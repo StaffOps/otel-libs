@@ -42,6 +42,10 @@ nupkg/
 **/*.trx
 **/*.user
 
+# Exception: prebuilt OtelHelper package consumed by Dockerfile.demo (CI artifact)
+!packages/
+!packages/*.nupkg
+
 # Tests not needed in example builds
 OtelHelper.Tests/
 

@@ -50,6 +50,10 @@ tests/
 **/.venv/
 **/venv/
 
+# Exception: prebuilt otel-helper wheel consumed by Dockerfile.demo (CI artifact)
+!packages/
+!packages/*.whl
+
 # Secrets — defensivo
 **/.env
 **/.env.*
