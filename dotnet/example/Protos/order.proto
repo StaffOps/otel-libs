@@ -1,0 +1,63 @@
+syntax = "proto3";
+
+option csharp_namespace = "OtelHelper.Grpc";
+
+package order;
+
+service OrderService {
+  rpc ProcessOrder (ProcessOrderRequest) returns (ProcessOrderReply);
+  rpc CancelOrder (CancelOrderRequest) returns (CancelOrderReply);
+  rpc SlowOperation (SlowOperationRequest) returns (SlowOperationReply);
+  rpc UnstableOperation (UnstableRequest) returns (UnstableReply);
+  rpc ReadBaggage (EmptyRequest) returns (BaggageReply);
+}
+
+message ProcessOrderRequest {
+  int32 order_id = 1;
+  string product = 2;
+  int32 quantity = 3;
+}
+
+message ProcessOrderReply {
+  int32 order_id = 1;
+  string status = 2;
+  bool enriched = 3;
+  string processed_by = 4;
+}
+
+message CancelOrderRequest {
+  int32 order_id = 1;
+}
+
+message CancelOrderReply {
+  int32 order_id = 1;
+  string status = 2;
+  string processed_by = 3;
+}
+
+message SlowOperationRequest {}
+
+message SlowOperationReply {
+  string status = 1;
+  string warning = 2;
+  string processed_by = 3;
+}
+
+message UnstableRequest {
+  int32 request_id = 1;
+  int32 fail_count = 2;
+}
+
+message UnstableReply {
+  int32 request_id = 1;
+  string status = 2;
+  int32 attempts = 3;
+  string processed_by = 4;
+}
+
+message EmptyRequest {}
+
+message BaggageReply {
+  map<string, string> baggage_items = 1;
+  string processed_by = 2;
+}

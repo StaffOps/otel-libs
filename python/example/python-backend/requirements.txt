@@ -1,0 +1,7 @@
+setuptools
+otel-helper
+grpcio==1.65.0
+grpcio-tools==1.65.0
+grpcio-health-checking==1.65.0
+protobuf==5.27.0
+opentelemetry-instrumentation-grpc==0.63b1

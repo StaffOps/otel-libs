@@ -1,0 +1,21 @@
+FROM python:3.11-slim
+
+ARG OTEL_HELPER_VERSION
+
+WORKDIR /app
+
+# Install otel-helper from PyPI
+RUN pip install --no-cache-dir otel-helper==${OTEL_HELPER_VERSION}
+
+# Install app dependencies (skip otel-helper line)
+COPY example/python-backend/requirements.txt .
+RUN grep -v "otel-helper\|setuptools" requirements.txt | pip install --no-cache-dir -r /dev/stdin
+
+# Generate gRPC stubs
+COPY example/protos/ /app/protos/
+RUN python -m grpc_tools.protoc -I/app/protos --python_out=/app --grpc_python_out=/app /app/protos/notification.proto
+
+COPY example/python-backend/ /app/
+
+EXPOSE 50051
+CMD ["python", "server.py"]

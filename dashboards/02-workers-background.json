@@ -1,0 +1,370 @@
+{
+  "annotations": {
+    "list": []
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "links": [],
+  "panels": [
+    {
+      "title": "Health Check Success Rate",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 0
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "victoriametrics"
+      },
+      "targets": [
+        {
+          "expr": "1 - (rate(api_health_checks_failed_total{service_name=\"sample-process\"}[5m]) / rate(api_health_checks_total{service_name=\"sample-process\"}[5m]))",
+          "legendFormat": "{{endpoint}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1
+        }
+      }
+    },
+    {
+      "title": "Health Check Duration (by endpoint)",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 0
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "victoriametrics"
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(api_health_check_duration_seconds_bucket{service_name=\"sample-process\"}[5m])) by (le, endpoint))",
+          "legendFormat": "{{endpoint}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        }
+      }
+    },
+    {
+      "title": "Heavy Work \u2014 Throughput (items/s)",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 6,
+        "w": 8,
+        "x": 0,
+        "y": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "victoriametrics"
+      },
+      "targets": [
+        {
+          "expr": "rate(heavy_work_items_total{service_name=\"sample-process\"}[5m])",
+          "legendFormat": "items/s"
+        },
+        {
+          "expr": "rate(heavy_work_errors_total{service_name=\"sample-process\"}[5m])",
+          "legendFormat": "errors/s"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops"
+        }
+      }
+    },
+    {
+      "title": "Heavy Work \u2014 Items Active",
+      "type": "gauge",
+      "gridPos": {
+        "h": 6,
+        "w": 4,
+        "x": 8,
+        "y": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "victoriametrics"
+      },
+      "targets": [
+        {
+          "expr": "heavy_work_items_active{service_name=\"sample-process\"}",
+          "legendFormat": "active"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 10
+              },
+              {
+                "color": "red",
+                "value": 20
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "title": "Heavy Work \u2014 Batch Duration",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 6,
+        "w": 12,
+        "x": 12,
+        "y": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "victoriametrics"
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(heavy_work_batch_duration_seconds_bucket{service_name=\"sample-process\"}[5m])) by (le))",
+          "legendFormat": "batch P95"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(heavy_work_item_duration_seconds_bucket{service_name=\"sample-process\"}[5m])) by (le))",
+          "legendFormat": "item P95"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        }
+      }
+    },
+    {
+      "title": "Queue \u2014 Depth",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 6,
+        "w": 8,
+        "x": 0,
+        "y": 14
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "victoriametrics"
+      },
+      "targets": [
+        {
+          "expr": "queue_depth{service_name=\"sample-process\"}",
+          "legendFormat": "depth"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        }
+      }
+    },
+    {
+      "title": "Queue \u2014 Messages Processed",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 6,
+        "w": 8,
+        "x": 8,
+        "y": 14
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "victoriametrics"
+      },
+      "targets": [
+        {
+          "expr": "rate(queue_messages_processed_total{service_name=\"sample-process\"}[5m])",
+          "legendFormat": "processed/s"
+        },
+        {
+          "expr": "rate(queue_messages_failed_total{service_name=\"sample-process\"}[5m])",
+          "legendFormat": "failed/s"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops"
+        }
+      }
+    },
+    {
+      "title": "Queue \u2014 Processing Duration P95",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 6,
+        "w": 8,
+        "x": 16,
+        "y": 14
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "victoriametrics"
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(queue_message_duration_seconds_bucket{service_name=\"sample-process\"}[5m])) by (le))",
+          "legendFormat": "P95"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        }
+      }
+    },
+    {
+      "title": "Circuit Breaker State",
+      "type": "stat",
+      "gridPos": {
+        "h": 6,
+        "w": 6,
+        "x": 0,
+        "y": 20
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "victoriametrics"
+      },
+      "targets": [
+        {
+          "expr": "circuit_breaker_state{service_name=\"sample-process\"}",
+          "legendFormat": "state"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "CLOSED",
+                  "color": "green"
+                },
+                "1": {
+                  "text": "OPEN",
+                  "color": "red"
+                },
+                "2": {
+                  "text": "HALF-OPEN",
+                  "color": "yellow"
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "title": "Scheduled Job \u2014 Results",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 6,
+        "w": 9,
+        "x": 6,
+        "y": 20
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "victoriametrics"
+      },
+      "targets": [
+        {
+          "expr": "rate(scheduled_job_runs_total{service_name=\"sample-process\"}[5m])",
+          "legendFormat": "{{result}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops"
+        }
+      }
+    },
+    {
+      "title": "Scheduled Job \u2014 Duration & Timeouts",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 6,
+        "w": 9,
+        "x": 15,
+        "y": 20
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "victoriametrics"
+      },
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(scheduled_job_duration_seconds_bucket{service_name=\"sample-process\"}[5m])) by (le))",
+          "legendFormat": "duration P95"
+        },
+        {
+          "expr": "rate(scheduled_job_timeouts_total{service_name=\"sample-process\"}[5m])",
+          "legendFormat": "timeouts/s"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        }
+      }
+    },
+    {
+      "title": "Worker Traces",
+      "type": "text",
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 26
+      },
+      "datasource": {
+        "type": "tempo",
+        "uid": "tempo"
+      },
+      "options": {
+        "mode": "markdown",
+        "content": "### [Worker Traces](/explore?orgId=1&left=%7B%22datasource%22:%22tempo%22,%22queries%22:%5B%7B%22queryType%22:%22traceql%22,%22query%22:%22%7Bresource.service.name%3D%22sample-process%22%7D%22%7D%5D%7D)\n\nQuery: `{resource.service.name=\"sample-process\"}`\n\n\ud83d\udc46 Clique no t\u00edtulo para abrir no Explore"
+      }
+    }
+  ],
+  "schemaVersion": 39,
+  "tags": [
+    "sample",
+    "otel",
+    "workers"
+  ],
+  "templating": {
+    "list": []
+  },
+  "time": {
+    "from": "now-30m",
+    "to": "now"
+  },
+  "title": "Sample \u2014 Workers & Background Processing",
+  "uid": "sample-workers"
+}

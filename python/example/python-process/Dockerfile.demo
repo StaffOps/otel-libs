@@ -1,0 +1,16 @@
+FROM python:3.11-slim
+
+ARG OTEL_HELPER_VERSION
+
+WORKDIR /app
+
+# Install otel-helper from PyPI
+RUN pip install --no-cache-dir otel-helper==${OTEL_HELPER_VERSION}
+
+# Install app dependencies
+COPY example/python-process/requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY example/python-process/ /app/
+
+CMD ["python", "workers.py"]

@@ -1,0 +1,58 @@
+# =============================================================================
+# .dockerignore — python/
+# CI Python roda `cd python && docker build -f example/python-{api,backend,process}/Dockerfile.demo .`
+# Esse context é o subdir python/ — esse arquivo controla o que vai pra dentro.
+# =============================================================================
+
+# Git
+.git
+.gitignore
+
+# CI/CD
+.github/
+
+# IDE
+.vscode/
+.idea/
+*.user
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Documentação (não vai pra runtime)
+README.md
+HOW-TO.md
+TESTS.md
+example/README.md
+example/python-api/ISTIO-ROUTING-TESTS.md
+example/python-api/istio-routing.yaml
+
+# Tests da lib — Dockerfile.demo não precisa
+tests/
+
+# Python — build artifacts
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+**/*.egg-info/
+**/dist/
+**/build/
+**/.eggs/
+**/.pytest_cache/
+**/.coverage
+**/coverage.xml
+**/htmlcov/
+**/.mypy_cache/
+**/.ruff_cache/
+**/.tox/
+**/.venv/
+**/venv/
+
+# Secrets — defensivo
+**/.env
+**/.env.*
+!**/.env.example
+**/*.pem
+**/*.key

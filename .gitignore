@@ -1,0 +1,36 @@
+# .NET
+bin/
+obj/
+*.nupkg
+*.snupkg
+nupkg/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+.eggs/
+.coverage
+coverage.xml
+htmlcov/
+.pytest_cache/
+
+# IDE
+.vs/
+.vscode/
+.idea/
+*.user
+*.suo
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Test/Coverage
+*.trx
+TestResults/
+dotnet/OtelHelper.Tests/coverage.xml
