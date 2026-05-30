@@ -1,0 +1,67 @@
+# =============================================================================
+# .dockerignore — root
+# Controla o que vai pro Docker context em qualquer `docker build` rodado da raiz.
+# Cada subdir (dotnet/, python/) tem seu próprio .dockerignore com regras
+# específicas — esse aqui cobre o caso genérico (build local, scripts ad-hoc).
+# =============================================================================
+
+# Git
+.git
+.gitignore
+.gitattributes
+
+# CI/CD (não precisa dentro da imagem)
+.github/
+
+# IDE
+.vscode/
+.idea/
+.vs/
+*.user
+*.suo
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Documentação que não vai pra runtime
+**/HOW-TO.md
+**/TESTS.md
+**/EXAMPLES.md
+**/ISTIO-ROUTING-TESTS.md
+dashboards/
+
+# .NET — build artifacts
+**/bin/
+**/obj/
+**/*.nupkg
+**/*.snupkg
+**/nupkg/
+**/TestResults/
+**/coverage.xml
+**/*.trx
+
+# Python — build artifacts
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+**/*.egg-info/
+**/dist/
+**/build/
+**/.eggs/
+**/.pytest_cache/
+**/.coverage
+**/htmlcov/
+**/.mypy_cache/
+**/.ruff_cache/
+**/.tox/
+**/.venv/
+**/venv/
+
+# Secrets — defensivo (NUNCA deveria estar no repo)
+**/.env
+**/.env.*
+!**/.env.example
+**/*.pem
+**/*.key

@@ -1,0 +1,234 @@
+{
+  "annotations": {
+    "list": []
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "links": [],
+  "panels": [
+    {
+      "title": "Trace Count by Service (last 5m)",
+      "type": "bargauge",
+      "gridPos": {
+        "h": 6,
+        "w": 8,
+        "x": 0,
+        "y": 0
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "victoriametrics"
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(spanmetrics_apm_calls_total[5m])) by (service_name)",
+          "legendFormat": "{{service_name}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops"
+        }
+      }
+    },
+    {
+      "title": "Error Spans by Service",
+      "type": "timeseries",
+      "gridPos": {
+        "h": 6,
+        "w": 8,
+        "x": 8,
+        "y": 0
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "victoriametrics"
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(spanmetrics_apm_calls_total{status_code=\"STATUS_CODE_ERROR\"}[5m])) by (service_name)",
+          "legendFormat": "{{service_name}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "color": {
+            "mode": "palette-classic"
+          }
+        }
+      }
+    },
+    {
+      "title": "Span Duration P95 by Operation",
+      "type": "table",
+      "gridPos": {
+        "h": 6,
+        "w": 8,
+        "x": 16,
+        "y": 0
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "victoriametrics"
+      },
+      "targets": [
+        {
+          "expr": "topk(10, histogram_quantile(0.95, sum(rate(spanmetrics_apm_latency_bucket[5m])) by (le, service_name, span_name)))",
+          "format": "table",
+          "instant": true
+        }
+      ]
+    },
+    {
+      "title": "Retry Pattern \u2014 Attempts Distribution",
+      "type": "text",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 6
+      },
+      "datasource": {
+        "type": "tempo",
+        "uid": "tempo"
+      },
+      "description": "Shows retry attempts \u2014 red spans are failures, green are success",
+      "options": {
+        "mode": "markdown",
+        "content": "### [Retry Pattern \u2014 Attempts Distribution](/explore?orgId=1&left=%7B%22datasource%22:%22tempo%22,%22queries%22:%5B%7B%22queryType%22:%22traceql%22,%22query%22:%22%7Bresource.service.name%3D%22sample-api%22%20%26%26%20name%3D%22api.retry-attempt%22%7D%22%7D%5D%7D)\n\nQuery: `{resource.service.name=\"sample-api\" && name=\"api.retry-attempt\"}`\n\n\ud83d\udc46 Clique no t\u00edtulo para abrir no Explore"
+      }
+    },
+    {
+      "title": "Parallel Fan-out \u2014 Concurrent Spans",
+      "type": "text",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 6
+      },
+      "datasource": {
+        "type": "tempo",
+        "uid": "tempo"
+      },
+      "description": "Open a trace to see parallel child spans side by side",
+      "options": {
+        "mode": "markdown",
+        "content": "### [Parallel Fan-out \u2014 Concurrent Spans](/explore?orgId=1&left=%7B%22datasource%22:%22tempo%22,%22queries%22:%5B%7B%22queryType%22:%22traceql%22,%22query%22:%22%7Bresource.service.name%3D%22sample-api%22%20%26%26%20name%3D%22api.parallel-fan-out%22%7D%22%7D%5D%7D)\n\nQuery: `{resource.service.name=\"sample-api\" && name=\"api.parallel-fan-out\"}`\n\n\ud83d\udc46 Clique no t\u00edtulo para abrir no Explore"
+      }
+    },
+    {
+      "title": "Baggage Propagation \u2014 Traces",
+      "type": "text",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 14
+      },
+      "datasource": {
+        "type": "tempo",
+        "uid": "tempo"
+      },
+      "description": "Open trace \u2192 Backend span shows baggage.* tags",
+      "options": {
+        "mode": "markdown",
+        "content": "### [Baggage Propagation \u2014 Traces](/explore?orgId=1&left=%7B%22datasource%22:%22tempo%22,%22queries%22:%5B%7B%22queryType%22:%22traceql%22,%22query%22:%22%7Bresource.service.name%3D%22sample-api%22%20%26%26%20name%3D%22api.trace-with-baggage%22%7D%22%7D%5D%7D)\n\nQuery: `{resource.service.name=\"sample-api\" && name=\"api.trace-with-baggage\"}`\n\n\ud83d\udc46 Clique no t\u00edtulo para abrir no Explore"
+      }
+    },
+    {
+      "title": "Span Events \u2014 Order Lifecycle",
+      "type": "text",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 14
+      },
+      "datasource": {
+        "type": "tempo",
+        "uid": "tempo"
+      },
+      "description": "Open trace \u2192 span detail \u2192 Events tab shows order lifecycle",
+      "options": {
+        "mode": "markdown",
+        "content": "### [Span Events \u2014 Order Lifecycle](/explore?orgId=1&left=%7B%22datasource%22:%22tempo%22,%22queries%22:%5B%7B%22queryType%22:%22traceql%22,%22query%22:%22%7Bresource.service.name%3D%22sample-api%22%20%26%26%20name%3D%22api.order-with-events%22%7D%22%7D%5D%7D)\n\nQuery: `{resource.service.name=\"sample-api\" && name=\"api.order-with-events\"}`\n\n\ud83d\udc46 Clique no t\u00edtulo para abrir no Explore"
+      }
+    },
+    {
+      "title": "Timeout Traces (Scheduled Job)",
+      "type": "text",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 22
+      },
+      "datasource": {
+        "type": "tempo",
+        "uid": "tempo"
+      },
+      "description": "Jobs that timed out or failed \u2014 check span.timeout tag",
+      "options": {
+        "mode": "markdown",
+        "content": "### [Timeout Traces (Scheduled Job)](/explore?orgId=1&left=%7B%22datasource%22:%22tempo%22,%22queries%22:%5B%7B%22queryType%22:%22traceql%22,%22query%22:%22%7Bresource.service.name%3D%22sample-process%22%20%26%26%20name%3D%22process.scheduled-job%22%20%26%26%20status%3Derror%7D%22%7D%5D%7D)\n\nQuery: `{resource.service.name=\"sample-process\" && name=\"process.scheduled-job\" && status=error}`\n\n\ud83d\udc46 Clique no t\u00edtulo para abrir no Explore"
+      }
+    },
+    {
+      "title": "Queue Consumer \u2014 Message Traces",
+      "type": "text",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 22
+      },
+      "datasource": {
+        "type": "tempo",
+        "uid": "tempo"
+      },
+      "description": "Each message is an independent trace with parse\u2192validate\u2192persist",
+      "options": {
+        "mode": "markdown",
+        "content": "### [Queue Consumer \u2014 Message Traces](/explore?orgId=1&left=%7B%22datasource%22:%22tempo%22,%22queries%22:%5B%7B%22queryType%22:%22traceql%22,%22query%22:%22%7Bresource.service.name%3D%22sample-process%22%20%26%26%20name%3D%22process.queue-consume%22%7D%22%7D%5D%7D)\n\nQuery: `{resource.service.name=\"sample-process\" && name=\"process.queue-consume\"}`\n\n\ud83d\udc46 Clique no t\u00edtulo para abrir no Explore"
+      }
+    },
+    {
+      "title": "All Error Traces (cross-service)",
+      "type": "text",
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 30
+      },
+      "datasource": {
+        "type": "tempo",
+        "uid": "tempo"
+      },
+      "description": "All errors across all 3 services \u2014 always kept by tail sampling",
+      "options": {
+        "mode": "markdown",
+        "content": "### [All Error Traces (cross-service)](/explore?orgId=1&left=%7B%22datasource%22:%22tempo%22,%22queries%22:%5B%7B%22queryType%22:%22traceql%22,%22query%22:%22%7Bresource.service.name%3D%7E%22sample-api%7Csample-backend%7Csample-process%22%20%26%26%20status%3Derror%7D%22%7D%5D%7D)\n\nQuery: `{resource.service.name=~\"sample-api|sample-backend|sample-process\" && status=error}`\n\n\ud83d\udc46 Clique no t\u00edtulo para abrir no Explore"
+      }
+    }
+  ],
+  "schemaVersion": 39,
+  "tags": [
+    "sample",
+    "otel",
+    "traces",
+    "reliability"
+  ],
+  "templating": {
+    "list": []
+  },
+  "time": {
+    "from": "now-30m",
+    "to": "now"
+  },
+  "title": "Sample \u2014 Traces & Reliability Patterns",
+  "uid": "sample-traces-reliability"
+}

@@ -1,0 +1,59 @@
+# =============================================================================
+# .dockerignore — dotnet/
+# CI .NET runs `cd dotnet && docker build -f example/dotnet-{api,backend}/Dockerfile.demo .`
+# This context is the subdir dotnet/ — this file controls what goes inside.
+# =============================================================================
+
+# Git
+.git
+.gitignore
+
+# CI/CD
+
+# IDE
+.vs/
+.vscode/
+.idea/
+*.user
+*.suo
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Documentation (not needed at runtime)
+README.md
+HOW-TO.md
+TESTS.md
+example/README.md
+example/EXAMPLES.md
+example/envoyfilter-grpc-scheme-rewrite-dev.yaml
+example/test-grpc.sh
+
+# .NET — build artifacts
+**/bin/
+**/obj/
+**/*.nupkg
+**/*.snupkg
+nupkg/
+**/TestResults/
+**/coverage.xml
+**/*.trx
+**/*.user
+
+# Tests not needed in example builds
+OtelHelper.Tests/
+
+# NuGet local sources (created at CI runtime; should not come from dev disk)
+NuGet.Config
+
+# Secrets
+**/.env
+**/.env.*
+!**/.env.example
+**/*.pem
+**/*.key
+
+# Solution files — only useful in IDE/CLI, not in build
+*.sln

@@ -1,0 +1,61 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  dotnet:
+    name: .NET (test + coverage)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: dotnet
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - run: dotnet restore OtelHelper.Tests/OtelHelper.Tests.csproj
+      - run: >
+          dotnet test OtelHelper.Tests
+          --configuration Release
+          --no-restore
+          /p:CollectCoverage=true
+          /p:CoverletOutputFormat=cobertura
+          /p:CoverletOutput=./coverage/
+          /p:Threshold=90
+          /p:ThresholdType=line
+          /p:ThresholdStat=total
+          /p:Exclude="[xunit*]*"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: dotnet-coverage
+          path: dotnet/OtelHelper.Tests/coverage/
+
+  python:
+    name: Python (test + coverage)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: python
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install -e ".[dev]" grpcio -q
+      - run: >
+          pytest tests/ --ignore=tests/test_propagation.py -v
+          --cov=otel_helper
+          --cov-report=term-missing
+          --cov-report=xml:coverage.xml
+          --cov-fail-under=90
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: python-coverage
+          path: python/coverage.xml

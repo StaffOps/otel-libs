@@ -1,0 +1,35 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "otel-helper"
+version = "0.1.0"
+description = "OpenTelemetry instrumentation helper for Python"
+requires-python = ">=3.10"
+dependencies = [
+    "opentelemetry-api==1.42.1",
+    "opentelemetry-sdk==1.42.1",
+    "opentelemetry-exporter-otlp-proto-grpc==1.42.1",
+    # Instrumentations (always installed, activation controlled via OTEL_HELPER_EXTRA_INSTRUMENTATION)
+    "opentelemetry-instrumentation-fastapi==0.63b1",
+    "opentelemetry-instrumentation-httpx==0.63b1",
+    "opentelemetry-instrumentation-requests==0.63b1",
+    "opentelemetry-instrumentation-grpc==0.63b1",
+    "opentelemetry-instrumentation-system-metrics==0.63b1",
+    "opentelemetry-instrumentation-sqlalchemy==0.63b1",
+    "opentelemetry-instrumentation-redis==0.63b1",
+    "opentelemetry-instrumentation-botocore==0.63b1",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["otel_helper"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
