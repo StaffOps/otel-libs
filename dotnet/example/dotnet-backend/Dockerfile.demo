@@ -1,10 +1,15 @@
 FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
 WORKDIR /src
+# Prebuilt OtelHelper package (built once in CI, passed via artifact)
+COPY packages/ /packages/
 COPY example/Protos/ example/Protos/
 COPY example/dotnet-backend/dotnet-backend.csproj example/dotnet-backend/
-RUN dotnet restore example/dotnet-backend/dotnet-backend.csproj
+# Consume the prebuilt package instead of compiling the lib from source
+RUN ver=$(ls /packages/OtelHelper.*.nupkg | sed 's#.*/OtelHelper\.\(.*\)\.nupkg#\1#') && \
+    sed -i "s#<ProjectReference[^/]*/>#<PackageReference Include=\"OtelHelper\" Version=\"$ver\" />#" example/dotnet-backend/dotnet-backend.csproj
+RUN dotnet restore example/dotnet-backend/dotnet-backend.csproj -s /packages -s https://api.nuget.org/v3/index.json
 COPY example/dotnet-backend/ example/dotnet-backend/
-RUN dotnet publish example/dotnet-backend/dotnet-backend.csproj -c Release -o /app
+RUN dotnet publish example/dotnet-backend/dotnet-backend.csproj -c Release --no-restore -o /app
 
 FROM mcr.microsoft.com/dotnet/aspnet:8.0
 WORKDIR /app

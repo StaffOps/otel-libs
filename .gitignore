@@ -34,3 +34,6 @@ Thumbs.db
 *.trx
 TestResults/
 dotnet/OtelHelper.Tests/coverage.xml
+
+# CI build output (consumed by Dockerfile.demo)
+packages/

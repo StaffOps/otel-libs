@@ -1,15 +1,15 @@
 FROM python:3.11-slim
 
-ARG OTEL_HELPER_VERSION
 
 WORKDIR /app
 
-# Install otel-helper from PyPI
-RUN pip install --no-cache-dir otel-helper==${OTEL_HELPER_VERSION}
+# Install prebuilt otel-helper wheel (built once in CI, passed via artifact)
+COPY packages/otel_helper-*.whl /tmp/
+RUN pip install --no-cache-dir /tmp/otel_helper-*.whl
 
-# Install app dependencies
+# Install app dependencies (skip otel-helper line — already installed from wheel)
 COPY example/python-process/requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN grep -v "otel-helper\|setuptools" requirements.txt | pip install --no-cache-dir -r /dev/stdin
 
 COPY example/python-process/ /app/
 
