@@ -35,7 +35,7 @@ setup_telemetry(TelemetryOptions(
 |----------|---------|-------------|
 | `SERVICE_NAME` | `my-service` | Service name (priority over `OTEL_SERVICE_NAME`) |
 | `OTEL_SERVICE_NAME` | `my-service` | Fallback for service name |
-| `ENVIRONMENT` | `LOCAL` | Environment: LOCAL, DEV, HML, PRD, BTC (or PRD-BATCH) |
+| `ENVIRONMENT` | `LOCAL` | Environment: LOCAL, DEV, HML, PRD |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | `http://localhost` | Collector endpoint |
 | `OTEL_HELPER_DEBUG_LEVEL` | `false` | Debug mode: DEBUG log, all instrumentations, attribute debug=true |
 | `OTEL_HELPER_EXTRA_INSTRUMENTATION` | `SQL` | Conditional instrumentations: SQL, REDIS, AWS |
@@ -47,7 +47,7 @@ setup_telemetry(TelemetryOptions(
 |-------------|-----------|
 | LOCAL | DEBUG |
 | DEV/HML | INFO |
-| PRD/BTC | WARNING |
+| PRD | WARNING |
 
 `OTEL_HELPER_DEBUG_LEVEL=true` forces DEBUG log level in any environment.
 

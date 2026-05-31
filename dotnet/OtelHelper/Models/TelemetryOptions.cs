@@ -81,7 +81,6 @@ namespace OtelHelper
                 DeploymentEnvironment.DEV => LogLevel.Information,
                 DeploymentEnvironment.HML => LogLevel.Information,
                 DeploymentEnvironment.PRD => LogLevel.Warning,
-                DeploymentEnvironment.BTC => LogLevel.Warning,
                 _ => LogLevel.Information,
             };
         }

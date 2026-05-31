@@ -39,29 +39,9 @@ public class OptionsTests
     [InlineData("DEV", DeploymentEnvironment.DEV)]
     [InlineData("HML", DeploymentEnvironment.HML)]
     [InlineData("PRD", DeploymentEnvironment.PRD)]
-    [InlineData("BTC", DeploymentEnvironment.BTC)]
-    [InlineData("btc", DeploymentEnvironment.BTC)]
     [InlineData("prd", DeploymentEnvironment.PRD)]
     [InlineData("dev", DeploymentEnvironment.DEV)]
     public void ResolveEnvironment_Parses_Correctly(string envValue, DeploymentEnvironment expected)
-    {
-        System.Environment.SetEnvironmentVariable("ENVIRONMENT", envValue);
-        try
-        {
-            var opts = new TelemetryOptions();
-            new TelemetryOptionsPostConfigure().PostConfigure(null, opts);
-            Assert.Equal(expected, opts.Environment);
-        }
-        finally
-        {
-            System.Environment.SetEnvironmentVariable("ENVIRONMENT", null);
-        }
-    }
-
-    [Theory]
-    [InlineData("PRD-BATCH", DeploymentEnvironment.BTC)]
-    [InlineData("prd-batch", DeploymentEnvironment.BTC)]
-    public void ResolveEnvironment_Aliases_Map_Correctly(string envValue, DeploymentEnvironment expected)
     {
         System.Environment.SetEnvironmentVariable("ENVIRONMENT", envValue);
         try

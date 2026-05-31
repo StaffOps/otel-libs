@@ -12,7 +12,6 @@ class DeploymentEnvironment(Enum):
     DEV = "DEV"
     HML = "HML"
     PRD = "PRD"
-    BTC = "BTC"
 
 
 # Environment variable names
@@ -30,9 +29,6 @@ _DEFAULT_OTLP_PORT = 4317
 
 def _parse_environment(value: str) -> DeploymentEnvironment:
     normalized = value.upper().replace("-", "_")
-    # Aliases
-    if normalized in ("PRD_BATCH",):
-        return DeploymentEnvironment.BTC
     try:
         return DeploymentEnvironment(normalized)
     except ValueError:
@@ -63,7 +59,6 @@ def get_default_log_level(environment: DeploymentEnvironment, debug_level: bool 
         DeploymentEnvironment.DEV: logging.INFO,
         DeploymentEnvironment.HML: logging.INFO,
         DeploymentEnvironment.PRD: logging.WARNING,
-        DeploymentEnvironment.BTC: logging.WARNING,
     }.get(environment, logging.INFO)
 
 

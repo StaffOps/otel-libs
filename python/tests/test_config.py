@@ -66,12 +66,6 @@ class TestEnvResolution:
         opts.resolve_from_env()
         assert opts.environment == DeploymentEnvironment.PRD
 
-    def test_environment_hyphen_normalization(self):
-        os.environ["ENVIRONMENT"] = "PRD-BATCH"
-        opts = TelemetryOptions()
-        opts.resolve_from_env()
-        assert opts.environment == DeploymentEnvironment.BTC
-
     def test_environment_invalid_falls_back_to_local(self):
         os.environ["ENVIRONMENT"] = "INVALID"
         opts = TelemetryOptions()
@@ -176,9 +170,6 @@ class TestLogLevel:
     def test_prd_warning(self):
         assert get_default_log_level(DeploymentEnvironment.PRD) == logging.WARNING
 
-    def test_prd_batch_warning(self):
-        assert get_default_log_level(DeploymentEnvironment.BTC) == logging.WARNING
-
     def test_debug_override(self):
         assert get_default_log_level(DeploymentEnvironment.PRD, debug_level=True) == logging.DEBUG
 
@@ -189,14 +180,10 @@ class TestEnvironmentParsing:
         assert _parse_environment("DEV") == DeploymentEnvironment.DEV
         assert _parse_environment("HML") == DeploymentEnvironment.HML
         assert _parse_environment("PRD") == DeploymentEnvironment.PRD
-        assert _parse_environment("BTC") == DeploymentEnvironment.BTC
 
     def test_case_insensitive(self):
         assert _parse_environment("prd") == DeploymentEnvironment.PRD
         assert _parse_environment("Dev") == DeploymentEnvironment.DEV
-
-    def test_hyphen_to_underscore(self):
-        assert _parse_environment("PRD-BATCH") == DeploymentEnvironment.BTC
 
     def test_invalid_falls_back(self):
         assert _parse_environment("STAGING") == DeploymentEnvironment.LOCAL
