@@ -8,6 +8,7 @@ Standardized OpenTelemetry instrumentation libraries for your applications.
 |----------|-----------|---------|--------|
 | .NET | [`dotnet/`](dotnet/) | `OtelHelper` (NuGet) | ✅ Production |
 | Python | [`python/`](python/) | `otel-helper` (PyPI) | ✅ Production |
+| Go | [`go/`](go/) | `otelhelper` (Go module) | 🚧 In Development |
 
 ## Dashboards
 
@@ -16,7 +17,7 @@ Shared Grafana dashboards in [`dashboards/`](dashboards/) — compatible with an
 ## Architecture
 
 ```
-[ Application (.NET / Python) ]
+[ Application (.NET / Python / Go) ]
         ↓ OTLP gRPC :4317
 [ OpenTelemetry Collector ]
         ↓
@@ -46,12 +47,20 @@ from otel_helper import setup_telemetry
 setup_telemetry()
 ```
 
-## Environment Variables (both libs)
+### Go
+```go
+import "github.com/staffops/otel-helper-go"
+
+shutdown, err := otelhelper.Setup(ctx)
+defer shutdown(ctx)
+```
+
+## Environment Variables (all libs)
 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `SERVICE_NAME` | `my-service` | Service name |
-| `ENVIRONMENT` | `LOCAL` | Environment: LOCAL, DEV, HML, PRD, BTC (or PRD-BATCH) |
+| `ENVIRONMENT` | `LOCAL` | Environment: LOCAL, DEV, HML, PRD |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | `http://localhost` | Collector endpoint |
 | `OTEL_HELPER_DEBUG_LEVEL` | `false` | Debug mode (DEBUG log, all instrumentations, attribute debug=true) |
 | `OTEL_HELPER_EXTRA_INSTRUMENTATION` | `SQL` | Conditional instrumentations: SQL, AWS, REDIS |
@@ -63,3 +72,5 @@ setup_telemetry()
 - [.NET — HOW-TO](dotnet/HOW-TO.md)
 - [Python — README](python/README.md)
 - [Python — HOW-TO](python/HOW-TO.md)
+- [Go — README](go/README.md)
+- [Go — HOW-TO](go/HOW-TO.md)

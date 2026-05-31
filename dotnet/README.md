@@ -36,7 +36,7 @@ After registration, available via DI:
 | Variable | Source | Description | Default |
 |---|---|---|---|
 | `SERVICE_NAME` | CI/CD Pipeline | Service name | `my-service` |
-| `ENVIRONMENT` | Helm Chart (`values.yaml`) | Environment: `LOCAL`, `DEV`, `HML`, `PRD`, `BTC`. Unrecognized value → `LOCAL`. | `LOCAL` |
+| `ENVIRONMENT` | Helm Chart (`values.yaml`) | Environment: `LOCAL`, `DEV`, `HML`, `PRD`. Unrecognized value → `LOCAL`. | `LOCAL` |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | Helm Chart | Collector base host | `http://localhost` |
 
 > These variables are injected automatically. Application teams **do not need to configure them manually**.
@@ -100,7 +100,6 @@ Recognized natively by the SDK. The lib does not override them — if defined, t
 | `DEV` | 100% (AlwaysOn) | Information |
 | `HML` | 100% (AlwaysOn) | Information |
 | `PRD` | 100% (AlwaysOn) | Warning |
-| `BTC` | 100% (AlwaysOn) | Warning |
 
 > The SDK sends 100% of traces to the Collector in all environments. **Tail-based sampling is the Collector's responsibility** (Agent → Gateway), which decides what to keep based on errors, latency, and configured rate per environment.
 

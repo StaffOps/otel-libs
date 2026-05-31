@@ -30,9 +30,7 @@ namespace OtelHelper
                 if (!string.IsNullOrWhiteSpace(env))
                 {
                     var normalized = env.Replace("-", "_");
-                    if (normalized.Equals("PRD_BATCH", StringComparison.OrdinalIgnoreCase))
-                        options.Environment = DeploymentEnvironment.BTC;
-                    else if (Enum.TryParse<DeploymentEnvironment>(normalized, ignoreCase: true, out var parsed))
+                    if (Enum.TryParse<DeploymentEnvironment>(normalized, ignoreCase: true, out var parsed))
                         options.Environment = parsed;
                 }
             }

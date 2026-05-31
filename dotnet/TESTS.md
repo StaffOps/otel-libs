@@ -17,8 +17,7 @@ Validate defaults and env var resolution.
 | `Default_ServiceName_Is_MyService` | Default ServiceName is "my-service" |
 | `Default_CollectorEndpoint_Has_Port_4317` | Default endpoint ends with :4317 |
 | `Default_DebugLevel_Is_False` | Debug disabled by default |
-| `ResolveEnvironment_Parses_Correctly` × 8 | LOCAL, DEV, HML, PRD, BTC, prd, dev, btc |
-| `ResolveEnvironment_Aliases_Map_Correctly` × 2 | PRD-BATCH and prd-batch → BTC |
+| `ResolveEnvironment_Parses_Correctly` × 6 | LOCAL, DEV, HML, PRD, prd, dev |
 | `ResolveEnvironment_Invalid_Falls_Back_To_LOCAL` × 3 | Invalid values → LOCAL |
 
 ## RegistrationTests
@@ -35,13 +34,13 @@ Validate defaults and env var resolution.
 
 | Test | Description |
 |-------|-----------|
-| `All_Environments_Register_Pipeline_Without_Error` × 5 | LOCAL, DEV, HML, PRD, BTC register pipeline |
+| `All_Environments_Register_Pipeline_Without_Error` × 4 | LOCAL, DEV, HML, PRD register pipeline |
 
 ### Log Level
 
 | Test | Description |
 |-------|-----------|
-| `LogLevel_Matches_Environment` × 5 | LOCAL=Debug, DEV/HML=Info, PRD/BTC=Warning |
+| `LogLevel_Matches_Environment` × 4 | LOCAL=Debug, DEV/HML=Info, PRD=Warning |
 | `DebugLevel_Forces_Debug_LogLevel` | Debug mode forces LogLevel.Debug in PRD |
 
 ### Extra Instrumentation

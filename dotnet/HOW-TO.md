@@ -134,7 +134,6 @@ The lib sets the minimum level based on environment:
 | `DEV` | Information | Information, Warning, Error, Critical |
 | `HML` | Information | Information, Warning, Error, Critical |
 | `PRD` | Warning | Warning, Error, Critical |
-| `BTC` | Warning | Warning, Error, Critical |
 
 ### Structured Logs
 

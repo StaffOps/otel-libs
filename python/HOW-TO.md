@@ -88,7 +88,7 @@ def process_order(order_id: str):
 |-------------|-------|
 | LOCAL | DEBUG |
 | DEV/HML | INFO |
-| PRD/BTC | WARNING |
+| PRD | WARNING |
 
 `OTEL_HELPER_DEBUG_LEVEL=true` forces DEBUG in any environment.
 
@@ -210,7 +210,7 @@ Error messages follow the pattern `[OtelHelper] ...` with indication of the requ
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `SERVICE_NAME` | Service name | `my-service` |
-| `ENVIRONMENT` | Environment (LOCAL/DEV/HML/PRD/BTC) | `LOCAL` |
+| `ENVIRONMENT` | Environment (LOCAL/DEV/HML/PRD) | `LOCAL` |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | Collector endpoint | `http://localhost` |
 | `OTEL_HELPER_DEBUG_LEVEL` | Debug mode | `false` |
 | `OTEL_HELPER_EXTRA_INSTRUMENTATION` | Extra instrumentations | `SQL` |

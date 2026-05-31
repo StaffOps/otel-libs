@@ -31,7 +31,6 @@ public class TelemetryPipelineTests
     [InlineData(DeploymentEnvironment.DEV)]
     [InlineData(DeploymentEnvironment.HML)]
     [InlineData(DeploymentEnvironment.PRD)]
-    [InlineData(DeploymentEnvironment.BTC)]
     public void All_Environments_Register_Pipeline_Without_Error(DeploymentEnvironment env)
     {
         using var provider = BuildProvider(opts =>
@@ -50,7 +49,6 @@ public class TelemetryPipelineTests
     [InlineData(DeploymentEnvironment.DEV, LogLevel.Information)]
     [InlineData(DeploymentEnvironment.HML, LogLevel.Information)]
     [InlineData(DeploymentEnvironment.PRD, LogLevel.Warning)]
-    [InlineData(DeploymentEnvironment.BTC, LogLevel.Warning)]
     public void LogLevel_Matches_Environment(DeploymentEnvironment env, LogLevel expectedMinLevel)
     {
         using var provider = BuildProvider(opts =>

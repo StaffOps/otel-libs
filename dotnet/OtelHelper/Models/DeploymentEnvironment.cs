@@ -5,7 +5,6 @@ namespace OtelHelper
         LOCAL,
         DEV,
         HML,
-        PRD,
-        BTC
+        PRD
     }
 }

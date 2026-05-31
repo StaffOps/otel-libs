@@ -28,7 +28,6 @@ docker run --rm -v $(pwd):/app -w /app python:3.11-slim sh -c "pip install -e '.
 | `test_otel_service_name_fallback` | OTEL_SERVICE_NAME as fallback |
 | `test_service_name_priority` | SERVICE_NAME has priority over OTEL_SERVICE_NAME |
 | `test_environment_from_env` | ENVIRONMENT=PRD resolves correctly |
-| `test_environment_hyphen_normalization` | PRD-BATCH normalizes to BTC |
 | `test_environment_invalid_falls_back_to_local` | Invalid value → LOCAL |
 | `test_collector_endpoint_from_env` | OTEL_EXPORTER_OTLP_ENDPOINT resolves endpoint |
 | `test_collector_endpoint_default` | Default uses localhost:4317 |
@@ -63,16 +62,14 @@ docker run --rm -v $(pwd):/app -w /app python:3.11-slim sh -c "pip install -e '.
 | `test_dev_info` | DEV → INFO |
 | `test_hml_info` | HML → INFO |
 | `test_prd_warning` | PRD → WARNING |
-| `test_prd_batch_warning` | BTC → WARNING |
 | `test_debug_override` | Debug mode → DEBUG in any environment |
 
-### TestEnvironmentParsing (4 tests)
+### TestEnvironmentParsing (3 tests)
 
 | Test | Description |
 |------|-------------|
-| `test_valid_values` | LOCAL, DEV, HML, PRD, BTC parse correctly |
-| `test_case_insensitive` | prd, btc, dev work |
-| `test_hyphen_to_underscore` | PRD-BATCH → BTC |
+| `test_valid_values` | LOCAL, DEV, HML, PRD parse correctly |
+| `test_case_insensitive` | prd, dev work |
 | `test_invalid_falls_back` | Invalid value → LOCAL |
 
 ---
