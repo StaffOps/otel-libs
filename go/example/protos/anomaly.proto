@@ -1,0 +1,35 @@
+// Reference proto file for the Anomaly Detection service.
+// Not compiled in this example — the backend uses net/http for simplicity.
+// To use with real gRPC, compile with:
+//   protoc --go_out=. --go-grpc_out=. protos/anomaly.proto
+
+syntax = "proto3";
+
+package anomaly.v1;
+
+option go_package = "github.com/staffops/otel-helper-go/example/protos/anomalyv1";
+
+service AnomalyDetection {
+  rpc Detect(DetectRequest) returns (DetectResponse);
+  rpc GetStatus(GetStatusRequest) returns (GetStatusResponse);
+}
+
+message DetectRequest {
+  string source = 1;
+  int64 timestamp = 2;
+}
+
+message DetectResponse {
+  bool anomaly_detected = 1;
+  double confidence = 2;
+  int64 latency_ms = 3;
+}
+
+message GetStatusRequest {
+  string id = 1;
+}
+
+message GetStatusResponse {
+  string id = 1;
+  string status = 2;
+}

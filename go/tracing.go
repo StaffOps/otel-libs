@@ -1,0 +1,52 @@
+package otelhelper
+
+import (
+	"context"
+	"fmt"
+	"time"
+
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/resource"
+	"go.opentelemetry.io/otel/trace"
+)
+
+func configureTracing(ctx context.Context, res *resource.Resource, opts *Options) (*sdktrace.TracerProvider, error) {
+	exporter, err := otlptracegrpc.New(ctx,
+		otlptracegrpc.WithEndpoint(opts.OtelEndpoint),
+		otlptracegrpc.WithInsecure(),
+		otlptracegrpc.WithTimeout(time.Duration(opts.ExportTimeoutMs)*time.Millisecond),
+		otlptracegrpc.WithCompressor("gzip"),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("trace exporter: %w", err)
+	}
+
+	var rootSampler sdktrace.Sampler
+	if opts.SampleRatio >= 1.0 {
+		rootSampler = sdktrace.AlwaysSample()
+	} else {
+		rootSampler = sdktrace.TraceIDRatioBased(opts.SampleRatio)
+	}
+
+	tpOpts := []sdktrace.TracerProviderOption{
+		sdktrace.WithResource(res),
+		sdktrace.WithSampler(sdktrace.ParentBased(rootSampler)),
+		sdktrace.WithBatcher(exporter),
+	}
+	if opts.DebugLevel {
+		tpOpts = append(tpOpts, sdktrace.WithSpanProcessor(&debugProcessor{}))
+	}
+
+	tp := sdktrace.NewTracerProvider(tpOpts...)
+	otel.SetTracerProvider(tp)
+	return tp, nil
+}
+
+// StartRootSpan starts a new span detached from any parent (new trace).
+// Use in workers where each iteration should be an independent trace.
+func StartRootSpan(ctx context.Context, tracer trace.Tracer, name string, opts ...trace.SpanStartOption) (context.Context, trace.Span) {
+	opts = append(opts, trace.WithNewRoot())
+	return tracer.Start(ctx, name, opts...)
+}

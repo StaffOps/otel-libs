@@ -1,0 +1,13 @@
+FROM golang:1.22 AS build
+WORKDIR /app
+COPY go.mod go.sum ./
+COPY . .
+# Replace directive points to local lib mounted at /lib
+RUN echo 'replace github.com/staffops/otel-helper-go => /lib' >> go.mod
+COPY --from=lib /lib /lib
+RUN go mod tidy && CGO_ENABLED=0 go build -o /bin/go-api .
+
+FROM alpine:3.20
+RUN apk add --no-cache ca-certificates
+COPY --from=build /bin/go-api /bin/go-api
+ENTRYPOINT ["/bin/go-api"]

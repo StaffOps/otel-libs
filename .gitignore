@@ -18,6 +18,14 @@ coverage.xml
 htmlcov/
 .pytest_cache/
 
+# Go
+go/example/go-api/go-api
+go/example/go-backend/go-backend
+go/example/go-process/go-process
+*.out
+cov.out
+coverage.out
+
 # IDE
 .vs/
 .vscode/
