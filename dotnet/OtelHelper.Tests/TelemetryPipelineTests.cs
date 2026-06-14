@@ -604,4 +604,135 @@ public class TelemetryPipelineTests
         var opts = CreateResolved();
         Assert.Equal("", opts.DisabledMetrics);
     }
+
+    // --- Full pipeline with disabled signals ---
+
+    [Fact]
+    public void Pipeline_Registers_When_Metrics_Disabled()
+    {
+        using var provider = BuildProvider(opts =>
+        {
+            opts.ServiceName = "test-disabled";
+            opts.OtelCollectorEndpoint = "http://localhost:4317";
+            opts.DisabledSignals = "metrics";
+        });
+        Assert.NotNull(provider);
+        var loggerFactory = provider.GetService<ILoggerFactory>();
+        Assert.NotNull(loggerFactory);
+    }
+
+    // --- HasInstrumentation("REDIS") ---
+
+    [Fact]
+    public void HasInstrumentation_Redis_Works_Like_SQL_AWS()
+    {
+        var opts = new TelemetryOptions { ExtraInstrumentation = "SQL,REDIS" };
+        Assert.True(opts.HasInstrumentation("SQL"));
+        Assert.True(opts.HasInstrumentation("REDIS"));
+        Assert.False(opts.HasInstrumentation("AWS"));
+    }
+
+    [Fact]
+    public void HasInstrumentation_Redis_Case_Insensitive()
+    {
+        var opts = new TelemetryOptions { ExtraInstrumentation = "redis" };
+        Assert.True(opts.HasInstrumentation("REDIS"));
+    }
+
+    // --- DisabledMetrics glob pattern via pipeline ---
+
+    [Fact]
+    public void Pipeline_Registers_With_DisabledMetrics_Pattern()
+    {
+        using var provider = BuildProvider(opts =>
+        {
+            opts.ServiceName = "test-drop-metrics";
+            opts.OtelCollectorEndpoint = "http://localhost:4317";
+            opts.DisabledMetrics = "http.server.*,system.*";
+        });
+        Assert.NotNull(provider);
+    }
+
+    // --- Disabled traces signal skips tracing setup ---
+
+    [Fact]
+    public void Pipeline_Registers_When_Traces_Disabled()
+    {
+        using var provider = BuildProvider(opts =>
+        {
+            opts.ServiceName = "test-no-traces";
+            opts.OtelCollectorEndpoint = "http://localhost:4317";
+            opts.DisabledSignals = "traces";
+        });
+        Assert.NotNull(provider);
+    }
+
+    [Fact]
+    public void Pipeline_Registers_When_Logs_Disabled()
+    {
+        using var provider = BuildProvider(opts =>
+        {
+            opts.ServiceName = "test-no-logs";
+            opts.OtelCollectorEndpoint = "http://localhost:4317";
+            opts.DisabledSignals = "logs";
+        });
+        Assert.NotNull(provider);
+    }
+
+    [Fact]
+    public void Pipeline_Registers_When_All_Signals_Disabled()
+    {
+        using var provider = BuildProvider(opts =>
+        {
+            opts.ServiceName = "test-no-signals";
+            opts.OtelCollectorEndpoint = "http://localhost:4317";
+            opts.DisabledSignals = "traces,metrics,logs";
+        });
+        Assert.NotNull(provider);
+    }
+
+    // --- ResolveCollectorHost non-URI fallback ---
+
+    [Fact]
+    public void PostConfigure_Endpoint_NonURI_Uses_RawValue()
+    {
+        System.Environment.SetEnvironmentVariable("OTEL_EXPORTER_OTLP_ENDPOINT", "just-a-hostname");
+        try
+        {
+            var opts = CreateResolved();
+            Assert.Contains("just-a-hostname", opts.OtelCollectorEndpoint);
+        }
+        finally
+        {
+            System.Environment.SetEnvironmentVariable("OTEL_EXPORTER_OTLP_ENDPOINT", null);
+        }
+    }
+
+    // --- AWS instrumentation in full pipeline ---
+
+    [Fact]
+    public void Pipeline_Registers_With_AWS_Instrumentation()
+    {
+        using var provider = BuildProvider(opts =>
+        {
+            opts.ServiceName = "test-aws";
+            opts.OtelCollectorEndpoint = "http://localhost:4317";
+            opts.ExtraInstrumentation = "SQL,AWS";
+        });
+        Assert.NotNull(provider);
+    }
+
+    // --- REDIS instrumentation in full pipeline ---
+
+    [Fact]
+    public void Pipeline_Registers_With_Redis_Instrumentation()
+    {
+        using var provider = BuildProvider(opts =>
+        {
+            opts.ServiceName = "test-redis";
+            opts.OtelCollectorEndpoint = "http://localhost:4317";
+            opts.ExtraInstrumentation = "SQL,REDIS";
+        });
+        Assert.NotNull(provider);
+    }
 }
