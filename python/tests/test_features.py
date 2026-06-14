@@ -17,7 +17,8 @@ from otel_helper.setup import reset_telemetry
 @pytest.fixture(autouse=True)
 def clean():
     for var in ["OTEL_HELPER_SAMPLE_RATIO", "OTEL_HELPER_DEBUG_LEVEL", "SERVICE_NAME",
-                "OTEL_EXPORTER_OTLP_ENDPOINT", "ENVIRONMENT"]:
+                "OTEL_EXPORTER_OTLP_ENDPOINT", "ENVIRONMENT",
+                "OTEL_HELPER_DISABLED_SIGNALS", "OTEL_HELPER_DISABLED_METRICS"]:
         os.environ.pop(var, None)
     reset_telemetry()
     yield
@@ -212,3 +213,72 @@ class TestDebugProcessorLifecycle:
         from otel_helper.processors import DebugProcessor
         p = DebugProcessor()
         assert p.force_flush() is True
+
+
+class TestDisabledSignals:
+    def test_is_signal_enabled_true_when_empty(self):
+        opts = TelemetryOptions(service_name="test", otel_endpoint="http://localhost:4317")
+        assert opts.is_signal_enabled("traces") is True
+        assert opts.is_signal_enabled("metrics") is True
+        assert opts.is_signal_enabled("logs") is True
+
+    def test_is_signal_enabled_false_when_in_list(self):
+        opts = TelemetryOptions(
+            service_name="test", otel_endpoint="http://localhost:4317",
+            disabled_signals=["metrics"]
+        )
+        assert opts.is_signal_enabled("metrics") is False
+        assert opts.is_signal_enabled("traces") is True
+
+    def test_is_signal_enabled_case_insensitive(self):
+        opts = TelemetryOptions(
+            service_name="test", otel_endpoint="http://localhost:4317",
+            disabled_signals=["Metrics", "TRACES"]
+        )
+        assert opts.is_signal_enabled("metrics") is False
+        assert opts.is_signal_enabled("METRICS") is False
+        assert opts.is_signal_enabled("traces") is False
+        assert opts.is_signal_enabled("Traces") is False
+        assert opts.is_signal_enabled("logs") is True
+
+    def test_env_var_resolves_disabled_signals(self):
+        os.environ["OTEL_HELPER_DISABLED_SIGNALS"] = "metrics,logs"
+        opts = TelemetryOptions(service_name="test", otel_endpoint="http://localhost:4317")
+        opts.resolve_from_env()
+        assert "metrics" in opts.disabled_signals
+        assert "logs" in opts.disabled_signals
+        assert opts.is_signal_enabled("metrics") is False
+        assert opts.is_signal_enabled("logs") is False
+        assert opts.is_signal_enabled("traces") is True
+
+    def test_env_var_resolves_disabled_metrics(self):
+        os.environ["OTEL_HELPER_DISABLED_METRICS"] = "http.server.*,rpc.client.*"
+        opts = TelemetryOptions(service_name="test", otel_endpoint="http://localhost:4317")
+        opts.resolve_from_env()
+        assert "http.server.*" in opts.disabled_metrics
+        assert "rpc.client.*" in opts.disabled_metrics
+
+    def test_disabled_metrics_empty_when_env_not_set(self):
+        opts = TelemetryOptions(service_name="test", otel_endpoint="http://localhost:4317")
+        opts.resolve_from_env()
+        assert opts.disabled_metrics == []
+
+    def test_setup_with_disabled_signals_does_not_raise(self):
+        opts = TelemetryOptions(
+            service_name="test", otel_endpoint="http://localhost:4317",
+            disabled_signals=["metrics"]
+        )
+        from otel_helper.setup import setup_telemetry, reset_telemetry
+        reset_telemetry()
+        setup_telemetry(opts)
+        reset_telemetry()
+
+    def test_disabled_metrics_pattern_does_not_raise(self):
+        opts = TelemetryOptions(
+            service_name="test", otel_endpoint="http://localhost:4317",
+            disabled_metrics=["http.*"]
+        )
+        from otel_helper.setup import setup_telemetry, reset_telemetry
+        reset_telemetry()
+        setup_telemetry(opts)
+        reset_telemetry()

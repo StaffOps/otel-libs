@@ -58,10 +58,11 @@ namespace OtelHelper
                     if (opts.ResourceAttributes.Count > 0)
                         r.AddAttributes(opts.ResourceAttributes.Select(kv => new KeyValuePair<string, object>(kv.Key, kv.Value)));
                 })
-                .WithTracing(builder => builder.ConfigureTracing(opts))
-                .WithMetrics(builder => builder.ConfigureMetrics(opts));
+                .WithTracing(builder => { if (opts.IsSignalEnabled("traces")) builder.ConfigureTracing(opts); })
+                .WithMetrics(builder => { if (opts.IsSignalEnabled("metrics")) builder.ConfigureMetrics(opts); });
 
-            services.ConfigureLogging(opts);
+            if (opts.IsSignalEnabled("logs"))
+                services.ConfigureLogging(opts);
 
             return services;
         }
