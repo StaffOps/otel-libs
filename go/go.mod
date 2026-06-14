@@ -1,4 +1,4 @@
-module github.com/staffops/otel-helper-go
+module github.com/karlipegomes/staffops-otel-libs/go
 
 go 1.22.0
 
