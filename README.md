@@ -66,6 +66,72 @@ defer shutdown(ctx)
 | `OTEL_HELPER_EXTRA_INSTRUMENTATION` | `SQL` | Conditional instrumentations: SQL, AWS, REDIS |
 | `OTEL_HELPER_SAMPLE_RATIO` | `1.0` | Head sampling ratio (0.0-1.0). 1.0 = AlwaysOn |
 
+## Installing from GitHub Packages (private)
+
+### .NET
+
+Add the GitHub NuGet source (once per machine/CI):
+
+```bash
+dotnet nuget add source "https://nuget.pkg.github.com/karlipegomes/index.json" \
+  --name github-staffops \
+  --username karlipegomes \
+  --password <GITHUB_PAT_WITH_READ_PACKAGES>
+```
+
+Then reference in your `.csproj`:
+
+```xml
+<PackageReference Include="OtelHelper" Version="0.1.0" />
+```
+
+In CI (GitHub Actions), use `GITHUB_TOKEN` automatically:
+
+```yaml
+- run: dotnet nuget add source "https://nuget.pkg.github.com/karlipegomes/index.json"
+        --name github --username github --password ${{ secrets.GITHUB_TOKEN }}
+```
+
+### Python
+
+Download the wheel from the GitHub Release:
+
+```bash
+# Authenticate with gh CLI
+gh release download v0.1.0 --repo karlipegomes/staffops-otel-libs --pattern "*.whl"
+pip install otel_helper-0.1.0-py3-none-any.whl
+```
+
+Or install directly (requires PAT with `repo` scope):
+
+```bash
+pip install "otel-helper @ https://github.com/karlipegomes/staffops-otel-libs/releases/download/v0.1.0/otel_helper-0.1.0-py3-none-any.whl" \
+  --extra-index-url https://<PAT>@raw.githubusercontent.com/
+```
+
+In CI (GitHub Actions):
+
+```yaml
+- run: gh release download v0.1.0 --repo karlipegomes/staffops-otel-libs --pattern "*.whl"
+  env:
+    GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+- run: pip install otel_helper-*.whl
+```
+
+### Go
+
+Go modules are consumed directly from the private repo:
+
+```bash
+# Configure git to use SSH (or PAT) for private repos
+git config --global url."git@github.com:".insteadOf "https://github.com/"
+
+# Set GOPRIVATE
+export GOPRIVATE=github.com/staffops/*
+
+go get github.com/staffops/otel-helper-go@latest
+```
+
 ## Documentation
 
 - [.NET — README](dotnet/README.md)
