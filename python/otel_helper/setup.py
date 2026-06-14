@@ -50,9 +50,12 @@ def setup_telemetry(options: TelemetryOptions | None = None) -> TelemetryOptions
     ]))
 
     # Configure signals
-    configure_tracing(resource, options)
-    configure_metrics(resource, options)
-    configure_logging(resource, options)
+    if options.is_signal_enabled('traces'):
+        configure_tracing(resource, options)
+    if options.is_signal_enabled('metrics'):
+        configure_metrics(resource, options)
+    if options.is_signal_enabled('logs'):
+        configure_logging(resource, options)
     configure_instrumentations(options)
 
     _initialized = True

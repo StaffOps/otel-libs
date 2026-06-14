@@ -9,10 +9,12 @@ import (
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
+	noopmetric "go.opentelemetry.io/otel/metric/noop"
 	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/sdk/resource"
 	semconv "go.opentelemetry.io/otel/semconv/v1.26.0"
 	"go.opentelemetry.io/otel/trace"
+	nooptrace "go.opentelemetry.io/otel/trace/noop"
 )
 
 // Shutdown flushes and shuts down all telemetry providers.
@@ -46,22 +48,38 @@ func Setup(ctx context.Context, opts ...Option) (Shutdown, error) {
 
 	res := buildResource(options)
 
-	tp, err := configureTracing(ctx, res, options)
-	if err != nil {
-		return noopShutdown, fmt.Errorf("otelhelper: %w", err)
+	var shutdowns []func(context.Context) error
+
+	if options.IsSignalEnabled("traces") {
+		tp, err := configureTracing(ctx, res, options)
+		if err != nil {
+			return noopShutdown, fmt.Errorf("otelhelper: %w", err)
+		}
+		shutdowns = append(shutdowns, tp.Shutdown)
+	} else {
+		otel.SetTracerProvider(nooptrace.NewTracerProvider())
 	}
 
-	mp, err := configureMetrics(ctx, res, options)
-	if err != nil {
-		tp.Shutdown(ctx) // cleanup already-created provider
-		return noopShutdown, fmt.Errorf("otelhelper: %w", err)
+	if options.IsSignalEnabled("metrics") {
+		mp, err := configureMetrics(ctx, res, options)
+		if err != nil {
+			noopShutdown(ctx) // best-effort cleanup
+			return noopShutdown, fmt.Errorf("otelhelper: %w", err)
+		}
+		shutdowns = append(shutdowns, mp.Shutdown)
+	} else {
+		otel.SetMeterProvider(noopmetric.NewMeterProvider())
 	}
 
-	lp, err := configureLogging(ctx, res, options)
-	if err != nil {
-		tp.Shutdown(ctx) // cleanup
-		mp.Shutdown(ctx) // cleanup
-		return noopShutdown, fmt.Errorf("otelhelper: %w", err)
+	if options.IsSignalEnabled("logs") {
+		lp, err := configureLogging(ctx, res, options)
+		if err != nil {
+			for _, fn := range shutdowns {
+				fn(ctx)
+			}
+			return noopShutdown, fmt.Errorf("otelhelper: %w", err)
+		}
+		shutdowns = append(shutdowns, lp.Shutdown)
 	}
 
 	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(
@@ -70,11 +88,11 @@ func Setup(ctx context.Context, opts ...Option) (Shutdown, error) {
 	))
 
 	shutdownFn = func(ctx context.Context) error {
-		return errors.Join(
-			tp.Shutdown(ctx),
-			mp.Shutdown(ctx),
-			lp.Shutdown(ctx),
-		)
+		var errs []error
+		for _, fn := range shutdowns {
+			errs = append(errs, fn(ctx))
+		}
+		return errors.Join(errs...)
 	}
 	setupDone = true
 	setupErr = nil

@@ -63,6 +63,22 @@ namespace OtelHelper
                         options.Sampler = new OpenTelemetry.Trace.TraceIdRatioBasedSampler(ratio);
                 }
             }
+
+            // Disabled signals from env var
+            if (string.IsNullOrEmpty(options.DisabledSignals))
+            {
+                var disabled = Environment.GetEnvironmentVariable(TelemetryOptions.DisabledSignalsEnvVar);
+                if (!string.IsNullOrWhiteSpace(disabled))
+                    options.DisabledSignals = disabled;
+            }
+
+            // Disabled metrics from env var
+            if (string.IsNullOrEmpty(options.DisabledMetrics))
+            {
+                var disabledMetrics = Environment.GetEnvironmentVariable(TelemetryOptions.DisabledMetricsEnvVar);
+                if (!string.IsNullOrWhiteSpace(disabledMetrics))
+                    options.DisabledMetrics = disabledMetrics;
+            }
         }
 
         private static string ResolveCollectorHost()

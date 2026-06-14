@@ -535,4 +535,73 @@ public class TelemetryPipelineTests
         Assert.True(result.Failed);
         Assert.Contains("ExportTimeoutMs", result.FailureMessage);
     }
+
+    // --- IsSignalEnabled ---
+
+    [Fact]
+    public void IsSignalEnabled_Returns_True_When_DisabledSignals_Empty()
+    {
+        var opts = new TelemetryOptions { DisabledSignals = "" };
+        Assert.True(opts.IsSignalEnabled("traces"));
+        Assert.True(opts.IsSignalEnabled("metrics"));
+        Assert.True(opts.IsSignalEnabled("logs"));
+    }
+
+    [Fact]
+    public void IsSignalEnabled_Returns_False_When_Signal_In_DisabledSignals()
+    {
+        var opts = new TelemetryOptions { DisabledSignals = "metrics,logs" };
+        Assert.True(opts.IsSignalEnabled("traces"));
+        Assert.False(opts.IsSignalEnabled("metrics"));
+        Assert.False(opts.IsSignalEnabled("logs"));
+    }
+
+    [Fact]
+    public void IsSignalEnabled_Is_Case_Insensitive()
+    {
+        var opts = new TelemetryOptions { DisabledSignals = "TRACES" };
+        Assert.False(opts.IsSignalEnabled("traces"));
+        Assert.False(opts.IsSignalEnabled("Traces"));
+        Assert.False(opts.IsSignalEnabled("TRACES"));
+    }
+
+    [Fact]
+    public void PostConfigure_Resolves_DisabledSignals_From_EnvVar()
+    {
+        System.Environment.SetEnvironmentVariable("OTEL_HELPER_DISABLED_SIGNALS", "metrics,logs");
+        try
+        {
+            var opts = CreateResolved();
+            Assert.Equal("metrics,logs", opts.DisabledSignals);
+            Assert.False(opts.IsSignalEnabled("metrics"));
+            Assert.True(opts.IsSignalEnabled("traces"));
+        }
+        finally
+        {
+            System.Environment.SetEnvironmentVariable("OTEL_HELPER_DISABLED_SIGNALS", null);
+        }
+    }
+
+    [Fact]
+    public void PostConfigure_Resolves_DisabledMetrics_From_EnvVar()
+    {
+        System.Environment.SetEnvironmentVariable("OTEL_HELPER_DISABLED_METRICS", "http.*,system.disk.*");
+        try
+        {
+            var opts = CreateResolved();
+            Assert.Equal("http.*,system.disk.*", opts.DisabledMetrics);
+        }
+        finally
+        {
+            System.Environment.SetEnvironmentVariable("OTEL_HELPER_DISABLED_METRICS", null);
+        }
+    }
+
+    [Fact]
+    public void PostConfigure_DisabledMetrics_Stays_Empty_When_EnvVar_Not_Set()
+    {
+        System.Environment.SetEnvironmentVariable("OTEL_HELPER_DISABLED_METRICS", null);
+        var opts = CreateResolved();
+        Assert.Equal("", opts.DisabledMetrics);
+    }
 }

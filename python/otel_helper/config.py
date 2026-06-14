@@ -22,6 +22,8 @@ ENV_ENVIRONMENT = "ENVIRONMENT"
 ENV_DEBUG_LEVEL = "OTEL_HELPER_DEBUG_LEVEL"
 ENV_EXTRA_INSTRUMENTATION = "OTEL_HELPER_EXTRA_INSTRUMENTATION"
 ENV_SAMPLE_RATIO = "OTEL_HELPER_SAMPLE_RATIO"
+ENV_DISABLED_SIGNALS = "OTEL_HELPER_DISABLED_SIGNALS"
+ENV_DISABLED_METRICS = "OTEL_HELPER_DISABLED_METRICS"
 
 _DEFAULT_COLLECTOR_HOST = "http://localhost"
 _DEFAULT_OTLP_PORT = 4317
@@ -73,6 +75,8 @@ class TelemetryOptions:
     extra_instrumentation: str = "SQL"
     export_timeout_ms: int = 10_000
     sample_ratio: float = 1.0
+    disabled_signals: list[str] = field(default_factory=list)
+    disabled_metrics: list[str] = field(default_factory=list)
     minimum_log_level: int | None = None
     resource_attributes: dict[str, object] = field(default_factory=dict)
 
@@ -80,6 +84,10 @@ class TelemetryOptions:
         if self.debug_level:
             return True
         return name.upper() in [x.strip().upper() for x in self.extra_instrumentation.split(",") if x.strip()]
+
+    def is_signal_enabled(self, signal: str) -> bool:
+        """Check if a signal (traces, metrics, logs) is enabled."""
+        return signal.lower() not in [s.lower() for s in self.disabled_signals]
 
     def resolve_from_env(self) -> None:
         """Apply environment variable defaults (PostConfigure equivalent)."""
@@ -110,6 +118,16 @@ class TelemetryOptions:
                     self.sample_ratio = max(0.0, min(1.0, float(env_ratio)))
                 except ValueError:
                     pass
+
+        if not self.disabled_signals:
+            env_disabled = os.getenv(ENV_DISABLED_SIGNALS)
+            if env_disabled:
+                self.disabled_signals = [s.strip().lower() for s in env_disabled.split(",") if s.strip()]
+
+        if not self.disabled_metrics:
+            env_metrics = os.getenv(ENV_DISABLED_METRICS)
+            if env_metrics:
+                self.disabled_metrics = [s.strip() for s in env_metrics.split(",") if s.strip()]
 
     def validate(self) -> None:
         """Validate options at startup. Raises ValueError on invalid config.

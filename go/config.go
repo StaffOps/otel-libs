@@ -27,6 +27,8 @@ const (
 	EnvDebugLevel           = "OTEL_HELPER_DEBUG_LEVEL"
 	EnvExtraInstrumentation = "OTEL_HELPER_EXTRA_INSTRUMENTATION"
 	EnvSampleRatio          = "OTEL_HELPER_SAMPLE_RATIO"
+	EnvDisabledSignals      = "OTEL_HELPER_DISABLED_SIGNALS"
+	EnvDisabledMetrics      = "OTEL_HELPER_DISABLED_METRICS"
 )
 
 func parseEnvironment(s string) DeploymentEnvironment {
@@ -98,6 +100,26 @@ func (o *Options) resolveFromEnv() {
 		if v := os.Getenv(EnvSampleRatio); v != "" {
 			if f, err := strconv.ParseFloat(v, 64); err == nil {
 				o.SampleRatio = max(0.0, min(1.0, f))
+			}
+		}
+	}
+
+	if len(o.DisabledSignals) == 0 {
+		if v := os.Getenv(EnvDisabledSignals); v != "" {
+			for _, s := range strings.Split(v, ",") {
+				if t := strings.ToLower(strings.TrimSpace(s)); t != "" {
+					o.DisabledSignals = append(o.DisabledSignals, t)
+				}
+			}
+		}
+	}
+
+	if len(o.DisabledMetrics) == 0 {
+		if v := os.Getenv(EnvDisabledMetrics); v != "" {
+			for _, s := range strings.Split(v, ",") {
+				if t := strings.TrimSpace(s); t != "" {
+					o.DisabledMetrics = append(o.DisabledMetrics, t)
+				}
 			}
 		}
 	}

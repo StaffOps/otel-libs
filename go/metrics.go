@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path"
 
 	"go.opentelemetry.io/contrib/instrumentation/runtime"
 	"go.opentelemetry.io/otel"
@@ -29,10 +30,16 @@ func configureMetrics(ctx context.Context, res *resource.Resource, opts *Options
 		return nil, fmt.Errorf("metric exporter: %w", err)
 	}
 
-	mp := sdkmetric.NewMeterProvider(
+	mpOpts := []sdkmetric.Option{
 		sdkmetric.WithResource(res),
 		sdkmetric.WithReader(sdkmetric.NewPeriodicReader(exporter)),
-	)
+	}
+
+	if len(opts.DisabledMetrics) > 0 {
+		mpOpts = append(mpOpts, sdkmetric.WithView(disabledMetricsView(opts.DisabledMetrics)))
+	}
+
+	mp := sdkmetric.NewMeterProvider(mpOpts...)
 	otel.SetMeterProvider(mp)
 
 	// Start runtime metrics (goroutines, GC, memory). Non-fatal if it fails.
@@ -41,4 +48,16 @@ func configureMetrics(ctx context.Context, res *resource.Resource, opts *Options
 	}
 
 	return mp, nil
+}
+
+// disabledMetricsView returns a View that drops metrics matching any of the given glob patterns.
+func disabledMetricsView(patterns []string) sdkmetric.View {
+	return func(inst sdkmetric.Instrument) (sdkmetric.Stream, bool) {
+		for _, pattern := range patterns {
+			if matched, _ := path.Match(pattern, inst.Name); matched {
+				return sdkmetric.Stream{Aggregation: sdkmetric.AggregationDrop{}}, true
+			}
+		}
+		return sdkmetric.Stream{}, false
+	}
 }

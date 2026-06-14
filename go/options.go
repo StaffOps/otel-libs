@@ -12,6 +12,18 @@ type Options struct {
 	ExportTimeoutMs      int
 	SampleRatio          float64
 	ResourceAttributes   map[string]string
+	DisabledSignals      []string
+	DisabledMetrics      []string
+}
+
+// IsSignalEnabled returns true if the signal is not in DisabledSignals (case-insensitive).
+func (o *Options) IsSignalEnabled(signal string) bool {
+	for _, s := range o.DisabledSignals {
+		if strings.EqualFold(s, signal) {
+			return false
+		}
+	}
+	return true
 }
 
 // Option is a functional option for Setup.
@@ -28,6 +40,12 @@ func WithExtraInstrumentation(instr string) Option {
 }
 func WithResourceAttributes(attrs map[string]string) Option {
 	return func(o *Options) { o.ResourceAttributes = attrs }
+}
+func WithDisabledSignals(signals []string) Option {
+	return func(o *Options) { o.DisabledSignals = signals }
+}
+func WithDisabledMetrics(patterns []string) Option {
+	return func(o *Options) { o.DisabledMetrics = patterns }
 }
 
 // HasInstrumentation checks if a named instrumentation is enabled.

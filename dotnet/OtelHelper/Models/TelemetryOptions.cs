@@ -17,6 +17,8 @@ namespace OtelHelper
         public const string DebugLevelEnvVar = "OTEL_HELPER_DEBUG_LEVEL";
         public const string ExtraInstrumentationEnvVar = "OTEL_HELPER_EXTRA_INSTRUMENTATION";
         public const string SampleRatioEnvVar = "OTEL_HELPER_SAMPLE_RATIO";
+        public const string DisabledSignalsEnvVar = "OTEL_HELPER_DISABLED_SIGNALS";
+        public const string DisabledMetricsEnvVar = "OTEL_HELPER_DISABLED_METRICS";
 
         [Required(AllowEmptyStrings = false)]
         public string ServiceName { get; set; } = "my-service";
@@ -66,6 +68,23 @@ namespace OtelHelper
         /// Use when the app creates ActivitySources with different names.
         /// </summary>
         public List<string> AdditionalActivitySources { get; set; } = new();
+
+        /// <summary>
+        /// Comma-separated list of signals to disable. Values: traces, metrics, logs. Case-insensitive.
+        /// </summary>
+        public string DisabledSignals { get; set; } = "";
+
+        /// <summary>
+        /// Comma-separated list of metric name patterns to drop. Supports * wildcard. Case-insensitive.
+        /// </summary>
+        public string DisabledMetrics { get; set; } = "";
+
+        /// <summary>
+        /// Returns true if the given signal is NOT in the DisabledSignals list.
+        /// </summary>
+        public bool IsSignalEnabled(string signal)
+            => !DisabledSignals.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Any(s => s.Equals(signal, StringComparison.OrdinalIgnoreCase));
 
         /// <summary>
         /// Returns the default log level for a given environment.

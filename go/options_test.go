@@ -156,3 +156,71 @@ func TestOptionsEnvEndpointNoPort(t *testing.T) {
 		t.Errorf("OtelEndpoint = %q, want %q", o.OtelEndpoint, "collector.monitoring:4317")
 	}
 }
+
+func TestIsSignalEnabledTrueWhenEmpty(t *testing.T) {
+	opts := &Options{DisabledSignals: nil}
+	if !opts.IsSignalEnabled("traces") {
+		t.Error("expected traces enabled")
+	}
+	if !opts.IsSignalEnabled("metrics") {
+		t.Error("expected metrics enabled")
+	}
+	if !opts.IsSignalEnabled("logs") {
+		t.Error("expected logs enabled")
+	}
+}
+
+func TestIsSignalEnabledFalseWhenInList(t *testing.T) {
+	opts := &Options{DisabledSignals: []string{"metrics"}}
+	if opts.IsSignalEnabled("metrics") {
+		t.Error("expected metrics disabled")
+	}
+	if !opts.IsSignalEnabled("traces") {
+		t.Error("expected traces enabled")
+	}
+}
+
+func TestIsSignalEnabledCaseInsensitive(t *testing.T) {
+	opts := &Options{DisabledSignals: []string{"Metrics", "TRACES"}}
+	if opts.IsSignalEnabled("metrics") {
+		t.Error("expected metrics disabled")
+	}
+	if opts.IsSignalEnabled("traces") {
+		t.Error("expected traces disabled")
+	}
+	if !opts.IsSignalEnabled("logs") {
+		t.Error("expected logs enabled")
+	}
+}
+
+func TestEnvResolvesDisabledSignals(t *testing.T) {
+	t.Setenv("OTEL_HELPER_DISABLED_SIGNALS", "metrics,logs")
+	opts := newOptions()
+	if opts.IsSignalEnabled("metrics") {
+		t.Error("expected metrics disabled")
+	}
+	if opts.IsSignalEnabled("logs") {
+		t.Error("expected logs disabled")
+	}
+	if !opts.IsSignalEnabled("traces") {
+		t.Error("expected traces enabled")
+	}
+}
+
+func TestEnvResolvesDisabledMetrics(t *testing.T) {
+	t.Setenv("OTEL_HELPER_DISABLED_METRICS", "http.server.*,rpc.client.*")
+	opts := newOptions()
+	if len(opts.DisabledMetrics) != 2 {
+		t.Fatalf("expected 2 patterns, got %d", len(opts.DisabledMetrics))
+	}
+	if opts.DisabledMetrics[0] != "http.server.*" {
+		t.Errorf("expected http.server.*, got %s", opts.DisabledMetrics[0])
+	}
+}
+
+func TestDisabledMetricsEmptyWhenEnvNotSet(t *testing.T) {
+	opts := newOptions()
+	if len(opts.DisabledMetrics) != 0 {
+		t.Errorf("expected empty, got %v", opts.DisabledMetrics)
+	}
+}
