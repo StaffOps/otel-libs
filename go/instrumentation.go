@@ -1,13 +1,31 @@
 package otelhelper
 
-import "database/sql"
-
-// InstrumentSQL is a placeholder for SQL instrumentation.
-// When otelsql is available and SQL instrumentation is enabled, this wraps the DB.
-func InstrumentSQL(db *sql.DB, opts *Options) *sql.DB {
-	if opts == nil || !opts.HasInstrumentation("SQL") {
-		return db
-	}
-	// TODO: integrate otelsql when adding database/sql instrumentation
-	return db
-}
+// Opt-in instrumentations live in separate sub-modules under ext/.
+// Import only what you need — each sub-module has its own go.mod so
+// it does not pull transitive dependencies into your main module.
+//
+// Available extensions:
+//
+//	github.com/karlipegomes/staffops-otel-libs/go/ext/otelaws   — AWS SDK v2 tracing
+//	github.com/karlipegomes/staffops-otel-libs/go/ext/otelredis — go-redis v9 tracing
+//	github.com/karlipegomes/staffops-otel-libs/go/ext/otelsql   — database/sql tracing + metrics
+//
+// Example (AWS):
+//
+//	import "github.com/karlipegomes/staffops-otel-libs/go/ext/otelaws"
+//
+//	cfg, _ := config.LoadDefaultConfig(ctx)
+//	otelaws.Instrument(&cfg)
+//
+// Example (Redis):
+//
+//	import "github.com/karlipegomes/staffops-otel-libs/go/ext/otelredis"
+//
+//	rdb := redis.NewClient(&redis.Options{Addr: "localhost:6379"})
+//	otelredis.Instrument(rdb)
+//
+// Example (SQL):
+//
+//	import "github.com/karlipegomes/staffops-otel-libs/go/ext/otelsql"
+//
+//	db, err := otelsql.Open("postgres", dsn)

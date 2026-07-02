@@ -3,11 +3,15 @@ package otelhelper
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"os"
 	"path"
+	"time"
 
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"go.opentelemetry.io/contrib/instrumentation/runtime"
 	"go.opentelemetry.io/otel"
+	promexporter "go.opentelemetry.io/otel/exporters/prometheus"
 	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/resource"
@@ -21,18 +25,34 @@ func configureMetrics(ctx context.Context, res *resource.Resource, opts *Options
 		os.Setenv("OTEL_METRICS_EXEMPLAR_FILTER", "trace_based")
 	}
 
-	exporter, err := otlpmetricgrpc.New(ctx,
-		otlpmetricgrpc.WithEndpoint(opts.OtelEndpoint),
-		otlpmetricgrpc.WithInsecure(),
-		otlpmetricgrpc.WithCompressor("gzip"),
-	)
-	if err != nil {
-		return nil, fmt.Errorf("metric exporter: %w", err)
-	}
+	var mpOpts []sdkmetric.Option
 
-	mpOpts := []sdkmetric.Option{
-		sdkmetric.WithResource(res),
-		sdkmetric.WithReader(sdkmetric.NewPeriodicReader(exporter)),
+	if opts.OtelEndpoint == "" {
+		// Prometheus scrape fallback — expose /metrics on PrometheusMetricsPort.
+		exporter, err := promexporter.New()
+		if err != nil {
+			return nil, fmt.Errorf("prometheus exporter: %w", err)
+		}
+		mpOpts = append(mpOpts,
+			sdkmetric.WithResource(res),
+			sdkmetric.WithReader(exporter),
+		)
+	} else {
+		// OTLP push path — export metrics to collector via gRPC.
+		exporter, err := otlpmetricgrpc.New(ctx,
+			otlpmetricgrpc.WithEndpoint(opts.OtelEndpoint),
+			otlpmetricgrpc.WithInsecure(),
+			otlpmetricgrpc.WithCompressor("gzip"),
+		)
+		if err != nil {
+			return nil, fmt.Errorf("metric exporter: %w", err)
+		}
+		mpOpts = append(mpOpts,
+			sdkmetric.WithResource(res),
+			sdkmetric.WithReader(sdkmetric.NewPeriodicReader(exporter,
+				sdkmetric.WithInterval(30*time.Second),
+			)),
+		)
 	}
 
 	if len(opts.DisabledMetrics) > 0 {
@@ -45,6 +65,16 @@ func configureMetrics(ctx context.Context, res *resource.Resource, opts *Options
 	// Start runtime metrics (goroutines, GC, memory). Non-fatal if it fails.
 	if err := runtime.Start(runtime.WithMeterProvider(mp)); err != nil {
 		otel.Handle(err)
+	}
+
+	// When in Prometheus mode, start HTTP server for scraping.
+	if opts.OtelEndpoint == "" {
+		go func() {
+			mux := http.NewServeMux()
+			mux.Handle("/metrics", promhttp.Handler())
+			srv := &http.Server{Addr: fmt.Sprintf(":%d", opts.PrometheusMetricsPort), Handler: mux}
+			srv.ListenAndServe()
+		}()
 	}
 
 	return mp, nil

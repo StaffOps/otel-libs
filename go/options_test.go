@@ -109,8 +109,8 @@ func TestOptionsValidateEmptyServiceName(t *testing.T) {
 
 func TestOptionsValidateEmptyEndpoint(t *testing.T) {
 	o := &Options{ServiceName: "svc", OtelEndpoint: "", ExportTimeoutMs: 10000}
-	if err := o.validate(); err == nil {
-		t.Error("Expected error for empty OtelEndpoint")
+	if err := o.validate(); err != nil {
+		t.Errorf("Empty OtelEndpoint should be valid (Prometheus fallback), got: %v", err)
 	}
 }
 

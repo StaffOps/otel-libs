@@ -132,10 +132,10 @@ public class TelemetryPipelineTests
     }
 
     [Fact]
-    public void Default_Endpoint_Uses_Localhost()
+    public void Default_Endpoint_Is_Empty_Without_EnvVar()
     {
         var opts = CreateResolved();
-        Assert.Contains("localhost", opts.OtelCollectorEndpoint);
+        Assert.Equal("", opts.OtelCollectorEndpoint);
     }
 
     [Fact]
@@ -507,13 +507,12 @@ public class TelemetryPipelineTests
     }
 
     [Fact]
-    public void Validator_Fails_On_Empty_Endpoint()
+    public void Validator_Succeeds_On_Empty_Endpoint_Prometheus_Mode()
     {
         var validator = new TelemetryOptionsValidator();
         var opts = new TelemetryOptions { ServiceName = "test", OtelCollectorEndpoint = "" };
         var result = validator.Validate(null, opts);
-        Assert.True(result.Failed);
-        Assert.Contains("OtelCollectorEndpoint", result.FailureMessage);
+        Assert.False(result.Failed);
     }
 
     [Fact]

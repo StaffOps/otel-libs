@@ -14,6 +14,9 @@ type Options struct {
 	ResourceAttributes   map[string]string
 	DisabledSignals      []string
 	DisabledMetrics      []string
+	// PrometheusMetricsPort is the port for /metrics when no OTLP endpoint is configured.
+	// Default: 9464. Configurable via OTEL_HELPER_METRICS_PORT env var.
+	PrometheusMetricsPort int
 }
 
 // IsSignalEnabled returns true if the signal is not in DisabledSignals (case-insensitive).
@@ -47,6 +50,9 @@ func WithDisabledSignals(signals []string) Option {
 func WithDisabledMetrics(patterns []string) Option {
 	return func(o *Options) { o.DisabledMetrics = patterns }
 }
+func WithPrometheusMetricsPort(port int) Option {
+	return func(o *Options) { o.PrometheusMetricsPort = port }
+}
 
 // HasInstrumentation checks if a named instrumentation is enabled.
 func (o *Options) HasInstrumentation(name string) bool {
@@ -63,12 +69,13 @@ func (o *Options) HasInstrumentation(name string) bool {
 
 func newOptions(opts ...Option) *Options {
 	o := &Options{
-		ServiceName:          "my-service",
-		Environment:          LOCAL,
-		ExtraInstrumentation: "SQL",
-		ExportTimeoutMs:      10_000,
-		SampleRatio:          1.0,
-		ResourceAttributes:   make(map[string]string),
+		ServiceName:           "my-service",
+		Environment:           LOCAL,
+		ExtraInstrumentation:  "SQL",
+		ExportTimeoutMs:       10_000,
+		SampleRatio:           1.0,
+		ResourceAttributes:    make(map[string]string),
+		PrometheusMetricsPort: 9464,
 	}
 	for _, opt := range opts {
 		opt(o)

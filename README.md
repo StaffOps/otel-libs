@@ -31,8 +31,22 @@ Shared Grafana dashboards in [`dashboards/`](dashboards/) — compatible with an
 
 - **OpenTelemetry as the single standard** — no vendor SDKs
 - **Everything via Collector** — SDK does not export directly to backends
+- **Prometheus fallback** — when no OTLP endpoint is configured, metrics are exposed via `/metrics` on port 9464 (Prometheus scrape compatible)
 - **Sampling at the Collector** — SDK uses AlwaysOn, tail sampling at the gateway
 - **Resource attributes at the Collector** — SDK only sets `service.name`
+- **Metrics exported every 30s** — default interval for all languages (SDK default is 60s)
+
+## Opt-in Extensions
+
+AWS, Redis, and SQL instrumentations are available as **opt-in packages** in all three languages. Core packages remain lightweight — add only what you need.
+
+| Language | AWS | Redis | SQL |
+|----------|-----|-------|-----|
+| .NET | `OtelHelper.AWS` | `OtelHelper.Redis` | `OtelHelper.Sql` |
+| Python | `otel-helper[aws]` | `otel-helper[redis]` | `otel-helper[sql]` |
+| Go | `ext/otelaws` | `ext/otelredis` | `ext/otelsql` |
+
+See each language's README for usage details.
 
 ## Quick Start
 
@@ -65,6 +79,7 @@ defer shutdown(ctx)
 | `OTEL_HELPER_DEBUG_LEVEL` | `false` | Debug mode (DEBUG log, all instrumentations, attribute debug=true) |
 | `OTEL_HELPER_EXTRA_INSTRUMENTATION` | `SQL` | Conditional instrumentations: SQL, AWS, REDIS |
 | `OTEL_HELPER_SAMPLE_RATIO` | `1.0` | Head sampling ratio (0.0-1.0). 1.0 = AlwaysOn |
+| `OTEL_HELPER_METRICS_PORT` | `9464` | Prometheus `/metrics` port when no OTLP endpoint is configured |
 
 ## Installing from GitHub Packages (private)
 

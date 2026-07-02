@@ -13,18 +13,25 @@ import (
 )
 
 func configureLogging(ctx context.Context, res *resource.Resource, opts *Options) (*sdklog.LoggerProvider, error) {
-	exporter, err := otlploggrpc.New(ctx,
-		otlploggrpc.WithEndpoint(opts.OtelEndpoint),
-		otlploggrpc.WithInsecure(),
-	)
-	if err != nil {
-		return nil, fmt.Errorf("log exporter: %w", err)
+	lpOpts := []sdklog.LoggerProviderOption{
+		sdklog.WithResource(res),
 	}
 
-	lp := sdklog.NewLoggerProvider(
-		sdklog.WithResource(res),
-		sdklog.WithProcessor(sdklog.NewBatchProcessor(exporter)),
-	)
+	if opts.OtelEndpoint != "" {
+		// OTLP push — export logs to collector.
+		exporter, err := otlploggrpc.New(ctx,
+			otlploggrpc.WithEndpoint(opts.OtelEndpoint),
+			otlploggrpc.WithInsecure(),
+		)
+		if err != nil {
+			return nil, fmt.Errorf("log exporter: %w", err)
+		}
+		lpOpts = append(lpOpts, sdklog.WithProcessor(sdklog.NewBatchProcessor(exporter)))
+	}
+	// When OtelEndpoint is empty, LoggerProvider is created without a processor.
+	// Logs go to stdout/slog only (no OTLP export).
+
+	lp := sdklog.NewLoggerProvider(lpOpts...)
 	global.SetLoggerProvider(lp)
 	return lp, nil
 }

@@ -19,13 +19,13 @@ namespace OtelHelper
         public const string SampleRatioEnvVar = "OTEL_HELPER_SAMPLE_RATIO";
         public const string DisabledSignalsEnvVar = "OTEL_HELPER_DISABLED_SIGNALS";
         public const string DisabledMetricsEnvVar = "OTEL_HELPER_DISABLED_METRICS";
+        public const string MetricsPortEnvVar = "OTEL_HELPER_METRICS_PORT";
 
         [Required(AllowEmptyStrings = false)]
         public string ServiceName { get; set; } = "my-service";
 
         public DeploymentEnvironment Environment { get; set; } = DeploymentEnvironment.LOCAL;
 
-        [Required(AllowEmptyStrings = false)]
         public string OtelCollectorEndpoint { get; set; } = "";
 
         /// <summary>
@@ -78,6 +78,12 @@ namespace OtelHelper
         /// Comma-separated list of metric name patterns to drop. Supports * wildcard. Case-insensitive.
         /// </summary>
         public string DisabledMetrics { get; set; } = "";
+
+        /// <summary>
+        /// Port for the Prometheus /metrics HTTP listener when no OTLP endpoint is configured.
+        /// Default: 9464 (Prometheus convention). Set via OTEL_HELPER_METRICS_PORT env var.
+        /// </summary>
+        public int PrometheusMetricsPort { get; set; } = 9464;
 
         /// <summary>
         /// Returns true if the given signal is NOT in the DisabledSignals list.

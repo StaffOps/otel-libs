@@ -7,7 +7,6 @@ from opentelemetry.sdk.trace import TracerProvider, SpanProcessor
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from opentelemetry.sdk.trace.sampling import ALWAYS_ON, TraceIdRatioBased
 from opentelemetry.sdk.resources import Resource
-from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
 
 from otel_helper.config import TelemetryOptions
 from otel_helper.processors import DebugProcessor
@@ -16,7 +15,11 @@ HEALTH_PATHS = frozenset(["/ping", "/health", "/healthz", "/ready"])
 
 
 def configure_tracing(resource: Resource, options: TelemetryOptions) -> TracerProvider:
-    """Configure and set the global TracerProvider."""
+    """Configure and set the global TracerProvider.
+
+    When otel_endpoint is empty, TracerProvider is configured without an OTLP exporter.
+    In-process context propagation and spans still work (useful for metric exemplars).
+    """
     sampler = ALWAYS_ON if options.sample_ratio >= 1.0 else TraceIdRatioBased(options.sample_ratio)
 
     provider = TracerProvider(
@@ -24,12 +27,15 @@ def configure_tracing(resource: Resource, options: TelemetryOptions) -> TracerPr
         sampler=sampler,
     )
 
-    exporter = OTLPSpanExporter(
-        endpoint=options.otel_endpoint,
-        insecure=True,
-        timeout=options.export_timeout_ms / 1000,
-    )
-    provider.add_span_processor(BatchSpanProcessor(exporter))
+    if options.otel_endpoint:
+        from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
+
+        exporter = OTLPSpanExporter(
+            endpoint=options.otel_endpoint,
+            insecure=True,
+            timeout=options.export_timeout_ms / 1000,
+        )
+        provider.add_span_processor(BatchSpanProcessor(exporter))
 
     if options.debug_level:
         provider.add_span_processor(DebugProcessor())

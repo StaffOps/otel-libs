@@ -78,11 +78,11 @@ class TestEnvResolution:
         opts.resolve_from_env()
         assert "custom-collector" in opts.otel_endpoint
 
-    def test_collector_endpoint_default(self):
+    def test_collector_endpoint_default_empty(self):
+        """When OTEL_EXPORTER_OTLP_ENDPOINT is not set, endpoint stays empty (Prometheus fallback)."""
         opts = TelemetryOptions()
         opts.resolve_from_env()
-        assert "localhost" in opts.otel_endpoint
-        assert "4317" in opts.otel_endpoint
+        assert opts.otel_endpoint == ""
 
     def test_debug_level_from_env(self):
         os.environ["OTEL_HELPER_DEBUG_LEVEL"] = "true"
@@ -116,10 +116,10 @@ class TestValidation:
         with pytest.raises(ValueError, match="ServiceName"):
             opts.validate()
 
-    def test_empty_endpoint_fails(self):
+    def test_empty_endpoint_is_valid(self):
+        """Empty endpoint means Prometheus fallback mode — no longer an error."""
         opts = TelemetryOptions(service_name="test", otel_endpoint="")
-        with pytest.raises(ValueError, match="OtelCollectorEndpoint"):
-            opts.validate()
+        opts.validate()  # Should not raise
 
     def test_invalid_endpoint_fails(self):
         opts = TelemetryOptions(service_name="test", otel_endpoint="not-a-uri")

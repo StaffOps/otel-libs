@@ -5,21 +5,27 @@ import logging
 from opentelemetry.sdk._logs import LoggerProvider, LoggingHandler
 from opentelemetry.sdk._logs.export import BatchLogRecordProcessor
 from opentelemetry.sdk.resources import Resource
-from opentelemetry.exporter.otlp.proto.grpc._log_exporter import OTLPLogExporter
 
 from otel_helper.config import TelemetryOptions, get_default_log_level
 
 
 def configure_logging(resource: Resource, options: TelemetryOptions) -> LoggerProvider:
-    """Configure OTel logging with OTLP export and level filtering."""
+    """Configure OTel logging with OTLP export and level filtering.
+
+    When otel_endpoint is empty, configures the LoggerProvider without an exporter.
+    Standard Python logging still works (stdout); OTel log correlation is available in-process.
+    """
     provider = LoggerProvider(resource=resource)
 
-    exporter = OTLPLogExporter(
-        endpoint=options.otel_endpoint,
-        insecure=True,
-        timeout=options.export_timeout_ms / 1000,
-    )
-    provider.add_log_record_processor(BatchLogRecordProcessor(exporter))
+    if options.otel_endpoint:
+        from opentelemetry.exporter.otlp.proto.grpc._log_exporter import OTLPLogExporter
+
+        exporter = OTLPLogExporter(
+            endpoint=options.otel_endpoint,
+            insecure=True,
+            timeout=options.export_timeout_ms / 1000,
+        )
+        provider.add_log_record_processor(BatchLogRecordProcessor(exporter))
 
     level = options.minimum_log_level or get_default_log_level(options.environment, options.debug_level)
 

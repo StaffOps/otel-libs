@@ -35,17 +35,16 @@ namespace OtelHelper.Tracing
             foreach (var source in options.AdditionalActivitySources)
                 builder.AddSource(source);
 
-            if (options.HasInstrumentation("SQL"))
-                builder.AddSqlClientInstrumentation(opts => opts.RecordException = true);
-
-            if (options.HasInstrumentation("AWS"))
-                builder.AddAWSInstrumentation();
-
-            builder.AddOtlpExporter(otlp =>
+            // OTLP exporter only when collector endpoint is configured.
+            // Without endpoint, traces are still created for in-process context propagation but not exported.
+            if (!string.IsNullOrWhiteSpace(options.OtelCollectorEndpoint))
             {
-                otlp.Endpoint = new Uri(options.OtelCollectorEndpoint);
-                otlp.TimeoutMilliseconds = options.ExportTimeoutMs;
-            });
+                builder.AddOtlpExporter(otlp =>
+                {
+                    otlp.Endpoint = new Uri(options.OtelCollectorEndpoint);
+                    otlp.TimeoutMilliseconds = options.ExportTimeoutMs;
+                });
+            }
 
             if (options.DebugLevel)
                 builder.AddProcessor(new DebugTraceStateProcessor());

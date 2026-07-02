@@ -40,4 +40,5 @@ __all__ = [
     "get_tracer",
     "get_meter",
     "start_root_span",
+    "ext",
 ]

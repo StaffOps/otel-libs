@@ -7,22 +7,12 @@ import (
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
-	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/resource"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/trace"
 )
 
 func configureTracing(ctx context.Context, res *resource.Resource, opts *Options) (*sdktrace.TracerProvider, error) {
-	exporter, err := otlptracegrpc.New(ctx,
-		otlptracegrpc.WithEndpoint(opts.OtelEndpoint),
-		otlptracegrpc.WithInsecure(),
-		otlptracegrpc.WithTimeout(time.Duration(opts.ExportTimeoutMs)*time.Millisecond),
-		otlptracegrpc.WithCompressor("gzip"),
-	)
-	if err != nil {
-		return nil, fmt.Errorf("trace exporter: %w", err)
-	}
-
 	var rootSampler sdktrace.Sampler
 	if opts.SampleRatio >= 1.0 {
 		rootSampler = sdktrace.AlwaysSample()
@@ -33,8 +23,24 @@ func configureTracing(ctx context.Context, res *resource.Resource, opts *Options
 	tpOpts := []sdktrace.TracerProviderOption{
 		sdktrace.WithResource(res),
 		sdktrace.WithSampler(sdktrace.ParentBased(rootSampler)),
-		sdktrace.WithBatcher(exporter),
 	}
+
+	if opts.OtelEndpoint != "" {
+		// OTLP push — export spans to collector.
+		exporter, err := otlptracegrpc.New(ctx,
+			otlptracegrpc.WithEndpoint(opts.OtelEndpoint),
+			otlptracegrpc.WithInsecure(),
+			otlptracegrpc.WithTimeout(time.Duration(opts.ExportTimeoutMs)*time.Millisecond),
+			otlptracegrpc.WithCompressor("gzip"),
+		)
+		if err != nil {
+			return nil, fmt.Errorf("trace exporter: %w", err)
+		}
+		tpOpts = append(tpOpts, sdktrace.WithBatcher(exporter))
+	}
+	// When OtelEndpoint is empty, no exporter is added. Spans still work
+	// in-process for context propagation; they are simply not exported.
+
 	if opts.DebugLevel {
 		tpOpts = append(tpOpts, sdktrace.WithSpanProcessor(&debugProcessor{}))
 	}

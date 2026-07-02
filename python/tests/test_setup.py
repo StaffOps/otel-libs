@@ -63,7 +63,8 @@ class TestSetupTelemetry:
     def test_env_var_resolution(self):
         os.environ["SERVICE_NAME"] = "env-service"
         os.environ["ENVIRONMENT"] = "PRD"
-        opts = setup_telemetry()
+        with patch("prometheus_client.start_http_server"):
+            opts = setup_telemetry()
         assert opts.service_name == "env-service"
         assert opts.environment == DeploymentEnvironment.PRD
 

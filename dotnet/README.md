@@ -46,12 +46,13 @@ After registration, available via DI:
 | Variable | Description | Default |
 |---|---|---|
 | `OTEL_HELPER_DEBUG_LEVEL` | Debug mode: forces Debug log level, all instrumentations, attribute debug=true (`true`/`false`) | `false` |
+| `OTEL_HELPER_METRICS_PORT` | Prometheus `/metrics` port when no OTLP endpoint is configured | `9464` |
 
 ### Extra Instrumentation
 
 | Variable | Description | Default |
 |---|---|---|
-| `OTEL_HELPER_EXTRA_INSTRUMENTATION` | Extra instrumentations: `SQL`, `AWS`. | `SQL` |
+| `OTEL_HELPER_EXTRA_INSTRUMENTATION` | Extra instrumentations: `SQL`, `AWS`. **Deprecated** — use opt-in subpackages instead. | `SQL` |
 | `OTEL_HELPER_SAMPLE_RATIO` | Head sampling ratio (0.0-1.0). 1.0 = AlwaysOn. | `1.0` |
 
 > Debug mode (`OTEL_HELPER_DEBUG_LEVEL=true`) enables all extra instrumentations automatically.
@@ -63,6 +64,20 @@ After registration, available via DI:
 | Signal | Port | Resulting Endpoint |
 |---|---|---|
 | OTLP (traces/metrics/logs) | `:4317` | `{OTEL_EXPORTER_OTLP_ENDPOINT}:4317` |
+
+### Behavior when no OTLP endpoint is configured
+
+When `OTEL_EXPORTER_OTLP_ENDPOINT` is **not set**, the library automatically falls back to:
+
+| Signal | Behavior |
+|--------|----------|
+| Metrics | Exposed via Prometheus HTTP `/metrics` on port 9464 |
+| Traces | In-process only (context propagation works, no export) |
+| Logs | stdout/console only (no OTel export) |
+
+The Prometheus metrics port is configurable via `OTEL_HELPER_METRICS_PORT` env var (default: 9464).
+
+This enables the standard Kubernetes pattern: deploy without a collector, and let Prometheus/VictoriaMetrics scrape `/metrics` directly from the pod.
 
 
 ### Standard OpenTelemetry SDK Variables
@@ -131,6 +146,8 @@ Sampler: AlwaysOnSampler in all environments (configurable via `opts.Sampler`). 
 | HttpClient | Outbound request duration, active requests |
 | Custom Meters | Business metrics via `Meter(serviceName)` |
 
+Metrics are exported every **30 seconds** (overrides SDK default of 60s).
+
 Exemplars enabled (`ExemplarFilterType.TraceBased`) — metric → trace correlation in Grafana.
 
 ### Logs
@@ -165,6 +182,58 @@ Exemplars enabled (`ExemplarFilterType.TraceBased`) — metric → trace correla
 > `MinimumLogLevel` when null: LOCAL=Debug, DEV/HML=Information, PRD=Warning. Use `GetDefaultLogLevel()` to query.
 > `Sampler` default is AlwaysOnSampler — override only if you have a specific reason.
 > Env vars are applied via `IPostConfigureOptions` — consumer overrides take priority.
+
+---
+
+## Opt-in Subpackages
+
+AWS, Redis, SQL, and Profiling instrumentations are **no longer bundled in core**. Install the subpackage you need:
+
+| Package | Registration | What it instruments |
+|---------|--------------|---------------------|
+| `OtelHelper.AWS` | `services.AddOtelHelperAws()` | AWS SDK calls (S3, SQS, DynamoDB, etc.) |
+| `OtelHelper.Redis` | `services.AddOtelHelperRedis()` | StackExchange.Redis commands |
+| `OtelHelper.Sql` | `services.AddOtelHelperSql()` | SqlClient queries |
+| `OtelHelper.Profiling` | `services.AddOtelHelperProfiling()` | Pyroscope continuous profiling |
+
+### Usage
+
+```csharp
+services.AddOtelHelper();
+
+// Add only the instrumentations you need:
+services.AddOtelHelperAws();
+services.AddOtelHelperRedis();
+services.AddOtelHelperSql();
+```
+
+Redis with explicit connection:
+
+```csharp
+services.AddOtelHelperRedis(connectionMultiplexer);
+```
+
+### Profiling (Pyroscope)
+
+```csharp
+services.AddOtelHelperProfiling();
+```
+
+Requires these environment variables set on the container:
+
+```yaml
+env:
+  - name: CORECLR_ENABLE_PROFILING
+    value: "1"
+  - name: CORECLR_PROFILER
+    value: "{BD1A650D-AC5D-4896-B64F-D6FA25D6B26A}"
+  - name: CORECLR_PROFILER_PATH
+    value: "/opt/pyroscope/Pyroscope.Profiler.Native.so"
+  - name: LD_PRELOAD
+    value: "/opt/pyroscope/Pyroscope.Linux.ApiWrapper.x64.so"
+```
+
+> **Note**: `OTEL_HELPER_EXTRA_INSTRUMENTATION` env var still works for backward compatibility but subpackages are the recommended approach.
 
 ---
 

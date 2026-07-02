@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFrameworks>net8.0</TargetFrameworks>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <LangVersion>latest</LangVersion>
+
+    <PackageId>OtelHelper.AWS</PackageId>
+    <Version>0.1.0</Version>
+    <Authors>DevOps Team</Authors>
+    <Description>AWS instrumentation opt-in subpackage for OtelHelper</Description>
+    <RepositoryUrl>https://github.com/StaffOps/staffops-otel-libs</RepositoryUrl>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\OtelHelper\OtelHelper.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="OpenTelemetry.Instrumentation.AWS" Version="1.15.1" />
+  </ItemGroup>
+</Project>

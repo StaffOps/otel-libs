@@ -24,6 +24,7 @@ ENV_EXTRA_INSTRUMENTATION = "OTEL_HELPER_EXTRA_INSTRUMENTATION"
 ENV_SAMPLE_RATIO = "OTEL_HELPER_SAMPLE_RATIO"
 ENV_DISABLED_SIGNALS = "OTEL_HELPER_DISABLED_SIGNALS"
 ENV_DISABLED_METRICS = "OTEL_HELPER_DISABLED_METRICS"
+ENV_METRICS_PORT = "OTEL_HELPER_METRICS_PORT"
 
 _DEFAULT_COLLECTOR_HOST = "http://localhost"
 _DEFAULT_OTLP_PORT = 4317
@@ -40,12 +41,21 @@ def _parse_environment(value: str) -> DeploymentEnvironment:
 def _resolve_collector_host() -> str:
     env = os.getenv(ENV_COLLECTOR_ENDPOINT, "").strip().rstrip("/")
     if not env:
-        return _DEFAULT_COLLECTOR_HOST
-    try:
-        parsed = urlparse(env)
-        return f"{parsed.scheme}://{parsed.hostname}"
-    except Exception:
+        return ""
+
+    # urlparse treats "host:port" (no scheme) as scheme="host", path="port",
+    # yielding hostname=None. Default to http:// when no scheme is present so
+    # endpoints like "collector.svc:4317" resolve correctly instead of producing
+    # an invalid "collector.svc://None" that silently drops all telemetry.
+    if "://" not in env:
+        env = f"http://{env}"
+
+    parsed = urlparse(env)
+    if not parsed.hostname:
+        # Could not extract a host — fall back to the raw value rather than
+        # emitting a broken "scheme://None" endpoint.
         return env
+    return f"{parsed.scheme}://{parsed.hostname}"
 
 
 def _env_bool(var_name: str) -> bool:
@@ -77,6 +87,7 @@ class TelemetryOptions:
     sample_ratio: float = 1.0
     disabled_signals: list[str] = field(default_factory=list)
     disabled_metrics: list[str] = field(default_factory=list)
+    prometheus_metrics_port: int = 9464
     minimum_log_level: int | None = None
     resource_attributes: dict[str, object] = field(default_factory=dict)
 
@@ -101,7 +112,9 @@ class TelemetryOptions:
 
         collector_host = _resolve_collector_host()
         if not self.otel_endpoint:
-            self.otel_endpoint = f"{collector_host}:{_DEFAULT_OTLP_PORT}"
+            if collector_host:
+                self.otel_endpoint = f"{collector_host}:{_DEFAULT_OTLP_PORT}"
+            # else: leave empty — triggers Prometheus fallback
 
         if not self.debug_level:
             self.debug_level = _env_bool(ENV_DEBUG_LEVEL)
@@ -129,6 +142,14 @@ class TelemetryOptions:
             if env_metrics:
                 self.disabled_metrics = [s.strip() for s in env_metrics.split(",") if s.strip()]
 
+        if self.prometheus_metrics_port == 9464:
+            env_port = os.getenv(ENV_METRICS_PORT)
+            if env_port is not None:
+                try:
+                    self.prometheus_metrics_port = int(env_port)
+                except ValueError:
+                    pass
+
     def validate(self) -> None:
         """Validate options at startup. Raises ValueError on invalid config.
 
@@ -138,12 +159,10 @@ class TelemetryOptions:
         if not self.service_name or not self.service_name.strip():
             raise ValueError(f"[OtelHelper] ServiceName is required. Set the {ENV_SERVICE_NAME} environment variable.")
 
-        if not self.otel_endpoint or not self.otel_endpoint.strip():
-            raise ValueError(f"[OtelHelper] OtelCollectorEndpoint is required. Set the {ENV_COLLECTOR_ENDPOINT} environment variable.")
-
-        parsed = urlparse(self.otel_endpoint)
-        if not parsed.scheme or not parsed.hostname:
-            raise ValueError(f"[OtelHelper] OtelCollectorEndpoint '{self.otel_endpoint}' is not a valid URI.")
+        if self.otel_endpoint and self.otel_endpoint.strip():
+            parsed = urlparse(self.otel_endpoint)
+            if not parsed.scheme or not parsed.hostname:
+                raise ValueError(f"[OtelHelper] OtelCollectorEndpoint '{self.otel_endpoint}' is not a valid URI.")
 
         if self.export_timeout_ms <= 0:
             raise ValueError("[OtelHelper] ExportTimeoutMs must be greater than 0.")

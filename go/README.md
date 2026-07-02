@@ -31,6 +31,7 @@ Requires Go 1.22+.
 | `OTEL_HELPER_DEBUG_LEVEL` | `false` | Debug mode: all instrumentations, attribute debug=true |
 | `OTEL_HELPER_EXTRA_INSTRUMENTATION` | `SQL` | Conditional instrumentations: SQL, REDIS, AWS |
 | `OTEL_HELPER_SAMPLE_RATIO` | `1.0` | Head sampling ratio (0.0-1.0). 1.0 = AlwaysOn |
+| `OTEL_HELPER_METRICS_PORT` | `9464` | Prometheus `/metrics` port when no OTLP endpoint is configured |
 
 > These variables are injected automatically by infrastructure. Application teams **do not need to configure them manually**.
 
@@ -170,6 +171,20 @@ conn, _ := grpc.Dial(addr,
 
 When `OTEL_HELPER_DEBUG_LEVEL=true`: root spans get attribute `debug=true` → Collector keeps 100% of these traces via tail sampling policy.
 
+## Behavior when no OTLP endpoint is configured
+
+When `OTEL_EXPORTER_OTLP_ENDPOINT` is **not set**, the library automatically falls back to:
+
+| Signal | Behavior |
+|--------|----------|
+| Metrics | Exposed via Prometheus HTTP `/metrics` on port 9464 |
+| Traces | In-process only (context propagation works, no export) |
+| Logs | stdout/console only (no OTel export) |
+
+The Prometheus metrics port is configurable via `OTEL_HELPER_METRICS_PORT` env var (default: 9464).
+
+This enables the standard Kubernetes pattern: deploy without a collector, and let Prometheus/VictoriaMetrics scrape `/metrics` directly from the pod.
+
 ---
 
 ## What is Configured Automatically
@@ -177,8 +192,49 @@ When `OTEL_HELPER_DEBUG_LEVEL=true`: root spans get attribute `debug=true` → C
 | Signal | What is captured |
 |--------|-----------------|
 | **Traces** | HTTP requests via `NewHTTPHandler`, HTTP client via `NewHTTPTransport`, gRPC via interceptors, custom spans via `GetTracer` |
-| **Metrics** | Go runtime metrics (goroutines, GC, memory) automatically, custom meters via `GetMeter`, exported via OTLP with exemplars (`OTEL_METRICS_EXEMPLAR_FILTER=trace_based` auto-set) |
+| **Metrics** | Go runtime metrics (goroutines, GC, memory) automatically, custom meters via `GetMeter`, exported via OTLP with exemplars (`OTEL_METRICS_EXEMPLAR_FILTER=trace_based` auto-set). Exported every **30s**. |
 | **Logs** | Exported via OTLP to the Collector; `NewSlogHandler()`/`NewLogger()` for slog bridge with trace correlation |
+
+## Endpoint Resolution
+
+Endpoints without scheme (e.g. `collector.svc:4317`) are automatically prefixed with `http://`. No more `scheme://None` errors.
+
+## Opt-in Extensions (`ext/`)
+
+AWS, Redis, and SQL instrumentations are available as separate Go modules — not bundled in core:
+
+```bash
+go get github.com/StaffOps/staffops-otel-libs/go/ext/otelaws
+go get github.com/StaffOps/staffops-otel-libs/go/ext/otelredis
+go get github.com/StaffOps/staffops-otel-libs/go/ext/otelsql
+```
+
+### Usage
+
+```go
+import (
+    "github.com/StaffOps/staffops-otel-libs/go/ext/otelaws"
+    "github.com/StaffOps/staffops-otel-libs/go/ext/otelredis"
+    "github.com/StaffOps/staffops-otel-libs/go/ext/otelsql"
+)
+
+// AWS SDK instrumentation
+otelaws.Instrument(&cfg)
+
+// Redis client instrumentation
+otelredis.Instrument(client)
+
+// SQL with tracing (wraps database/sql)
+db, err := otelsql.Open(driver, dsn)
+```
+
+| Module | Function | What it instruments |
+|--------|----------|---------------------|
+| `ext/otelaws` | `otelaws.Instrument(&cfg)` | AWS SDK calls |
+| `ext/otelredis` | `otelredis.Instrument(client)` | go-redis commands |
+| `ext/otelsql` | `otelsql.Open(driver, dsn)` | database/sql queries |
+
+> **Note**: `OTEL_HELPER_EXTRA_INSTRUMENTATION` env var still works for backward compatibility but explicit extensions are recommended.
 
 ### Health Checks Filtered
 

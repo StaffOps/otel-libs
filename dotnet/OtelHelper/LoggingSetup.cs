@@ -18,11 +18,17 @@ namespace OtelHelper.Logging
                     logging.IncludeFormattedMessage = true;
                     logging.IncludeScopes = true;
                     logging.ParseStateValues = true;
-                    logging.AddOtlpExporter(otlp =>
+
+                    // OTLP exporter only when collector endpoint is configured.
+                    // Without endpoint, logs go to console/stdout only (standard K8s pattern via Fluent Bit).
+                    if (!string.IsNullOrWhiteSpace(options.OtelCollectorEndpoint))
                     {
-                        otlp.Endpoint = new Uri(options.OtelCollectorEndpoint);
-                        otlp.TimeoutMilliseconds = options.ExportTimeoutMs;
-                    });
+                        logging.AddOtlpExporter(otlp =>
+                        {
+                            otlp.Endpoint = new Uri(options.OtelCollectorEndpoint);
+                            otlp.TimeoutMilliseconds = options.ExportTimeoutMs;
+                        });
+                    }
                 });
 
                 var level = options.MinimumLogLevel

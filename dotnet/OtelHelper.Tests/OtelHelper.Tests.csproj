@@ -16,9 +16,15 @@
     <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />
     <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="9.0.0" />
     <PackageReference Include="Microsoft.Extensions.Hosting" Version="9.0.0" />
+    <PackageReference Include="OpenTelemetry.Exporter.InMemory" Version="1.10.0" />
+    <PackageReference Include="Moq" Version="4.20.72" />
   </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\OtelHelper\OtelHelper.csproj" />
+    <ProjectReference Include="..\OtelHelper.AWS\OtelHelper.AWS.csproj" />
+    <ProjectReference Include="..\OtelHelper.Redis\OtelHelper.Redis.csproj" />
+    <ProjectReference Include="..\OtelHelper.Sql\OtelHelper.Sql.csproj" />
+    <ProjectReference Include="..\OtelHelper.Profiling\OtelHelper.Profiling.csproj" />
   </ItemGroup>
 </Project>

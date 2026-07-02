@@ -17,12 +17,25 @@ namespace OtelHelper.Metrics
                 .AddAspNetCoreInstrumentation()
                 .AddHttpClientInstrumentation()
                 .AddMeter(options.ServiceName)
-                .SetExemplarFilter(ExemplarFilterType.TraceBased)
-                .AddOtlpExporter(otlp =>
+                .SetExemplarFilter(ExemplarFilterType.TraceBased);
+
+            // Export: OTLP push if endpoint configured, otherwise Prometheus HTTP listener
+            if (!string.IsNullOrWhiteSpace(options.OtelCollectorEndpoint))
+            {
+                builder.AddOtlpExporter((exporterOptions, metricReaderOptions) =>
                 {
-                    otlp.Endpoint = new Uri(options.OtelCollectorEndpoint);
-                    otlp.TimeoutMilliseconds = options.ExportTimeoutMs;
+                    exporterOptions.Endpoint = new Uri(options.OtelCollectorEndpoint);
+                    exporterOptions.TimeoutMilliseconds = options.ExportTimeoutMs;
+                    metricReaderOptions.PeriodicExportingMetricReaderOptions.ExportIntervalMilliseconds = 30_000;
                 });
+            }
+            else
+            {
+                builder.AddPrometheusHttpListener(opts =>
+                {
+                    opts.UriPrefixes = new[] { $"http://*:{options.PrometheusMetricsPort}/" };
+                });
+            }
 
             // Drop metrics matching wildcard patterns
             if (!string.IsNullOrEmpty(options.DisabledMetrics))

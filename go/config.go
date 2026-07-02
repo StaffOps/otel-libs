@@ -29,6 +29,7 @@ const (
 	EnvSampleRatio          = "OTEL_HELPER_SAMPLE_RATIO"
 	EnvDisabledSignals      = "OTEL_HELPER_DISABLED_SIGNALS"
 	EnvDisabledMetrics      = "OTEL_HELPER_DISABLED_METRICS"
+	EnvMetricsPort          = "OTEL_HELPER_METRICS_PORT"
 )
 
 func parseEnvironment(s string) DeploymentEnvironment {
@@ -49,8 +50,16 @@ func parseEnvironment(s string) DeploymentEnvironment {
 func resolveCollectorHost() string {
 	env := strings.TrimRight(strings.TrimSpace(os.Getenv(EnvCollectorEndpoint)), "/")
 	if env == "" {
-		return "localhost:4317"
+		return ""
 	}
+
+	// url.Parse treats "host:port" (no scheme) as scheme="host", yielding an
+	// empty Host field. Default to http:// when no scheme is present so
+	// endpoints like "collector.svc:4317" resolve correctly.
+	if !strings.Contains(env, "://") {
+		env = "http://" + env
+	}
+
 	u, err := url.Parse(env)
 	if err != nil || u.Host == "" {
 		return env
@@ -123,14 +132,19 @@ func (o *Options) resolveFromEnv() {
 			}
 		}
 	}
+
+	if o.PrometheusMetricsPort == 9464 {
+		if v := os.Getenv(EnvMetricsPort); v != "" {
+			if p, err := strconv.Atoi(v); err == nil && p > 0 {
+				o.PrometheusMetricsPort = p
+			}
+		}
+	}
 }
 
 func (o *Options) validate() error {
 	if strings.TrimSpace(o.ServiceName) == "" {
 		return fmt.Errorf("ServiceName is required; set %s env var", EnvServiceName)
-	}
-	if strings.TrimSpace(o.OtelEndpoint) == "" {
-		return fmt.Errorf("OtelEndpoint is required; set %s env var", EnvCollectorEndpoint)
 	}
 	if o.ExportTimeoutMs <= 0 {
 		return fmt.Errorf("ExportTimeoutMs must be > 0")

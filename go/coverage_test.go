@@ -3,7 +3,6 @@ package otelhelper
 import (
 	"bytes"
 	"context"
-	"database/sql"
 	"log/slog"
 	"testing"
 
@@ -191,33 +190,9 @@ func TestStreamClientInterceptor(t *testing.T) {
 	}
 }
 
-// --- InstrumentSQL ---
-
-func TestInstrumentSQLNilOpts(t *testing.T) {
-	var db *sql.DB
-	got := InstrumentSQL(db, nil)
-	if got != nil {
-		t.Error("InstrumentSQL(nil, nil) should return nil")
-	}
-}
-
-func TestInstrumentSQLDisabled(t *testing.T) {
-	var db *sql.DB
-	opts := &Options{ExtraInstrumentation: "REDIS"}
-	got := InstrumentSQL(db, opts)
-	if got != nil {
-		t.Error("InstrumentSQL with SQL disabled should return db as-is (nil)")
-	}
-}
-
-func TestInstrumentSQLEnabled(t *testing.T) {
-	var db *sql.DB
-	opts := &Options{ExtraInstrumentation: "SQL"}
-	got := InstrumentSQL(db, opts)
-	if got != db {
-		t.Error("InstrumentSQL with SQL enabled should return same db (placeholder)")
-	}
-}
+// --- InstrumentSQL tests removed ---
+// SQL instrumentation moved to ext/otelsql sub-module.
+// See ext/otelsql/ for the actual implementation and its own tests.
 
 // --- processors: OnEnd / ForceFlush ---
 
@@ -300,8 +275,8 @@ func TestParseEnvironmentDefault(t *testing.T) {
 func TestResolveCollectorHostEmpty(t *testing.T) {
 	t.Setenv(EnvCollectorEndpoint, "")
 	got := resolveCollectorHost()
-	if got != "localhost:4317" {
-		t.Errorf("resolveCollectorHost() = %q, want %q", got, "localhost:4317")
+	if got != "" {
+		t.Errorf("resolveCollectorHost() = %q, want %q", got, "")
 	}
 }
 

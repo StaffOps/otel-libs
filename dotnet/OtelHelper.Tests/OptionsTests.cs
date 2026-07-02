@@ -21,10 +21,10 @@ public class OptionsTests
     }
 
     [Fact]
-    public void Default_CollectorEndpoint_Has_Port_4317()
+    public void Default_CollectorEndpoint_Is_Empty_When_No_EnvVar()
     {
         var opts = CreateResolved();
-        Assert.EndsWith(":4317", opts.OtelCollectorEndpoint);
+        Assert.Equal("", opts.OtelCollectorEndpoint);
     }
 
     [Fact]

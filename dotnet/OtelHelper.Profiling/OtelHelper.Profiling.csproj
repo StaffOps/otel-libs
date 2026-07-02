@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFrameworks>net8.0</TargetFrameworks>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <LangVersion>latest</LangVersion>
+    <PackageId>OtelHelper.Profiling</PackageId>
+    <Version>0.1.0</Version>
+    <Authors>DevOps Team</Authors>
+    <Description>Continuous profiling add-on for OtelHelper (Pyroscope in-process)</Description>
+    <RepositoryUrl>https://github.com/StaffOps/staffops-otel-libs</RepositoryUrl>
+  </PropertyGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="OtelHelper.Tests" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\OtelHelper\OtelHelper.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Pyroscope" Version="1.2.0" />
+    <PackageReference Include="Pyroscope.OpenTelemetry" Version="0.5.0" />
+  </ItemGroup>
+</Project>

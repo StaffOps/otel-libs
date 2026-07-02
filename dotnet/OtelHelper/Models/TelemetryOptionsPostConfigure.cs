@@ -9,9 +9,6 @@ namespace OtelHelper
     /// </summary>
     internal sealed class TelemetryOptionsPostConfigure : IPostConfigureOptions<TelemetryOptions>
     {
-        private const string DefaultCollectorHost = "http://localhost";
-        private const int DefaultOtlpPort = 4317;
-
         public void PostConfigure(string? name, TelemetryOptions options)
         {
             // ServiceName: env var only if still default
@@ -35,10 +32,24 @@ namespace OtelHelper
                 }
             }
 
-            // Collector endpoint
-            var collectorHost = ResolveCollectorHost();
+            // Collector endpoint: resolve from env var if not set by consumer.
+            // If the env var is also unset, leave empty — triggers Prometheus fallback.
             if (string.IsNullOrEmpty(options.OtelCollectorEndpoint))
-                options.OtelCollectorEndpoint = $"{collectorHost}:{DefaultOtlpPort}";
+            {
+                var endpoint = Environment.GetEnvironmentVariable(TelemetryOptions.CollectorEndpointEnvVar);
+                if (!string.IsNullOrWhiteSpace(endpoint))
+                {
+                    if (Uri.TryCreate(endpoint.TrimEnd('/'), UriKind.Absolute, out var uri))
+                        options.OtelCollectorEndpoint = $"{uri.Scheme}://{uri.Host}:{uri.Port}";
+                    else
+                        options.OtelCollectorEndpoint = $"{endpoint.TrimEnd('/')}:4317";
+                }
+            }
+
+            // PrometheusMetricsPort from env var
+            var metricsPort = Environment.GetEnvironmentVariable(TelemetryOptions.MetricsPortEnvVar);
+            if (!string.IsNullOrWhiteSpace(metricsPort) && int.TryParse(metricsPort, out var port))
+                options.PrometheusMetricsPort = port;
 
             // Debug level from env var (only if not already set by consumer)
             if (!options.DebugLevel)
@@ -79,18 +90,6 @@ namespace OtelHelper
                 if (!string.IsNullOrWhiteSpace(disabledMetrics))
                     options.DisabledMetrics = disabledMetrics;
             }
-        }
-
-        private static string ResolveCollectorHost()
-        {
-            var env = Environment.GetEnvironmentVariable(TelemetryOptions.CollectorEndpointEnvVar);
-            if (string.IsNullOrWhiteSpace(env))
-                return DefaultCollectorHost;
-
-            if (Uri.TryCreate(env.TrimEnd('/'), UriKind.Absolute, out var uri))
-                return $"{uri.Scheme}://{uri.Host}";
-
-            return env.TrimEnd('/');
         }
 
         private static bool ResolveEnvBool(string varName)
