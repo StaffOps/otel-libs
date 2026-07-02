@@ -6,7 +6,7 @@
 
 **Rationale:**
 - Go idiom: small, focused packages. This library is small enough for one package.
-- Simpler import: `import "github.com/staffops/otel-helper-go"` → `otelhelper.Setup(ctx)`
+- Simpler import: `import "github.com/staffops/staffops-otel-libs/go"` → `otelhelper.Setup(ctx)`
 - Avoids circular dependency issues between config/tracing/metrics.
 - Matches the Python pattern where `from otel_helper import setup_telemetry` is the primary interface.
 - Internal organization via separate files (not packages).
@@ -492,7 +492,7 @@ func buildResource(opts *Options) *resource.Resource {
 ## Dependencies (go.mod)
 
 ```
-module github.com/staffops/otel-helper-go
+module github.com/staffops/staffops-otel-libs/go
 
 go 1.22
 

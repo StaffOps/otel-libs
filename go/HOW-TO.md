@@ -16,7 +16,7 @@ import (
     "os"
     "os/signal"
 
-    otelhelper "github.com/staffops/otel-helper-go"
+    otelhelper "github.com/staffops/staffops-otel-libs/go"
     "go.opentelemetry.io/otel/attribute"
 )
 
@@ -74,7 +74,7 @@ Use `NewHTTPTransport` to instrument outgoing HTTP requests. Client spans are cr
 ```go
 import (
     "net/http"
-    otelhelper "github.com/staffops/otel-helper-go"
+    otelhelper "github.com/staffops/staffops-otel-libs/go"
 )
 
 // Create an instrumented HTTP client
@@ -112,7 +112,7 @@ import (
     "os"
     "os/signal"
 
-    otelhelper "github.com/staffops/otel-helper-go"
+    otelhelper "github.com/staffops/staffops-otel-libs/go"
     "google.golang.org/grpc"
 )
 
@@ -178,7 +178,7 @@ import (
     "os/signal"
     "time"
 
-    otelhelper "github.com/staffops/otel-helper-go"
+    otelhelper "github.com/staffops/staffops-otel-libs/go"
     "go.opentelemetry.io/otel/attribute"
 )
 
@@ -375,7 +375,7 @@ The lib provides `NewSlogHandler()` and `NewLogger()` for easy slog integration:
 ```go
 import (
     "log/slog"
-    otelhelper "github.com/staffops/otel-helper-go"
+    otelhelper "github.com/staffops/staffops-otel-libs/go"
 )
 
 // After otelhelper.Setup()
@@ -457,6 +457,7 @@ func main() {
 | `OTEL_HELPER_DEBUG_LEVEL` | Debug mode | `false` |
 | `OTEL_HELPER_EXTRA_INSTRUMENTATION` | Extra instrumentations | `SQL` |
 | `OTEL_HELPER_SAMPLE_RATIO` | Sampling ratio (0.0-1.0) | `1.0` (AlwaysOn) |
+| `OTEL_HELPER_METRICS_PORT` | Prometheus `/metrics` port (when no OTLP endpoint) | `9464` |
 
 ### Configuration Priority
 
@@ -506,3 +507,64 @@ A: No. The SDK uses AlwaysOn by default. Tail-based sampling is done at the Coll
 
 **Q: How does context propagation work across services?**
 A: The lib sets up W3C TraceContext + Baggage propagators globally. For HTTP, use `http.NewRequestWithContext(ctx, ...)`. For gRPC, use the provided interceptors. Context is propagated automatically.
+
+---
+
+## 12. Opt-in Extensions (`ext/`)
+
+AWS, Redis, and SQL instrumentations are available as **separate Go modules** — not bundled in core. Install only what you need:
+
+```bash
+go get github.com/staffops/staffops-otel-libs/go/ext/otelaws
+go get github.com/staffops/staffops-otel-libs/go/ext/otelredis
+go get github.com/staffops/staffops-otel-libs/go/ext/otelsql
+```
+
+### Usage
+
+```go
+import (
+    "github.com/staffops/staffops-otel-libs/go/ext/otelaws"
+    "github.com/staffops/staffops-otel-libs/go/ext/otelredis"
+    "github.com/staffops/staffops-otel-libs/go/ext/otelsql"
+)
+
+// AWS SDK instrumentation — pass your aws.Config
+otelaws.Instrument(&cfg)
+
+// Redis client instrumentation — pass your go-redis client
+otelredis.Instrument(client)
+
+// SQL with tracing — wraps database/sql Open
+db, err := otelsql.Open(driver, dsn)
+```
+
+| Module | Function | What it instruments |
+|--------|----------|---------------------|
+| `ext/otelaws` | `otelaws.Instrument(&cfg)` | AWS SDK calls (S3, SQS, DynamoDB, etc.) |
+| `ext/otelredis` | `otelredis.Instrument(client)` | go-redis commands |
+| `ext/otelsql` | `otelsql.Open(driver, dsn)` | database/sql queries |
+
+> **Note**: The `OTEL_HELPER_EXTRA_INSTRUMENTATION` env var still works for backward compatibility, but explicit ext modules are the recommended approach.
+
+---
+
+## 13. Prometheus `/metrics` Fallback
+
+When `OTEL_EXPORTER_OTLP_ENDPOINT` is **not set**, the library automatically falls back to local-only mode:
+
+| Signal | Behavior |
+|--------|----------|
+| Metrics | Exposed via Prometheus HTTP `/metrics` on port 9464 |
+| Traces | In-process only (context propagation works, no export) |
+| Logs | stdout/console only (no OTel export) |
+
+The port is configurable via `OTEL_HELPER_METRICS_PORT` env var (default: `9464`).
+
+This enables the standard Kubernetes scrape pattern: deploy without a Collector, and let Prometheus/VictoriaMetrics scrape `/metrics` directly from the pod.
+
+---
+
+## 14. Metrics Export Interval
+
+Metrics are exported every **30 seconds** (not the SDK default of 60s). This applies to both OTLP export and the Prometheus `/metrics` fallback.

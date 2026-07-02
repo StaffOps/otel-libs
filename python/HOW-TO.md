@@ -185,6 +185,8 @@ Instrumentations **always active** (no env var needed):
 - gRPC (client + server async)
 - System metrics (CPU, memory, GC, network)
 
+> **Recommended**: Use the `otel_helper.ext` modules (see section 13) instead of `OTEL_HELPER_EXTRA_INSTRUMENTATION`. The env var still works for backward compatibility.
+
 ---
 
 ## 10. Validation
@@ -215,6 +217,7 @@ Error messages follow the pattern `[OtelHelper] ...` with indication of the requ
 | `OTEL_HELPER_DEBUG_LEVEL` | Debug mode | `false` |
 | `OTEL_HELPER_EXTRA_INSTRUMENTATION` | Extra instrumentations | `SQL` |
 | `OTEL_HELPER_SAMPLE_RATIO` | Sampling ratio (0.0-1.0) | `1.0` (AlwaysOn) |
+| `OTEL_HELPER_METRICS_PORT` | Prometheus `/metrics` port (when no OTLP endpoint) | `9464` |
 
 ---
 
@@ -237,3 +240,68 @@ A: Yes, but only the first call takes effect. Subsequent calls are no-op.
 
 **Q: Does Python 3.12+ work?**
 A: Use Python 3.11. 3.12+ has issues with `pkg_resources` used by OTel instrumentations.
+
+---
+
+## 13. Opt-in Extension Modules (`otel_helper.ext`)
+
+AWS, Redis, and SQL instrumentations are available as **extras** — not bundled in the base install. Install only what you need:
+
+```bash
+pip install otel-helper[aws]
+pip install otel-helper[redis]
+pip install otel-helper[sql]
+pip install otel-helper[aws,redis,sql]  # all at once
+```
+
+### Usage
+
+```python
+from otel_helper import setup_telemetry
+from otel_helper.ext.aws import instrument_aws
+from otel_helper.ext.redis import instrument_redis
+from otel_helper.ext.sql import instrument_sql
+
+setup_telemetry()
+
+# AWS SDK (boto3/botocore) instrumentation
+instrument_aws()
+
+# Redis instrumentation
+instrument_redis()
+
+# SQL instrumentation (SQLAlchemy)
+instrument_sql()  # auto-detects engine
+# Or with explicit engine:
+# instrument_sql(engine=my_engine)
+```
+
+| Module | Function | What it instruments |
+|--------|----------|---------------------|
+| `otel_helper.ext.aws` | `instrument_aws()` | boto3/botocore (S3, SQS, DynamoDB, etc.) |
+| `otel_helper.ext.redis` | `instrument_redis()` | redis-py commands |
+| `otel_helper.ext.sql` | `instrument_sql(engine=None)` | SQLAlchemy queries |
+
+> **Note**: The `OTEL_HELPER_EXTRA_INSTRUMENTATION` env var still works for backward compatibility, but the ext modules are the recommended modern approach.
+
+---
+
+## 14. Prometheus `/metrics` Fallback
+
+When `OTEL_EXPORTER_OTLP_ENDPOINT` is **not set**, the library automatically falls back to local-only mode:
+
+| Signal | Behavior |
+|--------|----------|
+| Metrics | Exposed via Prometheus HTTP `/metrics` on port 9464 |
+| Traces | In-process only (context propagation works, no export) |
+| Logs | stdout only (no OTel export) |
+
+The port is configurable via `OTEL_HELPER_METRICS_PORT` env var (default: `9464`).
+
+This enables the standard Kubernetes scrape pattern: deploy without a Collector, and let Prometheus/VictoriaMetrics scrape `/metrics` directly from the pod.
+
+---
+
+## 15. Metrics Export Interval
+
+Metrics are exported every **30 seconds** (not the SDK default of 60s). This applies to both OTLP export and the Prometheus `/metrics` fallback.

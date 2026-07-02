@@ -16,7 +16,7 @@ defer shutdown(ctx)
 ## Installation
 
 ```bash
-go get github.com/staffops/otel-helper-go
+go get github.com/staffops/staffops-otel-libs/go
 ```
 
 Requires Go 1.22+.

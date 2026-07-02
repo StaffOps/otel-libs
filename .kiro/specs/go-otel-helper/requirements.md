@@ -238,7 +238,7 @@ Primary consumer: `anomaly-detection-controller` (Go gRPC service with backgroun
 **Acceptance Criteria:**
 ```
 go/
-├── go.mod                    # module github.com/staffops/otel-helper-go
+├── go.mod                    # module github.com/staffops/staffops-otel-libs/go
 ├── go.sum
 ├── doc.go                    # Package documentation
 ├── otelhelper.go             # Setup(), Shutdown type, GetTracer(), GetMeter()

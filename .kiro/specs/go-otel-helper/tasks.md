@@ -48,7 +48,7 @@
 **Covers:** US-16 (module structure)
 
 - [ ] Create `go/` directory
-- [ ] `go mod init github.com/staffops/otel-helper-go`
+- [ ] `go mod init github.com/staffops/staffops-otel-libs/go`
 - [ ] Add OTel SDK dependencies (trace, metric, log)
 - [ ] Add OTLP gRPC exporters
 - [ ] Add `otelhttp` and `otelgrpc` contrib packages
