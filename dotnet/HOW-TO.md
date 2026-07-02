@@ -391,6 +391,7 @@ When you use placeholders in logs, values are extracted as **separate attributes
 | `OTEL_HELPER_DEBUG_LEVEL` | Debug mode (Debug logs, all instrumentations, 100% sampling) | `false` | Manual |
 | `OTEL_HELPER_EXTRA_INSTRUMENTATION` | Extra instrumentations (SQL, AWS) | `SQL` | Helm Chart |
 | `OTEL_HELPER_SAMPLE_RATIO` | Head sampling ratio (0.0-1.0). 1.0 = AlwaysOn | `1.0` | Helm Chart |
+| `OTEL_HELPER_METRICS_PORT` | Prometheus `/metrics` port (when no OTLP endpoint) | `9464` | Helm Chart |
 
 ### Configuration Priority
 
@@ -450,3 +451,79 @@ OTEL_HELPER_DEBUG_LEVEL=true
 When active, the lib injects `tracestate: debug=true` in all traces. The Collector recognizes this flag and keeps 100% of traces from that service.
 
 ⚠️ **Do not leave debug enabled in production for long** — generates high volume and increases storage cost.
+
+---
+
+## 14. Opt-in Subpackages
+
+AWS, Redis, SQL, and Profiling instrumentations are available as **separate NuGet packages** — not bundled in core.
+
+> ⚠️ **Breaking change**: SQL and AWS were previously bundled in the core package and activated via `OTEL_HELPER_EXTRA_INSTRUMENTATION=SQL,AWS`. They are now separate packages. If you relied on that behavior, install the subpackages and call the corresponding extension methods explicitly.
+
+### Installation
+
+```bash
+dotnet add package OtelHelper.AWS
+dotnet add package OtelHelper.Redis
+dotnet add package OtelHelper.Sql
+dotnet add package OtelHelper.Profiling
+```
+
+### Usage
+
+```csharp
+var builder = WebApplication.CreateBuilder(args);
+
+// Core — traces, metrics, logs
+builder.Services.AddOtelHelper();
+
+// Opt-in extensions (add only what you use)
+builder.Services.AddOtelHelperAws();
+builder.Services.AddOtelHelperSql();
+builder.Services.AddOtelHelperRedis();
+// Or with explicit multiplexer:
+// builder.Services.AddOtelHelperRedis(connectionMultiplexer);
+builder.Services.AddOtelHelperProfiling();
+```
+
+| Package | Extension Method | What it instruments |
+|---------|-----------------|---------------------|
+| `OtelHelper.AWS` | `AddOtelHelperAws()` | AWS SDK calls (S3, SQS, DynamoDB, etc.) |
+| `OtelHelper.Redis` | `AddOtelHelperRedis()` | StackExchange.Redis commands |
+| `OtelHelper.Sql` | `AddOtelHelperSql()` | SqlClient queries |
+| `OtelHelper.Profiling` | `AddOtelHelperProfiling()` | .NET CLR profiling via OTel |
+
+### Profiling Prerequisites
+
+`OtelHelper.Profiling` requires the following environment variables for the .NET CLR profiler:
+
+```bash
+CORECLR_ENABLE_PROFILING=1
+CORECLR_PROFILER={918728DD-259F-4A6A-AC2B-B85E1B658571}
+CORECLR_PROFILER_PATH=/opt/profiler/libProfiler.so
+LD_PRELOAD=/opt/profiler/libProfiler.so
+```
+
+These are typically set in the Dockerfile or Helm values for the target deployment.
+
+---
+
+## 15. Prometheus `/metrics` Fallback
+
+When `OTEL_EXPORTER_OTLP_ENDPOINT` is **not set**, the library automatically falls back to local-only mode:
+
+| Signal | Behavior |
+|--------|----------|
+| Metrics | Exposed via Prometheus HTTP `/metrics` on port 9464 |
+| Traces | In-process only (context propagation works, no export) |
+| Logs | stdout/console only (no OTel export) |
+
+The port is configurable via `OTEL_HELPER_METRICS_PORT` env var (default: `9464`).
+
+This enables the standard Kubernetes scrape pattern: deploy without a Collector, and let Prometheus/VictoriaMetrics scrape `/metrics` directly from the pod.
+
+---
+
+## 16. Metrics Export Interval
+
+Metrics are exported every **30 seconds** (not the SDK default of 60s). This applies to both OTLP export and the Prometheus `/metrics` fallback.
