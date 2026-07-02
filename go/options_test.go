@@ -224,3 +224,87 @@ func TestDisabledMetricsEmptyWhenEnvNotSet(t *testing.T) {
 		t.Errorf("expected empty, got %v", opts.DisabledMetrics)
 	}
 }
+
+func TestInsecureDefaultSecure(t *testing.T) {
+	// No env set, no WithInsecure → secure by default (Insecure=false).
+	t.Setenv(EnvCollectorEndpoint, "gw:4317")
+	o := newOptions()
+	if o.Insecure {
+		t.Error("expected Insecure=false (secure by default) for schemeless endpoint")
+	}
+	if o.OtelEndpoint != "gw:4317" {
+		t.Errorf("OtelEndpoint = %q, want %q", o.OtelEndpoint, "gw:4317")
+	}
+}
+
+func TestInsecureHttpsScheme(t *testing.T) {
+	// https:// scheme → Insecure=false, endpoint stripped to host:port.
+	t.Setenv(EnvCollectorEndpoint, "https://gw:4317")
+	o := newOptions()
+	if o.Insecure {
+		t.Error("expected Insecure=false for https:// endpoint")
+	}
+	if o.OtelEndpoint != "gw:4317" {
+		t.Errorf("OtelEndpoint = %q, want %q", o.OtelEndpoint, "gw:4317")
+	}
+}
+
+func TestInsecureHttpScheme(t *testing.T) {
+	// http:// scheme → Insecure=true.
+	t.Setenv(EnvCollectorEndpoint, "http://gw:4317")
+	o := newOptions()
+	if !o.Insecure {
+		t.Error("expected Insecure=true for http:// endpoint")
+	}
+	if o.OtelEndpoint != "gw:4317" {
+		t.Errorf("OtelEndpoint = %q, want %q", o.OtelEndpoint, "gw:4317")
+	}
+}
+
+func TestInsecureEnvOverridesScheme(t *testing.T) {
+	// OTEL_EXPORTER_OTLP_INSECURE=true overrides https:// scheme.
+	t.Setenv(EnvCollectorEndpoint, "https://gw:4317")
+	t.Setenv(EnvInsecure, "true")
+	o := newOptions()
+	if !o.Insecure {
+		t.Error("expected Insecure=true when env var explicitly set")
+	}
+}
+
+func TestInsecureEnvFalseOverridesHttpScheme(t *testing.T) {
+	// OTEL_EXPORTER_OTLP_INSECURE=false overrides http:// scheme.
+	t.Setenv(EnvCollectorEndpoint, "http://gw:4317")
+	t.Setenv(EnvInsecure, "false")
+	o := newOptions()
+	if o.Insecure {
+		t.Error("expected Insecure=false when env var explicitly set to false")
+	}
+}
+
+func TestWithInsecureExplicitOverridesEverything(t *testing.T) {
+	// WithInsecure(true) is never overridden by env or scheme detection.
+	t.Setenv(EnvCollectorEndpoint, "https://gw:4317")
+	t.Setenv(EnvInsecure, "false")
+	o := newOptions(WithInsecure(true))
+	if !o.Insecure {
+		t.Error("expected explicit WithInsecure(true) to override env and scheme")
+	}
+}
+
+func TestWithInsecureFalseExplicitOverridesEverything(t *testing.T) {
+	// WithInsecure(false) stays false even if http:// and env say insecure.
+	t.Setenv(EnvCollectorEndpoint, "http://gw:4317")
+	t.Setenv(EnvInsecure, "true")
+	o := newOptions(WithInsecure(false))
+	if o.Insecure {
+		t.Error("expected explicit WithInsecure(false) to override env and scheme")
+	}
+}
+
+func TestInsecureNoEndpointDefaultSecure(t *testing.T) {
+	// No endpoint at all → Insecure stays false (secure default).
+	o := newOptions()
+	if o.Insecure {
+		t.Error("expected Insecure=false when no endpoint is configured")
+	}
+}

@@ -527,3 +527,27 @@ This enables the standard Kubernetes scrape pattern: deploy without a Collector,
 ## 16. Metrics Export Interval
 
 Metrics are exported every **30 seconds** (not the SDK default of 60s). This applies to both OTLP export and the Prometheus `/metrics` fallback.
+
+---
+
+## 17. TLS Transport
+
+OTLP export uses TLS by default. The transport is derived from the endpoint scheme:
+
+| Endpoint | Transport |
+|----------|-----------|
+| `https://host:4317` | TLS (system CA trust store) |
+| `http://host:4317` | Plaintext (insecure) |
+| `host:4317` (no scheme) | TLS (secure by default) |
+
+Override via env var:
+
+```bash
+# Force plaintext for a local collector without TLS
+OTEL_EXPORTER_OTLP_ENDPOINT=https://otel-gateway.example:4317  # TLS
+OTEL_EXPORTER_OTLP_INSECURE=true                                # forces plaintext regardless of scheme
+```
+
+Priority: code config (scheme in `TelemetryOptions.OtelCollectorEndpoint`) > `OTEL_EXPORTER_OTLP_INSECURE` env var > scheme-based detection.
+
+For local development with a plaintext collector, the default `http://localhost` already resolves to plaintext — no changes needed.

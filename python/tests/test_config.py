@@ -187,3 +187,56 @@ class TestEnvironmentParsing:
 
     def test_invalid_falls_back(self):
         assert _parse_environment("STAGING") == DeploymentEnvironment.LOCAL
+
+
+class TestResolveInsecure:
+    """Tests for TelemetryOptions.resolve_insecure() — TLS auto-detection."""
+
+    def test_https_endpoint_is_secure(self):
+        opts = TelemetryOptions(otel_endpoint="https://otel-gateway:4317")
+        assert opts.resolve_insecure() is False
+
+    def test_http_endpoint_is_insecure(self):
+        opts = TelemetryOptions(otel_endpoint="http://collector.svc:4317")
+        assert opts.resolve_insecure() is True
+
+    def test_empty_endpoint_is_insecure(self):
+        opts = TelemetryOptions(otel_endpoint="")
+        assert opts.resolve_insecure() is True
+
+    def test_env_override_false_with_http_endpoint(self):
+        os.environ["OTEL_EXPORTER_OTLP_INSECURE"] = "false"
+        opts = TelemetryOptions(otel_endpoint="http://collector:4317")
+        assert opts.resolve_insecure() is False
+
+    def test_env_override_true_with_https_endpoint(self):
+        os.environ["OTEL_EXPORTER_OTLP_INSECURE"] = "true"
+        opts = TelemetryOptions(otel_endpoint="https://gateway:4317")
+        assert opts.resolve_insecure() is True
+
+    def test_env_override_case_insensitive(self):
+        os.environ["OTEL_EXPORTER_OTLP_INSECURE"] = "False"
+        opts = TelemetryOptions(otel_endpoint="http://collector:4317")
+        assert opts.resolve_insecure() is False
+
+    def test_env_override_with_whitespace(self):
+        os.environ["OTEL_EXPORTER_OTLP_INSECURE"] = "  true  "
+        opts = TelemetryOptions(otel_endpoint="https://gateway:4317")
+        assert opts.resolve_insecure() is True
+
+    def test_explicit_insecure_false_overrides_scheme(self):
+        opts = TelemetryOptions(otel_endpoint="http://collector:4317", insecure=False)
+        assert opts.resolve_insecure() is False
+
+    def test_explicit_insecure_true_overrides_scheme(self):
+        opts = TelemetryOptions(otel_endpoint="https://gateway:4317", insecure=True)
+        assert opts.resolve_insecure() is True
+
+    def test_explicit_overrides_env(self):
+        os.environ["OTEL_EXPORTER_OTLP_INSECURE"] = "true"
+        opts = TelemetryOptions(otel_endpoint="http://collector:4317", insecure=False)
+        assert opts.resolve_insecure() is False
+
+    def test_default_insecure_is_none(self):
+        opts = TelemetryOptions()
+        assert opts.insecure is None

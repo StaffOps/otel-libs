@@ -2,6 +2,7 @@ package otelhelper
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"log/slog"
 
@@ -10,6 +11,7 @@ import (
 	"go.opentelemetry.io/otel/log/global"
 	sdklog "go.opentelemetry.io/otel/sdk/log"
 	"go.opentelemetry.io/otel/sdk/resource"
+	"google.golang.org/grpc/credentials"
 )
 
 func configureLogging(ctx context.Context, res *resource.Resource, opts *Options) (*sdklog.LoggerProvider, error) {
@@ -19,10 +21,15 @@ func configureLogging(ctx context.Context, res *resource.Resource, opts *Options
 
 	if opts.OtelEndpoint != "" {
 		// OTLP push — export logs to collector.
-		exporter, err := otlploggrpc.New(ctx,
+		logOpts := []otlploggrpc.Option{
 			otlploggrpc.WithEndpoint(opts.OtelEndpoint),
-			otlploggrpc.WithInsecure(),
-		)
+		}
+		if opts.Insecure {
+			logOpts = append(logOpts, otlploggrpc.WithInsecure())
+		} else {
+			logOpts = append(logOpts, otlploggrpc.WithTLSCredentials(credentials.NewTLS(&tls.Config{})))
+		}
+		exporter, err := otlploggrpc.New(ctx, logOpts...)
 		if err != nil {
 			return nil, fmt.Errorf("log exporter: %w", err)
 		}

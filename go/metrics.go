@@ -2,6 +2,7 @@ package otelhelper
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"net/http"
 	"os"
@@ -15,6 +16,7 @@ import (
 	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/resource"
+	"google.golang.org/grpc/credentials"
 )
 
 func configureMetrics(ctx context.Context, res *resource.Resource, opts *Options) (*sdkmetric.MeterProvider, error) {
@@ -39,11 +41,16 @@ func configureMetrics(ctx context.Context, res *resource.Resource, opts *Options
 		)
 	} else {
 		// OTLP push path — export metrics to collector via gRPC.
-		exporter, err := otlpmetricgrpc.New(ctx,
+		metricOpts := []otlpmetricgrpc.Option{
 			otlpmetricgrpc.WithEndpoint(opts.OtelEndpoint),
-			otlpmetricgrpc.WithInsecure(),
 			otlpmetricgrpc.WithCompressor("gzip"),
-		)
+		}
+		if opts.Insecure {
+			metricOpts = append(metricOpts, otlpmetricgrpc.WithInsecure())
+		} else {
+			metricOpts = append(metricOpts, otlpmetricgrpc.WithTLSCredentials(credentials.NewTLS(&tls.Config{})))
+		}
+		exporter, err := otlpmetricgrpc.New(ctx, metricOpts...)
 		if err != nil {
 			return nil, fmt.Errorf("metric exporter: %w", err)
 		}

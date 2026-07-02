@@ -24,6 +24,7 @@ const (
 	EnvOtelServiceName      = "OTEL_SERVICE_NAME"
 	EnvEnvironment          = "ENVIRONMENT"
 	EnvCollectorEndpoint    = "OTEL_EXPORTER_OTLP_ENDPOINT"
+	EnvInsecure             = "OTEL_EXPORTER_OTLP_INSECURE"
 	EnvDebugLevel           = "OTEL_HELPER_DEBUG_LEVEL"
 	EnvExtraInstrumentation = "OTEL_HELPER_EXTRA_INSTRUMENTATION"
 	EnvSampleRatio          = "OTEL_HELPER_SAMPLE_RATIO"
@@ -93,6 +94,20 @@ func (o *Options) resolveFromEnv() {
 
 	if o.OtelEndpoint == "" {
 		o.OtelEndpoint = resolveCollectorHost()
+	}
+
+	// Resolve Insecure flag: explicit WithInsecure() takes priority, then env var,
+	// then scheme from the raw endpoint URL.
+	if !o.insecureExplicit {
+		if v := os.Getenv(EnvInsecure); v != "" {
+			o.Insecure = strings.ToLower(v) == "true"
+		} else {
+			raw := strings.TrimSpace(os.Getenv(EnvCollectorEndpoint))
+			if strings.HasPrefix(raw, "http://") {
+				o.Insecure = true
+			}
+			// "https://" or no scheme → Insecure stays false (secure by default).
+		}
 	}
 
 	if !o.DebugLevel {

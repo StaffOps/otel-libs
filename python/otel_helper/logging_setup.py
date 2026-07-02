@@ -22,7 +22,7 @@ def configure_logging(resource: Resource, options: TelemetryOptions) -> LoggerPr
 
         exporter = OTLPLogExporter(
             endpoint=options.otel_endpoint,
-            insecure=True,
+            insecure=options.resolve_insecure(),
             timeout=options.export_timeout_ms / 1000,
         )
         provider.add_log_record_processor(BatchLogRecordProcessor(exporter))

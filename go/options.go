@@ -8,6 +8,7 @@ type Options struct {
 	Environment          DeploymentEnvironment
 	OtelEndpoint         string
 	DebugLevel           bool
+	Insecure             bool
 	ExtraInstrumentation string
 	ExportTimeoutMs      int
 	SampleRatio          float64
@@ -17,6 +18,10 @@ type Options struct {
 	// PrometheusMetricsPort is the port for /metrics when no OTLP endpoint is configured.
 	// Default: 9464. Configurable via OTEL_HELPER_METRICS_PORT env var.
 	PrometheusMetricsPort int
+
+	// insecureExplicit tracks whether WithInsecure was called explicitly,
+	// preventing env/scheme auto-detection from overriding the consumer's choice.
+	insecureExplicit bool
 }
 
 // IsSignalEnabled returns true if the signal is not in DisabledSignals (case-insensitive).
@@ -52,6 +57,9 @@ func WithDisabledMetrics(patterns []string) Option {
 }
 func WithPrometheusMetricsPort(port int) Option {
 	return func(o *Options) { o.PrometheusMetricsPort = port }
+}
+func WithInsecure(insecure bool) Option {
+	return func(o *Options) { o.Insecure = insecure; o.insecureExplicit = true }
 }
 
 // HasInstrumentation checks if a named instrumentation is enabled.

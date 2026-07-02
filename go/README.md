@@ -28,6 +28,7 @@ Requires Go 1.22+.
 | `SERVICE_NAME` | `my-service` | Service name (priority over `OTEL_SERVICE_NAME`) |
 | `ENVIRONMENT` | `LOCAL` | Environment: LOCAL, DEV, HML, PRD |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | `http://localhost` | Collector endpoint |
+| `OTEL_EXPORTER_OTLP_INSECURE` | _(unset)_ | TLS override: `true` = plaintext, `false` = TLS. Unset = derived from scheme (secure by default) |
 | `OTEL_HELPER_DEBUG_LEVEL` | `false` | Debug mode: all instrumentations, attribute debug=true |
 | `OTEL_HELPER_EXTRA_INSTRUMENTATION` | `SQL` | Conditional instrumentations: SQL, REDIS, AWS |
 | `OTEL_HELPER_SAMPLE_RATIO` | `1.0` | Head sampling ratio (0.0-1.0). 1.0 = AlwaysOn |
@@ -195,9 +196,19 @@ This enables the standard Kubernetes pattern: deploy without a collector, and le
 | **Metrics** | Go runtime metrics (goroutines, GC, memory) automatically, custom meters via `GetMeter`, exported via OTLP with exemplars (`OTEL_METRICS_EXEMPLAR_FILTER=trace_based` auto-set). Exported every **30s**. |
 | **Logs** | Exported via OTLP to the Collector; `NewSlogHandler()`/`NewLogger()` for slog bridge with trace correlation |
 
-## Endpoint Resolution
+## Endpoint Resolution & TLS
 
-Endpoints without scheme (e.g. `collector.svc:4317`) are automatically prefixed with `http://`. No more `scheme://None` errors.
+Transport is determined by the endpoint scheme:
+
+| Endpoint | Transport |
+|----------|-----------|
+| `https://host:4317` | TLS (system CA trust store) |
+| `http://host:4317` | Plaintext (insecure) |
+| `host:4317` (no scheme) | TLS (secure by default) |
+
+Override with `OTEL_EXPORTER_OTLP_INSECURE`: `true` forces plaintext, `false` forces TLS. Explicit code config (`WithInsecure(true)`) always wins over env/scheme.
+
+For a local plaintext collector, use `http://` in the endpoint or set `OTEL_EXPORTER_OTLP_INSECURE=true`.
 
 ## Opt-in Extensions (`ext/`)
 

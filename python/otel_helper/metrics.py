@@ -34,7 +34,7 @@ def configure_metrics(resource: Resource, options: TelemetryOptions) -> MeterPro
 
         exporter = OTLPMetricExporter(
             endpoint=options.otel_endpoint,
-            insecure=True,
+            insecure=options.resolve_insecure(),
             timeout=options.export_timeout_ms / 1000,
         )
         reader = PeriodicExportingMetricReader(exporter, export_interval_millis=30_000)

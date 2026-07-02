@@ -19,6 +19,7 @@ namespace OtelHelper
         public const string SampleRatioEnvVar = "OTEL_HELPER_SAMPLE_RATIO";
         public const string DisabledSignalsEnvVar = "OTEL_HELPER_DISABLED_SIGNALS";
         public const string DisabledMetricsEnvVar = "OTEL_HELPER_DISABLED_METRICS";
+        public const string InsecureEnvVar = "OTEL_EXPORTER_OTLP_INSECURE";
         public const string MetricsPortEnvVar = "OTEL_HELPER_METRICS_PORT";
 
         [Required(AllowEmptyStrings = false)]

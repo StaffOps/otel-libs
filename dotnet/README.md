@@ -65,6 +65,20 @@ After registration, available via DI:
 |---|---|---|
 | OTLP (traces/metrics/logs) | `:4317` | `{OTEL_EXPORTER_OTLP_ENDPOINT}:4317` |
 
+### TLS / Transport Security
+
+Transport is determined by the endpoint scheme:
+
+| Endpoint | Transport |
+|----------|-----------|
+| `https://host:4317` | TLS (system CA trust store) |
+| `http://host:4317` | Plaintext (insecure) |
+| `host:4317` (no scheme) | TLS (secure by default) |
+
+Override with `OTEL_EXPORTER_OTLP_INSECURE`: `true` forces plaintext, `false` forces TLS. Code config (`TelemetryOptions.OtelCollectorEndpoint` scheme) always wins over env var.
+
+For a local plaintext collector, use `http://` in the endpoint or set `OTEL_EXPORTER_OTLP_INSECURE=true`.
+
 ### Behavior when no OTLP endpoint is configured
 
 When `OTEL_EXPORTER_OTLP_ENDPOINT` is **not set**, the library automatically falls back to:
@@ -102,6 +116,7 @@ Recognized natively by the SDK. The lib does not override them — if defined, t
 | Variable | Description | Default |
 |---|---|---|
 | `OTEL_EXPORTER_OTLP_PROTOCOL` | OTLP protocol. | `grpc` |
+| `OTEL_EXPORTER_OTLP_INSECURE` | TLS override: `true` = plaintext, `false` = TLS. Unset = derived from endpoint scheme (secure by default). | _(unset)_ |
 | `OTEL_EXPORTER_OTLP_HEADERS` | Additional headers (e.g., auth). | empty |
 | `OTEL_EXPORTER_OTLP_TIMEOUT` | Timeout in ms. | `10000` |
 

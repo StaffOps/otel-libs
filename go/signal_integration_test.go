@@ -213,3 +213,325 @@ func Test_ParseEnvironment_AllValues(t *testing.T) {
 		})
 	}
 }
+
+// --- TLS/Insecure configuration tests ---
+
+func Test_ConfigureTracing_Insecure(t *testing.T) {
+	opts := &Options{
+		ServiceName:     "test-svc",
+		Environment:     LOCAL,
+		OtelEndpoint:    "localhost:4317",
+		Insecure:        true,
+		ExportTimeoutMs: 10_000,
+		SampleRatio:     1.0,
+	}
+	res := resource.Default()
+	tp, err := configureTracing(context.Background(), res, opts)
+	if err != nil {
+		t.Fatalf("configureTracing(insecure=true) error = %v", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	if err := tp.Shutdown(ctx); err != nil {
+		t.Logf("shutdown warning (expected — no collector): %v", err)
+	}
+}
+
+func Test_ConfigureTracing_TLS(t *testing.T) {
+	opts := &Options{
+		ServiceName:     "test-svc",
+		Environment:     LOCAL,
+		OtelEndpoint:    "localhost:4317",
+		Insecure:        false,
+		ExportTimeoutMs: 10_000,
+		SampleRatio:     1.0,
+	}
+	res := resource.Default()
+	tp, err := configureTracing(context.Background(), res, opts)
+	if err != nil {
+		t.Fatalf("configureTracing(insecure=false/TLS) error = %v", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	if err := tp.Shutdown(ctx); err != nil {
+		t.Logf("shutdown warning (expected — no collector): %v", err)
+	}
+}
+
+func Test_ConfigureMetrics_Insecure(t *testing.T) {
+	opts := &Options{
+		ServiceName:     "test-svc",
+		Environment:     LOCAL,
+		OtelEndpoint:    "localhost:4317",
+		Insecure:        true,
+		ExportTimeoutMs: 10_000,
+		SampleRatio:     1.0,
+	}
+	res := resource.Default()
+	mp, err := configureMetrics(context.Background(), res, opts)
+	if err != nil {
+		t.Fatalf("configureMetrics(insecure=true) error = %v", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	if err := mp.Shutdown(ctx); err != nil {
+		t.Logf("shutdown warning (expected — no collector): %v", err)
+	}
+}
+
+func Test_ConfigureMetrics_TLS(t *testing.T) {
+	opts := &Options{
+		ServiceName:     "test-svc",
+		Environment:     LOCAL,
+		OtelEndpoint:    "localhost:4317",
+		Insecure:        false,
+		ExportTimeoutMs: 10_000,
+		SampleRatio:     1.0,
+	}
+	res := resource.Default()
+	mp, err := configureMetrics(context.Background(), res, opts)
+	if err != nil {
+		t.Fatalf("configureMetrics(insecure=false/TLS) error = %v", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	if err := mp.Shutdown(ctx); err != nil {
+		t.Logf("shutdown warning (expected — no collector): %v", err)
+	}
+}
+
+func Test_ConfigureLogging_Insecure(t *testing.T) {
+	opts := &Options{
+		ServiceName:     "test-svc",
+		Environment:     LOCAL,
+		OtelEndpoint:    "localhost:4317",
+		Insecure:        true,
+		ExportTimeoutMs: 10_000,
+	}
+	res := resource.Default()
+	lp, err := configureLogging(context.Background(), res, opts)
+	if err != nil {
+		t.Fatalf("configureLogging(insecure=true) error = %v", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	if err := lp.Shutdown(ctx); err != nil {
+		t.Logf("shutdown warning (expected — no collector): %v", err)
+	}
+}
+
+func Test_ConfigureLogging_TLS(t *testing.T) {
+	opts := &Options{
+		ServiceName:     "test-svc",
+		Environment:     LOCAL,
+		OtelEndpoint:    "localhost:4317",
+		Insecure:        false,
+		ExportTimeoutMs: 10_000,
+	}
+	res := resource.Default()
+	lp, err := configureLogging(context.Background(), res, opts)
+	if err != nil {
+		t.Fatalf("configureLogging(insecure=false/TLS) error = %v", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	if err := lp.Shutdown(ctx); err != nil {
+		t.Logf("shutdown warning (expected — no collector): %v", err)
+	}
+}
+
+func Test_WithPrometheusMetricsPort_Option(t *testing.T) {
+	opts := &Options{PrometheusMetricsPort: 9464}
+	WithPrometheusMetricsPort(8080)(opts)
+	if opts.PrometheusMetricsPort != 8080 {
+		t.Errorf("PrometheusMetricsPort = %d, want 8080", opts.PrometheusMetricsPort)
+	}
+}
+
+// --- Prometheus fallback (no OTLP endpoint) ---
+
+func Test_ConfigureMetrics_PrometheusMode(t *testing.T) {
+	// When OtelEndpoint is empty, configureMetrics should use Prometheus exporter.
+	opts := &Options{
+		ServiceName:           "test-svc",
+		Environment:           LOCAL,
+		OtelEndpoint:          "", // triggers Prometheus fallback
+		ExportTimeoutMs:       10_000,
+		SampleRatio:           1.0,
+		PrometheusMetricsPort: 0, // port 0 = random port (won't conflict)
+	}
+	res := resource.Default()
+	mp, err := configureMetrics(context.Background(), res, opts)
+	if err != nil {
+		t.Fatalf("configureMetrics(prometheus mode) error = %v", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	if err := mp.Shutdown(ctx); err != nil {
+		t.Logf("shutdown warning: %v", err)
+	}
+}
+
+// --- Setup with debug mode (covers debugProcessor OnStart branch) ---
+
+func Test_Setup_DebugMode(t *testing.T) {
+	resetGlobals()
+	t.Setenv(EnvServiceName, "debug-test")
+
+	shutdown, err := Setup(context.Background(), WithEndpoint("localhost:4317"), WithDebug())
+	if err != nil {
+		t.Fatalf("Setup with debug failed: %v", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	if err := shutdown(ctx); err != nil {
+		t.Logf("shutdown warning: %v", err)
+	}
+}
+
+// --- Setup with disabled signals (covers noop provider paths) ---
+
+func Test_Setup_DisabledTraces(t *testing.T) {
+	resetGlobals()
+	t.Setenv(EnvServiceName, "disabled-traces")
+
+	shutdown, err := Setup(context.Background(),
+		WithEndpoint("localhost:4317"),
+		WithDisabledSignals([]string{"traces"}),
+	)
+	if err != nil {
+		t.Fatalf("Setup with disabled traces failed: %v", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	if err := shutdown(ctx); err != nil {
+		t.Logf("shutdown warning: %v", err)
+	}
+}
+
+func Test_Setup_DisabledMetrics(t *testing.T) {
+	resetGlobals()
+	t.Setenv(EnvServiceName, "disabled-metrics")
+
+	shutdown, err := Setup(context.Background(),
+		WithEndpoint("localhost:4317"),
+		WithDisabledSignals([]string{"metrics"}),
+	)
+	if err != nil {
+		t.Fatalf("Setup with disabled metrics failed: %v", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	if err := shutdown(ctx); err != nil {
+		t.Logf("shutdown warning: %v", err)
+	}
+}
+
+func Test_Setup_DisabledLogs(t *testing.T) {
+	resetGlobals()
+	t.Setenv(EnvServiceName, "disabled-logs")
+
+	shutdown, err := Setup(context.Background(),
+		WithEndpoint("localhost:4317"),
+		WithDisabledSignals([]string{"logs"}),
+	)
+	if err != nil {
+		t.Fatalf("Setup with disabled logs failed: %v", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	if err := shutdown(ctx); err != nil {
+		t.Logf("shutdown warning: %v", err)
+	}
+}
+
+// --- configureMetrics with DisabledMetrics (covers disabledMetricsView in OTLP path) ---
+
+func Test_ConfigureMetrics_WithDisabledMetrics_OTLP(t *testing.T) {
+	opts := &Options{
+		ServiceName:     "test-svc",
+		Environment:     LOCAL,
+		OtelEndpoint:    "localhost:4317",
+		Insecure:        true,
+		ExportTimeoutMs: 10_000,
+		SampleRatio:     1.0,
+		DisabledMetrics: []string{"http.*"},
+	}
+	res := resource.Default()
+	mp, err := configureMetrics(context.Background(), res, opts)
+	if err != nil {
+		t.Fatalf("configureMetrics(disabled metrics) error = %v", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	if err := mp.Shutdown(ctx); err != nil {
+		t.Logf("shutdown warning: %v", err)
+	}
+}
+
+// --- configureTracing with debug + SampleRatio < 1.0 ---
+
+func Test_ConfigureTracing_Debug_WithRatioBased(t *testing.T) {
+	opts := &Options{
+		ServiceName:     "test-svc",
+		Environment:     LOCAL,
+		OtelEndpoint:    "localhost:4317",
+		Insecure:        true,
+		ExportTimeoutMs: 10_000,
+		SampleRatio:     0.5,
+		DebugLevel:      true,
+	}
+	res := resource.Default()
+	tp, err := configureTracing(context.Background(), res, opts)
+	if err != nil {
+		t.Fatalf("configureTracing(debug+ratio) error = %v", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	if err := tp.Shutdown(ctx); err != nil {
+		t.Logf("shutdown warning: %v", err)
+	}
+}
+
+// --- configureTracing with no endpoint (no exporter added) ---
+
+func Test_ConfigureTracing_NoEndpoint(t *testing.T) {
+	opts := &Options{
+		ServiceName:     "test-svc",
+		Environment:     LOCAL,
+		OtelEndpoint:    "",
+		ExportTimeoutMs: 10_000,
+		SampleRatio:     1.0,
+	}
+	res := resource.Default()
+	tp, err := configureTracing(context.Background(), res, opts)
+	if err != nil {
+		t.Fatalf("configureTracing(no endpoint) error = %v", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	if err := tp.Shutdown(ctx); err != nil {
+		t.Logf("shutdown warning: %v", err)
+	}
+}
+
+// --- configureLogging with no endpoint ---
+
+func Test_ConfigureLogging_NoEndpoint(t *testing.T) {
+	opts := &Options{
+		ServiceName:     "test-svc",
+		Environment:     LOCAL,
+		OtelEndpoint:    "",
+		ExportTimeoutMs: 10_000,
+	}
+	res := resource.Default()
+	lp, err := configureLogging(context.Background(), res, opts)
+	if err != nil {
+		t.Fatalf("configureLogging(no endpoint) error = %v", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	if err := lp.Shutdown(ctx); err != nil {
+		t.Logf("shutdown warning: %v", err)
+	}
+}

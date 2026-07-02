@@ -39,10 +39,7 @@ namespace OtelHelper
                 var endpoint = Environment.GetEnvironmentVariable(TelemetryOptions.CollectorEndpointEnvVar);
                 if (!string.IsNullOrWhiteSpace(endpoint))
                 {
-                    if (Uri.TryCreate(endpoint.TrimEnd('/'), UriKind.Absolute, out var uri))
-                        options.OtelCollectorEndpoint = $"{uri.Scheme}://{uri.Host}:{uri.Port}";
-                    else
-                        options.OtelCollectorEndpoint = $"{endpoint.TrimEnd('/')}:4317";
+                    options.OtelCollectorEndpoint = ResolveEndpoint(endpoint.TrimEnd('/'));
                 }
             }
 
@@ -96,6 +93,42 @@ namespace OtelHelper
         {
             var env = Environment.GetEnvironmentVariable(varName);
             return string.Equals(env, "true", StringComparison.OrdinalIgnoreCase);
+        }
+
+        /// <summary>
+        /// Resolves an endpoint string to a fully qualified URI with scheme and port.
+        /// - If the endpoint already has a scheme (http:// or https://), preserves it.
+        /// - If no scheme: uses OTEL_EXPORTER_OTLP_INSECURE to decide (true -> http, false/unset -> https).
+        /// - If no port is specified, defaults to 4317.
+        /// Secure by default: https when no explicit scheme and INSECURE is not set.
+        /// </summary>
+        internal static string ResolveEndpoint(string rawEndpoint)
+        {
+            // If the endpoint already has a scheme, parse it and normalize.
+            if (Uri.TryCreate(rawEndpoint, UriKind.Absolute, out var uri)
+                && (uri.Scheme == "http" || uri.Scheme == "https"))
+            {
+                var port = uri.IsDefaultPort ? 4317 : uri.Port;
+                return $"{uri.Scheme}://{uri.Host}:{port}";
+            }
+
+            // No scheme present — decide scheme from OTEL_EXPORTER_OTLP_INSECURE env var.
+            var insecure = ResolveEnvBool(TelemetryOptions.InsecureEnvVar);
+            var scheme = insecure ? "http" : "https";
+
+            // Parse host and port from the raw value (e.g. "host:4317" or "host").
+            var hostPort = rawEndpoint;
+            int resolvedPort = 4317;
+
+            var lastColon = hostPort.LastIndexOf(':');
+            if (lastColon > 0 && int.TryParse(hostPort.Substring(lastColon + 1), out var parsedPort))
+            {
+                // Has explicit port
+                resolvedPort = parsedPort;
+                hostPort = hostPort.Substring(0, lastColon);
+            }
+
+            return $"{scheme}://{hostPort}:{resolvedPort}";
         }
     }
 }

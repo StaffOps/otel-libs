@@ -32,7 +32,7 @@ def configure_tracing(resource: Resource, options: TelemetryOptions) -> TracerPr
 
         exporter = OTLPSpanExporter(
             endpoint=options.otel_endpoint,
-            insecure=True,
+            insecure=options.resolve_insecure(),
             timeout=options.export_timeout_ms / 1000,
         )
         provider.add_span_processor(BatchSpanProcessor(exporter))

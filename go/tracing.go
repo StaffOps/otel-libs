@@ -2,6 +2,7 @@ package otelhelper
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"time"
 
@@ -10,6 +11,7 @@ import (
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/trace"
+	"google.golang.org/grpc/credentials"
 )
 
 func configureTracing(ctx context.Context, res *resource.Resource, opts *Options) (*sdktrace.TracerProvider, error) {
@@ -27,12 +29,17 @@ func configureTracing(ctx context.Context, res *resource.Resource, opts *Options
 
 	if opts.OtelEndpoint != "" {
 		// OTLP push — export spans to collector.
-		exporter, err := otlptracegrpc.New(ctx,
+		traceOpts := []otlptracegrpc.Option{
 			otlptracegrpc.WithEndpoint(opts.OtelEndpoint),
-			otlptracegrpc.WithInsecure(),
-			otlptracegrpc.WithTimeout(time.Duration(opts.ExportTimeoutMs)*time.Millisecond),
+			otlptracegrpc.WithTimeout(time.Duration(opts.ExportTimeoutMs) * time.Millisecond),
 			otlptracegrpc.WithCompressor("gzip"),
-		)
+		}
+		if opts.Insecure {
+			traceOpts = append(traceOpts, otlptracegrpc.WithInsecure())
+		} else {
+			traceOpts = append(traceOpts, otlptracegrpc.WithTLSCredentials(credentials.NewTLS(&tls.Config{})))
+		}
+		exporter, err := otlptracegrpc.New(ctx, traceOpts...)
 		if err != nil {
 			return nil, fmt.Errorf("trace exporter: %w", err)
 		}

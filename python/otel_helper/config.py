@@ -25,6 +25,7 @@ ENV_SAMPLE_RATIO = "OTEL_HELPER_SAMPLE_RATIO"
 ENV_DISABLED_SIGNALS = "OTEL_HELPER_DISABLED_SIGNALS"
 ENV_DISABLED_METRICS = "OTEL_HELPER_DISABLED_METRICS"
 ENV_METRICS_PORT = "OTEL_HELPER_METRICS_PORT"
+ENV_INSECURE = "OTEL_EXPORTER_OTLP_INSECURE"
 
 _DEFAULT_COLLECTOR_HOST = "http://localhost"
 _DEFAULT_OTLP_PORT = 4317
@@ -43,12 +44,15 @@ def _resolve_collector_host() -> str:
     if not env:
         return ""
 
-    # urlparse treats "host:port" (no scheme) as scheme="host", path="port",
-    # yielding hostname=None. Default to http:// when no scheme is present so
-    # endpoints like "collector.svc:4317" resolve correctly instead of producing
-    # an invalid "collector.svc://None" that silently drops all telemetry.
+    # If the endpoint has no scheme (e.g. "collector.svc:4317"), urlparse treats
+    # it as scheme="collector.svc" and yields hostname=None. Prepend a scheme so
+    # it resolves correctly. Secure by default: use https:// unless the operator
+    # opts into plaintext via OTEL_EXPORTER_OTLP_INSECURE=true. This keeps the
+    # schemeless behavior aligned with the .NET/Go helpers and resolve_insecure().
     if "://" not in env:
-        env = f"http://{env}"
+        insecure = os.getenv(ENV_INSECURE, "").strip().lower() == "true"
+        scheme = "http" if insecure else "https"
+        env = f"{scheme}://{env}"
 
     parsed = urlparse(env)
     if not parsed.hostname:
@@ -90,6 +94,7 @@ class TelemetryOptions:
     prometheus_metrics_port: int = 9464
     minimum_log_level: int | None = None
     resource_attributes: dict[str, object] = field(default_factory=dict)
+    insecure: bool | None = None
 
     def has_instrumentation(self, name: str) -> bool:
         if self.debug_level:
@@ -99,6 +104,21 @@ class TelemetryOptions:
     def is_signal_enabled(self, signal: str) -> bool:
         """Check if a signal (traces, metrics, logs) is enabled."""
         return signal.lower() not in [s.lower() for s in self.disabled_signals]
+
+    def resolve_insecure(self) -> bool:
+        """Resolve whether OTLP export should use insecure (plaintext) connection.
+
+        Priority:
+        1. Explicit value set in code (self.insecure is not None)
+        2. OTEL_EXPORTER_OTLP_INSECURE env var (standard OTel convention)
+        3. Auto-detect from endpoint scheme: https:// -> False, else -> True
+        """
+        if self.insecure is not None:
+            return self.insecure
+        env_insecure = os.getenv(ENV_INSECURE)
+        if env_insecure is not None:
+            return env_insecure.strip().lower() == "true"
+        return not self.otel_endpoint.startswith("https://")
 
     def resolve_from_env(self) -> None:
         """Apply environment variable defaults (PostConfigure equivalent)."""
