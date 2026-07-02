@@ -83,69 +83,9 @@ defer shutdown(ctx)
 
 ## Installing from GitHub Packages (private)
 
-### .NET
+All packages are private and require a GitHub token with `read:packages` scope. .NET uses GitHub Packages NuGet, Python uses GitHub Release wheel assets, Go uses `go get` directly from the repo.
 
-Add the GitHub NuGet source (once per machine/CI):
-
-```bash
-dotnet nuget add source "https://nuget.pkg.github.com/StaffOps/index.json" \
-  --name github-staffops \
-  --username StaffOps \
-  --password <GITHUB_PAT_WITH_READ_PACKAGES>
-```
-
-Then reference in your `.csproj`:
-
-```xml
-<PackageReference Include="OtelHelper" Version="0.1.0" />
-```
-
-In CI (GitHub Actions), use `GITHUB_TOKEN` automatically:
-
-```yaml
-- run: dotnet nuget add source "https://nuget.pkg.github.com/StaffOps/index.json"
-        --name github --username github --password ${{ secrets.GITHUB_TOKEN }}
-```
-
-### Python
-
-Download the wheel from the GitHub Release:
-
-```bash
-# Authenticate with gh CLI
-gh release download v0.1.0 --repo StaffOps/staffops-otel-libs --pattern "*.whl"
-pip install otel_helper-0.1.0-py3-none-any.whl
-```
-
-Or install directly (requires PAT with `repo` scope):
-
-```bash
-pip install "otel-helper @ https://github.com/StaffOps/staffops-otel-libs/releases/download/v0.1.0/otel_helper-0.1.0-py3-none-any.whl" \
-  --extra-index-url https://<PAT>@raw.githubusercontent.com/
-```
-
-In CI (GitHub Actions):
-
-```yaml
-- run: gh release download v0.1.0 --repo StaffOps/staffops-otel-libs --pattern "*.whl"
-  env:
-    GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-- run: pip install otel_helper-*.whl
-```
-
-### Go
-
-Go modules are consumed directly from the private repo:
-
-```bash
-# Configure git to use SSH (or PAT) for private repos
-git config --global url."git@github.com:".insteadOf "https://github.com/"
-
-# Set GOPRIVATE
-export GOPRIVATE=github.com/staffops/*
-
-go get github.com/staffops/staffops-otel-libs/go@latest
-```
+See [CONSUMING.md](CONSUMING.md) for full, validated per-language instructions (auth setup, install commands, CI variants, and gotchas).
 
 ## Documentation
 
