@@ -1,4 +1,4 @@
-module github.com/karlipegomes/staffops-otel-libs/go/ext/otelredis
+module github.com/staffops/staffops-otel-libs/go/ext/otelredis
 
 go 1.22.0
 

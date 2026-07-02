@@ -1,4 +1,4 @@
-module github.com/karlipegomes/staffops-otel-libs/go/ext/otelaws
+module github.com/staffops/staffops-otel-libs/go/ext/otelaws
 
 go 1.22.0
 

@@ -63,7 +63,7 @@ setup_telemetry()
 
 ### Go
 ```go
-import "github.com/staffops/otel-helper-go"
+import otelhelper "github.com/staffops/staffops-otel-libs/go"
 
 shutdown, err := otelhelper.Setup(ctx)
 defer shutdown(ctx)
@@ -88,9 +88,9 @@ defer shutdown(ctx)
 Add the GitHub NuGet source (once per machine/CI):
 
 ```bash
-dotnet nuget add source "https://nuget.pkg.github.com/karlipegomes/index.json" \
+dotnet nuget add source "https://nuget.pkg.github.com/StaffOps/index.json" \
   --name github-staffops \
-  --username karlipegomes \
+  --username StaffOps \
   --password <GITHUB_PAT_WITH_READ_PACKAGES>
 ```
 
@@ -103,7 +103,7 @@ Then reference in your `.csproj`:
 In CI (GitHub Actions), use `GITHUB_TOKEN` automatically:
 
 ```yaml
-- run: dotnet nuget add source "https://nuget.pkg.github.com/karlipegomes/index.json"
+- run: dotnet nuget add source "https://nuget.pkg.github.com/StaffOps/index.json"
         --name github --username github --password ${{ secrets.GITHUB_TOKEN }}
 ```
 
@@ -113,21 +113,21 @@ Download the wheel from the GitHub Release:
 
 ```bash
 # Authenticate with gh CLI
-gh release download v0.1.0 --repo karlipegomes/staffops-otel-libs --pattern "*.whl"
+gh release download v0.1.0 --repo StaffOps/staffops-otel-libs --pattern "*.whl"
 pip install otel_helper-0.1.0-py3-none-any.whl
 ```
 
 Or install directly (requires PAT with `repo` scope):
 
 ```bash
-pip install "otel-helper @ https://github.com/karlipegomes/staffops-otel-libs/releases/download/v0.1.0/otel_helper-0.1.0-py3-none-any.whl" \
+pip install "otel-helper @ https://github.com/StaffOps/staffops-otel-libs/releases/download/v0.1.0/otel_helper-0.1.0-py3-none-any.whl" \
   --extra-index-url https://<PAT>@raw.githubusercontent.com/
 ```
 
 In CI (GitHub Actions):
 
 ```yaml
-- run: gh release download v0.1.0 --repo karlipegomes/staffops-otel-libs --pattern "*.whl"
+- run: gh release download v0.1.0 --repo StaffOps/staffops-otel-libs --pattern "*.whl"
   env:
     GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 - run: pip install otel_helper-*.whl
@@ -144,7 +144,7 @@ git config --global url."git@github.com:".insteadOf "https://github.com/"
 # Set GOPRIVATE
 export GOPRIVATE=github.com/staffops/*
 
-go get github.com/staffops/otel-helper-go@latest
+go get github.com/staffops/staffops-otel-libs/go@latest
 ```
 
 ## Documentation

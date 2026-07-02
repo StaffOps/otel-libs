@@ -10,7 +10,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	otelhelper "github.com/karlipegomes/staffops-otel-libs/go"
+	otelhelper "github.com/staffops/staffops-otel-libs/go"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
 )

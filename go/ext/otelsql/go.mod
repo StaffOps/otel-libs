@@ -1,4 +1,4 @@
-module github.com/karlipegomes/staffops-otel-libs/go/ext/otelsql
+module github.com/staffops/staffops-otel-libs/go/ext/otelsql
 
 go 1.22.0
 

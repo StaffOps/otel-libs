@@ -170,11 +170,11 @@ jobs:
             -c Release \
             -o nupkgs \
             /p:Version="0.1.0-dev-${SHORT_SHA}" \
-            /p:RepositoryUrl="https://github.com/karlipegomes/staffops-otel-libs"
+            /p:RepositoryUrl="https://github.com/StaffOps/staffops-otel-libs"
       - name: Push to GitHub Packages
         run: |
           dotnet nuget push nupkgs/*.nupkg \
-            --source "https://nuget.pkg.github.com/karlipegomes/index.json" \
+            --source "https://nuget.pkg.github.com/StaffOps/index.json" \
             --api-key ${{ secrets.GITHUB_TOKEN }} \
             --skip-duplicate
 
@@ -200,11 +200,11 @@ jobs:
             -c Release \
             -o nupkgs \
             /p:Version="${{ steps.version.outputs.VERSION }}" \
-            /p:RepositoryUrl="https://github.com/karlipegomes/staffops-otel-libs"
+            /p:RepositoryUrl="https://github.com/StaffOps/staffops-otel-libs"
       - name: Push to GitHub Packages
         run: |
           dotnet nuget push nupkgs/*.nupkg \
-            --source "https://nuget.pkg.github.com/karlipegomes/index.json" \
+            --source "https://nuget.pkg.github.com/StaffOps/index.json" \
             --api-key ${{ secrets.GITHUB_TOKEN }} \
             --skip-duplicate
 
