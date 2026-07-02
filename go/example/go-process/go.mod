@@ -1,22 +1,30 @@
-module github.com/staffops/otel-helper-go/example/go-process
+module github.com/staffops/staffops-otel-libs/go/example/go-process
 
 go 1.22.0
 
 toolchain go1.22.12
 
 require (
-	github.com/staffops/otel-helper-go v0.0.0
+	github.com/staffops/staffops-otel-libs/go v0.0.0
 	go.opentelemetry.io/otel v1.31.0
 	go.opentelemetry.io/otel/metric v1.31.0
 )
 
 require (
+	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/cenkalti/backoff/v4 v4.3.0 // indirect
+	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/felixge/httpsnoop v1.0.4 // indirect
 	github.com/go-logr/logr v1.4.2 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.22.0 // indirect
+	github.com/klauspost/compress v1.17.9 // indirect
+	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
+	github.com/prometheus/client_golang v1.20.5 // indirect
+	github.com/prometheus/client_model v0.6.1 // indirect
+	github.com/prometheus/common v0.60.0 // indirect
+	github.com/prometheus/procfs v0.15.1 // indirect
 	go.opentelemetry.io/contrib/bridges/otelslog v0.6.0 // indirect
 	go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc v0.56.0 // indirect
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.56.0 // indirect
@@ -25,6 +33,7 @@ require (
 	go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc v1.31.0 // indirect
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace v1.31.0 // indirect
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc v1.31.0 // indirect
+	go.opentelemetry.io/otel/exporters/prometheus v0.53.0 // indirect
 	go.opentelemetry.io/otel/log v0.7.0 // indirect
 	go.opentelemetry.io/otel/sdk v1.31.0 // indirect
 	go.opentelemetry.io/otel/sdk/log v0.7.0 // indirect
@@ -40,4 +49,4 @@ require (
 	google.golang.org/protobuf v1.35.1 // indirect
 )
 
-replace github.com/staffops/otel-helper-go => ../../
+replace github.com/staffops/staffops-otel-libs/go => ../../
