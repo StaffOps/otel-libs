@@ -5,7 +5,7 @@ COPY packages/ /packages/
 COPY example/Protos/ example/Protos/
 COPY example/dotnet-backend/dotnet-backend.csproj example/dotnet-backend/
 # Consume the prebuilt package instead of compiling the lib from source
-RUN ver=$(ls /packages/OtelHelper.*.nupkg | sed 's#.*/OtelHelper\.\(.*\)\.nupkg#\1#') && \
+RUN ver=$(ls /packages/OtelHelper.[0-9]*.nupkg | sed 's#.*/OtelHelper\.\(.*\)\.nupkg#\1#') && \
     sed -i "s#<ProjectReference[^/]*/>#<PackageReference Include=\"OtelHelper\" Version=\"$ver\" />#" example/dotnet-backend/dotnet-backend.csproj
 RUN dotnet restore example/dotnet-backend/dotnet-backend.csproj -s /packages -s https://api.nuget.org/v3/index.json
 COPY example/dotnet-backend/ example/dotnet-backend/
