@@ -97,3 +97,5 @@ See [CONSUMING.md](CONSUMING.md) for full, validated per-language instructions (
 - [Python — HOW-TO](python/HOW-TO.md)
 - [Go — README](go/README.md)
 - [Go — HOW-TO](go/HOW-TO.md)
+- [Consuming packages](CONSUMING.md)
+- [Changelog](CHANGELOG.md)
