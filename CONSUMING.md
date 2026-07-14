@@ -56,7 +56,7 @@ Package name on import: `otel_helper`. pip/distribution name: `otel-helper`.
 ### Install using gh CLI (simplest)
 
 ```bash
-gh release download v0.1.0-rc.1 --repo StaffOps/staffops-otel-libs --pattern "*.whl"
+gh release download v0.1.0 --repo StaffOps/staffops-otel-libs --pattern "*.whl"
 pip install otel_helper-0.1.0-py3-none-any.whl
 ```
 
@@ -67,7 +67,7 @@ In CI: set `GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}` in the env.
 ```bash
 # Resolve the asset API URL, then download with auth
 ASSET_URL=$(curl -s -H "Authorization: Bearer $GH_PAT" \
-  "https://api.github.com/repos/StaffOps/staffops-otel-libs/releases/tags/v0.1.0-rc.1" \
+  "https://api.github.com/repos/StaffOps/staffops-otel-libs/releases/tags/v0.1.0" \
   | jq -r '.assets[] | select(.name | endswith(".whl")) | .url')
 curl -sL -H "Authorization: Bearer $GH_PAT" -H "Accept: application/octet-stream" \
   "$ASSET_URL" -o otel_helper-0.1.0-py3-none-any.whl
