@@ -1,0 +1,148 @@
+/* ─── Fonts ─────────────────────────────────────────────────────────────── */
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=Inter:wght@400;500;600&display=swap');
+
+/* ─── Brand tokens ───────────────────────────────────────────────────────── */
+:root {
+  --so-green:       #3dd68c;
+  --so-green-dim:   #2ab374;
+  --so-green-glow:  rgba(61, 214, 140, 0.12);
+  --so-bg:          #0b1710;
+  --so-surface:     #0f1e14;
+  --so-surface2:    #162519;
+  --so-border:      rgba(61, 214, 140, 0.14);
+  --so-text:        #dff0e6;
+  --so-text-dim:    #7ea98a;
+  --so-font-mono:   'JetBrains Mono', 'Fira Code', monospace;
+  --so-font-body:   'Inter', system-ui, sans-serif;
+}
+
+/* ─── Global overrides ───────────────────────────────────────────────────── */
+body { font-family: var(--so-font-body); }
+
+[data-md-color-scheme=slate] {
+  --md-default-bg-color:           var(--so-bg);
+  --md-default-bg-color--light:    var(--so-surface);
+  --md-default-bg-color--lighter:  var(--so-surface2);
+  --md-default-fg-color:           var(--so-text);
+  --md-default-fg-color--light:    var(--so-text-dim);
+  --md-code-bg-color:              var(--so-surface);
+  --md-typeset-a-color:            var(--so-green);
+}
+
+[data-md-color-primary=custom] {
+  --md-primary-fg-color:       var(--so-green);
+  --md-primary-bg-color:       var(--so-bg);
+  --md-primary-bg-color--light: rgba(11,23,16,.7);
+}
+[data-md-color-accent=custom] {
+  --md-accent-fg-color: var(--so-green);
+}
+
+/* ─── Header — always dark regardless of scheme ──────────────────────────── */
+.md-header {
+  background: #0a1410 !important;
+  border-bottom: none;
+  box-shadow: none;
+}
+.md-header__title { font-family: var(--so-font-mono); font-weight: 700; color: #e8f5ed !important; }
+.md-header__button { color: #e8f5ed !important; opacity: 1 !important; }
+.md-header__button:hover { color: var(--so-green) !important; }
+.md-header__button.md-logo img { height: 30px; width: 30px; }
+.md-header__source { color: #e8f5ed !important; }
+.md-header__source .md-source { color: #e8f5ed !important; }
+
+/* Search bar */
+.md-search__form {
+  background: rgba(255,255,255,.08) !important;
+  border: 1px solid rgba(255,255,255,.15) !important;
+  border-radius: 6px !important;
+}
+.md-search__input { color: #e8f5ed !important; }
+.md-search__input::placeholder { color: rgba(232,245,237,.45) !important; }
+.md-search__icon { color: #e8f5ed !important; opacity: 1 !important; }
+.md-search__icon:hover { color: var(--so-green) !important; }
+
+/* ─── Nav tabs — always dark ─────────────────────────────────────────────── */
+.md-tabs { background: #0a1410 !important; border-bottom: 1px solid var(--so-border); }
+.md-tabs__link { color: rgba(232,245,237,.6) !important; font-family: var(--so-font-body); font-size: .8rem; letter-spacing: .04em; }
+.md-tabs__link--active,
+.md-tabs__link:hover { color: var(--so-green) !important; }
+
+/* ─── Dark mode content ──────────────────────────────────────────────────── */
+[data-md-color-scheme=slate] .md-nav__link { color: var(--so-text-dim); }
+[data-md-color-scheme=slate] .md-nav__link--active,
+[data-md-color-scheme=slate] .md-nav__link:hover { color: var(--so-green); }
+[data-md-color-scheme=slate] .md-nav__link--active { border-left: 2px solid var(--so-green); padding-left: .5rem; }
+
+/* ─── Light mode content ─────────────────────────────────────────────────── */
+[data-md-color-scheme=default] {
+  --md-default-fg-color:        #1a2e20;
+  --md-default-fg-color--light: #4d7a5a;
+  --md-default-bg-color:        #f4faf6;
+  --md-code-bg-color:           #e8f5ed;
+  --md-typeset-a-color:         #2ab374;
+}
+[data-md-color-scheme=default] .md-nav__link { color: #4d7a5a; }
+[data-md-color-scheme=default] .md-nav__link--active,
+[data-md-color-scheme=default] .md-nav__link:hover { color: #2ab374; }
+[data-md-color-scheme=default] .md-nav__link--active { border-left: 2px solid #2ab374; padding-left: .5rem; }
+[data-md-color-scheme=default] .md-footer { background: #1a2e20; }
+[data-md-color-scheme=default] .md-footer-meta { background: #1a2e20; }
+[data-md-color-scheme=default] .md-footer * { color: #e8f5ed !important; }
+
+/* ─── Content headings ───────────────────────────────────────────────────── */
+.md-typeset h1,
+.md-typeset h2,
+.md-typeset h3 { font-family: var(--so-font-mono); }
+.md-typeset h2 { border-left: 3px solid var(--so-green); padding-left: .75rem; }
+
+/* ─── Links & code ───────────────────────────────────────────────────────── */
+.md-typeset a { color: var(--so-green); }
+.md-typeset a:hover { color: #6ee7aa; }
+[data-md-color-scheme=default] .md-typeset a { color: #2ab374; }
+[data-md-color-scheme=default] .md-typeset a:hover { color: var(--so-green); }
+.md-typeset code {
+  font-family: var(--so-font-mono);
+  color: var(--so-green);
+  background: var(--so-green-glow);
+  border-radius: 3px;
+}
+[data-md-color-scheme=default] .md-typeset :not(pre) > code {
+  color: #1a6b3a;
+}
+[data-md-color-scheme=slate] .md-typeset .highlight {
+  background: rgba(61, 214, 140, 0.07) !important;
+  border: 1px solid rgba(61, 214, 140, 0.2);
+  border-radius: 6px;
+}
+[data-md-color-scheme=slate] .md-typeset pre { background: transparent !important; }
+[data-md-color-scheme=slate] .md-typeset pre > code { color: var(--so-text); background: transparent; }
+
+/* ─── Tables ─────────────────────────────────────────────────────────────── */
+.md-typeset table:not([class]) th {
+  background: var(--so-green-glow);
+  color: var(--so-green);
+  font-family: var(--so-font-mono);
+  font-size: .78rem;
+  letter-spacing: .05em;
+  border-bottom: 1px solid var(--so-border);
+}
+.md-typeset table:not([class]) td { border-color: var(--so-border); }
+
+/* ─── Footer (dark mode) ─────────────────────────────────────────────────── */
+[data-md-color-scheme=slate] .md-footer { background: var(--so-bg); border-top: 1px solid var(--so-border); }
+[data-md-color-scheme=slate] .md-footer-meta { background: var(--so-bg); }
+
+@media (prefers-reduced-motion: reduce) {
+  .so-card { transition: none; }
+}
+
+/* ─── Sub-site brand in tabs ─────────────────────────────────────────────── */
+.so-sub-brand {
+  color: var(--so-green) !important;
+  font-weight: 600;
+  cursor: default;
+  border-right: 1px solid rgba(61,214,140,.25);
+  margin-right: .5rem;
+  padding-right: 1.25rem;
+}
