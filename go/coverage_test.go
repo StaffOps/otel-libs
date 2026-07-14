@@ -238,8 +238,8 @@ func TestBuildResource(t *testing.T) {
 	if found["service.name"] != "test-svc" {
 		t.Errorf("service.name = %q, want %q", found["service.name"], "test-svc")
 	}
-	if found["deployment.environment"] != "PRD" {
-		t.Errorf("deployment.environment = %q, want %q", found["deployment.environment"], "PRD")
+	if found["deployment.environment.name"] != "PRD" {
+		t.Errorf("deployment.environment.name = %q, want %q", found["deployment.environment.name"], "PRD")
 	}
 	if found["custom.key"] != "custom.val" {
 		t.Errorf("custom.key = %q, want %q", found["custom.key"], "custom.val")

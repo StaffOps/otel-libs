@@ -34,7 +34,7 @@ Shared Grafana dashboards in [`dashboards/`](dashboards/) — compatible with an
 - **Prometheus fallback** — when no OTLP endpoint is configured, metrics are exposed via `/metrics` on port 9464 (Prometheus scrape compatible). `OTEL_METRICS_EXPORTER` (`otlp`, `prometheus`, `otlp,prometheus`, `none`) can run OTLP push and `/metrics` simultaneously — see each language's HOW-TO
 - **Standard OTel env vars win over `OTEL_HELPER_*` ones** — never invent a proprietary knob when the spec defines one (e.g. `OTEL_METRIC_EXPORT_INTERVAL`, `OTEL_TRACES_SAMPLER`)
 - **Sampling at the Collector** — SDK uses AlwaysOn, tail sampling at the gateway
-- **Resource attributes at the Collector** — SDK only sets `service.name`
+- **Resource attributes at the Collector** — SDK only sets `service.name` and `deployment.environment.name`, identically across all three languages
 - **TLS by default** — `https://` or schemeless endpoints use TLS (system CA); use `http://` or `OTEL_EXPORTER_OTLP_INSECURE=true` for a plaintext local collector
 - **Metrics exported every 30s** — default interval for all languages (SDK default is 60s)
 

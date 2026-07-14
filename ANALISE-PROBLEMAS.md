@@ -480,25 +480,74 @@ factory `sp => new ActivitySource(sp.GetRequiredService<IOptions<...>>().Value.S
 
 ## Resumo priorizado
 
-| # | Problema | Linguagem | Severidade | Esforço |
-|---|----------|-----------|------------|---------|
-| P1 | Extras no-op / core pesado | Python | Alta | Baixo |
-| P2 | Pin `==` em biblioteca | Python | Alta | Baixo |
-| P3 | Porta do endpoint descartada | Python | Alta | Baixo |
-| P4 | `/metrics` aditivo (`OTEL_METRICS_EXPORTER`) | Todas | Feature | Médio |
-| P5 | Servidor Go frágil (erro/timeout/shutdown/registry) | Go | Média-Alta | Baixo |
-| P6 | Multi-worker quebra `/metrics` + handler montável | Python (Go/.NET ganham handler) | Média-Alta | Médio |
-| P7 | Env vars padrão OTel ignoradas / 30s hardcoded | Todas | Média | Médio |
-| P8 | Semconv `deployment.environment` divergente | Go (auditar todas) | Média | Baixo |
-| P9 | Options duplicadas no registro | .NET | Média-Baixa | Baixo |
+| # | Problema | Linguagem | Severidade | Esforço | Status |
+|---|----------|-----------|------------|---------|--------|
+| P1 | Extras no-op / core pesado | Python | Alta | Baixo | ✅ Resolvido (PR #1) |
+| P2 | Pin `==` em biblioteca | Python | Alta | Baixo | ✅ Resolvido (PR #1) |
+| P3 | Porta do endpoint descartada | Python | Alta | Baixo | ✅ Resolvido (PR #1) |
+| P4 | `/metrics` aditivo (`OTEL_METRICS_EXPORTER`) | Todas | Feature | Médio | ✅ Resolvido (PR #2) |
+| P5 | Servidor Go frágil (erro/timeout/shutdown/registry) | Go | Média-Alta | Baixo | ✅ Resolvido (PR #2) |
+| P6 | Multi-worker quebra `/metrics` + handler montável | Python (Go/.NET ganham handler) | Média-Alta | Médio | ✅ Resolvido (PR #2) |
+| P7 | Env vars padrão OTel ignoradas / 30s hardcoded | Todas | Média | Médio | ✅ Resolvido (PR #2) |
+| P8 | Semconv `deployment.environment` divergente | Go (auditar todas) | Média | Baixo | ✅ Resolvido |
+| P9 | Options duplicadas no registro | .NET | Média-Baixa | Baixo | ✅ Resolvido (com ressalva, ver seção P9) |
 
-**Sugestão de PRs:**
+**PRs:**
 
-1. **PR 1 (bugs Python):** P1 + P2 + P3 — coeso, pequeno, destrava consumo.
-2. **PR 2 (feature /metrics):** P4 + P6 — o pedido do usuário, nas três
-   linguagens, com HOW-TO atualizado (incluindo exemplo de relabel para filtrar
-   métricas no scrape).
-3. **PR 3 (robustez Go):** P5.
-4. **PR 4 (alinhamento com spec, antes do 0.1.0 estável):** P7 + P8 + P9 —
-   importante fechar antes do estável porque mudanças de env var/atributo depois
-   viram breaking change.
+1. **PR 1 (bugs Python):** P1 + P2 + P3 — mergeado.
+2. **PR 2 (feature /metrics):** P4 + P6 + P7 — mergeado.
+3. **PR 3 (site MkDocs):** infraestrutura de documentação, fora desta lista.
+4. **P8 + P9:** implementados diretamente em `main` após os PRs acima
+   (ver notas de resolução em cada seção).
+
+### Nota de resolução — P8
+
+Chave escolhida: `deployment.environment.name` (semconv ≥ v1.27), emitida
+agora nas **três linguagens** (antes só o Go emitia, e com a chave legada
+`deployment.environment`). Não foi feito upgrade do módulo `go.opentelemetry.io/otel`
+no Go — a versão pinada (v1.31.0) só empacota semconv até v1.26.0, sem a
+constante tipada; usei string literal (mesmo padrão que o código já usava),
+evitando um bump de dependência fora de escopo. Nenhum dashboard em
+`dashboards/*.json` referenciava a chave antiga — nada a migrar ali. Testes
+adicionados/atualizados: Go (`coverage_test.go`), Python (`test_setup.py`).
+.NET não tem uma forma pública simples de inspecionar o `Resource` construído
+(sem `.Attributes()` como o Go) — a mudança segue o mesmo padrão já coberto
+por `ResourceAttributes_Accepted_In_Pipeline`, sem teste dedicado novo.
+
+### Nota de resolução — P9
+
+Verifiquei empiricamente (não presumido) que `OpenTelemetry.Extensions.Hosting`
+1.15.3 **não tem** overloads sensíveis a `IServiceProvider` para
+`ConfigureResource`/`WithTracing`/`WithMetrics` — a correção sugerida
+originalmente (usar esses overloads) não compila contra o SDK instalado.
+Correção aplicada em vez disso:
+
+- `ActivitySource`/`Meter`: registrados como singleton via **factory lazy**
+  (`services.AddSingleton(sp => new ActivitySource(sp.GetRequiredService<IOptions<TelemetryOptions>>().Value.ServiceName))`)
+  — resolvido de verdade na primeira resolução via DI, sem cópia manual.
+  Totalmente corrigido, sem ressalva.
+- Resource/Tracing/Metrics/Logging: a cópia manual duplicada
+  (`new TelemetryOptions(); configure(opts); new TelemetryOptionsPostConfigure().PostConfigure(...)`)
+  foi **removida** e substituída por resolução através do pipeline real de
+  options via um `ServiceProvider` provisório (`services.BuildServiceProvider()`),
+  eliminando a segunda implementação hand-rolled que podia divergir da real.
+
+**Ressalva documentada em código:** como não existe overload sensível a `sp`
+nesses pontos do SDK, a resolução ainda acontece uma vez, de forma síncrona,
+durante `AddOtelHelper()` — um `services.Configure<TelemetryOptions>(...)`
+registrado pelo consumidor **depois** dessa chamada não é refletido no
+pipeline de tracing/metrics/resource (embora seja refletido por qualquer
+`IOptions<TelemetryOptions>` resolvido depois, incluindo o `ValidateOnStart`).
+Resolver isso por completo exigiria reescrever `ConfigureTracing`/`ConfigureMetrics`
+para construir sampler/exporter/processor via os overloads `Func<IServiceProvider,T>`
+de baixo nível que o SDK oferece (`SetSampler(Func<...>)`, `AddProcessor(Func<...>)`,
+`AddReader(Func<...>)`) — escopo maior, não justificado pela severidade
+Média-Baixa original do problema.
+
+**Efeito colateral (bom) descoberto durante o teste:** validação de config
+inválida agora falha **dentro de `AddOtelHelper()`** (fail-fast), não mais
+apenas quando algo resolve `IOptions<TelemetryOptions>.Value` depois (ex.: o
+hosted service do `ValidateOnStart`, no startup real da app). Dois testes
+que assumiam o comportamento antigo (`ValidateOnStart_Throws_With_Empty_ServiceName`,
+`ValidateOnStart_Throws_With_Invalid_Endpoint`) foram atualizados para refletir
+isso.

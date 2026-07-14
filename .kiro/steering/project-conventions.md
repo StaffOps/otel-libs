@@ -12,7 +12,7 @@
 
 3. **Sampling at the Collector** — SDK uses AlwaysOn (or configurable ratio via `OTEL_HELPER_SAMPLE_RATIO`). Tail sampling decisions happen at the Collector gateway, not in application code.
 
-4. **Resource attributes at the Collector** — SDK sets only `service.name` and `deployment.environment.name` (semconv ≥ v1.27 key; NOT the legacy `deployment.environment`). All three languages must emit both attributes identically — as of rc.1 only Go emits environment (with the legacy key); see `ANALISE-PROBLEMAS.md` P8. The Collector's `k8sattributes` processor enriches with pod, namespace, node, and cloud metadata.
+4. **Resource attributes at the Collector** — SDK sets only `service.name` and `deployment.environment.name` (semconv ≥ v1.27 key; NOT the legacy `deployment.environment`). All three languages emit both attributes identically (fixed post-rc.1; see `ANALISE-PROBLEMAS.md` P8). The Collector's `k8sattributes` processor enriches with pod, namespace, node, and cloud metadata.
 
 5. **TLS by default** — `https://` or schemeless endpoints use TLS (system CA trust store). Plaintext requires explicit opt-in: `http://` scheme or `OTEL_EXPORTER_OTLP_INSECURE=true`. Explicit code config wins over env/scheme.
 

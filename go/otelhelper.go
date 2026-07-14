@@ -121,9 +121,13 @@ func GetMeter(name ...string) metric.Meter {
 }
 
 func buildResource(opts *Options) *resource.Resource {
+	// "deployment.environment.name" is the semconv >= v1.27 key. The otel module
+	// version pinned in go.mod (v1.31.0) only bundles semconv up to v1.26.0, which
+	// has no typed constant for it — using the literal string keeps this in sync
+	// with Python/.NET without forcing an unrelated SDK-wide version bump.
 	attrs := []attribute.KeyValue{
 		semconv.ServiceName(opts.ServiceName),
-		attribute.String("deployment.environment", string(opts.Environment)),
+		attribute.String("deployment.environment.name", string(opts.Environment)),
 	}
 	for k, v := range opts.ResourceAttributes {
 		attrs = append(attrs, attribute.String(k, v))
