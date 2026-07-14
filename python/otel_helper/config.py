@@ -59,7 +59,10 @@ def _resolve_collector_host() -> str:
         # Could not extract a host — fall back to the raw value rather than
         # emitting a broken "scheme://None" endpoint.
         return env
-    return f"{parsed.scheme}://{parsed.hostname}"
+    # Preserve an explicit port; apply the OTLP default only when absent
+    # (same behavior as the Go and .NET helpers).
+    port = parsed.port or _DEFAULT_OTLP_PORT
+    return f"{parsed.scheme}://{parsed.hostname}:{port}"
 
 
 def _env_bool(var_name: str) -> bool:
@@ -130,10 +133,10 @@ class TelemetryOptions:
             if env_val:
                 self.environment = _parse_environment(env_val)
 
-        collector_host = _resolve_collector_host()
         if not self.otel_endpoint:
+            collector_host = _resolve_collector_host()
             if collector_host:
-                self.otel_endpoint = f"{collector_host}:{_DEFAULT_OTLP_PORT}"
+                self.otel_endpoint = collector_host
             # else: leave empty — triggers Prometheus fallback
 
         if not self.debug_level:

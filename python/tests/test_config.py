@@ -38,7 +38,7 @@ class TestEnvResolution:
     def setup_method(self):
         for var in ["SERVICE_NAME", "OTEL_SERVICE_NAME", "ENVIRONMENT",
                     "OTEL_EXPORTER_OTLP_ENDPOINT", "OTEL_HELPER_DEBUG_LEVEL",
-                    "OTEL_HELPER_EXTRA_INSTRUMENTATION"]:
+                    "OTEL_HELPER_EXTRA_INSTRUMENTATION", "OTEL_EXPORTER_OTLP_INSECURE"]:
             os.environ.pop(var, None)
 
     def test_service_name_from_env(self):
@@ -83,6 +83,31 @@ class TestEnvResolution:
         opts = TelemetryOptions()
         opts.resolve_from_env()
         assert opts.otel_endpoint == ""
+
+    def test_collector_endpoint_preserves_custom_port(self):
+        os.environ["OTEL_EXPORTER_OTLP_ENDPOINT"] = "https://gateway:14317"
+        opts = TelemetryOptions()
+        opts.resolve_from_env()
+        assert opts.otel_endpoint == "https://gateway:14317"
+
+    def test_collector_endpoint_defaults_port_when_absent(self):
+        os.environ["OTEL_EXPORTER_OTLP_ENDPOINT"] = "https://gateway"
+        opts = TelemetryOptions()
+        opts.resolve_from_env()
+        assert opts.otel_endpoint == "https://gateway:4317"
+
+    def test_collector_endpoint_schemeless_preserves_port(self):
+        os.environ["OTEL_EXPORTER_OTLP_ENDPOINT"] = "gateway:14317"
+        opts = TelemetryOptions()
+        opts.resolve_from_env()
+        assert opts.otel_endpoint == "https://gateway:14317"
+
+    def test_collector_endpoint_strips_path(self):
+        """Scheme+host+port are kept; any path suffix is dropped."""
+        os.environ["OTEL_EXPORTER_OTLP_ENDPOINT"] = "http://collector.svc:4318/v1/traces"
+        opts = TelemetryOptions()
+        opts.resolve_from_env()
+        assert opts.otel_endpoint == "http://collector.svc:4318"
 
     def test_debug_level_from_env(self):
         os.environ["OTEL_HELPER_DEBUG_LEVEL"] = "true"
