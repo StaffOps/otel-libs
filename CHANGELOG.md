@@ -9,6 +9,12 @@ currently aligned at the same version.
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-07-14
+
+First stable release. All items tracked in `ANALISE-PROBLEMAS.md` (P1–P9)
+are resolved; behavior is unchanged from `0.1.0-rc.1` for anything not
+listed below — this release folds in everything shipped since the rc.
+
 ### Added
 
 - **`OTEL_METRICS_EXPORTER` contract** (all languages) — selects the active
