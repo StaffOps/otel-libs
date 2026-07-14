@@ -8,7 +8,7 @@
 | 2. Metrics pipeline: multi-reader (3 langs) | ✅ Done (Python, Go, .NET) |
 | 3. Mountable handlers + listener robustness | ✅ Done (Python, Go, .NET incl. ASP.NET Core HOW-TO) |
 | 4. Standard env precedence (interval, sampler) | ✅ Done (Python, Go, .NET incl. dedicated .NET sampler tests) |
-| 5. Docs (HOW-TOs, README, CHANGELOG, steering) | 🟨 .NET HOW-TO §10/§15 done; README/CHANGELOG/other HOW-TOs/steering-check not started |
+| 5. Docs (HOW-TOs, README, CHANGELOG, steering) | ✅ Done (all 3 language HOW-TOs, root README, root CHANGELOG; steering was already accurate) |
 
 Prerequisite: PR 1 (`fix/python-packaging-endpoint`, P1–P3 of
 `ANALISE-PROBLEMAS.md`) is **open, CI green, not yet merged**
@@ -67,36 +67,30 @@ untracked files both times, nothing staged.
   coverage; Go all tests pass (`-count=1`, 22.4s); .NET 164 passed, 0 failed,
   0 warnings** (159 + 5 new sampler tests).
 
-**Caveat — still NOT verified:**
-- The CI job also gates on `/p:CollectCoverage=true ... /p:Threshold=90`
-  (coverlet.msbuild, 90% line coverage). Reproducing that exact invocation in
-  the Docker container on this machine produced inconsistent/empty output
-  across several attempts (build succeeded, no visible test report, or fully
-  silent with exit 0) — most likely an environment artifact (ARM64 host +
-  coverlet.msbuild's native collector, or an MSBuild incremental-build skip),
-  not evidence of a real problem, since the plain `dotnet test` runs were
-  clean and reproducible every time. **The 90% coverage gate itself has not
-  been independently confirmed for the new `.cs` test files** — this will be
-  checked by the real CI once the branch is pushed and the PR opened, rather
-  than re-fought locally.
+**Resolved after PR 2 opened:**
+- PR 2 (https://github.com/StaffOps/otel-libs/pull/2) was retargeted to
+  `main` (its stacked base on PR 1 doesn't trigger CI — `ci.yml`'s
+  `pull_request` trigger is filtered to `branches: [main]`) and
+  closed/reopened to force a fresh CI run. Result: **all 12 checks green**,
+  including both `.NET 8.0.x (test + coverage)` and `.NET 10.0.x (test +
+  coverage)` jobs — which run with the exact `/p:CollectCoverage=true
+  /p:Threshold=90` flags that couldn't be reproduced locally. **The 90%
+  coverage gate is now confirmed passing**, closing the caveat that was open
+  when this branch was first pushed.
+- Phase 5 docs completed: Python and Go HOW-TOs got the same "Metrics without
+  a Collector" dual-mode section .NET has (§14/§13 respectively — mount
+  example, multi-worker guidance, scrape-side filtering note); root
+  `README.md` env var table + precedence rule; root `CHANGELOG.md` entry
+  under Unreleased. Steering (`.kiro/steering/project-conventions.md`) was
+  re-checked and remains accurate against the shipped code — no changes
+  needed.
 
-**Not started:**
-- Phase 5 docs beyond the .NET HOW-TO done above: Python/Go HOW-TOs still
-  need the same "Metrics without a Collector" section (they already had a
-  Prometheus-fallback section from rc.1 — needs the dual-mode/env-var-table
-  update mirroring what .NET got); root `README.md` env var table; root
-  `CHANGELOG.md` entry under Unreleased; steering re-check against final
-  shipped code (the steering file itself was already accurate when read this
-  session — see below).
-- No PR opened yet for this branch (PR 2, stacked on the still-unmerged PR 1:
-  https://github.com/StaffOps/otel-libs/pull/1).
-
-**Bottom line on "were these steps really done?":** Yes for Python and Go —
-independently re-executed, not just recalled. Yes for .NET *compiling and
-passing tests, including the newly-added sampler tests* — independently
-executed via Docker (this machine has no `dotnet` CLI) both before and after
-the warning fixes. Not yet confirmed for the .NET *coverage threshold* —
-flag this as open, don't assume it passes; it will surface in real CI.
+**Bottom line on "were these steps really done?":** Yes, across the board —
+Python and Go were independently re-executed (not recalled), .NET was
+verified twice via Docker locally (compiling + passing tests, before and
+after the warning fixes) and then a third time via the actual GitHub Actions
+CI run, which also closed the one remaining gap: the .NET coverage-threshold
+gate.
 
 ---
 
@@ -125,13 +119,13 @@ flag this as open, don't assume it passes; it will surface in real CI.
 - [x] `TelemetryOptions.ExportIntervalMs` honoring `OTEL_METRIC_EXPORT_INTERVAL` (stop hardcoding 30_000 in `MetricsSetup.cs:29`)
 - [x] Validation in `TelemetryOptionsValidator` (unknown value, otlp-without-endpoint)
 
-### Task 1.4: Contract tests (3 langs) ✅ Python/Go verified, 🟨 .NET written/unverified
+### Task 1.4: Contract tests (3 langs) ✅
 **Covers:** US-6
 
 - [x] Table test: every `OTEL_METRICS_EXPORTER` value of US-1 → expected reader set / validation error (`python/tests/test_metrics_contract.py`, `go/metrics_contract_test.go`, `dotnet/OtelHelper.Tests/MetricsContractTests.cs`)
 - [x] Precedence: explicit option beats env; standard env beats legacy inference
 - [x] Case/whitespace tolerance; `none` behavior
-- [ ] **`dotnet test` not yet run this session** — confirm the .NET contract tests actually pass before treating 1.4 as done
+- [x] .NET verified: `dotnet test` via Docker (164 passed, 0 failed, 0 warnings) + confirmed again in real CI with the 90% coverage gate
 
 ---
 
@@ -155,12 +149,12 @@ flag this as open, don't assume it passes; it will surface in real CI.
 
 - [x] `AddOtlpExporter` and `AddPrometheusHttpListener` per resolved list (both allowed on same builder) (`dotnet/OtelHelper/MetricsSetup.cs`)
 
-### Task 2.4: Dual-mode integration tests (3 langs) ✅ Python/Go verified, 🟨 .NET written/unverified
+### Task 2.4: Dual-mode integration tests (3 langs) ✅
 **Covers:** US-6
 
 - [x] Same counter visible in in-memory OTLP reader AND scraped from `/metrics` (Prometheus text format), single provider
 - [x] `prometheus`-only mode with endpoint set: nothing pushed via OTLP
-- [ ] .NET: same "not yet run" caveat as 1.4 applies here (same test file)
+- [x] .NET verified alongside 1.4 (same test file, same CI run)
 
 ---
 
@@ -181,65 +175,54 @@ flag this as open, don't assume it passes; it will surface in real CI.
 - [x] `srv.Shutdown` appended to the composite shutdown chain in `otelhelper.go`
 - [x] Port `0` / `WithoutMetricsListener()` → reader active, no listener
 
-### Task 3.3: .NET web-app path 🟨 code done, HOW-TO doc pending
+### Task 3.3: .NET web-app path ✅
 **Covers:** US-3
 
-- [ ] HOW-TO section: `Prometheus.AspNetCore` + `MapPrometheusScrapingEndpoint()` for ASP.NET Core apps; `HttpListener` for headless processes — **not written yet**
+- [x] HOW-TO section: `Prometheus.AspNetCore` + `MapPrometheusScrapingEndpoint()` for ASP.NET Core apps; `HttpListener` for headless processes (`dotnet/HOW-TO.md` §15)
 - [x] `PrometheusMetricsPort = 0` → skip `AddPrometheusHttpListener` (`dotnet/OtelHelper/MetricsSetup.cs`)
 
-### Task 3.4: Handler tests (3 langs) ✅ Python/Go verified, 🟨 .NET written/unverified
+### Task 3.4: Handler tests (3 langs) ✅
 **Covers:** US-6
 
 - [x] Mounted handler serves Prometheus text format (Python: ASGI test client; Go: `httptest`)
 - [x] Port 0 suppresses listener; busy-port failure is loud (Py raise / Go setup error)
-- [ ] .NET: same "not yet run" caveat applies (port-0 build test written in `MetricsContractTests.cs`, not executed)
+- [x] .NET port-0 build test (`MetricsContractTests.cs`) verified passing via Docker + CI
 
 ---
 
 ## Phase 4: Sampler Precedence
 
-### Task 4.1: `OTEL_TRACES_SAMPLER` respected (3 langs) ✅ Python/Go verified, 🟨 .NET written/unverified
+### Task 4.1: `OTEL_TRACES_SAMPLER` respected (3 langs) ✅
 **Covers:** US-2
 
 - [x] If `OTEL_TRACES_SAMPLER` env set: helper does not construct its own sampler from `OTEL_HELPER_SAMPLE_RATIO` (SDK env config wins) — `python/otel_helper/tracing.py`, `go/tracing.go`, `dotnet/OtelHelper/TracerSetup.cs` + `TelemetryOptionsPostConfigure.cs`
-- [x] Tests: sampler type asserted per combination (helper var only / standard var only / both → standard wins) — `python/tests/test_sampler_precedence.py`, sampler tests in `go/metrics_contract_test.go`
-- [ ] .NET: no dedicated sampler-precedence test written yet (only covered indirectly, if at all, by `MetricsContractTests.cs`) — **gap**, add before closing this task
+- [x] Tests: sampler type asserted per combination (helper var only / standard var only / both → standard wins) — `python/tests/test_sampler_precedence.py`, sampler tests in `go/metrics_contract_test.go`, `dotnet/OtelHelper.Tests/SamplerPrecedenceTests.cs` (5 tests)
+- [x] .NET: closed the gap — before writing the test, empirically verified (disposable console app in the SDK 8.0 container) that `Sdk.CreateTracerProviderBuilder()` reads `OTEL_TRACES_SAMPLER` on its own when `SetSampler()` isn't called, and that explicit `SetSampler()` still overrides it
 
 ---
 
-## Phase 5: Documentation — ⬜ NOT STARTED
+## Phase 5: Documentation — ✅ DONE
 
-### Task 5.1: HOW-TOs (3 langs)
+### Task 5.1: HOW-TOs (3 langs) ✅
 **Covers:** US-3, US-4, US-5
 
-- [ ] "Metrics without a Collector" section: modes table, dual-mode example, mount example (`python/HOW-TO.md`, `go/HOW-TO.md`, `dotnet/HOW-TO.md`)
-- [ ] Multi-worker guidance (gunicorn: mount or `PROMETHEUS_MULTIPROC_DIR`)
-- [ ] Scrape-side subset filtering: `metric_relabel_configs` + vmagent example; note that `OTEL_HELPER_DISABLED_METRICS` affects all exporters
-- [ ] .NET-specific: the ASP.NET Core `MapPrometheusScrapingEndpoint()` section from Task 3.3 belongs here
+- [x] "Metrics without a Collector" section: modes table, dual-mode example, mount example (`python/HOW-TO.md` §14, `go/HOW-TO.md` §13, `dotnet/HOW-TO.md` §15)
+- [x] Multi-worker guidance (Python: mount or `PROMETHEUS_MULTIPROC_DIR`; Go: `MetricsHandler()` on own mux; .NET: ASP.NET Core mount)
+- [x] Scrape-side subset filtering: `metric_relabel_configs` + vmagent example; note that `OTEL_HELPER_DISABLED_METRICS` affects all exporters
+- [x] .NET-specific: the ASP.NET Core `MapPrometheusScrapingEndpoint()` section from Task 3.3 included
 
-### Task 5.2: Root README + CHANGELOG
-- [ ] Env var table: add `OTEL_METRICS_EXPORTER`, `OTEL_METRIC_EXPORT_INTERVAL`; precedence rule paragraph (root `README.md`)
-- [ ] CHANGELOG entry under Unreleased (root `CHANGELOG.md` — already has an Unreleased section from PR 1, this spec adds a second entry to it)
+### Task 5.2: Root README + CHANGELOG ✅
+- [x] Env var table: added `OTEL_METRICS_EXPORTER`, `OTEL_METRIC_EXPORT_INTERVAL`, `OTEL_TRACES_SAMPLER`; precedence rule paragraph (root `README.md`)
+- [x] CHANGELOG entry under Unreleased (root `CHANGELOG.md` — added as a second entry alongside PR 1's)
 
-### Task 5.3: Steering check
-- [ ] Confirm `.kiro/steering/project-conventions.md` matches shipped behavior (table already updated 2026-07-04 anticipating this spec) — note: `project-conventions.md` shows as modified in `git status` on `main`, not yet committed; verify it doesn't conflict with what actually shipped here
+### Task 5.3: Steering check ✅
+- [x] Confirmed `.kiro/steering/project-conventions.md` matches shipped behavior — read the full file this session, cross-checked every claim (env var precedence, `OTEL_METRICS_EXPORTER` values, sampler precedence, packaging convention) against the actual implementation. Accurate as-is, no changes needed. Committed alongside this work (it predates this session but was still uncommitted).
 
-### Immediate next steps, in order
+### Follow-up needed after this spec (not part of it)
 
-1. Run `dotnet test` on `dotnet/OtelHelper.Tests` (working dir has uncommitted
-   `.cs` changes across `Models/`, `MetricsSetup.cs`, `TracerSetup.cs`,
-   `TelemetryExtensions.cs`, plus the new `MetricsContractTests.cs`). Fix any
-   build/test failures before moving on.
-2. Add the missing .NET sampler-precedence test (Task 4.1 gap above).
-3. Write the .NET HOW-TO section for the ASP.NET Core Prometheus path (Task 3.3).
-4. Do Phase 5 docs across all three languages + root README/CHANGELOG/steering.
-5. Decide commit granularity (see session notes above) and commit.
-6. Push `feat/metrics-exporter-contract` and open PR 2, stacked on PR 1
-   (https://github.com/StaffOps/otel-libs/pull/1, still unmerged).
-7. After PR 2: PR 3/4 from `ANALISE-PROBLEMAS.md` remain untouched —
-   P8 (semconv `deployment.environment` vs `.name` divergence) and P9 (.NET
-   options resolved twice) are not part of this spec and still need their own
-   work.
+`ANALISE-PROBLEMAS.md` items not touched by this spec, still open:
+- **P8** — semconv `deployment.environment` (legacy, Go) vs `deployment.environment.name` (current spec) divergence across languages.
+- **P9** — .NET resolves `TelemetryOptions` twice (once for DI's options pipeline, once manually in `AddOtelHelper`), a latent trap if they ever diverge.
 
 ---
 
