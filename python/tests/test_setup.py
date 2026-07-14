@@ -52,6 +52,18 @@ class TestSetupTelemetry:
         assert provider is not None
         assert hasattr(provider, 'resource')
 
+    def test_resource_emits_deployment_environment_name(self):
+        """P8: 'deployment.environment.name' (semconv >= v1.27), not the legacy
+        'deployment.environment' key — parity with Go/.NET."""
+        setup_telemetry(TelemetryOptions(
+            service_name="test",
+            environment=DeploymentEnvironment.PRD,
+            otel_endpoint="http://localhost:4317",
+        ))
+        provider = trace.get_tracer_provider()
+        assert provider.resource.attributes["deployment.environment.name"] == "PRD"
+        assert "deployment.environment" not in provider.resource.attributes
+
     def test_sets_meter_provider(self):
         setup_telemetry(TelemetryOptions(
             service_name="test",

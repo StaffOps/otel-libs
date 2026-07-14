@@ -38,8 +38,12 @@ def setup_telemetry(options: TelemetryOptions | None = None) -> TelemetryOptions
     options.resolve_from_env()
     options.validate()
 
-    # Build resource
-    attributes = {SERVICE_NAME: options.service_name}
+    # Build resource. "deployment.environment.name" is the semconv >= v1.27 key
+    # (not the legacy "deployment.environment") — kept in sync with Go/.NET.
+    attributes = {
+        SERVICE_NAME: options.service_name,
+        "deployment.environment.name": options.environment.value,
+    }
     attributes.update(options.resource_attributes)
     resource = Resource.create(attributes)
 

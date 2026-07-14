@@ -37,6 +37,25 @@ currently aligned at the same version.
 
 ### Fixed
 
+- **Cross-language `deployment.environment.name` resource attribute** (P8) —
+  only Go emitted this attribute, and with the legacy semconv key
+  (`deployment.environment`). All three languages now emit
+  `deployment.environment.name` (semconv >= v1.27) identically, so the shared
+  dashboards in `dashboards/` filter/group consistently regardless of which
+  language emitted the telemetry.
+- **.NET: options no longer resolved through two independent code paths**
+  (P9) — `AddOtelHelper()` used to build a hand-rolled copy of the resolved
+  `TelemetryOptions` (a duplicate `Configure` + `PostConfigure` call) separate
+  from the one DI's `IOptions<TelemetryOptions>` pipeline would produce, so
+  the two could silently drift apart. `ActivitySource`/`Meter` are now
+  registered as DI factories resolved lazily from the real options pipeline;
+  the resource/tracing/metrics/logging setup resolves through that same
+  pipeline via a bootstrap `ServiceProvider`, removing the duplicate
+  implementation. Side effect: invalid configuration now fails fast inside
+  `AddOtelHelper()` itself instead of only surfacing later when something
+  resolves `IOptions<TelemetryOptions>.Value` (e.g. `ValidateOnStart` at
+  real app startup).
+
 - **Go: `/metrics` listener robustness** — `ListenAndServe` errors were
   silently swallowed (a busy port meant no metrics and no warning — the exact
   "silent telemetry loss" class of bug this project targets). The listener

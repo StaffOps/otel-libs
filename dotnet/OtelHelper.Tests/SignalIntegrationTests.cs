@@ -124,37 +124,34 @@ public class SignalIntegrationTests : IDisposable
     [Fact]
     public void ValidateOnStart_Throws_With_Empty_ServiceName()
     {
+        // AddOtelHelper resolves IOptions<TelemetryOptions> through the real DI options
+        // pipeline (Configure -> PostConfigure -> Validate) as part of registration, so
+        // invalid config now fails fast right here instead of waiting for a later resolution
+        // (e.g. the ValidateOnStart hosted service at real app startup) — see the P9 fix.
         var services = new ServiceCollection();
-        services.AddOtelHelper(opts =>
-        {
-            opts.ServiceName = "";
-            opts.OtelCollectorEndpoint = "http://localhost:4317";
-        });
 
-        using var provider = services.BuildServiceProvider();
-
-        // Accessing validated options triggers validation
         var ex = Assert.Throws<OptionsValidationException>(() =>
-            provider.GetRequiredService<IOptions<TelemetryOptions>>().Value);
+            services.AddOtelHelper(opts =>
+            {
+                opts.ServiceName = "";
+                opts.OtelCollectorEndpoint = "http://localhost:4317";
+            }));
         Assert.Contains("ServiceName", ex.Message);
     }
 
-    // --- ValidateOnStart throws with invalid endpoint ---
+    // --- Invalid config throws at AddOtelHelper time (fail-fast) ---
 
     [Fact]
     public void ValidateOnStart_Throws_With_Invalid_Endpoint()
     {
         var services = new ServiceCollection();
-        services.AddOtelHelper(opts =>
-        {
-            opts.ServiceName = "test";
-            opts.OtelCollectorEndpoint = "not-a-uri";
-        });
-
-        using var provider = services.BuildServiceProvider();
 
         var ex = Assert.Throws<OptionsValidationException>(() =>
-            provider.GetRequiredService<IOptions<TelemetryOptions>>().Value);
+            services.AddOtelHelper(opts =>
+            {
+                opts.ServiceName = "test";
+                opts.OtelCollectorEndpoint = "not-a-uri";
+            }));
         Assert.Contains("OtelCollectorEndpoint", ex.Message);
     }
 
