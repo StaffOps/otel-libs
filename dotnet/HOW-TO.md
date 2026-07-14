@@ -391,13 +391,17 @@ When you use placeholders in logs, values are extracted as **separate attributes
 | `OTEL_HELPER_DEBUG_LEVEL` | Debug mode (Debug logs, all instrumentations, 100% sampling) | `false` | Manual |
 | `OTEL_HELPER_EXTRA_INSTRUMENTATION` | Extra instrumentations (SQL, AWS) | `SQL` | Helm Chart |
 | `OTEL_HELPER_SAMPLE_RATIO` | Head sampling ratio (0.0-1.0). 1.0 = AlwaysOn | `1.0` | Helm Chart |
-| `OTEL_HELPER_METRICS_PORT` | Prometheus `/metrics` port (when no OTLP endpoint) | `9464` | Helm Chart |
+| `OTEL_HELPER_METRICS_PORT` | Standalone Prometheus `/metrics` listener port (`0` disables it) | `9464` | Helm Chart |
+| `OTEL_METRICS_EXPORTER` | Metric exporter(s): `otlp`, `prometheus`, `otlp,prometheus`, `none` | legacy inference | Manual |
+| `OTEL_METRIC_EXPORT_INTERVAL` | OTLP metric export interval (ms) | `30000` | Manual |
+| `OTEL_TRACES_SAMPLER` | Standard OTel sampler config — takes priority over `OTEL_HELPER_SAMPLE_RATIO` when set | _(unset)_ | Manual |
 
 ### Configuration Priority
 
 1. **Code** (override in `AddOtelHelper(opts => ...)`) — highest priority
-2. **Environment variable** — applied if code didn't set it
-3. **Library default** — used if neither of the above defined it
+2. **Standard OTel environment variable** (`OTEL_METRICS_EXPORTER`, `OTEL_METRIC_EXPORT_INTERVAL`, `OTEL_TRACES_SAMPLER`) — applied if code didn't set the equivalent option
+3. **`OTEL_HELPER_*` environment variable** — applied if neither of the above is present
+4. **Library default** — used if none of the above defined it
 
 ---
 
@@ -508,7 +512,7 @@ These are typically set in the Dockerfile or Helm values for the target deployme
 
 ---
 
-## 15. Prometheus `/metrics` Fallback
+## 15. Metrics Without a Collector (Prometheus `/metrics`)
 
 When `OTEL_EXPORTER_OTLP_ENDPOINT` is **not set**, the library automatically falls back to local-only mode:
 
@@ -521,6 +525,59 @@ When `OTEL_EXPORTER_OTLP_ENDPOINT` is **not set**, the library automatically fal
 The port is configurable via `OTEL_HELPER_METRICS_PORT` env var (default: `9464`).
 
 This enables the standard Kubernetes scrape pattern: deploy without a Collector, and let Prometheus/VictoriaMetrics scrape `/metrics` directly from the pod.
+
+### Running OTLP push AND `/metrics` at the same time
+
+`OTEL_METRICS_EXPORTER` selects which exporter(s) are active on the metrics pipeline, independent of the legacy endpoint-based fallback above:
+
+| `OTEL_METRICS_EXPORTER` | Behavior |
+|---|---|
+| _(unset)_ | Legacy: OTLP if `OTEL_EXPORTER_OTLP_ENDPOINT` is set, else Prometheus fallback |
+| `otlp` | OTLP only. Fails validation at startup if no endpoint is configured |
+| `prometheus` | `/metrics` only, even when an OTLP endpoint IS set |
+| `otlp,prometheus` | **Both** — one `MeterProvider`, two readers. Same instrument, same values, in both outputs |
+| `none` | Metrics disabled entirely (equivalent to `OTEL_HELPER_DISABLED_SIGNALS=metrics`) |
+
+The equivalent programmatic option — `TelemetryOptions.MetricExporters` (comma-separated string) — wins over the env var:
+
+```csharp
+builder.Services.AddOtelHelper(opts =>
+{
+    opts.MetricExporters = "otlp,prometheus";
+});
+```
+
+`OTEL_METRIC_EXPORT_INTERVAL` (milliseconds) controls the OTLP push interval; the library default is 30000ms, overriding the SDK's own 60s default. `TelemetryOptions.ExportIntervalMs` wins over the env var.
+
+### ASP.NET Core: mounting `/metrics` on your own pipeline
+
+The standalone listener (`AddPrometheusHttpListener`, port 9464 by default) binds its own `HttpListener` — fine for workers/CLIs with no HTTP server of their own, but the **wrong** choice for a web app running behind Kestrel: it's a second port to expose, and it breaks under multiple workers/replicas sharing a pod (each process tries to bind the same port).
+
+For ASP.NET Core apps, add `OpenTelemetry.Exporter.Prometheus.AspNetCore` to your own project (core does not take this dependency) and map the scrape endpoint on the app's existing pipeline:
+
+```bash
+dotnet add package OpenTelemetry.Exporter.Prometheus.AspNetCore
+```
+
+```csharp
+var builder = WebApplication.CreateBuilder(args);
+
+builder.Services.AddOtelHelper(opts =>
+{
+    opts.MetricExporters = "prometheus"; // or "otlp,prometheus" for dual mode
+    opts.PrometheusMetricsPort = 0;       // disable the standalone HttpListener
+});
+
+var app = builder.Build();
+app.MapPrometheusScrapingEndpoint(); // serves /metrics on the app's own Kestrel pipeline
+app.Run();
+```
+
+`PrometheusMetricsPort = 0` is required here — otherwise the core library still binds its own listener on 9464 alongside the ASP.NET Core endpoint, which is redundant (and a second port to manage). Use the standalone listener (default `PrometheusMetricsPort = 9464`, no code change needed) only for headless processes without their own HTTP pipeline.
+
+### Scoping down what gets scraped
+
+`OTEL_HELPER_DISABLED_METRICS` drops instruments from **every** active exporter — there's no supported way to push everything via OTLP while exposing only a subset on `/metrics` from the same `MeterProvider` (the OTel SDK's Views are per-provider, not per-reader). If you need a narrower `/metrics` output while keeping the full set on OTLP, filter on the scrape side instead — e.g. Prometheus `metric_relabel_configs` or a vmagent `drop` relabel rule matching the instrument name.
 
 ---
 

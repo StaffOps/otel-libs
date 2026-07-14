@@ -26,9 +26,14 @@ ENV_DISABLED_SIGNALS = "OTEL_HELPER_DISABLED_SIGNALS"
 ENV_DISABLED_METRICS = "OTEL_HELPER_DISABLED_METRICS"
 ENV_METRICS_PORT = "OTEL_HELPER_METRICS_PORT"
 ENV_INSECURE = "OTEL_EXPORTER_OTLP_INSECURE"
+ENV_METRICS_EXPORTER = "OTEL_METRICS_EXPORTER"
+ENV_METRIC_EXPORT_INTERVAL = "OTEL_METRIC_EXPORT_INTERVAL"
+ENV_TRACES_SAMPLER = "OTEL_TRACES_SAMPLER"
 
 _DEFAULT_COLLECTOR_HOST = "http://localhost"
 _DEFAULT_OTLP_PORT = 4317
+_DEFAULT_EXPORT_INTERVAL_MS = 30_000
+_VALID_METRIC_EXPORTERS = ("otlp", "prometheus", "none")
 
 
 def _parse_environment(value: str) -> DeploymentEnvironment:
@@ -94,6 +99,12 @@ class TelemetryOptions:
     sample_ratio: float = 1.0
     disabled_signals: list[str] = field(default_factory=list)
     disabled_metrics: list[str] = field(default_factory=list)
+    # Metric exporters: "otlp", "prometheus", "none". None = resolve from
+    # OTEL_METRICS_EXPORTER, falling back to legacy inference (otlp when an
+    # endpoint is set, prometheus otherwise). Explicit value wins over env.
+    metric_exporters: list[str] | None = None
+    # Metric export interval (ms). None = OTEL_METRIC_EXPORT_INTERVAL, else 30000.
+    export_interval_ms: int | None = None
     prometheus_metrics_port: int = 9464
     minimum_log_level: int | None = None
     resource_attributes: dict[str, object] = field(default_factory=dict)
@@ -107,6 +118,14 @@ class TelemetryOptions:
     def is_signal_enabled(self, signal: str) -> bool:
         """Check if a signal (traces, metrics, logs) is enabled."""
         return signal.lower() not in [s.lower() for s in self.disabled_signals]
+
+    def resolved_metric_exporters(self) -> list[str]:
+        """Active metric exporters after resolution. "none" resolves to an empty list."""
+        if self.metric_exporters is None:
+            return ["otlp"] if self.otel_endpoint else ["prometheus"]
+        if self.metric_exporters == ["none"]:
+            return []
+        return self.metric_exporters
 
     def resolve_insecure(self) -> bool:
         """Resolve whether OTLP export should use insecure (plaintext) connection.
@@ -147,13 +166,35 @@ class TelemetryOptions:
             if env_extra is not None:
                 self.extra_instrumentation = env_extra
 
-        if self.sample_ratio == 1.0:
+        # Standard OTel var wins over the proprietary one: when OTEL_TRACES_SAMPLER
+        # is set, the SDK's own env handling configures the sampler and
+        # OTEL_HELPER_SAMPLE_RATIO is ignored.
+        if self.sample_ratio == 1.0 and not os.getenv(ENV_TRACES_SAMPLER):
             env_ratio = os.getenv(ENV_SAMPLE_RATIO)
             if env_ratio is not None:
                 try:
                     self.sample_ratio = max(0.0, min(1.0, float(env_ratio)))
                 except ValueError:
                     pass
+
+        if self.metric_exporters is None:
+            env_exporters = os.getenv(ENV_METRICS_EXPORTER, "").strip()
+            if env_exporters:
+                self.metric_exporters = [
+                    e.strip().lower() for e in env_exporters.split(",") if e.strip()
+                ]
+        else:
+            self.metric_exporters = [e.strip().lower() for e in self.metric_exporters if e.strip()]
+
+        if self.export_interval_ms is None:
+            env_interval = os.getenv(ENV_METRIC_EXPORT_INTERVAL)
+            if env_interval is not None:
+                try:
+                    self.export_interval_ms = int(env_interval)
+                except ValueError:
+                    pass
+        if self.export_interval_ms is None:
+            self.export_interval_ms = _DEFAULT_EXPORT_INTERVAL_MS
 
         if not self.disabled_signals:
             env_disabled = os.getenv(ENV_DISABLED_SIGNALS)
@@ -189,3 +230,23 @@ class TelemetryOptions:
 
         if self.export_timeout_ms <= 0:
             raise ValueError("[OtelHelper] ExportTimeoutMs must be greater than 0.")
+
+        if self.export_interval_ms is not None and self.export_interval_ms <= 0:
+            raise ValueError("[OtelHelper] ExportIntervalMs must be greater than 0.")
+
+        if self.metric_exporters is not None:
+            unknown = [e for e in self.metric_exporters if e not in _VALID_METRIC_EXPORTERS]
+            if unknown:
+                raise ValueError(
+                    f"[OtelHelper] Unknown metric exporter(s) {unknown} in {ENV_METRICS_EXPORTER}. "
+                    f"Valid values: {', '.join(_VALID_METRIC_EXPORTERS)}."
+                )
+            if "none" in self.metric_exporters and len(self.metric_exporters) > 1:
+                raise ValueError(
+                    f"[OtelHelper] 'none' cannot be combined with other metric exporters in {ENV_METRICS_EXPORTER}."
+                )
+        if "otlp" in (self.metric_exporters or []) and not self.otel_endpoint:
+            raise ValueError(
+                "[OtelHelper] Metric exporter 'otlp' requires an endpoint. "
+                f"Set {ENV_COLLECTOR_ENDPOINT} or remove 'otlp' from {ENV_METRICS_EXPORTER}."
+            )

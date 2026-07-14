@@ -21,6 +21,12 @@ namespace OtelHelper
         public const string DisabledMetricsEnvVar = "OTEL_HELPER_DISABLED_METRICS";
         public const string InsecureEnvVar = "OTEL_EXPORTER_OTLP_INSECURE";
         public const string MetricsPortEnvVar = "OTEL_HELPER_METRICS_PORT";
+        public const string MetricsExporterEnvVar = "OTEL_METRICS_EXPORTER";
+        public const string MetricExportIntervalEnvVar = "OTEL_METRIC_EXPORT_INTERVAL";
+        public const string TracesSamplerEnvVar = "OTEL_TRACES_SAMPLER";
+
+        internal const int DefaultExportIntervalMs = 30_000;
+        internal static readonly string[] ValidMetricExporters = { "otlp", "prometheus", "none" };
 
         [Required(AllowEmptyStrings = false)]
         public string ServiceName { get; set; } = "my-service";
@@ -81,8 +87,23 @@ namespace OtelHelper
         public string DisabledMetrics { get; set; } = "";
 
         /// <summary>
-        /// Port for the Prometheus /metrics HTTP listener when no OTLP endpoint is configured.
-        /// Default: 9464 (Prometheus convention). Set via OTEL_HELPER_METRICS_PORT env var.
+        /// Comma-separated metric exporters: "otlp", "prometheus", "none".
+        /// Empty = resolve from OTEL_METRICS_EXPORTER, falling back to legacy
+        /// inference (otlp when an endpoint is set, prometheus otherwise).
+        /// </summary>
+        public string MetricExporters { get; set; } = "";
+
+        /// <summary>
+        /// Metric export interval (ms) for the OTLP reader.
+        /// Null = resolve from OTEL_METRIC_EXPORT_INTERVAL, else 30000.
+        /// </summary>
+        public int? ExportIntervalMs { get; set; }
+
+        /// <summary>
+        /// Port for the standalone Prometheus /metrics HTTP listener.
+        /// Default: 9464 (OTEL_HELPER_METRICS_PORT). 0 disables the listener —
+        /// for ASP.NET Core apps, prefer OpenTelemetry.Exporter.Prometheus.AspNetCore
+        /// with MapPrometheusScrapingEndpoint() on the app's own pipeline.
         /// </summary>
         public int PrometheusMetricsPort { get; set; } = 9464;
 
@@ -109,6 +130,28 @@ namespace OtelHelper
                 DeploymentEnvironment.PRD => LogLevel.Warning,
                 _ => LogLevel.Information,
             };
+        }
+
+        /// <summary>
+        /// Active metric exporters after resolution. "none" resolves to empty
+        /// (metrics disabled). Legacy inference when MetricExporters is unset:
+        /// otlp when an endpoint is configured, prometheus otherwise.
+        /// </summary>
+        public string[] ResolvedMetricExporters()
+        {
+            if (string.IsNullOrWhiteSpace(MetricExporters))
+                return string.IsNullOrWhiteSpace(OtelCollectorEndpoint)
+                    ? new[] { "prometheus" }
+                    : new[] { "otlp" };
+
+            var exporters = MetricExporters
+                .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Select(e => e.ToLowerInvariant())
+                .ToArray();
+
+            return exporters.Length == 1 && exporters[0] == "none"
+                ? Array.Empty<string>()
+                : exporters;
         }
 
         internal bool HasInstrumentation(string name)

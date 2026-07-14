@@ -22,14 +22,32 @@ def _build_drop_views(patterns: list[str]) -> list[View]:
     return views
 
 
+def metrics_app():
+    """ASGI app serving the Prometheus scrape endpoint.
+
+    Mount it on the application's own server — the correct mode under
+    multi-worker servers (gunicorn/uvicorn workers), where the standalone
+    listener cannot bind the same port in every process:
+
+        app.mount("/metrics", metrics_app())
+
+    Combine with OTEL_HELPER_METRICS_PORT=0 to suppress the standalone listener.
+    """
+    from prometheus_client import make_asgi_app
+
+    return make_asgi_app()
+
+
 def configure_metrics(resource: Resource, options: TelemetryOptions) -> MeterProvider:
     """Configure and set the global MeterProvider with trace-based exemplars.
 
-    When otel_endpoint is set, uses OTLP push exporter.
-    When otel_endpoint is empty, falls back to Prometheus HTTP scrape endpoint.
+    The active exporters come from options.resolved_metric_exporters():
+    "otlp" (push) and/or "prometheus" (/metrics scrape) on the same provider.
     """
-    if options.otel_endpoint:
-        # OTLP push mode (existing behavior)
+    exporters = options.resolved_metric_exporters()
+    readers = []
+
+    if "otlp" in exporters:
         from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import OTLPMetricExporter
 
         exporter = OTLPMetricExporter(
@@ -37,24 +55,41 @@ def configure_metrics(resource: Resource, options: TelemetryOptions) -> MeterPro
             insecure=options.resolve_insecure(),
             timeout=options.export_timeout_ms / 1000,
         )
-        reader = PeriodicExportingMetricReader(exporter, export_interval_millis=30_000)
-    else:
-        # Prometheus scrape fallback — expose /metrics HTTP endpoint
-        from opentelemetry.exporter.prometheus import PrometheusMetricReader
-        from prometheus_client import start_http_server
+        readers.append(PeriodicExportingMetricReader(
+            exporter, export_interval_millis=options.export_interval_ms,
+        ))
 
-        start_http_server(port=options.prometheus_metrics_port)
-        reader = PrometheusMetricReader()
-        _logger.info(
-            "OTel Prometheus fallback: metrics available at http://0.0.0.0:%d/metrics",
-            options.prometheus_metrics_port,
-        )
+    if "prometheus" in exporters:
+        from opentelemetry.exporter.prometheus import PrometheusMetricReader
+
+        readers.append(PrometheusMetricReader())
+        if options.prometheus_metrics_port > 0:
+            from prometheus_client import start_http_server
+
+            try:
+                start_http_server(port=options.prometheus_metrics_port)
+            except OSError as e:
+                raise RuntimeError(
+                    f"[OtelHelper] Could not bind the /metrics listener on port "
+                    f"{options.prometheus_metrics_port}: {e}. If another process (or worker) owns "
+                    "the port, mount otel_helper.metrics_app() on your app and set "
+                    "OTEL_HELPER_METRICS_PORT=0 to disable the standalone listener."
+                ) from e
+            _logger.info(
+                "OTel Prometheus exporter: metrics available at http://0.0.0.0:%d/metrics",
+                options.prometheus_metrics_port,
+            )
+        else:
+            _logger.info(
+                "OTel Prometheus exporter: standalone listener disabled (port=0); "
+                "mount otel_helper.metrics_app() to expose /metrics",
+            )
 
     views = _build_drop_views(options.disabled_metrics) if options.disabled_metrics else []
 
     kwargs = dict(
         resource=resource,
-        metric_readers=[reader],
+        metric_readers=readers,
         exemplar_filter=TraceBasedExemplarFilter(),
     )
     if views:

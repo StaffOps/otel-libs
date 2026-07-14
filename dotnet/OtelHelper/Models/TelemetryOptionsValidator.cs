@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using Microsoft.Extensions.Options;
 
 namespace OtelHelper
@@ -20,8 +21,35 @@ namespace OtelHelper
             if (options.ExportTimeoutMs <= 0)
                 return ValidateOptionsResult.Fail("ExportTimeoutMs must be greater than 0.");
 
-            if (options.PrometheusMetricsPort <= 0 || options.PrometheusMetricsPort > 65535)
-                return ValidateOptionsResult.Fail("PrometheusMetricsPort must be between 1 and 65535.");
+            if (options.ExportIntervalMs is <= 0)
+                return ValidateOptionsResult.Fail("ExportIntervalMs must be greater than 0.");
+
+            // 0 = standalone listener disabled (mounted-endpoint mode).
+            if (options.PrometheusMetricsPort < 0 || options.PrometheusMetricsPort > 65535)
+                return ValidateOptionsResult.Fail("PrometheusMetricsPort must be between 0 and 65535.");
+
+            if (!string.IsNullOrWhiteSpace(options.MetricExporters))
+            {
+                var exporters = options.MetricExporters
+                    .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                    .Select(e => e.ToLowerInvariant())
+                    .ToArray();
+
+                var unknown = exporters.Except(TelemetryOptions.ValidMetricExporters).ToArray();
+                if (unknown.Length > 0)
+                    return ValidateOptionsResult.Fail(
+                        $"Unknown metric exporter(s) '{string.Join(", ", unknown)}' in {TelemetryOptions.MetricsExporterEnvVar}. " +
+                        $"Valid values: {string.Join(", ", TelemetryOptions.ValidMetricExporters)}.");
+
+                if (exporters.Contains("none") && exporters.Length > 1)
+                    return ValidateOptionsResult.Fail(
+                        $"'none' cannot be combined with other metric exporters in {TelemetryOptions.MetricsExporterEnvVar}.");
+            }
+
+            if (options.ResolvedMetricExporters().Contains("otlp") && string.IsNullOrWhiteSpace(options.OtelCollectorEndpoint))
+                return ValidateOptionsResult.Fail(
+                    $"Metric exporter 'otlp' requires an endpoint. Set {TelemetryOptions.CollectorEndpointEnvVar} " +
+                    $"or remove 'otlp' from {TelemetryOptions.MetricsExporterEnvVar}.");
 
             return ValidateOptionsResult.Success;
         }

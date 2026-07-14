@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
+	"os"
 	"time"
 
 	"go.opentelemetry.io/otel"
@@ -15,16 +16,21 @@ import (
 )
 
 func configureTracing(ctx context.Context, res *resource.Resource, opts *Options) (*sdktrace.TracerProvider, error) {
-	var rootSampler sdktrace.Sampler
-	if opts.SampleRatio >= 1.0 {
-		rootSampler = sdktrace.AlwaysSample()
-	} else {
-		rootSampler = sdktrace.TraceIDRatioBased(opts.SampleRatio)
-	}
-
 	tpOpts := []sdktrace.TracerProviderOption{
 		sdktrace.WithResource(res),
-		sdktrace.WithSampler(sdktrace.ParentBased(rootSampler)),
+	}
+
+	if os.Getenv(EnvTracesSampler) != "" && opts.SampleRatio >= 1.0 {
+		// No explicit ratio in code: standard SDK env config wins. NewTracerProvider
+		// without WithSampler reads OTEL_TRACES_SAMPLER / OTEL_TRACES_SAMPLER_ARG itself.
+	} else {
+		var rootSampler sdktrace.Sampler
+		if opts.SampleRatio >= 1.0 {
+			rootSampler = sdktrace.AlwaysSample()
+		} else {
+			rootSampler = sdktrace.TraceIDRatioBased(opts.SampleRatio)
+		}
+		tpOpts = append(tpOpts, sdktrace.WithSampler(sdktrace.ParentBased(rootSampler)))
 	}
 
 	if opts.OtelEndpoint != "" {

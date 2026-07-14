@@ -60,8 +60,30 @@ namespace OtelHelper
                     options.ExtraInstrumentation = extra;
             }
 
-            // Sample ratio from env var (only if sampler is still default AlwaysOn)
-            if (options.Sampler is OpenTelemetry.Trace.AlwaysOnSampler)
+            // Metric exporters from the standard OTel env var (only if not set by consumer)
+            if (string.IsNullOrWhiteSpace(options.MetricExporters))
+            {
+                var exporters = Environment.GetEnvironmentVariable(TelemetryOptions.MetricsExporterEnvVar);
+                if (!string.IsNullOrWhiteSpace(exporters))
+                    options.MetricExporters = exporters;
+            }
+
+            // Export interval: explicit > OTEL_METRIC_EXPORT_INTERVAL > 30000.
+            // Resolved here (not hardcoded in MetricsSetup) so the standard var is honored.
+            if (options.ExportIntervalMs is null)
+            {
+                var intervalStr = Environment.GetEnvironmentVariable(TelemetryOptions.MetricExportIntervalEnvVar);
+                if (!string.IsNullOrWhiteSpace(intervalStr) && int.TryParse(intervalStr, out var interval) && interval > 0)
+                    options.ExportIntervalMs = interval;
+            }
+            options.ExportIntervalMs ??= TelemetryOptions.DefaultExportIntervalMs;
+
+            // Sample ratio from env var (only if sampler is still default AlwaysOn).
+            // Standard OTel var wins over the proprietary one: when OTEL_TRACES_SAMPLER
+            // is set, the SDK's own env handling configures the sampler and
+            // OTEL_HELPER_SAMPLE_RATIO is ignored (see TracerSetup).
+            if (options.Sampler is OpenTelemetry.Trace.AlwaysOnSampler
+                && string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable(TelemetryOptions.TracesSamplerEnvVar)))
             {
                 var ratioStr = Environment.GetEnvironmentVariable(TelemetryOptions.SampleRatioEnvVar);
                 if (!string.IsNullOrWhiteSpace(ratioStr) && double.TryParse(ratioStr, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var ratio))

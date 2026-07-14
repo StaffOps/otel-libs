@@ -9,6 +9,7 @@ from opentelemetry import trace as _trace
 from opentelemetry import metrics as _metrics
 
 from otel_helper.config import TelemetryOptions, DeploymentEnvironment, get_default_log_level
+from otel_helper.metrics import metrics_app
 from otel_helper.setup import setup_telemetry, reset_telemetry
 from otel_helper.tracing import start_root_span
 
@@ -39,6 +40,7 @@ __all__ = [
     "get_default_log_level",
     "get_tracer",
     "get_meter",
+    "metrics_app",
     "start_root_span",
     "ext",
 ]

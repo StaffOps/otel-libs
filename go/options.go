@@ -15,8 +15,16 @@ type Options struct {
 	ResourceAttributes   map[string]string
 	DisabledSignals      []string
 	DisabledMetrics      []string
-	// PrometheusMetricsPort is the port for /metrics when no OTLP endpoint is configured.
-	// Default: 9464. Configurable via OTEL_HELPER_METRICS_PORT env var.
+	// MetricExporters selects the active metric exporters: "otlp", "prometheus",
+	// "none". Nil = resolve from OTEL_METRICS_EXPORTER, falling back to legacy
+	// inference (otlp when an endpoint is set, prometheus otherwise).
+	MetricExporters []string
+	// ExportIntervalMs is the metric export interval for the OTLP reader.
+	// 0 = resolve from OTEL_METRIC_EXPORT_INTERVAL, else 30000.
+	ExportIntervalMs int
+	// PrometheusMetricsPort is the port for the standalone /metrics listener.
+	// Default: 9464 (OTEL_HELPER_METRICS_PORT). 0 disables the listener while
+	// keeping the Prometheus reader active for MetricsHandler().
 	PrometheusMetricsPort int
 
 	// insecureExplicit tracks whether WithInsecure was called explicitly,
@@ -58,8 +66,50 @@ func WithDisabledMetrics(patterns []string) Option {
 func WithPrometheusMetricsPort(port int) Option {
 	return func(o *Options) { o.PrometheusMetricsPort = port }
 }
+
+// WithMetricExporters selects the active metric exporters ("otlp", "prometheus",
+// "none"), overriding OTEL_METRICS_EXPORTER and the legacy endpoint inference.
+func WithMetricExporters(exporters ...string) Option {
+	return func(o *Options) { o.MetricExporters = exporters }
+}
+
+// WithExportInterval sets the OTLP metric export interval in milliseconds,
+// overriding OTEL_METRIC_EXPORT_INTERVAL.
+func WithExportInterval(ms int) Option {
+	return func(o *Options) { o.ExportIntervalMs = ms }
+}
+
+// WithoutMetricsListener disables the standalone /metrics listener. The
+// Prometheus reader stays active; mount MetricsHandler() on the app's own mux.
+func WithoutMetricsListener() Option {
+	return func(o *Options) { o.PrometheusMetricsPort = 0 }
+}
 func WithInsecure(insecure bool) Option {
 	return func(o *Options) { o.Insecure = insecure; o.insecureExplicit = true }
+}
+
+// resolvedMetricExporters returns the active metric exporters after resolution.
+// "none" resolves to an empty list (metrics disabled).
+func (o *Options) resolvedMetricExporters() []string {
+	if o.MetricExporters == nil {
+		if o.OtelEndpoint != "" {
+			return []string{"otlp"}
+		}
+		return []string{"prometheus"}
+	}
+	if len(o.MetricExporters) == 1 && o.MetricExporters[0] == "none" {
+		return nil
+	}
+	return o.MetricExporters
+}
+
+func (o *Options) hasMetricExporter(name string) bool {
+	for _, e := range o.resolvedMetricExporters() {
+		if e == name {
+			return true
+		}
+	}
+	return false
 }
 
 // HasInstrumentation checks if a named instrumentation is enabled.

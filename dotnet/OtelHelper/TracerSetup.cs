@@ -29,8 +29,17 @@ namespace OtelHelper.Tracing
                     opts.RecordException = true;
                 })
                 .AddGrpcClientInstrumentation()
-                .AddSource(options.ServiceName)
-                .SetSampler(options.Sampler);
+                .AddSource(options.ServiceName);
+
+            // Standard SDK env config wins when the consumer kept the default
+            // sampler: without SetSampler, the SDK reads OTEL_TRACES_SAMPLER /
+            // OTEL_TRACES_SAMPLER_ARG itself. An explicit sampler set in code
+            // (or OTEL_HELPER_SAMPLE_RATIO when the standard var is absent —
+            // see TelemetryOptionsPostConfigure) still takes precedence.
+            var standardSamplerSet = !string.IsNullOrWhiteSpace(
+                Environment.GetEnvironmentVariable(TelemetryOptions.TracesSamplerEnvVar));
+            if (!(standardSamplerSet && options.Sampler is AlwaysOnSampler))
+                builder.SetSampler(options.Sampler);
 
             foreach (var source in options.AdditionalActivitySources)
                 builder.AddSource(source);
