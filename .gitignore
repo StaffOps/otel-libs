@@ -46,3 +46,6 @@ dotnet/OtelHelper.Tests/coverage/
 
 # CI build output (consumed by Dockerfile.demo)
 packages/
+
+# Claude Code — personal overrides, not for the team
+.claude/settings.local.json

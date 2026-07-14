@@ -31,7 +31,8 @@ Shared Grafana dashboards in [`dashboards/`](dashboards/) — compatible with an
 
 - **OpenTelemetry as the single standard** — no vendor SDKs
 - **Everything via Collector** — SDK does not export directly to backends
-- **Prometheus fallback** — when no OTLP endpoint is configured, metrics are exposed via `/metrics` on port 9464 (Prometheus scrape compatible)
+- **Prometheus fallback** — when no OTLP endpoint is configured, metrics are exposed via `/metrics` on port 9464 (Prometheus scrape compatible). `OTEL_METRICS_EXPORTER` (`otlp`, `prometheus`, `otlp,prometheus`, `none`) can run OTLP push and `/metrics` simultaneously — see each language's HOW-TO
+- **Standard OTel env vars win over `OTEL_HELPER_*` ones** — never invent a proprietary knob when the spec defines one (e.g. `OTEL_METRIC_EXPORT_INTERVAL`, `OTEL_TRACES_SAMPLER`)
 - **Sampling at the Collector** — SDK uses AlwaysOn, tail sampling at the gateway
 - **Resource attributes at the Collector** — SDK only sets `service.name`
 - **TLS by default** — `https://` or schemeless endpoints use TLS (system CA); use `http://` or `OTEL_EXPORTER_OTLP_INSECURE=true` for a plaintext local collector
@@ -80,8 +81,13 @@ defer shutdown(ctx)
 | `OTEL_EXPORTER_OTLP_INSECURE` | _(unset)_ | TLS override: `true` = plaintext, `false` = TLS. Unset = derived from scheme (secure by default) |
 | `OTEL_HELPER_DEBUG_LEVEL` | `false` | Debug mode (DEBUG log, all instrumentations, attribute debug=true) |
 | `OTEL_HELPER_EXTRA_INSTRUMENTATION` | `SQL` | Conditional instrumentations: SQL, AWS, REDIS |
-| `OTEL_HELPER_SAMPLE_RATIO` | `1.0` | Head sampling ratio (0.0-1.0). 1.0 = AlwaysOn |
-| `OTEL_HELPER_METRICS_PORT` | `9464` | Prometheus `/metrics` port when no OTLP endpoint is configured |
+| `OTEL_HELPER_SAMPLE_RATIO` | `1.0` | Head sampling ratio (0.0-1.0). 1.0 = AlwaysOn. Ignored if the standard `OTEL_TRACES_SAMPLER` is set |
+| `OTEL_HELPER_METRICS_PORT` | `9464` | Standalone Prometheus `/metrics` listener port (`0` disables it) |
+| `OTEL_METRICS_EXPORTER` | legacy inference | Metric exporter(s): `otlp`, `prometheus`, `otlp,prometheus`, `none`. Unset = OTLP if endpoint set, else Prometheus fallback |
+| `OTEL_METRIC_EXPORT_INTERVAL` | `30000` | OTLP metric export interval in ms (standard OTel var; helper default is 30s, not the SDK's 60s) |
+| `OTEL_TRACES_SAMPLER` | _(unset)_ | Standard OTel sampler config — takes priority over `OTEL_HELPER_SAMPLE_RATIO` when set |
+
+**Precedence rule:** explicit code config > standard OTel env var (`OTEL_METRICS_EXPORTER`, `OTEL_METRIC_EXPORT_INTERVAL`, `OTEL_TRACES_SAMPLER`) > `OTEL_HELPER_*` env var > library default. `OTEL_HELPER_*` vars keep working when the standard var is absent — they're convenience defaults, not a replacement for the spec.
 
 ## Installing from GitHub Packages (private)
 

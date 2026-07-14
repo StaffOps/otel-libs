@@ -9,7 +9,40 @@ currently aligned at the same version.
 
 ## [Unreleased]
 
+### Added
+
+- **`OTEL_METRICS_EXPORTER` contract** (all languages) — selects the active
+  metric exporter(s): `otlp`, `prometheus`, `otlp,prometheus`, or `none`.
+  Replaces the previous either-or fallback (OTLP if an endpoint is set, else
+  Prometheus) with reader accumulation on a single `MeterProvider`, so OTLP
+  push and the `/metrics` scrape endpoint can now run **simultaneously**
+  without double-counting. Unset behavior is unchanged (fully backwards
+  compatible). Equivalent programmatic option:
+  `TelemetryOptions(metric_exporters=[...])` (Python),
+  `WithMetricExporters(...)` (Go), `TelemetryOptions.MetricExporters` (.NET).
+- **Mountable `/metrics` handlers** for multi-worker deployments — Python
+  `otel_helper.metrics_app()` (ASGI, mount on FastAPI/Starlette), Go
+  `otelhelper.MetricsHandler()` (dedicated `prometheus.Registry`, not the
+  `client_golang` global one). .NET's ASP.NET Core path
+  (`OpenTelemetry.Exporter.Prometheus.AspNetCore` +
+  `MapPrometheusScrapingEndpoint()`) is documented in `dotnet/HOW-TO.md`. All
+  three support disabling the standalone listener (port `0`) while keeping
+  the reader active for the mounted handler.
+- **Standard OTel env var precedence** (all languages) — `OTEL_TRACES_SAMPLER`
+  and `OTEL_METRIC_EXPORT_INTERVAL` now take priority over the proprietary
+  `OTEL_HELPER_SAMPLE_RATIO` and the previously-hardcoded 30s interval,
+  respectively. `OTEL_HELPER_*` vars keep working when the standard var is
+  absent. Precedence everywhere: explicit code config > standard OTel env var
+  > `OTEL_HELPER_*` env var > library default.
+
 ### Fixed
+
+- **Go: `/metrics` listener robustness** — `ListenAndServe` errors were
+  silently swallowed (a busy port meant no metrics and no warning — the exact
+  "silent telemetry loss" class of bug this project targets). The listener
+  now binds synchronously so a busy port fails `Setup` immediately, has a
+  `ReadHeaderTimeout`, and its `Shutdown` joins the composite shutdown chain
+  returned by `Setup`.
 
 - **Python: `[aws]`, `[redis]`, `[sql]` extras are now real** — the SQLAlchemy,
   Redis, and botocore instrumentations were incorrectly bundled in the core
