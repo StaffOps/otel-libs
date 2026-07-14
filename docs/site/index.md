@@ -8,7 +8,7 @@ Standardized OpenTelemetry instrumentation libraries for your applications.
 |----------|-----------|---------|--------|
 | .NET | [`dotnet/`](dotnet/) | `OtelHelper` (NuGet) | ✅ Production |
 | Python | [`python/`](python/) | `otel-helper` (PyPI) | ✅ Production |
-| Go | [`go/`](go/) | `otelhelper` (Go module) | 🚧 In Development |
+| Go | [`go/`](go/) | `otelhelper` (Go module) | ✅ Production |
 
 ## Dashboards
 
