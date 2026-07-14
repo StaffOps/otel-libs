@@ -19,17 +19,25 @@ namespace OtelHelper.Metrics
                 .AddMeter(options.ServiceName)
                 .SetExemplarFilter(ExemplarFilterType.TraceBased);
 
-            // Export: OTLP push if endpoint configured, otherwise Prometheus HTTP listener
-            if (!string.IsNullOrWhiteSpace(options.OtelCollectorEndpoint))
+            // One reader per resolved exporter: OTLP push and/or Prometheus scrape
+            // can be active on the same provider (OTEL_METRICS_EXPORTER contract).
+            var exporters = options.ResolvedMetricExporters();
+
+            if (exporters.Contains("otlp"))
             {
                 builder.AddOtlpExporter((exporterOptions, metricReaderOptions) =>
                 {
                     exporterOptions.Endpoint = new Uri(options.OtelCollectorEndpoint);
                     exporterOptions.TimeoutMilliseconds = options.ExportTimeoutMs;
-                    metricReaderOptions.PeriodicExportingMetricReaderOptions.ExportIntervalMilliseconds = 30_000;
+                    metricReaderOptions.PeriodicExportingMetricReaderOptions.ExportIntervalMilliseconds =
+                        options.ExportIntervalMs ?? TelemetryOptions.DefaultExportIntervalMs;
                 });
             }
-            else
+
+            // Port 0 = listener disabled. ASP.NET Core apps should instead add
+            // OpenTelemetry.Exporter.Prometheus.AspNetCore and map
+            // MapPrometheusScrapingEndpoint() on their own pipeline.
+            if (exporters.Contains("prometheus") && options.PrometheusMetricsPort > 0)
             {
                 builder.AddPrometheusHttpListener(opts =>
                 {

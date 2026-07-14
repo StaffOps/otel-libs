@@ -219,8 +219,13 @@ Error messages follow the pattern `[OtelHelper] ...` with indication of the requ
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | Collector endpoint | `http://localhost` |
 | `OTEL_HELPER_DEBUG_LEVEL` | Debug mode | `false` |
 | `OTEL_HELPER_EXTRA_INSTRUMENTATION` | Extra instrumentations | `SQL` |
-| `OTEL_HELPER_SAMPLE_RATIO` | Sampling ratio (0.0-1.0) | `1.0` (AlwaysOn) |
-| `OTEL_HELPER_METRICS_PORT` | Prometheus `/metrics` port (when no OTLP endpoint) | `9464` |
+| `OTEL_HELPER_SAMPLE_RATIO` | Sampling ratio (0.0-1.0). Ignored if the standard `OTEL_TRACES_SAMPLER` is set | `1.0` (AlwaysOn) |
+| `OTEL_HELPER_METRICS_PORT` | Standalone Prometheus `/metrics` listener port (`0` disables it) | `9464` |
+| `OTEL_METRICS_EXPORTER` | Metric exporter(s): `otlp`, `prometheus`, `otlp,prometheus`, `none` | legacy inference |
+| `OTEL_METRIC_EXPORT_INTERVAL` | OTLP metric export interval (ms) | `30000` |
+| `OTEL_TRACES_SAMPLER` | Standard OTel sampler config — takes priority over `OTEL_HELPER_SAMPLE_RATIO` when set | _(unset)_ |
+
+**Precedence rule:** explicit code config (`TelemetryOptions(...)`) > standard OTel env var (`OTEL_METRICS_EXPORTER`, `OTEL_METRIC_EXPORT_INTERVAL`, `OTEL_TRACES_SAMPLER`) > `OTEL_HELPER_*` env var > library default.
 
 ---
 
@@ -289,7 +294,7 @@ instrument_sql()  # auto-detects engine
 
 ---
 
-## 14. Prometheus `/metrics` Fallback
+## 14. Metrics Without a Collector (Prometheus `/metrics`)
 
 When `OTEL_EXPORTER_OTLP_ENDPOINT` is **not set**, the library automatically falls back to local-only mode:
 
@@ -303,11 +308,60 @@ The port is configurable via `OTEL_HELPER_METRICS_PORT` env var (default: `9464`
 
 This enables the standard Kubernetes scrape pattern: deploy without a Collector, and let Prometheus/VictoriaMetrics scrape `/metrics` directly from the pod.
 
+### Running OTLP push AND `/metrics` at the same time
+
+`OTEL_METRICS_EXPORTER` selects which exporter(s) are active on the metrics pipeline, independent of the legacy endpoint-based fallback above:
+
+| `OTEL_METRICS_EXPORTER` | Behavior |
+|---|---|
+| _(unset)_ | Legacy: OTLP if `OTEL_EXPORTER_OTLP_ENDPOINT` is set, else Prometheus fallback |
+| `otlp` | OTLP only. Fails validation at startup if no endpoint is configured |
+| `prometheus` | `/metrics` only, even when an OTLP endpoint IS set |
+| `otlp,prometheus` | **Both** — one `MeterProvider`, two readers. Same instrument, same values, in both outputs |
+| `none` | Metrics disabled entirely (equivalent to `OTEL_HELPER_DISABLED_SIGNALS=metrics`) |
+
+The equivalent programmatic option — `TelemetryOptions.metric_exporters` — wins over the env var:
+
+```python
+setup_telemetry(TelemetryOptions(
+    metric_exporters=["otlp", "prometheus"],
+))
+```
+
+`OTEL_METRIC_EXPORT_INTERVAL` (milliseconds) controls the OTLP push interval; the library default is 30000ms, overriding the SDK's own 60s default. `TelemetryOptions.export_interval_ms` wins over the env var.
+
+### Multi-worker deployments (gunicorn/uvicorn)
+
+The standalone listener (`start_http_server`, port 9464 by default) opens one socket **per process** — under `gunicorn -w 4`, the second worker fails with `Address already in use`, and even if it didn't, each worker would expose only its own metrics on the same port.
+
+Two ways to fix this:
+
+1. **Mount `/metrics` on the app's own server** (recommended for FastAPI/Starlette):
+
+```python
+from otel_helper import setup_telemetry, metrics_app
+
+app = FastAPI()
+setup_telemetry(TelemetryOptions(
+    metric_exporters=["prometheus"],  # or ["otlp", "prometheus"] for dual mode
+    prometheus_metrics_port=0,         # disable the standalone listener
+))
+app.mount("/metrics", metrics_app())
+```
+
+2. **`prometheus_client`'s multiprocess mode** (`PROMETHEUS_MULTIPROC_DIR`) if you need the standalone listener behavior across workers — see the [prometheus_client docs](https://github.com/prometheus/client_python#multiprocess-mode-eg-gunicorn).
+
+`prometheus_metrics_port=0` (or `OTEL_HELPER_METRICS_PORT=0`) disables the standalone listener while keeping the Prometheus reader active for the mounted handler. If the port is already in use and not disabled, `setup_telemetry()` raises a `RuntimeError` naming `metrics_app()` as the fix.
+
+### Scoping down what gets scraped
+
+`OTEL_HELPER_DISABLED_METRICS` drops instruments from **every** active exporter — there's no supported way to push everything via OTLP while exposing only a subset on `/metrics` from the same `MeterProvider` (the OTel SDK's Views are per-provider, not per-reader). If you need a narrower `/metrics` output while keeping the full set on OTLP, filter on the scrape side instead — e.g. Prometheus `metric_relabel_configs` or a vmagent `drop` relabel rule matching the instrument name.
+
 ---
 
 ## 15. Metrics Export Interval
 
-Metrics are exported every **30 seconds** (not the SDK default of 60s). This applies to both OTLP export and the Prometheus `/metrics` fallback.
+Metrics are exported every **30 seconds** by default (not the SDK's 60s default) — set explicitly via `TelemetryOptions.export_interval_ms` or `OTEL_METRIC_EXPORT_INTERVAL` (ms). Applies to both OTLP export and the Prometheus `/metrics` fallback.
 
 ---
 

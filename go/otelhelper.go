@@ -60,11 +60,14 @@ func Setup(ctx context.Context, opts ...Option) (Shutdown, error) {
 		otel.SetTracerProvider(nooptrace.NewTracerProvider())
 	}
 
-	if options.IsSignalEnabled("metrics") {
-		mp, err := configureMetrics(ctx, res, options)
+	if options.IsSignalEnabled("metrics") && len(options.resolvedMetricExporters()) > 0 {
+		mp, srvShutdown, err := configureMetrics(ctx, res, options)
 		if err != nil {
 			noopShutdown(ctx) // best-effort cleanup
 			return noopShutdown, fmt.Errorf("otelhelper: %w", err)
+		}
+		if srvShutdown != nil {
+			shutdowns = append(shutdowns, srvShutdown)
 		}
 		shutdowns = append(shutdowns, mp.Shutdown)
 	} else {

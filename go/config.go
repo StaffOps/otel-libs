@@ -31,7 +31,12 @@ const (
 	EnvDisabledSignals      = "OTEL_HELPER_DISABLED_SIGNALS"
 	EnvDisabledMetrics      = "OTEL_HELPER_DISABLED_METRICS"
 	EnvMetricsPort          = "OTEL_HELPER_METRICS_PORT"
+	EnvMetricsExporter      = "OTEL_METRICS_EXPORTER"
+	EnvMetricExportInterval = "OTEL_METRIC_EXPORT_INTERVAL"
+	EnvTracesSampler        = "OTEL_TRACES_SAMPLER"
 )
+
+const defaultExportIntervalMs = 30_000
 
 func parseEnvironment(s string) DeploymentEnvironment {
 	switch strings.ToUpper(strings.ReplaceAll(s, "-", "_")) {
@@ -120,12 +125,44 @@ func (o *Options) resolveFromEnv() {
 		}
 	}
 
-	if o.SampleRatio == 1.0 {
+	// Standard OTel var wins over the proprietary one: when OTEL_TRACES_SAMPLER
+	// is set, the SDK's own env handling configures the sampler and
+	// OTEL_HELPER_SAMPLE_RATIO is ignored.
+	if o.SampleRatio == 1.0 && os.Getenv(EnvTracesSampler) == "" {
 		if v := os.Getenv(EnvSampleRatio); v != "" {
 			if f, err := strconv.ParseFloat(v, 64); err == nil {
 				o.SampleRatio = max(0.0, min(1.0, f))
 			}
 		}
+	}
+
+	if o.MetricExporters == nil {
+		if v := strings.TrimSpace(os.Getenv(EnvMetricsExporter)); v != "" {
+			for _, e := range strings.Split(v, ",") {
+				if t := strings.ToLower(strings.TrimSpace(e)); t != "" {
+					o.MetricExporters = append(o.MetricExporters, t)
+				}
+			}
+		}
+	} else {
+		normalized := make([]string, 0, len(o.MetricExporters))
+		for _, e := range o.MetricExporters {
+			if t := strings.ToLower(strings.TrimSpace(e)); t != "" {
+				normalized = append(normalized, t)
+			}
+		}
+		o.MetricExporters = normalized
+	}
+
+	if o.ExportIntervalMs == 0 {
+		if v := os.Getenv(EnvMetricExportInterval); v != "" {
+			if ms, err := strconv.Atoi(v); err == nil && ms > 0 {
+				o.ExportIntervalMs = ms
+			}
+		}
+	}
+	if o.ExportIntervalMs == 0 {
+		o.ExportIntervalMs = defaultExportIntervalMs
 	}
 
 	if len(o.DisabledSignals) == 0 {
@@ -150,7 +187,8 @@ func (o *Options) resolveFromEnv() {
 
 	if o.PrometheusMetricsPort == 9464 {
 		if v := os.Getenv(EnvMetricsPort); v != "" {
-			if p, err := strconv.Atoi(v); err == nil && p > 0 {
+			// 0 is valid: disables the standalone listener (mounted-handler mode).
+			if p, err := strconv.Atoi(v); err == nil && p >= 0 {
 				o.PrometheusMetricsPort = p
 			}
 		}
@@ -163,6 +201,26 @@ func (o *Options) validate() error {
 	}
 	if o.ExportTimeoutMs <= 0 {
 		return fmt.Errorf("ExportTimeoutMs must be > 0")
+	}
+	if o.ExportIntervalMs < 0 {
+		return fmt.Errorf("ExportIntervalMs must be > 0")
+	}
+	if o.MetricExporters != nil {
+		for _, e := range o.MetricExporters {
+			if e != "otlp" && e != "prometheus" && e != "none" {
+				return fmt.Errorf("unknown metric exporter %q in %s; valid values: otlp, prometheus, none", e, EnvMetricsExporter)
+			}
+		}
+		if len(o.MetricExporters) > 1 {
+			for _, e := range o.MetricExporters {
+				if e == "none" {
+					return fmt.Errorf("%q cannot be combined with other metric exporters in %s", "none", EnvMetricsExporter)
+				}
+			}
+		}
+	}
+	if o.hasMetricExporter("otlp") && o.OtelEndpoint == "" {
+		return fmt.Errorf("metric exporter \"otlp\" requires an endpoint; set %s or remove \"otlp\" from %s", EnvCollectorEndpoint, EnvMetricsExporter)
 	}
 	return nil
 }

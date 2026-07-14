@@ -68,7 +68,7 @@ func Test_MetricInterval_Is30Seconds(t *testing.T) {
 	}
 
 	res := resource.Default()
-	mp, err := configureMetrics(context.Background(), res, opts)
+	mp, _, err := configureMetrics(context.Background(), res, opts)
 	if err != nil {
 		t.Fatalf("configureMetrics() error = %v", err)
 	}
@@ -268,7 +268,7 @@ func Test_ConfigureMetrics_Insecure(t *testing.T) {
 		SampleRatio:     1.0,
 	}
 	res := resource.Default()
-	mp, err := configureMetrics(context.Background(), res, opts)
+	mp, _, err := configureMetrics(context.Background(), res, opts)
 	if err != nil {
 		t.Fatalf("configureMetrics(insecure=true) error = %v", err)
 	}
@@ -289,7 +289,7 @@ func Test_ConfigureMetrics_TLS(t *testing.T) {
 		SampleRatio:     1.0,
 	}
 	res := resource.Default()
-	mp, err := configureMetrics(context.Background(), res, opts)
+	mp, _, err := configureMetrics(context.Background(), res, opts)
 	if err != nil {
 		t.Fatalf("configureMetrics(insecure=false/TLS) error = %v", err)
 	}
@@ -358,10 +358,10 @@ func Test_ConfigureMetrics_PrometheusMode(t *testing.T) {
 		OtelEndpoint:          "", // triggers Prometheus fallback
 		ExportTimeoutMs:       10_000,
 		SampleRatio:           1.0,
-		PrometheusMetricsPort: 0, // port 0 = random port (won't conflict)
+		PrometheusMetricsPort: 0, // port 0 = standalone listener disabled (won't conflict)
 	}
 	res := resource.Default()
-	mp, err := configureMetrics(context.Background(), res, opts)
+	mp, _, err := configureMetrics(context.Background(), res, opts)
 	if err != nil {
 		t.Fatalf("configureMetrics(prometheus mode) error = %v", err)
 	}
@@ -458,7 +458,7 @@ func Test_ConfigureMetrics_WithDisabledMetrics_OTLP(t *testing.T) {
 		DisabledMetrics: []string{"http.*"},
 	}
 	res := resource.Default()
-	mp, err := configureMetrics(context.Background(), res, opts)
+	mp, _, err := configureMetrics(context.Background(), res, opts)
 	if err != nil {
 		t.Fatalf("configureMetrics(disabled metrics) error = %v", err)
 	}
