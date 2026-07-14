@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+
+{% block announce %}{% endblock %}
+
+{% block tabs %}
+<div class="md-tabs" data-md-component="tabs">
+  <div class="md-tabs__inner md-grid">
+    <ul class="md-tabs__list" role="tablist">
+      <li class="md-tabs__item">
+        <a href="https://staffops.github.io/" class="md-tabs__link">Home</a>
+      </li>
+      <li class="md-tabs__item">
+        <a href="https://staffops.github.io/products/" class="md-tabs__link">Products</a>
+      </li>
+      <li class="md-tabs__item">
+        <a href="https://staffops.github.io/community/principles/" class="md-tabs__link">Community</a>
+      </li>
+    </ul>
+  </div>
+</div>
+<div class="md-tabs">
+  <div class="md-tabs__inner md-grid">
+    <ul class="md-tabs__list" role="tablist">
+      <li class="md-tabs__item">
+        <span class="md-tabs__link so-sub-brand">◈ {{ config.site_name | replace("StaffOps — ", "") }}</span>
+      </li>
+      {% for nav_item in nav if nav_item.title != "Home" %}
+        <li class="md-tabs__item">
+          {% if nav_item.children %}
+            <a href="{{ nav_item.children[0].url | url }}"
+               class="md-tabs__link{% if nav_item.active %} md-tabs__link--active{% endif %}">
+              {{ nav_item.title }}
+            </a>
+          {% else %}
+            <a href="{{ nav_item.url | url }}"
+               class="md-tabs__link{% if nav_item.active %} md-tabs__link--active{% endif %}">
+              {{ nav_item.title }}
+            </a>
+          {% endif %}
+        </li>
+      {% endfor %}
+    </ul>
+  </div>
+</div>
+{% endblock %}

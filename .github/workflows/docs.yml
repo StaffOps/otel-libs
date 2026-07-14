@@ -1,0 +1,93 @@
+name: Docs
+
+on:
+  push:
+    branches: [main]          # deploy to prod ONLY from main
+    paths:
+      - "docs/site/**"
+      - "mkdocs.yml"
+      # docs/site/{dotnet,python,go}/**, CONSUMING.md, and CHANGELOG.md are
+      # symlinks to the paths below — editing the symlink target doesn't
+      # touch the symlink file itself, so path filtering must watch the
+      # real sources too or the deploy never fires on doc edits.
+      - "dotnet/README.md"
+      - "dotnet/HOW-TO.md"
+      - "dotnet/TESTS.md"
+      - "dotnet/example/README.md"
+      - "dotnet/example/EXAMPLES.md"
+      - "python/README.md"
+      - "python/HOW-TO.md"
+      - "python/TESTS.md"
+      - "python/example/README.md"
+      - "python/example/EXAMPLES.md"
+      - "go/README.md"
+      - "go/HOW-TO.md"
+      - "go/example/README.md"
+      - "CONSUMING.md"
+      - "CHANGELOG.md"
+  pull_request:
+    branches: [main]          # validate on PRs (no deploy)
+    paths:
+      - "docs/site/**"
+      - "mkdocs.yml"
+      - "dotnet/README.md"
+      - "dotnet/HOW-TO.md"
+      - "dotnet/TESTS.md"
+      - "dotnet/example/README.md"
+      - "dotnet/example/EXAMPLES.md"
+      - "python/README.md"
+      - "python/HOW-TO.md"
+      - "python/TESTS.md"
+      - "python/example/README.md"
+      - "python/example/EXAMPLES.md"
+      - "go/README.md"
+      - "go/HOW-TO.md"
+      - "go/example/README.md"
+      - "CONSUMING.md"
+      - "CHANGELOG.md"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  # PR lane: prove the site builds (broken nav/links fail --strict). No deploy.
+  build_check:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install mkdocs-material==9.5.39
+      - run: mkdocs build --strict --site-dir site
+
+  # Publish lane: only on push to main.
+  deploy:
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install mkdocs-material==9.5.39
+
+      - name: Build docs
+        run: mkdocs build --site-dir site
+
+      - name: Deploy to staffops.github.io/otel-libs/
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          personal_token: ${{ secrets.DOCS_DEPLOY_TOKEN }}
+          external_repository: StaffOps/staffops.github.io
+          publish_branch: gh-pages
+          publish_dir: ./site
+          destination_dir: otel-libs
+          keep_files: true
