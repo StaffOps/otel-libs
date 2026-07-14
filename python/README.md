@@ -8,7 +8,7 @@ OpenTelemetry instrumentation helper library for Python applications. A single c
 pip install otel-helper
 ```
 
-All instrumentations (FastAPI, HTTPX, requests, gRPC, SQLAlchemy, Redis, botocore, system-metrics) are installed automatically. Activation of SQL/REDIS/AWS is controlled via env var.
+Web/HTTP instrumentations (FastAPI, HTTPX, requests, gRPC, system-metrics) are installed automatically. SQLAlchemy, Redis, and botocore live in optional extras — install `otel-helper[sql]`, `[redis]`, `[aws]` (or `[all]`) as needed.
 
 ## Quick Start
 

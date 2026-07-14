@@ -173,11 +173,14 @@ OTEL_HELPER_EXTRA_INSTRUMENTATION=SQL,REDIS   # SQLAlchemy + Redis
 OTEL_HELPER_EXTRA_INSTRUMENTATION=SQL,AWS     # SQLAlchemy + boto3/botocore
 ```
 
-| Value | Instrumentation |
-|-------|-----------------|
-| `SQL` | SQLAlchemy |
-| `REDIS` | Redis |
-| `AWS` | boto3/botocore (S3, SQS, DynamoDB, etc.) |
+| Value | Instrumentation | Requires extra |
+|-------|-----------------|----------------|
+| `SQL` | SQLAlchemy | `otel-helper[sql]` |
+| `REDIS` | Redis | `otel-helper[redis]` |
+| `AWS` | boto3/botocore (S3, SQS, DynamoDB, etc.) | `otel-helper[aws]` |
+
+The env var only *activates* the instrumentation — the corresponding extra
+must be installed. Without the extra, activation is silently skipped.
 
 Instrumentations **always active** (no env var needed):
 - FastAPI (server)

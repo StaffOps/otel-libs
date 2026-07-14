@@ -7,6 +7,25 @@ All notable changes to this project are documented here. Format based on
 This is a monorepo; each language package is versioned independently but is
 currently aligned at the same version.
 
+## [Unreleased]
+
+### Fixed
+
+- **Python: `[aws]`, `[redis]`, `[sql]` extras are now real** — the SQLAlchemy,
+  Redis, and botocore instrumentations were incorrectly bundled in the core
+  package, making the extras no-ops and the core heavier than documented. They
+  now install only via their extras (new `[all]` meta-extra added). The
+  `otel_helper.ext` helpers raise an actionable `ImportError`
+  (`pip install otel-helper[aws]`) when the extra is missing.
+- **Python: library-style dependency ranges** — OTel dependencies were pinned
+  with `==`, causing pip resolution conflicts for any app depending on a
+  different OTel SDK version. Now `>=1.42,<2` (stable) / `>=0.63b0`
+  (instrumentations).
+- **Python: custom OTLP endpoint port no longer discarded** —
+  `OTEL_EXPORTER_OTLP_ENDPOINT=https://gateway:14317` was silently rewritten to
+  port 4317. The port is now preserved; 4317 applies only when absent (parity
+  with Go/.NET).
+
 ## [0.1.0-rc.1] - 2026-07-02
 
 First published pre-release. Consumed and validated end-to-end from the
