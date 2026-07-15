@@ -9,6 +9,8 @@ currently aligned at the same version.
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-07-15
+
 ### Added
 
 - **OTLP/HTTP protocol support** (all languages) — the SDK can now export via

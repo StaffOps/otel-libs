@@ -28,18 +28,18 @@ In CI (GitHub Actions): `--password ${{ secrets.GITHUB_TOKEN }}`.
 
 ```bash
 # Core package
-dotnet add package OtelHelper --version 0.1.0
+dotnet add package OtelHelper --version 0.2.0
 
 # Opt-in subpackages (each pulls OtelHelper core transitively)
-dotnet add package OtelHelper.AWS --version 0.1.0
-dotnet add package OtelHelper.Redis --version 0.1.0
-dotnet add package OtelHelper.Sql --version 0.1.0
-dotnet add package OtelHelper.Profiling --version 0.1.0
+dotnet add package OtelHelper.AWS --version 0.2.0
+dotnet add package OtelHelper.Redis --version 0.2.0
+dotnet add package OtelHelper.Sql --version 0.2.0
+dotnet add package OtelHelper.Profiling --version 0.2.0
 ```
 
-> **Note**: `0.1.0` is the first stable release — plain `dotnet add package OtelHelper`
-> (no flags) also resolves to it, since NuGet excludes prereleases from default
-> resolution once a stable version exists. Pinning `--version 0.1.0` explicitly is
+> **Note**: plain `dotnet add package OtelHelper` (no flags) also resolves to
+> the latest stable version, since NuGet excludes prereleases from default
+> resolution once a stable version exists. Pinning `--version 0.2.0` explicitly is
 > still recommended for reproducible builds. Prerelease versions also exist
 > (`-dev-<sha>` published on every push to `main`, `-rc.N` from RC tags) — use
 > `--prerelease` only if you deliberately want to track those.
@@ -61,8 +61,8 @@ Package name on import: `otel_helper`. pip/distribution name: `otel-helper`.
 ### Install using gh CLI (simplest)
 
 ```bash
-gh release download v0.1.0 --repo StaffOps/staffops-otel-libs --pattern "*.whl"
-pip install otel_helper-0.1.0-py3-none-any.whl
+gh release download v0.2.0 --repo StaffOps/staffops-otel-libs --pattern "*.whl"
+pip install otel_helper-0.2.0-py3-none-any.whl
 ```
 
 In CI: set `GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}` in the env.
@@ -72,19 +72,19 @@ In CI: set `GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}` in the env.
 ```bash
 # Resolve the asset API URL, then download with auth
 ASSET_URL=$(curl -s -H "Authorization: Bearer $GH_PAT" \
-  "https://api.github.com/repos/StaffOps/staffops-otel-libs/releases/tags/v0.1.0" \
+  "https://api.github.com/repos/StaffOps/staffops-otel-libs/releases/tags/v0.2.0" \
   | jq -r '.assets[] | select(.name | endswith(".whl")) | .url')
 curl -sL -H "Authorization: Bearer $GH_PAT" -H "Accept: application/octet-stream" \
-  "$ASSET_URL" -o otel_helper-0.1.0-py3-none-any.whl
-pip install otel_helper-0.1.0-py3-none-any.whl
+  "$ASSET_URL" -o otel_helper-0.2.0-py3-none-any.whl
+pip install otel_helper-0.2.0-py3-none-any.whl
 ```
 
-> **Important gotcha**: The downloaded file MUST keep the canonical wheel filename (`otel_helper-0.1.0-py3-none-any.whl`). pip rejects a renamed wheel with `ERROR: not a valid wheel filename`.
+> **Important gotcha**: The downloaded file MUST keep the canonical wheel filename (`otel_helper-0.2.0-py3-none-any.whl`). pip rejects a renamed wheel with `ERROR: not a valid wheel filename`.
 
 ### Optional extras (standard OTel packages from PyPI)
 
 ```bash
-pip install "otel-helper[aws,redis,sql] @ file://$(pwd)/otel_helper-0.1.0-py3-none-any.whl"
+pip install "otel-helper[aws,redis,sql] @ file://$(pwd)/otel_helper-0.2.0-py3-none-any.whl"
 ```
 
 ### Usage

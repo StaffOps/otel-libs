@@ -7,7 +7,7 @@
     <LangVersion>latest</LangVersion>
 
     <PackageId>OtelHelper</PackageId>
-    <Version>0.1.0</Version>
+    <Version>0.2.0</Version>
     <Authors>DevOps Team</Authors>
     <Description>OpenTelemetry helper library for .NET (Tracing, Metrics, Logging)</Description>
   </PropertyGroup>

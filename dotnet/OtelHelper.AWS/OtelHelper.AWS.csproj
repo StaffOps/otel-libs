@@ -7,7 +7,7 @@
     <LangVersion>latest</LangVersion>
 
     <PackageId>OtelHelper.AWS</PackageId>
-    <Version>0.1.0</Version>
+    <Version>0.2.0</Version>
     <Authors>DevOps Team</Authors>
     <Description>AWS instrumentation opt-in subpackage for OtelHelper</Description>
     <RepositoryUrl>https://github.com/StaffOps/staffops-otel-libs</RepositoryUrl>

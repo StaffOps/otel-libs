@@ -6,7 +6,7 @@
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <LangVersion>latest</LangVersion>
     <PackageId>OtelHelper.Profiling</PackageId>
-    <Version>0.1.0</Version>
+    <Version>0.2.0</Version>
     <Authors>DevOps Team</Authors>
     <Description>Continuous profiling add-on for OtelHelper (Pyroscope in-process)</Description>
     <RepositoryUrl>https://github.com/StaffOps/staffops-otel-libs</RepositoryUrl>
