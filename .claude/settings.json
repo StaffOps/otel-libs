@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "if": "Bash(git commit*)",
+            "if": "Bash(git commit *)",
             "command": "jq -n '{hookSpecificOutput: {hookEventName: \"PreToolUse\", additionalContext: \"Pre-commit reminder (otel-libs): before finishing this commit, verify documentation matches the code change. Check: root README.md (env var table), root CHANGELOG.md (Unreleased entry), and the per-language HOW-TO.md under python/, go/, dotnet/ for any user-facing behavior touched by this commit. Update whichever are stale before committing.\"}}'",
             "statusMessage": "Checking documentation is up to date before commit..."
           }
