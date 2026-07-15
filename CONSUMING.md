@@ -28,16 +28,21 @@ In CI (GitHub Actions): `--password ${{ secrets.GITHUB_TOKEN }}`.
 
 ```bash
 # Core package
-dotnet add package OtelHelper --prerelease
+dotnet add package OtelHelper --version 0.1.0
 
 # Opt-in subpackages (each pulls OtelHelper core transitively)
-dotnet add package OtelHelper.AWS --prerelease
-dotnet add package OtelHelper.Redis --prerelease
-dotnet add package OtelHelper.Sql --prerelease
-dotnet add package OtelHelper.Profiling --prerelease
+dotnet add package OtelHelper.AWS --version 0.1.0
+dotnet add package OtelHelper.Redis --version 0.1.0
+dotnet add package OtelHelper.Sql --version 0.1.0
+dotnet add package OtelHelper.Profiling --version 0.1.0
 ```
 
-> **Note**: Versions are prerelease (`-dev-<sha>` for main pushes, `-rc.N` for RC tags), so `--prerelease` or an explicit `--version` is required until a stable `0.1.0` is released.
+> **Note**: `0.1.0` is the first stable release — plain `dotnet add package OtelHelper`
+> (no flags) also resolves to it, since NuGet excludes prereleases from default
+> resolution once a stable version exists. Pinning `--version 0.1.0` explicitly is
+> still recommended for reproducible builds. Prerelease versions also exist
+> (`-dev-<sha>` published on every push to `main`, `-rc.N` from RC tags) — use
+> `--prerelease` only if you deliberately want to track those.
 
 ### Usage
 
