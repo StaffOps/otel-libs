@@ -1,6 +1,7 @@
 using System;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using OpenTelemetry.Exporter;
 using OpenTelemetry.Logs;
 
 namespace OtelHelper.Logging
@@ -23,9 +24,19 @@ namespace OtelHelper.Logging
                     // Without endpoint, logs go to console/stdout only (standard K8s pattern via Fluent Bit).
                     if (!string.IsNullOrWhiteSpace(options.OtelCollectorEndpoint))
                     {
+                        var protocol = options.ResolvedOtlpProtocol();
                         logging.AddOtlpExporter(otlp =>
                         {
-                            otlp.Endpoint = new Uri(options.OtelCollectorEndpoint);
+                            if (protocol == TelemetryOptions.ProtocolHttpProtobuf)
+                            {
+                                otlp.Protocol = OtlpExportProtocol.HttpProtobuf;
+                                otlp.Endpoint = new Uri(options.OtelCollectorEndpoint.TrimEnd('/') + "/v1/logs");
+                            }
+                            else
+                            {
+                                otlp.Protocol = OtlpExportProtocol.Grpc;
+                                otlp.Endpoint = new Uri(options.OtelCollectorEndpoint);
+                            }
                             otlp.TimeoutMilliseconds = options.ExportTimeoutMs;
                         });
                     }

@@ -2,6 +2,7 @@ package otelhelper
 
 import (
 	"fmt"
+	"net"
 	"net/url"
 	"os"
 	"strconv"
@@ -34,9 +35,20 @@ const (
 	EnvMetricsExporter      = "OTEL_METRICS_EXPORTER"
 	EnvMetricExportInterval = "OTEL_METRIC_EXPORT_INTERVAL"
 	EnvTracesSampler        = "OTEL_TRACES_SAMPLER"
+	EnvOtlpProtocol         = "OTEL_EXPORTER_OTLP_PROTOCOL"
 )
 
 const defaultExportIntervalMs = 30_000
+const defaultOtlpHTTPPort = "4318"
+
+// OTLP wire protocol values. "http/json" is a valid spec value but not
+// implemented by the Go SDK's OTLP exporters — validate() rejects it.
+const (
+	ProtocolGRPC = "grpc"
+	ProtocolHTTP = "http/protobuf"
+)
+
+var validOtlpProtocols = []string{ProtocolGRPC, ProtocolHTTP}
 
 func parseEnvironment(s string) DeploymentEnvironment {
 	switch strings.ToUpper(strings.ReplaceAll(s, "-", "_")) {
@@ -195,6 +207,26 @@ func (o *Options) resolveFromEnv() {
 	}
 }
 
+// resolvedOtlpProtocol resolves the OTLP wire protocol: "grpc" or "http/protobuf".
+//
+// Priority:
+//  1. Explicit value set via WithOtlpProtocol
+//  2. OTEL_EXPORTER_OTLP_PROTOCOL env var (standard OTel convention)
+//  3. Port-based inference: endpoint port 4318 -> http/protobuf, else grpc
+func (o *Options) resolvedOtlpProtocol() string {
+	if o.OtlpProtocol != "" {
+		return strings.ToLower(strings.TrimSpace(o.OtlpProtocol))
+	}
+	if v := strings.TrimSpace(os.Getenv(EnvOtlpProtocol)); v != "" {
+		return strings.ToLower(v)
+	}
+	_, port, err := net.SplitHostPort(o.OtelEndpoint)
+	if err == nil && port == defaultOtlpHTTPPort {
+		return ProtocolHTTP
+	}
+	return ProtocolGRPC
+}
+
 func (o *Options) validate() error {
 	if strings.TrimSpace(o.ServiceName) == "" {
 		return fmt.Errorf("ServiceName is required; set %s env var", EnvServiceName)
@@ -221,6 +253,17 @@ func (o *Options) validate() error {
 	}
 	if o.hasMetricExporter("otlp") && o.OtelEndpoint == "" {
 		return fmt.Errorf("metric exporter \"otlp\" requires an endpoint; set %s or remove \"otlp\" from %s", EnvCollectorEndpoint, EnvMetricsExporter)
+	}
+	protocol := o.resolvedOtlpProtocol()
+	valid := false
+	for _, p := range validOtlpProtocols {
+		if protocol == p {
+			valid = true
+			break
+		}
+	}
+	if !valid {
+		return fmt.Errorf("unknown OTLP protocol %q in %s; valid values: %s", protocol, EnvOtlpProtocol, strings.Join(validOtlpProtocols, ", "))
 	}
 	return nil
 }

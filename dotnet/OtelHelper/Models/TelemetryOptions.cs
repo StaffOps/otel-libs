@@ -24,9 +24,14 @@ namespace OtelHelper
         public const string MetricsExporterEnvVar = "OTEL_METRICS_EXPORTER";
         public const string MetricExportIntervalEnvVar = "OTEL_METRIC_EXPORT_INTERVAL";
         public const string TracesSamplerEnvVar = "OTEL_TRACES_SAMPLER";
+        public const string OtlpProtocolEnvVar = "OTEL_EXPORTER_OTLP_PROTOCOL";
 
         internal const int DefaultExportIntervalMs = 30_000;
+        internal const int DefaultOtlpHttpPort = 4318;
+        internal const string ProtocolGrpc = "grpc";
+        internal const string ProtocolHttpProtobuf = "http/protobuf";
         internal static readonly string[] ValidMetricExporters = { "otlp", "prometheus", "none" };
+        internal static readonly string[] ValidOtlpProtocols = { ProtocolGrpc, ProtocolHttpProtobuf };
 
         [Required(AllowEmptyStrings = false)]
         public string ServiceName { get; set; } = "my-service";
@@ -108,6 +113,13 @@ namespace OtelHelper
         public int PrometheusMetricsPort { get; set; } = 9464;
 
         /// <summary>
+        /// OTLP wire protocol: "grpc" or "http/protobuf".
+        /// Null/empty = resolve from OTEL_EXPORTER_OTLP_PROTOCOL, falling back to
+        /// port-based inference (4318 -> http/protobuf, else grpc).
+        /// </summary>
+        public string? OtlpProtocol { get; set; }
+
+        /// <summary>
         /// Returns true if the given signal is NOT in the DisabledSignals list.
         /// </summary>
         public bool IsSignalEnabled(string signal)
@@ -152,6 +164,25 @@ namespace OtelHelper
             return exporters.Length == 1 && exporters[0] == "none"
                 ? Array.Empty<string>()
                 : exporters;
+        }
+
+        /// <summary>
+        /// Resolved OTLP wire protocol. Precedence: explicit OtlpProtocol (set by
+        /// consumer code or resolved from OTEL_EXPORTER_OTLP_PROTOCOL in
+        /// TelemetryOptionsPostConfigure) > port-based inference (4318 ->
+        /// http/protobuf) > grpc default.
+        /// </summary>
+        public string ResolvedOtlpProtocol()
+        {
+            if (!string.IsNullOrWhiteSpace(OtlpProtocol))
+                return OtlpProtocol.Trim().ToLowerInvariant();
+
+            if (!string.IsNullOrWhiteSpace(OtelCollectorEndpoint)
+                && Uri.TryCreate(OtelCollectorEndpoint, UriKind.Absolute, out var uri)
+                && uri.Port == DefaultOtlpHttpPort)
+                return ProtocolHttpProtobuf;
+
+            return ProtocolGrpc;
         }
 
         internal bool HasInstrumentation(string name)

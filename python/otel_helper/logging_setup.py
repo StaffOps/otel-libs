@@ -6,7 +6,7 @@ from opentelemetry.sdk._logs import LoggerProvider, LoggingHandler
 from opentelemetry.sdk._logs.export import BatchLogRecordProcessor
 from opentelemetry.sdk.resources import Resource
 
-from otel_helper.config import TelemetryOptions, get_default_log_level
+from otel_helper.config import PROTOCOL_HTTP, TelemetryOptions, get_default_log_level
 
 
 def configure_logging(resource: Resource, options: TelemetryOptions) -> LoggerProvider:
@@ -18,13 +18,24 @@ def configure_logging(resource: Resource, options: TelemetryOptions) -> LoggerPr
     provider = LoggerProvider(resource=resource)
 
     if options.otel_endpoint:
-        from opentelemetry.exporter.otlp.proto.grpc._log_exporter import OTLPLogExporter
+        if options.resolved_otlp_protocol() == PROTOCOL_HTTP:
+            from opentelemetry.exporter.otlp.proto.http._log_exporter import OTLPLogExporter as HttpLogExporter
 
-        exporter = OTLPLogExporter(
-            endpoint=options.otel_endpoint,
-            insecure=options.resolve_insecure(),
-            timeout=options.export_timeout_ms / 1000,
-        )
+            endpoint = options.otel_endpoint.rstrip("/")
+            if not endpoint.endswith("/v1/logs"):
+                endpoint = f"{endpoint}/v1/logs"
+            exporter = HttpLogExporter(
+                endpoint=endpoint,
+                timeout=options.export_timeout_ms / 1000,
+            )
+        else:
+            from opentelemetry.exporter.otlp.proto.grpc._log_exporter import OTLPLogExporter
+
+            exporter = OTLPLogExporter(
+                endpoint=options.otel_endpoint,
+                insecure=options.resolve_insecure(),
+                timeout=options.export_timeout_ms / 1000,
+            )
         provider.add_log_record_processor(BatchLogRecordProcessor(exporter))
 
     level = options.minimum_log_level or get_default_log_level(options.environment, options.debug_level)

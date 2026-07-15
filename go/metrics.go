@@ -17,6 +17,7 @@ import (
 	"go.opentelemetry.io/contrib/instrumentation/runtime"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc"
+	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp"
 	promexporter "go.opentelemetry.io/otel/exporters/prometheus"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/resource"
@@ -73,16 +74,30 @@ func configureMetrics(ctx context.Context, res *resource.Resource, opts *Options
 	var srvShutdown func(context.Context) error
 
 	if opts.hasMetricExporter("otlp") {
-		metricOpts := []otlpmetricgrpc.Option{
-			otlpmetricgrpc.WithEndpoint(opts.OtelEndpoint),
-			otlpmetricgrpc.WithCompressor("gzip"),
-		}
-		if opts.Insecure {
-			metricOpts = append(metricOpts, otlpmetricgrpc.WithInsecure())
+		var exporter sdkmetric.Exporter
+		var err error
+		if opts.resolvedOtlpProtocol() == ProtocolHTTP {
+			httpOpts := []otlpmetrichttp.Option{
+				otlpmetrichttp.WithEndpoint(opts.OtelEndpoint),
+			}
+			if opts.Insecure {
+				httpOpts = append(httpOpts, otlpmetrichttp.WithInsecure())
+			} else {
+				httpOpts = append(httpOpts, otlpmetrichttp.WithTLSClientConfig(&tls.Config{}))
+			}
+			exporter, err = otlpmetrichttp.New(ctx, httpOpts...)
 		} else {
-			metricOpts = append(metricOpts, otlpmetricgrpc.WithTLSCredentials(credentials.NewTLS(&tls.Config{})))
+			grpcOpts := []otlpmetricgrpc.Option{
+				otlpmetricgrpc.WithEndpoint(opts.OtelEndpoint),
+				otlpmetricgrpc.WithCompressor("gzip"),
+			}
+			if opts.Insecure {
+				grpcOpts = append(grpcOpts, otlpmetricgrpc.WithInsecure())
+			} else {
+				grpcOpts = append(grpcOpts, otlpmetricgrpc.WithTLSCredentials(credentials.NewTLS(&tls.Config{})))
+			}
+			exporter, err = otlpmetricgrpc.New(ctx, grpcOpts...)
 		}
-		exporter, err := otlpmetricgrpc.New(ctx, metricOpts...)
 		if err != nil {
 			return nil, nil, fmt.Errorf("metric exporter: %w", err)
 		}

@@ -1,6 +1,6 @@
 # Tests — OtelHelper (.NET)
 
-164 unit tests (xUnit), 0 failed, 0 warnings.
+179 unit tests (xUnit), 0 failed, 0 warnings.
 
 ```bash
 docker run --rm -v "$(pwd):/src" -w /src mcr.microsoft.com/dotnet/sdk:8.0 dotnet test OtelHelper.Tests
@@ -346,3 +346,36 @@ Opt-in subpackage extensions (AWS, SQL, Redis) — each verifies the fluent `ISe
 | `StandardVarBeatsHelperVar` | Both set → standard var wins, helper ratio ignored |
 | `ExplicitRatioBeatsStandardVar` | Explicit `Sampler` in code wins over the standard env var |
 | `NoEnvNoOverride_DefaultsToAlwaysOn` | Neither set → `AlwaysOnSampler`, span sampled |
+
+## OtlpProtocolTests
+
+OTLP wire protocol selection (grpc vs http/protobuf) — tracing and metrics. Cross-language parity with `python/tests/test_otlp_protocol.py` and `go/otlp_protocol_test.go`. Uses `[Collection("EnvVarTests")]`.
+
+### ResolvedOtlpProtocol precedence
+
+| Test | Description |
+|-------|-----------|
+| `DefaultIsGrpc` | Endpoint on port 4317, no env var → grpc |
+| `NoEndpoint_DefaultsToGrpc` | No endpoint at all → grpc |
+| `Port4318_InfersHttp` | Endpoint on port 4318 → http/protobuf |
+| `Port4317_InfersGrpc` | Endpoint on port 4317 → grpc |
+| `OtherPort_InfersGrpc` | Endpoint on an unrelated port → grpc |
+| `EnvVar_BeatsPortInference` | `OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf` wins over a :4317 endpoint that would infer grpc |
+| `EnvVarGrpc_BeatsHttpPortInference` | `OTEL_EXPORTER_OTLP_PROTOCOL=grpc` wins over a :4318 endpoint that would infer http |
+| `ExplicitOption_BeatsEnv` | `TelemetryOptions.OtlpProtocol` set in code wins over the env var |
+| `EnvVar_CaseAndWhitespaceTolerant` | `"  HTTP/PROTOBUF  "` normalizes correctly |
+
+### Validation
+
+| Test | Description |
+|-------|-----------|
+| `UnknownValue_FailsValidation` | Unknown protocol value → validation error |
+| `HttpJson_RejectedEvenThoughSpecValid` | `http/json` is a valid OTel spec value but unsupported here → fails validation |
+| `GrpcAndHttpProtobuf_PassValidation` × 2 | `grpc` and `http/protobuf` both pass validation |
+
+### Live integration — HTTP protocol delivers to /v1/{signal}
+
+| Test | Description |
+|-------|-----------|
+| `Tracing_Http_DeliversToV1Traces` | `ConfigureTracing` with http/protobuf sends the request to `/v1/traces` on a real `HttpListener` |
+| `Metrics_Http_DeliversToV1Metrics` | `ConfigureMetrics` with http/protobuf sends the request to `/v1/metrics` on a real `HttpListener` |

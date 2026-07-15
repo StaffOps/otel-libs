@@ -26,6 +26,10 @@ type Options struct {
 	// Default: 9464 (OTEL_HELPER_METRICS_PORT). 0 disables the listener while
 	// keeping the Prometheus reader active for MetricsHandler().
 	PrometheusMetricsPort int
+	// OtlpProtocol selects the OTLP wire protocol: "grpc" or "http/protobuf".
+	// Empty = resolve from OTEL_EXPORTER_OTLP_PROTOCOL, falling back to
+	// port-based inference (4318 -> http/protobuf, else grpc).
+	OtlpProtocol string
 
 	// insecureExplicit tracks whether WithInsecure was called explicitly,
 	// preventing env/scheme auto-detection from overriding the consumer's choice.
@@ -45,12 +49,20 @@ func (o *Options) IsSignalEnabled(signal string) bool {
 // Option is a functional option for Setup.
 type Option func(*Options)
 
-func WithServiceName(name string) Option          { return func(o *Options) { o.ServiceName = name } }
-func WithEnvironment(env DeploymentEnvironment) Option { return func(o *Options) { o.Environment = env } }
-func WithDebug() Option                           { return func(o *Options) { o.DebugLevel = true } }
-func WithEndpoint(endpoint string) Option         { return func(o *Options) { o.OtelEndpoint = endpoint } }
-func WithSampleRatio(ratio float64) Option        { return func(o *Options) { o.SampleRatio = ratio } }
-func WithExportTimeout(ms int) Option             { return func(o *Options) { o.ExportTimeoutMs = ms } }
+func WithServiceName(name string) Option { return func(o *Options) { o.ServiceName = name } }
+func WithEnvironment(env DeploymentEnvironment) Option {
+	return func(o *Options) { o.Environment = env }
+}
+func WithDebug() Option                   { return func(o *Options) { o.DebugLevel = true } }
+func WithEndpoint(endpoint string) Option { return func(o *Options) { o.OtelEndpoint = endpoint } }
+
+// WithOtlpProtocol selects the OTLP wire protocol ("grpc" or "http/protobuf"),
+// overriding OTEL_EXPORTER_OTLP_PROTOCOL and the port-based inference.
+func WithOtlpProtocol(protocol string) Option {
+	return func(o *Options) { o.OtlpProtocol = protocol }
+}
+func WithSampleRatio(ratio float64) Option { return func(o *Options) { o.SampleRatio = ratio } }
+func WithExportTimeout(ms int) Option      { return func(o *Options) { o.ExportTimeoutMs = ms } }
 func WithExtraInstrumentation(instr string) Option {
 	return func(o *Options) { o.ExtraInstrumentation = instr }
 }

@@ -9,6 +9,21 @@ currently aligned at the same version.
 
 ## [Unreleased]
 
+### Added
+
+- **OTLP/HTTP protocol support** (all languages) — the SDK can now export via
+  `http/protobuf` in addition to the existing `grpc` transport. Selection
+  follows the standard `OTEL_EXPORTER_OTLP_PROTOCOL` env var; when unset, the
+  endpoint port infers the protocol (`4318` → `http/protobuf`, else `grpc`),
+  matching `bdcotelhelper`'s port-based convention. Explicit code config wins
+  over the env var, which wins over port inference. `http/json` is a valid
+  OTel spec value but has no exporter implementation in any of the three
+  SDKs — it fails validation instead of silently falling back. Programmatic
+  override: `TelemetryOptions(otlp_protocol=...)` (Python),
+  `WithOtlpProtocol(...)` (Go), `TelemetryOptions.OtlpProtocol` (.NET). Python
+  and .NET manually append `/v1/{signal}` to the endpoint for the HTTP
+  exporters (the Go SDK does this automatically).
+
 ## [0.1.0] - 2026-07-14
 
 First stable release. All items tracked in `ANALISE-PROBLEMAS.md` (P1–P9)
