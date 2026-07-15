@@ -1,6 +1,6 @@
 # Tests — otel-helper (Python)
 
-133 unit tests (pytest), `--ignore=tests/test_propagation.py`. Coverage: ≥90% line (CI gate).
+153 unit tests (pytest), `--ignore=tests/test_propagation.py`. Coverage: ≥90% line (CI gate).
 
 ```bash
 docker run --rm -v $(pwd):/app -w /app python:3.11-slim sh -c "pip install -e '.[dev]' grpcio -q && pytest tests/ --ignore=tests/test_propagation.py -v"
@@ -8,7 +8,7 @@ docker run --rm -v $(pwd):/app -w /app python:3.11-slim sh -c "pip install -e '.
 
 ---
 
-## test_config.py (47 tests)
+## test_config.py (59 tests)
 
 ### TestDefaults (5 tests)
 
@@ -93,6 +93,25 @@ TLS auto-detection via `resolve_insecure()`.
 | `test_explicit_insecure_true_overrides_scheme` | Explicit `insecure=True` wins over https:// scheme |
 | `test_explicit_overrides_env` | Explicit value wins over env var |
 | `test_default_insecure_is_none` | `insecure` field defaults to None (unset) |
+
+### TestResolvedOtlpProtocol (12 tests)
+
+`resolved_otlp_protocol()` — explicit > `OTEL_EXPORTER_OTLP_PROTOCOL` > port 4318 inference > `grpc` default. Cross-language parity with `go/otlp_protocol_test.go` and `dotnet/OtelHelper.Tests/OtlpProtocolTests.cs`.
+
+| Test | Description |
+|------|-------------|
+| `test_default_is_grpc` | Endpoint on port 4317, no env var → grpc |
+| `test_no_endpoint_defaults_to_grpc` | No endpoint at all → grpc |
+| `test_port_4318_infers_http` | Endpoint on port 4318 → http/protobuf |
+| `test_port_4317_infers_grpc` | Endpoint on port 4317 → grpc |
+| `test_other_port_infers_grpc` | Endpoint on an unrelated port → grpc |
+| `test_env_var_wins_over_port_inference` | `OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf` wins over a :4317 endpoint that would infer grpc |
+| `test_env_var_grpc_wins_over_http_port_inference` | `OTEL_EXPORTER_OTLP_PROTOCOL=grpc` wins over a :4318 endpoint that would infer http |
+| `test_explicit_option_beats_env_var` | `otlp_protocol=` kwarg wins over the env var |
+| `test_env_var_case_and_whitespace_tolerant` | `"  HTTP/PROTOBUF  "` normalizes correctly |
+| `test_unknown_protocol_fails_validation` | Unknown protocol value → `ValueError` |
+| `test_unsupported_but_spec_valid_http_json_fails_validation` | `http/json` is a valid OTel spec value but unsupported here → fails validation |
+| `test_grpc_and_http_protobuf_pass_validation` | `grpc` and `http/protobuf` both pass validation |
 
 ---
 
@@ -255,6 +274,35 @@ Opt-in instrumentation extensions (`otel_helper.ext`) — the optional packages 
 |------|-------------|
 | `test_port_zero_suppresses_listener` | `prometheus_metrics_port=0` → no listener bound, no error |
 | `test_busy_port_raises_actionable_error` | Port already in use → RuntimeError naming `metrics_app()` as the fix |
+
+---
+
+## test_otlp_protocol.py (8 tests)
+
+OTLP wire protocol selection (grpc vs http/protobuf) — tracing, metrics, logging. Verifies exporter selection via mocking the exporter constructors; the underlying SDK path-append behavior was confirmed empirically against the real installed SDK before writing this file. Cross-language parity with `go/otlp_protocol_test.go` and `dotnet/OtelHelper.Tests/OtlpProtocolTests.cs`.
+
+### TestTracingProtocolSelection (4 tests)
+
+| Test | Description |
+|------|-------------|
+| `test_grpc_endpoint_uses_grpc_exporter` | Port 4317 → grpc exporter, http exporter not called |
+| `test_http_endpoint_uses_http_exporter_with_path_appended` | Port 4318 → http exporter, `/v1/traces` appended, no `insecure` kwarg |
+| `test_http_endpoint_with_trailing_slash_no_double_path` | Trailing slash on the endpoint doesn't produce `//v1/traces` |
+| `test_explicit_protocol_overrides_port_inference` | `otlp_protocol="http/protobuf"` overrides a :4317 endpoint that would infer grpc |
+
+### TestMetricsProtocolSelection (2 tests)
+
+| Test | Description |
+|------|-------------|
+| `test_grpc_endpoint_uses_grpc_exporter` | Port 4317 → grpc exporter |
+| `test_http_endpoint_uses_http_exporter_with_path_appended` | Port 4318 → http exporter, `/v1/metrics` appended |
+
+### TestLoggingProtocolSelection (2 tests)
+
+| Test | Description |
+|------|-------------|
+| `test_grpc_endpoint_uses_grpc_exporter` | Port 4317 → grpc exporter |
+| `test_http_endpoint_uses_http_exporter_with_path_appended` | Port 4318 → http exporter, `/v1/logs` appended |
 
 ---
 

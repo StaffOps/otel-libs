@@ -461,6 +461,7 @@ func main() {
 | `OTEL_METRICS_EXPORTER` | Metric exporter(s): `otlp`, `prometheus`, `otlp,prometheus`, `none` | legacy inference |
 | `OTEL_METRIC_EXPORT_INTERVAL` | OTLP metric export interval (ms) | `30000` |
 | `OTEL_TRACES_SAMPLER` | Standard OTel sampler config — takes priority over `OTEL_HELPER_SAMPLE_RATIO` when set | _(unset)_ |
+| `OTEL_EXPORTER_OTLP_PROTOCOL` | OTLP wire protocol: `grpc` or `http/protobuf` | port-based inference |
 
 ### Configuration Priority
 
@@ -646,5 +647,31 @@ shutdown, err := otelhelper.Setup(ctx,
 ```
 
 Priority: code config (`WithInsecure(true)`) > `OTEL_EXPORTER_OTLP_INSECURE` env var > scheme-based detection.
+
+---
+
+## 16. OTLP Protocol (gRPC vs HTTP/protobuf)
+
+By default, the SDK exports over **gRPC**. To use OTLP/HTTP instead (e.g. behind an ingress that doesn't proxy gRPC), set the standard env var:
+
+```bash
+OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf
+```
+
+Or in code:
+
+```go
+shutdown, err := otelhelper.Setup(ctx,
+    otelhelper.WithOtlpProtocol("http/protobuf"),
+)
+```
+
+If left unset, the protocol is inferred from the endpoint port: `4318` resolves to `http/protobuf`, any other port (including the default `4317`) resolves to `grpc`.
+
+Priority: code config (`WithOtlpProtocol(...)`) > `OTEL_EXPORTER_OTLP_PROTOCOL` env var > port-based inference (`4318` → `http/protobuf`) > `grpc` default.
+
+`http/json` is a valid value per the OTel spec but has no exporter implementation for traces/metrics/logs in this library — it fails validation at startup instead of silently falling back to another protocol.
+
+The Go OTLP/HTTP exporters append `/v1/traces`, `/v1/metrics`, `/v1/logs` to the endpoint automatically — do not include them in `OTEL_EXPORTER_OTLP_ENDPOINT`.
 
 For local development with a plaintext collector, the default `http://localhost` already resolves to plaintext — no changes needed.

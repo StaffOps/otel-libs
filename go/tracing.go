@@ -8,7 +8,9 @@ import (
 	"time"
 
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/exporters/otlp/otlptrace"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
+	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/trace"
@@ -34,18 +36,37 @@ func configureTracing(ctx context.Context, res *resource.Resource, opts *Options
 	}
 
 	if opts.OtelEndpoint != "" {
-		// OTLP push — export spans to collector.
-		traceOpts := []otlptracegrpc.Option{
-			otlptracegrpc.WithEndpoint(opts.OtelEndpoint),
-			otlptracegrpc.WithTimeout(time.Duration(opts.ExportTimeoutMs) * time.Millisecond),
-			otlptracegrpc.WithCompressor("gzip"),
-		}
-		if opts.Insecure {
-			traceOpts = append(traceOpts, otlptracegrpc.WithInsecure())
+		// OTLP push — export spans to collector, over gRPC or HTTP/protobuf
+		// depending on the resolved protocol (design: config.go's
+		// resolvedOtlpProtocol — explicit > OTEL_EXPORTER_OTLP_PROTOCOL >
+		// port 4318 inference > grpc default).
+		var exporter *otlptrace.Exporter
+		var err error
+		if opts.resolvedOtlpProtocol() == ProtocolHTTP {
+			httpOpts := []otlptracehttp.Option{
+				otlptracehttp.WithEndpoint(opts.OtelEndpoint),
+				otlptracehttp.WithTimeout(time.Duration(opts.ExportTimeoutMs) * time.Millisecond),
+				otlptracehttp.WithCompression(otlptracehttp.GzipCompression),
+			}
+			if opts.Insecure {
+				httpOpts = append(httpOpts, otlptracehttp.WithInsecure())
+			} else {
+				httpOpts = append(httpOpts, otlptracehttp.WithTLSClientConfig(&tls.Config{}))
+			}
+			exporter, err = otlptracehttp.New(ctx, httpOpts...)
 		} else {
-			traceOpts = append(traceOpts, otlptracegrpc.WithTLSCredentials(credentials.NewTLS(&tls.Config{})))
+			grpcOpts := []otlptracegrpc.Option{
+				otlptracegrpc.WithEndpoint(opts.OtelEndpoint),
+				otlptracegrpc.WithTimeout(time.Duration(opts.ExportTimeoutMs) * time.Millisecond),
+				otlptracegrpc.WithCompressor("gzip"),
+			}
+			if opts.Insecure {
+				grpcOpts = append(grpcOpts, otlptracegrpc.WithInsecure())
+			} else {
+				grpcOpts = append(grpcOpts, otlptracegrpc.WithTLSCredentials(credentials.NewTLS(&tls.Config{})))
+			}
+			exporter, err = otlptracegrpc.New(ctx, grpcOpts...)
 		}
-		exporter, err := otlptracegrpc.New(ctx, traceOpts...)
 		if err != nil {
 			return nil, fmt.Errorf("trace exporter: %w", err)
 		}

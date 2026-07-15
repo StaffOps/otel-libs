@@ -8,6 +8,7 @@ import (
 
 	"go.opentelemetry.io/contrib/bridges/otelslog"
 	"go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc"
+	"go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp"
 	"go.opentelemetry.io/otel/log/global"
 	sdklog "go.opentelemetry.io/otel/sdk/log"
 	"go.opentelemetry.io/otel/sdk/resource"
@@ -20,16 +21,31 @@ func configureLogging(ctx context.Context, res *resource.Resource, opts *Options
 	}
 
 	if opts.OtelEndpoint != "" {
-		// OTLP push — export logs to collector.
-		logOpts := []otlploggrpc.Option{
-			otlploggrpc.WithEndpoint(opts.OtelEndpoint),
-		}
-		if opts.Insecure {
-			logOpts = append(logOpts, otlploggrpc.WithInsecure())
+		// OTLP push — export logs to collector, over gRPC or HTTP/protobuf
+		// depending on the resolved protocol.
+		var exporter sdklog.Exporter
+		var err error
+		if opts.resolvedOtlpProtocol() == ProtocolHTTP {
+			httpOpts := []otlploghttp.Option{
+				otlploghttp.WithEndpoint(opts.OtelEndpoint),
+			}
+			if opts.Insecure {
+				httpOpts = append(httpOpts, otlploghttp.WithInsecure())
+			} else {
+				httpOpts = append(httpOpts, otlploghttp.WithTLSClientConfig(&tls.Config{}))
+			}
+			exporter, err = otlploghttp.New(ctx, httpOpts...)
 		} else {
-			logOpts = append(logOpts, otlploggrpc.WithTLSCredentials(credentials.NewTLS(&tls.Config{})))
+			grpcOpts := []otlploggrpc.Option{
+				otlploggrpc.WithEndpoint(opts.OtelEndpoint),
+			}
+			if opts.Insecure {
+				grpcOpts = append(grpcOpts, otlploggrpc.WithInsecure())
+			} else {
+				grpcOpts = append(grpcOpts, otlploggrpc.WithTLSCredentials(credentials.NewTLS(&tls.Config{})))
+			}
+			exporter, err = otlploggrpc.New(ctx, grpcOpts...)
 		}
-		exporter, err := otlploggrpc.New(ctx, logOpts...)
 		if err != nil {
 			return nil, fmt.Errorf("log exporter: %w", err)
 		}

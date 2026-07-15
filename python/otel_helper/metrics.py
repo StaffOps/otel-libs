@@ -9,7 +9,7 @@ from opentelemetry.sdk.metrics._internal.exemplar import TraceBasedExemplarFilte
 from opentelemetry.sdk.metrics.view import View, DropAggregation
 from opentelemetry.sdk.resources import Resource
 
-from otel_helper.config import TelemetryOptions
+from otel_helper.config import PROTOCOL_HTTP, TelemetryOptions
 
 _logger = logging.getLogger(__name__)
 
@@ -48,13 +48,24 @@ def configure_metrics(resource: Resource, options: TelemetryOptions) -> MeterPro
     readers = []
 
     if "otlp" in exporters:
-        from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import OTLPMetricExporter
+        if options.resolved_otlp_protocol() == PROTOCOL_HTTP:
+            from opentelemetry.exporter.otlp.proto.http.metric_exporter import OTLPMetricExporter as HttpMetricExporter
 
-        exporter = OTLPMetricExporter(
-            endpoint=options.otel_endpoint,
-            insecure=options.resolve_insecure(),
-            timeout=options.export_timeout_ms / 1000,
-        )
+            endpoint = options.otel_endpoint.rstrip("/")
+            if not endpoint.endswith("/v1/metrics"):
+                endpoint = f"{endpoint}/v1/metrics"
+            exporter = HttpMetricExporter(
+                endpoint=endpoint,
+                timeout=options.export_timeout_ms / 1000,
+            )
+        else:
+            from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import OTLPMetricExporter
+
+            exporter = OTLPMetricExporter(
+                endpoint=options.otel_endpoint,
+                insecure=options.resolve_insecure(),
+                timeout=options.export_timeout_ms / 1000,
+            )
         readers.append(PeriodicExportingMetricReader(
             exporter, export_interval_millis=options.export_interval_ms,
         ))

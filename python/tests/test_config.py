@@ -265,3 +265,65 @@ class TestResolveInsecure:
     def test_default_insecure_is_none(self):
         opts = TelemetryOptions()
         assert opts.insecure is None
+
+
+class TestResolvedOtlpProtocol:
+    """resolved_otlp_protocol() — explicit > OTEL_EXPORTER_OTLP_PROTOCOL > port 4318 > grpc default."""
+
+    def test_default_is_grpc(self):
+        opts = TelemetryOptions(otel_endpoint="http://collector:4317")
+        assert opts.resolved_otlp_protocol() == "grpc"
+
+    def test_no_endpoint_defaults_to_grpc(self):
+        opts = TelemetryOptions()
+        assert opts.resolved_otlp_protocol() == "grpc"
+
+    def test_port_4318_infers_http(self):
+        opts = TelemetryOptions(otel_endpoint="http://collector:4318")
+        assert opts.resolved_otlp_protocol() == "http/protobuf"
+
+    def test_port_4317_infers_grpc(self):
+        opts = TelemetryOptions(otel_endpoint="http://collector:4317")
+        assert opts.resolved_otlp_protocol() == "grpc"
+
+    def test_other_port_infers_grpc(self):
+        opts = TelemetryOptions(otel_endpoint="http://collector:9999")
+        assert opts.resolved_otlp_protocol() == "grpc"
+
+    def test_env_var_wins_over_port_inference(self):
+        os.environ["OTEL_EXPORTER_OTLP_PROTOCOL"] = "http/protobuf"
+        opts = TelemetryOptions(otel_endpoint="http://collector:4317")  # would infer grpc
+        assert opts.resolved_otlp_protocol() == "http/protobuf"
+
+    def test_env_var_grpc_wins_over_http_port_inference(self):
+        os.environ["OTEL_EXPORTER_OTLP_PROTOCOL"] = "grpc"
+        opts = TelemetryOptions(otel_endpoint="http://collector:4318")  # would infer http
+        assert opts.resolved_otlp_protocol() == "grpc"
+
+    def test_explicit_option_beats_env_var(self):
+        os.environ["OTEL_EXPORTER_OTLP_PROTOCOL"] = "http/protobuf"
+        opts = TelemetryOptions(otel_endpoint="http://collector:4317", otlp_protocol="grpc")
+        assert opts.resolved_otlp_protocol() == "grpc"
+
+    def test_env_var_case_and_whitespace_tolerant(self):
+        os.environ["OTEL_EXPORTER_OTLP_PROTOCOL"] = "  HTTP/PROTOBUF  "
+        opts = TelemetryOptions(otel_endpoint="http://collector:4317")
+        assert opts.resolved_otlp_protocol() == "http/protobuf"
+
+    def test_unknown_protocol_fails_validation(self):
+        opts = TelemetryOptions(service_name="svc", otlp_protocol="http/json")
+        with pytest.raises(ValueError, match="Unknown OTLP protocol"):
+            opts.validate()
+
+    def test_unsupported_but_spec_valid_http_json_fails_validation(self):
+        # http/json is a valid spec value but no OTel SDK implements it for
+        # traces/metrics/logs — must fail loud, not silently downgrade.
+        os.environ["OTEL_EXPORTER_OTLP_PROTOCOL"] = "http/json"
+        opts = TelemetryOptions(service_name="svc")
+        with pytest.raises(ValueError, match="Unknown OTLP protocol"):
+            opts.validate()
+
+    def test_grpc_and_http_protobuf_pass_validation(self):
+        for proto in ("grpc", "http/protobuf"):
+            opts = TelemetryOptions(service_name="svc", otlp_protocol=proto)
+            opts.validate()  # should not raise

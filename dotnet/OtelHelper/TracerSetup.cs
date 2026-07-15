@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using Microsoft.Extensions.DependencyInjection;
+using OpenTelemetry.Exporter;
 using OpenTelemetry.Trace;
 
 namespace OtelHelper.Tracing
@@ -48,9 +49,19 @@ namespace OtelHelper.Tracing
             // Without endpoint, traces are still created for in-process context propagation but not exported.
             if (!string.IsNullOrWhiteSpace(options.OtelCollectorEndpoint))
             {
+                var protocol = options.ResolvedOtlpProtocol();
                 builder.AddOtlpExporter(otlp =>
                 {
-                    otlp.Endpoint = new Uri(options.OtelCollectorEndpoint);
+                    if (protocol == TelemetryOptions.ProtocolHttpProtobuf)
+                    {
+                        otlp.Protocol = OtlpExportProtocol.HttpProtobuf;
+                        otlp.Endpoint = new Uri(options.OtelCollectorEndpoint.TrimEnd('/') + "/v1/traces");
+                    }
+                    else
+                    {
+                        otlp.Protocol = OtlpExportProtocol.Grpc;
+                        otlp.Endpoint = new Uri(options.OtelCollectorEndpoint);
+                    }
                     otlp.TimeoutMilliseconds = options.ExportTimeoutMs;
                 });
             }

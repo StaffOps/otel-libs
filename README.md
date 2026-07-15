@@ -86,6 +86,7 @@ defer shutdown(ctx)
 | `OTEL_METRICS_EXPORTER` | legacy inference | Metric exporter(s): `otlp`, `prometheus`, `otlp,prometheus`, `none`. Unset = OTLP if endpoint set, else Prometheus fallback |
 | `OTEL_METRIC_EXPORT_INTERVAL` | `30000` | OTLP metric export interval in ms (standard OTel var; helper default is 30s, not the SDK's 60s) |
 | `OTEL_TRACES_SAMPLER` | _(unset)_ | Standard OTel sampler config — takes priority over `OTEL_HELPER_SAMPLE_RATIO` when set |
+| `OTEL_EXPORTER_OTLP_PROTOCOL` | port-based inference | OTLP wire protocol: `grpc` or `http/protobuf`. Unset = `http/protobuf` when the endpoint port is `4318`, else `grpc`. `http/json` is a valid spec value but unsupported here — fails validation loudly |
 
 **Precedence rule:** explicit code config > standard OTel env var (`OTEL_METRICS_EXPORTER`, `OTEL_METRIC_EXPORT_INTERVAL`, `OTEL_TRACES_SAMPLER`) > `OTEL_HELPER_*` env var > library default. `OTEL_HELPER_*` vars keep working when the standard var is absent — they're convenience defaults, not a replacement for the spec.
 

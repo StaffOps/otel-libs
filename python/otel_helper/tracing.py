@@ -9,7 +9,7 @@ from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from opentelemetry.sdk.trace.sampling import ALWAYS_ON, TraceIdRatioBased
 from opentelemetry.sdk.resources import Resource
 
-from otel_helper.config import ENV_TRACES_SAMPLER, TelemetryOptions
+from otel_helper.config import ENV_TRACES_SAMPLER, PROTOCOL_HTTP, TelemetryOptions
 from otel_helper.processors import DebugProcessor
 
 HEALTH_PATHS = frozenset(["/ping", "/health", "/healthz", "/ready"])
@@ -33,13 +33,29 @@ def configure_tracing(resource: Resource, options: TelemetryOptions) -> TracerPr
         )
 
     if options.otel_endpoint:
-        from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
+        if options.resolved_otlp_protocol() == PROTOCOL_HTTP:
+            from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter as HttpSpanExporter
 
-        exporter = OTLPSpanExporter(
-            endpoint=options.otel_endpoint,
-            insecure=options.resolve_insecure(),
-            timeout=options.export_timeout_ms / 1000,
-        )
+            # The HTTP exporter has no separate "insecure" flag — transport
+            # security is purely the endpoint's own scheme (http:// vs
+            # https://), unlike gRPC's independent insecure bool. An explicit
+            # endpoint is used as-is by the SDK (no auto path), so the
+            # standard /v1/traces suffix is appended here.
+            endpoint = options.otel_endpoint.rstrip("/")
+            if not endpoint.endswith("/v1/traces"):
+                endpoint = f"{endpoint}/v1/traces"
+            exporter = HttpSpanExporter(
+                endpoint=endpoint,
+                timeout=options.export_timeout_ms / 1000,
+            )
+        else:
+            from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
+
+            exporter = OTLPSpanExporter(
+                endpoint=options.otel_endpoint,
+                insecure=options.resolve_insecure(),
+                timeout=options.export_timeout_ms / 1000,
+            )
         provider.add_span_processor(BatchSpanProcessor(exporter))
 
     if options.debug_level:

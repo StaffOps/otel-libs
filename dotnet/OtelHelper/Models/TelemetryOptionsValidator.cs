@@ -51,6 +51,17 @@ namespace OtelHelper
                     $"Metric exporter 'otlp' requires an endpoint. Set {TelemetryOptions.CollectorEndpointEnvVar} " +
                     $"or remove 'otlp' from {TelemetryOptions.MetricsExporterEnvVar}.");
 
+            // http/json is a valid OTel spec value but no .NET OTLP exporter implements
+            // it — must fail loud, not silently fall back to another protocol.
+            if (!string.IsNullOrWhiteSpace(options.OtlpProtocol))
+            {
+                var protocol = options.OtlpProtocol.Trim().ToLowerInvariant();
+                if (!TelemetryOptions.ValidOtlpProtocols.Contains(protocol))
+                    return ValidateOptionsResult.Fail(
+                        $"Unknown OTLP protocol '{options.OtlpProtocol}' in {TelemetryOptions.OtlpProtocolEnvVar}. " +
+                        $"Valid values: {string.Join(", ", TelemetryOptions.ValidOtlpProtocols)}.");
+            }
+
             return ValidateOptionsResult.Success;
         }
     }

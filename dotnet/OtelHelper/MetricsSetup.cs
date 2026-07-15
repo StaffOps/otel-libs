@@ -2,6 +2,7 @@ using System;
 using System.Linq;
 using System.Text.RegularExpressions;
 using Microsoft.Extensions.DependencyInjection;
+using OpenTelemetry.Exporter;
 using OpenTelemetry.Metrics;
 
 namespace OtelHelper.Metrics
@@ -25,9 +26,19 @@ namespace OtelHelper.Metrics
 
             if (exporters.Contains("otlp"))
             {
+                var protocol = options.ResolvedOtlpProtocol();
                 builder.AddOtlpExporter((exporterOptions, metricReaderOptions) =>
                 {
-                    exporterOptions.Endpoint = new Uri(options.OtelCollectorEndpoint);
+                    if (protocol == TelemetryOptions.ProtocolHttpProtobuf)
+                    {
+                        exporterOptions.Protocol = OtlpExportProtocol.HttpProtobuf;
+                        exporterOptions.Endpoint = new Uri(options.OtelCollectorEndpoint.TrimEnd('/') + "/v1/metrics");
+                    }
+                    else
+                    {
+                        exporterOptions.Protocol = OtlpExportProtocol.Grpc;
+                        exporterOptions.Endpoint = new Uri(options.OtelCollectorEndpoint);
+                    }
                     exporterOptions.TimeoutMilliseconds = options.ExportTimeoutMs;
                     metricReaderOptions.PeriodicExportingMetricReaderOptions.ExportIntervalMilliseconds =
                         options.ExportIntervalMs ?? TelemetryOptions.DefaultExportIntervalMs;

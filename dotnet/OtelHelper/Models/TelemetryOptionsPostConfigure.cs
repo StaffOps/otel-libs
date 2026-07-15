@@ -109,6 +109,16 @@ namespace OtelHelper
                 if (!string.IsNullOrWhiteSpace(disabledMetrics))
                     options.DisabledMetrics = disabledMetrics;
             }
+
+            // OTLP protocol from the standard OTel env var (only if not set by consumer).
+            // Port-based inference (4318 -> http/protobuf) happens lazily in
+            // TelemetryOptions.ResolvedOtlpProtocol() so it always sees the final endpoint.
+            if (string.IsNullOrWhiteSpace(options.OtlpProtocol))
+            {
+                var protocol = Environment.GetEnvironmentVariable(TelemetryOptions.OtlpProtocolEnvVar);
+                if (!string.IsNullOrWhiteSpace(protocol))
+                    options.OtlpProtocol = protocol.Trim().ToLowerInvariant();
+            }
         }
 
         private static bool ResolveEnvBool(string varName)

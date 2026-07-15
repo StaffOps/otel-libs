@@ -29,11 +29,16 @@ ENV_INSECURE = "OTEL_EXPORTER_OTLP_INSECURE"
 ENV_METRICS_EXPORTER = "OTEL_METRICS_EXPORTER"
 ENV_METRIC_EXPORT_INTERVAL = "OTEL_METRIC_EXPORT_INTERVAL"
 ENV_TRACES_SAMPLER = "OTEL_TRACES_SAMPLER"
+ENV_OTLP_PROTOCOL = "OTEL_EXPORTER_OTLP_PROTOCOL"
 
 _DEFAULT_COLLECTOR_HOST = "http://localhost"
 _DEFAULT_OTLP_PORT = 4317
+_DEFAULT_OTLP_HTTP_PORT = 4318
 _DEFAULT_EXPORT_INTERVAL_MS = 30_000
 _VALID_METRIC_EXPORTERS = ("otlp", "prometheus", "none")
+PROTOCOL_GRPC = "grpc"
+PROTOCOL_HTTP = "http/protobuf"
+_VALID_OTLP_PROTOCOLS = (PROTOCOL_GRPC, PROTOCOL_HTTP)
 
 
 def _parse_environment(value: str) -> DeploymentEnvironment:
@@ -109,6 +114,11 @@ class TelemetryOptions:
     minimum_log_level: int | None = None
     resource_attributes: dict[str, object] = field(default_factory=dict)
     insecure: bool | None = None
+    # OTLP wire protocol: "grpc" or "http/protobuf". None = resolve from
+    # OTEL_EXPORTER_OTLP_PROTOCOL, falling back to port-based inference
+    # (4318 -> http/protobuf, else grpc). "http/json" is not supported —
+    # none of the OTel SDKs implement it for traces/metrics/logs.
+    otlp_protocol: str | None = None
 
     def has_instrumentation(self, name: str) -> bool:
         if self.debug_level:
@@ -126,6 +136,24 @@ class TelemetryOptions:
         if self.metric_exporters == ["none"]:
             return []
         return self.metric_exporters
+
+    def resolved_otlp_protocol(self) -> str:
+        """Resolve the OTLP wire protocol: "grpc" or "http/protobuf".
+
+        Priority:
+        1. Explicit value set in code (self.otlp_protocol is not None)
+        2. OTEL_EXPORTER_OTLP_PROTOCOL env var (standard OTel convention)
+        3. Port-based inference: endpoint port 4318 -> http/protobuf, else grpc
+        """
+        if self.otlp_protocol is not None:
+            return self.otlp_protocol.strip().lower()
+        env_protocol = os.getenv(ENV_OTLP_PROTOCOL)
+        if env_protocol:
+            return env_protocol.strip().lower()
+        parsed = urlparse(self.otel_endpoint)
+        if parsed.port == _DEFAULT_OTLP_HTTP_PORT:
+            return PROTOCOL_HTTP
+        return PROTOCOL_GRPC
 
     def resolve_insecure(self) -> bool:
         """Resolve whether OTLP export should use insecure (plaintext) connection.
@@ -249,4 +277,11 @@ class TelemetryOptions:
             raise ValueError(
                 "[OtelHelper] Metric exporter 'otlp' requires an endpoint. "
                 f"Set {ENV_COLLECTOR_ENDPOINT} or remove 'otlp' from {ENV_METRICS_EXPORTER}."
+            )
+
+        resolved_protocol = self.resolved_otlp_protocol()
+        if resolved_protocol not in _VALID_OTLP_PROTOCOLS:
+            raise ValueError(
+                f"[OtelHelper] Unknown OTLP protocol '{resolved_protocol}' in {ENV_OTLP_PROTOCOL}. "
+                f"Valid values: {', '.join(_VALID_OTLP_PROTOCOLS)}."
             )
