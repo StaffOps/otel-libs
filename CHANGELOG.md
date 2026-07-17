@@ -9,6 +9,22 @@ currently aligned at the same version.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Go: `NewLogger` silently discarded every log record when no OTLP endpoint
+  was configured.** `NewLogger` always bridged `slog` through the OTel Logs
+  API (`otelslog.NewHandler`) into the process's `LoggerProvider`. When
+  `Setup()` runs without an OTLP endpoint, `configureLogging` builds that
+  `LoggerProvider` with **no processor attached** (there is nothing to
+  export to) — routing records through it in that case dropped every one of
+  them, with no error and no output anywhere. Discovered on
+  `staffops-anomaly-detection`: a full day of `alert_fired`/`anomaly_detected`
+  structured logs never reached stdout or Loki, breaking dry-run alert
+  auditing. `NewLogger` now checks whether `configureLogging` actually
+  attached a processor; without one, it falls back to a plain
+  `slog.NewJSONHandler` on stdout (same flat `msg`/`level`/`time` shape
+  consuming apps already parse) instead of the OTel bridge.
+
 ## [0.2.0] - 2026-07-15
 
 ### Added

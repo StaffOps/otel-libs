@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"fmt"
 	"log/slog"
+	"os"
 
 	"go.opentelemetry.io/contrib/bridges/otelslog"
 	"go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc"
@@ -51,8 +52,9 @@ func configureLogging(ctx context.Context, res *resource.Resource, opts *Options
 		}
 		lpOpts = append(lpOpts, sdklog.WithProcessor(sdklog.NewBatchProcessor(exporter)))
 	}
-	// When OtelEndpoint is empty, LoggerProvider is created without a processor.
-	// Logs go to stdout/slog only (no OTLP export).
+	// logsHaveProcessor gates NewLogger's handler choice below: called from
+	// Setup(), which already holds mu, so this plain assignment is safe.
+	logsHaveProcessor = opts.OtelEndpoint != ""
 
 	lp := sdklog.NewLoggerProvider(lpOpts...)
 	global.SetLoggerProvider(lp)
@@ -83,10 +85,32 @@ func DefaultLogLevel(env DeploymentEnvironment, debug bool) slog.Level {
 	}
 }
 
-// NewLogger returns a configured *slog.Logger with OTel bridge and environment-appropriate level.
+// NewLogger returns a configured *slog.Logger with environment-appropriate level.
+//
+// When Setup() configured an OTLP endpoint, this bridges slog through the
+// OTel Logs API (NewSlogHandler) so records are trace-correlated and exported
+// via OTLP. Without an endpoint, configureLogging builds a LoggerProvider
+// with NO processor attached (there is nothing to export to) — bridging
+// through it in that case would silently discard every record, since a
+// processor-less provider drops everything handed to it. So instead this
+// falls back to a plain JSON handler on stdout, matching the flat
+// msg/level/time shape the OTel bridge's absence would otherwise lose.
 func NewLogger(env DeploymentEnvironment, debug bool) *slog.Logger {
 	level := DefaultLogLevel(env, debug)
-	handler := NewSlogHandler()
+
+	mu.Lock()
+	bridged := logsHaveProcessor
+	mu.Unlock()
+
+	var handler slog.Handler
+	if bridged {
+		handler = NewSlogHandler()
+	} else {
+		handler = slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: level})
+		// slog.NewJSONHandler already enforces Level itself; the outer
+		// levelFilterHandler below is redundant here but kept for a uniform
+		// return type/behavior between both branches.
+	}
 	return slog.New(levelFilterHandler{level: level, inner: handler})
 }
 

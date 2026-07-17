@@ -25,6 +25,11 @@ var (
 	setupDone  bool
 	shutdownFn Shutdown
 	setupErr   error
+	// logsHaveProcessor is true once configureLogging attaches a real export
+	// processor (i.e. an OTLP endpoint was configured). NewLogger reads this to
+	// decide whether it's safe to bridge slog through the OTel Logs API — see
+	// the comment on NewLogger in logging.go for why this matters.
+	logsHaveProcessor bool
 )
 
 // noopShutdown is returned when Setup fails so callers always get a safe function.
