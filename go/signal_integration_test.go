@@ -1,7 +1,10 @@
 package otelhelper
 
 import (
+	"bytes"
 	"context"
+	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -533,5 +536,70 @@ func Test_ConfigureLogging_NoEndpoint(t *testing.T) {
 	defer cancel()
 	if err := lp.Shutdown(ctx); err != nil {
 		t.Logf("shutdown warning: %v", err)
+	}
+	if logsHaveProcessor {
+		t.Error("logsHaveProcessor should be false when OtelEndpoint is empty")
+	}
+}
+
+// Regression test for the bug where NewLogger, called after configureLogging
+// ran with no OTLP endpoint, bridged every record through a processor-less
+// LoggerProvider — which silently discards everything handed to it. Records
+// must instead reach stdout as plain JSON in that case.
+func Test_NewLogger_NoEndpoint_WritesToStdout(t *testing.T) {
+	opts := &Options{
+		ServiceName:     "test-svc",
+		Environment:     LOCAL,
+		OtelEndpoint:    "",
+		ExportTimeoutMs: 10_000,
+	}
+	res := resource.Default()
+	lp, err := configureLogging(context.Background(), res, opts)
+	if err != nil {
+		t.Fatalf("configureLogging(no endpoint) error = %v", err)
+	}
+	defer lp.Shutdown(context.Background())
+
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe() error = %v", err)
+	}
+	origStdout := os.Stdout
+	os.Stdout = w
+	defer func() { os.Stdout = origStdout }()
+
+	logger := NewLogger(LOCAL, false)
+	logger.Info("alert_fired", "severity", "critical")
+
+	w.Close()
+	os.Stdout = origStdout
+	var buf bytes.Buffer
+	if _, err := buf.ReadFrom(r); err != nil {
+		t.Fatalf("read pipe: %v", err)
+	}
+
+	out := buf.String()
+	if !strings.Contains(out, `"msg":"alert_fired"`) {
+		t.Errorf("expected the log record to reach stdout as JSON, got: %q", out)
+	}
+}
+
+func Test_NewLogger_WithEndpoint_DoesNotWriteRawJSONToStdout(t *testing.T) {
+	opts := &Options{
+		ServiceName:     "test-svc",
+		Environment:     LOCAL,
+		OtelEndpoint:    "127.0.0.1:0", // unreachable but non-empty — just needs to be set
+		ExportTimeoutMs: 10_000,
+		Insecure:        true,
+	}
+	res := resource.Default()
+	lp, err := configureLogging(context.Background(), res, opts)
+	if err != nil {
+		t.Fatalf("configureLogging(with endpoint) error = %v", err)
+	}
+	defer lp.Shutdown(context.Background())
+
+	if !logsHaveProcessor {
+		t.Error("logsHaveProcessor should be true when OtelEndpoint is set")
 	}
 }
