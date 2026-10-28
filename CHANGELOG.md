@@ -10,7 +10,10 @@ currently aligned at the same version.
 ## [Unreleased]
 
 Target: **`0.3.0` for Go and Python** (one coordinated release, preceded by
-`0.3.0-rc.1`; design D10). It implements the cross-language config contract in
+`0.3.0-rc.1`; design D10). **`0.3.0-rc.1` cut on 2026-10-28** — tags
+`v0.3.0-rc.1` (Python `0.3.0rc1`), `go/v0.3.0-rc.1` and
+`go/ext/{otelaws,otelredis,otelsql}/v0.3.0-rc.1`; .NET releases are now tagged
+`dotnet/vX.Y.Z` (design D10 A11 ruling). It implements the cross-language config contract in
 [`specs/config-contract-v0.3/`](https://github.com/StaffOps/otel-libs/tree/main/specs/config-contract-v0.3) (ADR-001 to
 ADR-008). **.NET is unchanged and stays on 0.2.x**: it adopts the same contract
 in Phase C (ADR-004); until then its differences are `xfail` cases in

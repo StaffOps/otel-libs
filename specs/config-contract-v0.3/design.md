@@ -595,6 +595,14 @@ paths in every language with no removal date.
 **Reversal action**: hold that change behind a one-release compat shim, ship the rest.
 **Alternatives rejected**: staged 0.3/0.4 flips; `OTEL_HELPER_LEGACY_PRECEDENCE` flag.
 
+**A11 ruling (2026-10-28, owner approved the rc cut).** Release tags per
+language, because versions now diverge (ADR-004): `vX.Y.Z[-rc.N]` publishes the
+Python wheel/sdist to the GitHub Release (PEP 440 version in `pyproject.toml`,
+e.g. `0.3.0rc1`); `go/vX.Y.Z[-rc.N]` plus `go/ext/<module>/vX.Y.Z[-rc.N]` for
+each ext module (Go submodule tag rule); `dotnet/vX.Y.Z` publishes NuGet. Before
+this ruling every `v*` tag also published .NET under that version, so
+`v0.3.0-rc.1` would have shipped the unchanged 0.2.x .NET code as 0.3.0-rc.1.
+
 ---
 
 ## D12 — Python defaults HTTP semconv to stable
