@@ -96,8 +96,8 @@ def missing_dependency_hint(err: ImportError, extra: str, label: str, library: s
         parts = module.split(".")
         if err.name in {".".join(parts[:i]) for i in range(1, len(parts) + 1)}:
             return (
-                f"{label} instrumentation not installed. "
-                f"Run: pip install otel-helper[{extra}]"
+                f"{label} instrumentation not installed. Install the otel-helper "
+                f"wheel with the [{extra}] extra (not on PyPI; see CONSUMING.md)"
             )
         if err.name.split(".")[0] == library:
             return (

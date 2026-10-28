@@ -18,13 +18,20 @@ how to test the library is in [TESTS.md](TESTS.md).
 
 ## Installation
 
+The package is **not on PyPI** (the name is not registered there, so never
+install it by name). Install the release wheel, or pin its URL with a hash —
+see [CONSUMING.md](../CONSUMING.md#python-github-release-assets):
+
 ```bash
-pip install otel-helper
+pip install ./otel_helper-<version>-py3-none-any.whl
+# requirements.txt, hash-pinned:
+# otel-helper @ https://github.com/StaffOps/otel-libs/releases/download/<tag>/otel_helper-<version>-py3-none-any.whl#sha256=<digest>
 ```
 
 FastAPI, HTTPX, requests, gRPC (sync and `grpc.aio`), system metrics and the
 `logging` bridge are part of the core install. SQLAlchemy, Redis and botocore
-live in extras: `otel-helper[sql]`, `[redis]`, `[aws]` or `[all]`.
+live in extras: `[sql]`, `[redis]`, `[aws]` or `[all]`, requested on the wheel
+(`pip install "otel-helper[sql] @ file://$(pwd)/otel_helper-<version>-py3-none-any.whl"`).
 
 ## Quick start
 

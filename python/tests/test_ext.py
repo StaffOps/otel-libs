@@ -31,17 +31,17 @@ def _fake_instrumentor_module(monkeypatch, module_name: str, class_name: str) ->
 class TestExtraNotInstalled:
     def test_aws_raises_actionable_import_error(self, monkeypatch):
         monkeypatch.setitem(sys.modules, "opentelemetry.instrumentation.botocore", None)  # import fails
-        with pytest.raises(ImportError, match=r"pip install otel-helper\[aws\]"):
+        with pytest.raises(ImportError, match=r"otel-helper wheel with the \[aws\] extra \(not on PyPI; see CONSUMING\.md\)"):
             instrument_aws()
 
     def test_redis_raises_actionable_import_error(self, monkeypatch):
         monkeypatch.setitem(sys.modules, "opentelemetry.instrumentation.redis", None)  # import fails
-        with pytest.raises(ImportError, match=r"pip install otel-helper\[redis\]"):
+        with pytest.raises(ImportError, match=r"otel-helper wheel with the \[redis\] extra \(not on PyPI; see CONSUMING\.md\)"):
             instrument_redis()
 
     def test_sql_raises_actionable_import_error(self, monkeypatch):
         monkeypatch.setitem(sys.modules, "opentelemetry.instrumentation.sqlalchemy", None)  # import fails
-        with pytest.raises(ImportError, match=r"pip install otel-helper\[sql\]"):
+        with pytest.raises(ImportError, match=r"otel-helper wheel with the \[sql\] extra \(not on PyPI; see CONSUMING\.md\)"):
             instrument_sql()
 
 
@@ -72,7 +72,9 @@ class TestLibraryNotInstalled:
 
         msg = missing_dependency_hint(ModuleNotFoundError("x", name=name), "redis", "Redis", library="redis",
                                       module=_REDIS_MOD)
-        assert msg == "Redis instrumentation not installed. Run: pip install otel-helper[redis]"
+        assert msg == ("Redis instrumentation not installed. Install the otel-helper wheel "
+                       "with the [redis] extra (not on PyPI; see CONSUMING.md)")
+        assert "pip install otel-helper" not in msg  # the name is not on PyPI (dependency confusion)
 
     def test_hint_uses_top_level_package(self):
         from otel_helper._support import missing_dependency_hint

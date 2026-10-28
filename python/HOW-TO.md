@@ -4,7 +4,8 @@ Practical guide for Python developers instrumenting a service with
 `otel-helper` 0.3. The variable reference is in [README.md](README.md#environment-variables);
 runnable examples are in [example/](example/README.md).
 
-Prerequisites: Python 3.10+, `pip install otel-helper`, and an OpenTelemetry
+Prerequisites: Python 3.10+, the `otel-helper` wheel installed (not on PyPI —
+see [CONSUMING.md](../CONSUMING.md#python-github-release-assets)), and an OpenTelemetry
 Collector reachable over OTLP (or none, for the Prometheus fallback).
 
 - [1. Getting started](#1-getting-started)
@@ -440,7 +441,8 @@ debug mode cannot rescue a trace an upstream caller did not sample.
 SQLAlchemy, Redis and botocore instrumentation are extras, not part of core:
 
 ```bash
-pip install 'otel-helper[sql]'        # or [redis], [aws], [all]
+# The wheel, not the PyPI name (not registered there; see CONSUMING.md)
+pip install "otel-helper[sql] @ file://$(pwd)/otel_helper-<version>-py3-none-any.whl"   # or [redis], [aws], [all]
 ```
 
 Call the `ext` functions **before** `setup_telemetry()`:
@@ -471,7 +473,8 @@ setup_telemetry()
 - **SQLAlchemy 2.1 is not supported** by `opentelemetry-instrumentation-sqlalchemy`
   0.63b0–0.66b1 (`< 2.1.0`): pin `sqlalchemy<2.1`. 2.0.x works. Redis 8.x and
   botocore 1.43 work.
-- An `ImportError` from these functions says `pip install otel-helper[<extra>]`;
+- An `ImportError` from these functions says to install the otel-helper wheel
+  with the `[<extra>]` extra;
   if the extra is already installed, the missing package is the library itself
   (`sqlalchemy`, `redis`, `botocore`).
 - **Database attributes:** with the helper's default
