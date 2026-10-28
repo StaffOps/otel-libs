@@ -168,6 +168,34 @@ jobs:
         if: failure()
         run: docker compose -f testing/docker-compose.yml --profile e2e logs collector || true
 
+  spec-checks:
+    # specs/repo-tooling RT7: spec format lint, requirement traceability and
+    # docs/site/index.md freshness. Stdlib-only tools (T-D3), no install step.
+    # Python matrix: 3.10 is the tools' declared floor (T-D3), 3.12 the default.
+    name: Spec checks (lint, traceability, site index) (py ${{ matrix.python }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ['3.10', '3.12']
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Tool tests (hook tests must run, not skip)
+        env:
+          REQUIRE_HOOK_TESTS: '1'
+        run: python -m unittest discover -s tools/tests
+      - name: Spec lint
+        run: python tools/spec_lint.py
+      - name: Traceability (uncovered SHALL requirements fail)
+        run: python tools/trace_matrix.py --check
+      - name: docs/site/index.md is regenerated from README.md
+        run: python tools/regen_index.py --check
+
   # ─── Build Jobs ──────────────────────────────────────────────────────
 
   build-lib:

@@ -187,6 +187,11 @@ the tail-sampling counters have no environment label (r2 review).
   `otel-libs-testing`); no shared volumes with `otel-libs-testing`.
 **Justification**: Docker disk filled three times on 2026-10-28 on a shared
 daemon; the real risk is build cache and images.
+**When wrong**: the safeguards block legitimate runs (pre-flight too
+conservative) or still let the daemon fill.
+**Reversal action**: recalibrate the constants from S7 data (dated note
+here); if disk still fills, run the soak on a dedicated Docker context/VM
+and drop the shared-daemon assumptions.
 
 ### S-D8 — Gateway tail-sampling policy (literal; any-match)
 **Choice**: `tail_sampling` evaluates **all** policies; a trace is kept if

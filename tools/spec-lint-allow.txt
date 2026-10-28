@@ -1,0 +1,3 @@
+# Allow-list for tools/spec_lint.py: "<rule> <location> <reason>".
+# Each entry is a pre-existing gap whose fix is a spec content decision (owner).
+# Remove the entry when the spec is fixed; a stale entry fails the lint.

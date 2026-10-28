@@ -132,6 +132,14 @@ resolution rules: design D1. Summary of what differs between the two contracts:
      `specs/config-contract-v0.3/tasks.md`), after everything is validated.
      The pre-commit hook in `.claude/settings.json` reminds you to check
      README, CHANGELOG and the per-language HOW-TOs.
+- **Tooling for the loop** ([`specs/repo-tooling/`](specs/repo-tooling/)):
+  `testing/verify.sh` (the CI risk matrix locally — run before a tag or PR),
+  `tools/spec_lint.py` (the `specs/README.md` rules), `tools/trace_matrix.py`
+  (requirement → test matrix), `tools/regen_index.py` (`docs/site/index.md`
+  from `README.md`). Claude Code: project skills `change-loop`, `release`,
+  `parity-case`; agent `spec-refuter`; hooks in `.claude/hooks/` — a guard
+  that asks before Docker prune/rm/`down -v` and force-push/tag deletion, a
+  commit reminder, and a session-start summary of open spec tasks.
 - Helper diagnostics (config warnings, deprecations): Go → the package's stderr
   `*slog.Logger` (never `slog.Default()`, `fmt.Fprint*`, or `otel.Handle`, which
   is for SDK pipeline errors); Python → `logging.getLogger("otel_helper…")`.

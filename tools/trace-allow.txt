@@ -1,0 +1,29 @@
+# Allow-list for tools/trace_matrix.py --check: "<ID> <reason>".
+# A SHALL requirement listed here has no test citation yet. Remove the entry as
+# soon as a test, parity case or e2e check cites the id (a stale entry fails).
+#
+# config-contract-v0.3: implemented by done tasks whose tests don't cite the id.
+G4 uncovered at introduction (2026-10-28); owner task: A2 (done; build on otel v1.47 + stats handlers is exercised by CI, no test names G4)
+G5 uncovered at introduction (2026-10-28); owner task: A2 (done; add G5 to the route-name test)
+G6 uncovered at introduction (2026-10-28); owner task: A10 (done; add G6 to the go/ext tests)
+P15 uncovered at introduction (2026-10-28); owner task: A1 (done; enforced by the CI lower-deps matrix, not by a test file)
+#
+# repo-tooling (draft spec).
+RT7 implemented as the CI job spec-checks (.github/workflows/ci.yml); no test file can cite it; owner task: T11 review
+#
+# soak-simulation (draft spec, under review: owner tasks taken from its tasks.md on 2026-10-28).
+SR0 not implemented yet (spec draft); owner task: S2
+SR1 not implemented yet (spec draft); owner task: S1
+SR2 not implemented yet (spec draft); owner task: review (no task lists it)
+SR3 not implemented yet (spec draft); owner task: S3
+SR4 not implemented yet (spec draft); owner task: S4a
+SR5 not implemented yet (spec draft); owner task: S4b
+SR6 not implemented yet (spec draft); owner task: S4c
+SR7 not implemented yet (spec draft); owner task: S4d
+SR8 not implemented yet (spec draft); owner task: S4e
+SR9 not implemented yet (spec draft); owner task: S4f
+SR10 not implemented yet (spec draft); owner task: S4g
+SR11 not implemented yet (spec draft); owner task: S5
+SR12 not implemented yet (spec draft); owner task: S4h
+SR13 not implemented yet (spec draft); owner task: S4i
+SR14 not implemented yet (spec draft); owner task: S6

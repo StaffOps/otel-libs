@@ -231,6 +231,7 @@ class TestLogsExporterActive:
         assert "RESULT 1 2 1" in proc.stdout  # app handler + OTel handler (diagnostics handler stepped aside)
 
     def test_uvicorn_loggers_reach_the_otel_handler_once(self):
+        """P16: uvicorn loggers (propagate=False) reach the OTel handler."""
         # uvicorn's default LOGGING_CONFIG (propagate=False), applied after setup as
         # uvicorn.run() does; the console logs exporter prints one JSON per record.
         proc = _run("""

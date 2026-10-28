@@ -33,6 +33,7 @@ def _setup() -> trace.Tracer:
 
 
 def test_inject_writes_traceparent_inside_span():
+    """P17: real propagation tests, setup inside the test (not at import)."""
     tracer = _setup()
     with tracer.start_as_current_span("parent") as span:
         headers: dict[str, str] = {}

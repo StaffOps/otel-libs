@@ -1,5 +1,7 @@
+# otel-helper is NOT listed here on purpose: the Dockerfile installs it from the local
+# source or release wheel. The name is not registered on PyPI, so a bare `otel-helper`
+# line could resolve to someone else's package (dependency confusion).
 setuptools
-otel-helper
 grpcio==1.76.0
 grpcio-tools==1.76.0
 grpcio-health-checking==1.76.0

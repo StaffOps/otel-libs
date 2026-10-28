@@ -10,10 +10,12 @@ _PKG_DIR = Path(otel_helper.__file__).parent
 
 
 def test_ships_py_typed_marker():
+    """P17: the package ships py.typed."""
     assert resources.files("otel_helper").joinpath("py.typed").is_file()
 
 
 def test_no_opentelemetry_internal_imports():
+    """P17: no import from an opentelemetry.*._internal module."""
     offenders = []
     for path in sorted(_PKG_DIR.rglob("*.py")):
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))

@@ -61,6 +61,13 @@ Precedence: **explicit code > standard `OTEL_*` env > legacy / `OTEL_HELPER_*` e
 default; invalid **code** values fail fast. Warnings name the variable and
 never print `*_HEADERS`, `*_CLIENT_KEY` or URL userinfo/query values.
 
+**When wrong** (added 2026-10-28, spec lint): an OTel SDK starts honoring a
+row itself (ADR-001's trigger) or a consumer needs env to override code.
+**Reversal action**: move that row's owner to the SDK (ADR-001) and drop the
+helper parsing in Go and Python together, with a parity case flip; for an
+env-over-code need, add an explicit opt-in option rather than inverting the
+order.
+
 ### D1 edge-case rulings (A3 validation, 2026-10-28)
 
 The A3 review (observability + dev + two code-reviews) found inputs the table
@@ -740,8 +747,15 @@ change BREAKING (0.2.0 served the global registry, incl. `process_*`/`python_*`)
   span with an unsampled remote parent is dropped before the marker runs, so
   debug mode cannot force retention of traces an upstream caller didn't sample.
 
+**Reversal action** (added 2026-10-28, spec lint): if `closeDB` proves
+unwanted, keep `Open` returning it but make `db.Close` sufficient by
+registering the callback on a wrapper driver (one release with both paths);
+if semconv redis metrics churn, pin `WithSemConvCompliantMetrics(false)` and
+document the old instruments — the ext modules are versioned with the core,
+so either ships in the next minor.
+
 Python ext import failures (A13 validation, 2026-10-28): `otel_helper.ext.{aws,redis,sql}` raise an `ImportError` whose message claims a cause only when it is certain:
-- `ModuleNotFoundError` for the extra's instrumentor module (`opentelemetry.instrumentation.<lib>`, passed in by the entry point) or one of its parent packages → "instrumentation not installed. Run: pip install otel-helper[<extra>]".
+- `ModuleNotFoundError` for the extra's instrumentor module (`opentelemetry.instrumentation.<lib>`, passed in by the entry point) or one of its parent packages → "instrumentation not installed. Install the otel-helper wheel with the [<extra>] extra (not on PyPI; see CONSUMING.md)". *(Corrected 2026-10-28, repo-tooling review H2: the first wording, "Run: pip install otel-helper[<extra>]", told users to install by name from PyPI, where `otel-helper` is not registered — a dependency-confusion vector in a public repo. The hint now points to the wheel and CONSUMING.md.)*
 - `ModuleNotFoundError` whose missing top-level module is the instrumented library of that extra (`botocore` / `redis` / `sqlalchemy`, passed in by the entry point) → "library '<lib>' is not installed" (the extra does not pull it in).
 - Anything else — another `opentelemetry.*` module (`opentelemetry.semconv._incubating.attributes`: version skew inside the OTel namespace), a submodule of the instrumentor, no module name (A13 review M2), a plain `ImportError` (version skew: `cannot import name 'X' from 'sqlalchemy'`), a missing transitive dependency (`wrapt`) — → "failed to import the <label> instrumentation: <error>", without guessing a cause. Before this ruling both cases were reported as "library not installed".
 

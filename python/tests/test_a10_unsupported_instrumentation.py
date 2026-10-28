@@ -72,6 +72,7 @@ class TestVersionMatrix:
         ([MISSING, UNSUPPORTED], True, True),  # a missing dep must not hide an out-of-range one
     ], ids=["out_of_range", "in_range", "missing", "missing_then_out_of_range"])
     def test_refusal_is_warned_only_when_installed_out_of_range(self, caplog, fresh, deps, refused, warned):
+        """P18: an out-of-range library (e.g. SQLAlchemy 2.1) is warned, not a silent no-op."""
         inst = fresh(deps)()
         with caplog.at_level(logging.WARNING):
             inst.instrument()

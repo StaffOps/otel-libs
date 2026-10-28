@@ -10,8 +10,12 @@ Planning artefacts for `otel-libs`. Conventions and principles live in
    config contract, parity harness, Go/Python fixes (Phase A), Node.js (B),
    .NET (C). [requirements](config-contract-v0.3/requirements.md) ·
    [design](config-contract-v0.3/design.md) · [tasks](config-contract-v0.3/tasks.md)
-2. [`decisions/`](decisions/) — decision records (index below).
-3. Shipped (historical, older user-story format; superseded wherever
+2. [`soak-simulation/`](soak-simulation/) — **active**. Local DEV/HML/PRD soak
+   of the rc (Docker Compose; Kubernetes deferred as Phase K).
+3. [`repo-tooling/`](repo-tooling/) — **active**. Hooks, spec lint,
+   traceability, local verify, skills.
+4. [`decisions/`](decisions/) — decision records (index below).
+5. Shipped (historical, older user-story format; superseded wherever
    `config-contract-v0.3` differs — e.g. health paths D5, gRPC API ADR-005):
    [`metrics-exporter-contract/`](metrics-exporter-contract/) (0.1.0),
    [`go-otel-helper/`](go-otel-helper/) (0.1.0).

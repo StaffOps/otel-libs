@@ -1,8 +1,9 @@
 # Consuming otel-libs Packages
 
-How to install and use the OTel helper packages from this private repository.
-
-All packages require authentication — see [Creating a read:packages token](#creating-a-readpackages-token) below.
+How to install and use the OTel helper packages. The repository is **public**:
+Go modules and Python wheels need no credentials. Only the .NET packages
+(GitHub Packages NuGet) need a token — GitHub requires one even for public
+packages; see [Creating a read:packages token](#creating-a-readpackages-token).
 
 ## Versions
 
@@ -36,6 +37,51 @@ dotnet nuget add source "https://nuget.pkg.github.com/StaffOps/index.json" \
 ```
 
 In CI (GitHub Actions): `--password ${{ secrets.GITHUB_TOKEN }}`.
+
+### Map `OtelHelper*` to the GitHub source (required)
+
+The `OtelHelper*` package IDs are **not registered on nuget.org**. Without
+source mapping, NuGet queries every configured source and takes the best
+match from any of them, so anyone who registers `OtelHelper` (or
+`OtelHelper.Sql`, …) on nuget.org with a higher version would be restored
+instead of ours — dependency confusion. Commit a `nuget.config` next to your
+solution that pins those IDs to the GitHub source and everything else to
+nuget.org (NuGet 6.0+ / .NET 6 SDK or later):
+
+```xml
+<?xml version="1.0" encoding="utf-8"?>
+<configuration>
+  <packageSources>
+    <clear />
+    <add key="nuget.org" value="https://api.nuget.org/v3/index.json" protocolVersion="3" />
+    <add key="staffops" value="https://nuget.pkg.github.com/StaffOps/index.json" />
+  </packageSources>
+  <packageSourceMapping>
+    <!-- The most specific pattern wins: OtelHelper* only ever comes from the GitHub source. -->
+    <packageSource key="staffops">
+      <package pattern="OtelHelper" />
+      <package pattern="OtelHelper.*" />
+    </packageSource>
+    <packageSource key="nuget.org">
+      <package pattern="*" />
+    </packageSource>
+  </packageSourceMapping>
+  <packageSourceCredentials>
+    <!-- Read from the environment; never commit the token itself. -->
+    <staffops>
+      <add key="Username" value="%GITHUB_USERNAME%" />
+      <add key="ClearTextPassword" value="%GITHUB_PACKAGES_TOKEN%" />
+    </staffops>
+  </packageSourceCredentials>
+</configuration>
+```
+
+With this file in the repository, the `dotnet nuget add source` step above is
+not needed: set `GITHUB_USERNAME` and `GITHUB_PACKAGES_TOKEN` (a
+`read:packages` token; `${{ secrets.GITHUB_TOKEN }}` in GitHub Actions)
+instead. The `<clear />` drops sources inherited from user or machine
+configs, so the mapping is the whole story. Restore fails with `NU1100` if a
+package matches no mapped source — that is the mapping working.
 
 ### Install packages
 
@@ -78,19 +124,38 @@ gh release download v0.2.0 --repo StaffOps/otel-libs --pattern "*.whl"
 pip install otel_helper-0.2.0-py3-none-any.whl
 ```
 
-In CI: set `GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}` in the env.
+(`gh` needs a login; for anonymous downloads use the URL below.)
 
-### Install using the GitHub API (no gh CLI)
+### Install without gh (anonymous)
 
 ```bash
-# Resolve the asset API URL, then download with auth
-ASSET_URL=$(curl -s -H "Authorization: Bearer $GH_PAT" \
-  "https://api.github.com/repos/StaffOps/otel-libs/releases/tags/v0.2.0" \
-  | jq -r '.assets[] | select(.name | endswith(".whl")) | .url')
-curl -sL -H "Authorization: Bearer $GH_PAT" -H "Accept: application/octet-stream" \
-  "$ASSET_URL" -o otel_helper-0.2.0-py3-none-any.whl
+curl -fsSLO https://github.com/StaffOps/otel-libs/releases/download/v0.2.0/otel_helper-0.2.0-py3-none-any.whl
 pip install otel_helper-0.2.0-py3-none-any.whl
 ```
+
+Verify the download against the SHA-256 shown on the release page
+(`shasum -a 256 <file>`).
+
+> **Never `pip install otel-helper` by name.** The package is not on PyPI and
+> the name is not registered there: installing it by name — or listing a bare
+> `otel-helper` in `requirements.txt` — could fetch an unrelated package
+> (dependency confusion). Install the wheel file, or pin it by URL **with its
+> hash** (next section).
+
+### Pin by URL in `requirements.txt`
+
+```text
+otel-helper @ https://github.com/StaffOps/otel-libs/releases/download/<tag>/otel_helper-<version>-py3-none-any.whl#sha256=<digest>
+```
+
+`<digest>` is the SHA-256 shown on the release page (or `shasum -a 256` of the
+downloaded wheel). pip checks the downloaded file against the `#sha256=`
+fragment and refuses a mismatch, so a replaced release asset cannot slip in.
+For the whole dependency tree, use hash-checking mode: `pip install
+--require-hashes -r requirements.txt`, which needs every requirement —
+transitive ones included — pinned with `==` and a `--hash=sha256:…` (generate
+the file with `pip-compile --generate-hashes`); the wheel line then becomes
+`otel-helper @ <url> --hash=sha256:<digest>`.
 
 > **Important gotcha**: The downloaded file MUST keep the canonical wheel filename (`otel_helper-0.2.0-py3-none-any.whl`). pip rejects a renamed wheel with `ERROR: not a valid wheel filename`.
 
@@ -114,21 +179,21 @@ call `shutdown_telemetry()` on SIGTERM — see `python/HOW-TO.md`.
 
 ## Go (direct from repo)
 
-Consumed via `go get` from the private repo (no registry). Requires `GOPRIVATE` and git auth.
+Consumed via `go get` through the public Go module proxy — no credentials.
 
 Module path: `github.com/staffops/otel-libs/go`
 
-### Configure auth
+### Do not set `GOPRIVATE` for this module
 
-```bash
-# HTTPS + PAT (validated)
-git config --global url."https://x:${GH_PAT}@github.com/".insteadOf "https://github.com/"
+Older versions of this page asked for `GOPRIVATE=github.com/staffops/*` and a
+git token. The repository is public: remove that setting for this module —
+`GOPRIVATE` also disables checksum-database verification (`sum.golang.org`)
+for every matching module, silently.
 
-# SSH alternative (if keys are set up)
-# git config --global url."git@github.com:".insteadOf "https://github.com/"
-
-export GOPRIVATE=github.com/staffops/*
-```
+If you set `GOPRIVATE` for *other* private modules under the same owner, do not
+use a wildcard such as `github.com/staffops/*`: it matches this module too.
+List those private modules explicitly instead
+(`GOPRIVATE=github.com/staffops/private-a,github.com/staffops/private-b`).
 
 ### Install modules
 
@@ -158,7 +223,7 @@ defer shutdown(context.Background()) // from 0.3: use a fresh deadline on SIGTER
 
 ## Creating a read:packages token
 
-All methods require a GitHub token with package read access.
+Needed only for the .NET packages (GitHub Packages NuGet requires a token even for public packages).
 
 ### Fine-grained token (recommended)
 

@@ -537,6 +537,14 @@ Behavior changes, with migration notes:
 
 ### Python — detailed changes
 
+- **Fix — the missing-extra `ImportError` no longer says `pip install
+  otel-helper[<extra>]`.** `otel-helper` is not on PyPI and the name is not
+  registered there, so installing it by name could fetch an unrelated package.
+  `otel_helper.ext.{aws,redis,sql}` now say "Install the otel-helper wheel
+  with the [<extra>] extra (not on PyPI; see CONSUMING.md)"; `python/README.md`
+  and `python/HOW-TO.md` install the wheel or a hash-pinned URL instead of the
+  bare name (design D14, corrected 2026-10-28).
+
 - **Fix — code options equal to the helper default no longer lose to the
   environment (design D1 edge-case rulings, A13).** `sample_ratio=1.0` beats
   `OTEL_TRACES_SAMPLER` and `OTEL_HELPER_SAMPLE_RATIO`;
@@ -944,6 +952,36 @@ Unsupported instrumentation versions, task A10 (P18):
 
 ### Internal
 
+- **Spec-driven tooling (`specs/repo-tooling/`).** `testing/verify.sh` runs
+  the CI risk matrix locally (Go + ext, Python 3.10/lower, 3.13/lower,
+  3.13/latest, e2e, `mkdocs --strict`, spec checks; `--quick`, `--only`);
+  `tools/spec_lint.py` enforces the `specs/README.md` rules (ADR index,
+  reversal actions, open `xfail:<task>` targets, no TBD, dated corrections);
+  `tools/trace_matrix.py` builds the requirement → test matrix and fails on an
+  uncovered SHALL requirement outside `tools/trace-allow.txt` (only citations
+  inside a test definition count, not file headers);
+  `tools/regen_index.py` regenerates `docs/site/index.md` from `README.md`
+  (and refuses README constructs it cannot rewrite);
+  CI job `spec-checks` runs them on Python 3.10 and 3.12, with the hook tests
+  required (`REQUIRE_HOOK_TESTS=1`). `testing/e2e/smoke.sh` and `verify.sh`
+  stop only the Collector/fake receivers they started. Claude Code project config: hooks
+  (`.claude/hooks/`) — the commit reminder now fires only on `git commit`
+  (it fired on most Bash calls), a guard that asks before Docker
+  prune/rm/`down -v` and force-push/ref deletion/history rewrite, and a
+  session-start summary of open spec tasks; skills `change-loop`, `release`,
+  `parity-case`; agent `spec-refuter`.
+- **Soak simulation spec (`specs/soak-simulation/`)** replaces D10's
+  "soaked in DEV/HML" (no such environment); Kubernetes checks deferred as
+  its Phase K.
+- **Consumption docs: the repository is public.** `CONSUMING.md` drops the
+  private-repo instructions — no `GOPRIVATE` (it silently disables Go
+  checksum verification), anonymous wheel download; a token is needed only
+  for the .NET packages (GitHub Packages). New: a `nuget.config` with
+  `<packageSourceMapping>` pinning `OtelHelper*` to the GitHub source (the IDs
+  are not registered on nuget.org), and `#sha256=` / `--require-hashes`
+  guidance for the Python URL pin. Example `requirements.txt` files no
+  longer name `otel-helper` (not registered on PyPI: a bare name could resolve
+  to an unrelated package).
 - **CI fixes found by the `v0.3.0-rc.1` tag run.** SQLAlchemy test floor
   `>=2.0.31` (2.0.0 does not import on Python 3.13; `python/ci/lower.txt`), and
   the e2e Go smoke builds with `-buildvcs=false` (the read-only repo mount owned

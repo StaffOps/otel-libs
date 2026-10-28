@@ -9,17 +9,42 @@
 # failures (XFAIL <task>); an expected failure that passes is an error (XPASS).
 #
 #   testing/e2e/smoke.sh
+#
+# The Collector is stopped at exit only when this run started it. A Collector
+# that was already running is reused as is (not recreated, not stopped) and
+# only its log lines since this run began are read.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
 compose=(docker compose -f docker-compose.yml --profile e2e)
 
-"${compose[@]}" up -d --force-recreate --quiet-pull collector
+collector_running() {
+  "${compose[@]}" ps --status running --services 2>/dev/null | grep -qx collector
+}
+started_collector=0
+stop_collector() {
+  if [ "$started_collector" = 1 ]; then
+    "${compose[@]}" stop collector >/dev/null 2>&1 || true
+    started_collector=0
+  fi
+}
+trap stop_collector EXIT
+trap 'exit 130' INT TERM
+
+since=$(( $(date +%s) - 2 )) # small margin for host/VM clock skew
+if collector_running; then
+  echo "smoke: reusing the Collector that was already running (it will be left running)"
+  logs_since=(--since "$since")
+else
+  started_collector=1
+  "${compose[@]}" up -d --force-recreate --quiet-pull collector
+  logs_since=()
+fi
 "${compose[@]}" run --rm --quiet-pull go-smoke
 "${compose[@]}" run --rm --quiet-pull python-smoke
 sleep 3 # let the debug exporter print the last batches
-logs=$("${compose[@]}" logs --no-color --no-log-prefix collector)
-"${compose[@]}" stop collector >/dev/null 2>&1 || true
+logs=$("${compose[@]}" logs --no-color --no-log-prefix ${logs_since[@]+"${logs_since[@]}"} collector)
+stop_collector
 
 # One "<signal>|<service.name>|<receiver>" line per recorded batch that holds a smoke marker.
 seen=$(awk '

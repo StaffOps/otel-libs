@@ -298,6 +298,7 @@ func TestSetupFailure_LogsStage_ReleasesAndRetries(t *testing.T) {
 }
 
 func TestShutdown_IdempotentAndSignalsConcurrent(t *testing.T) {
+	// G2: a second Shutdown returns the first result.
 	lifecycleTest(t)
 	var log shutdownLog
 	tracesDown := make(chan struct{})
@@ -483,6 +484,7 @@ func TestShutdown_ConcurrentCallsShareOneResult(t *testing.T) {
 }
 
 func TestSetupAfterShutdown_BuildsFreshPipeline(t *testing.T) {
+	// G2: Setup after Shutdown builds a fresh pipeline.
 	lifecycleTest(t)
 	var log shutdownLog
 	spyTraces(&log)

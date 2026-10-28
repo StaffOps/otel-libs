@@ -1,4 +1,6 @@
+# otel-helper is NOT listed here on purpose: the Dockerfile installs it from the local
+# source or release wheel. The name is not registered on PyPI, so a bare `otel-helper`
+# line could resolve to someone else's package (dependency confusion).
 setuptools
-otel-helper
 httpx==0.27.0
 aiohttp==3.10.0
