@@ -1,12 +1,12 @@
 package otelhelper
 
 import (
-	"bytes"
 	"context"
 	"log/slog"
 	"testing"
 
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/sdk/resource"
 )
 
 // --- Functional options (With*) table-driven ---
@@ -23,7 +23,9 @@ func TestWithOptions(t *testing.T) {
 		{"WithSampleRatio", WithSampleRatio(0.3), func(o *Options) bool { return o.SampleRatio == 0.3 }},
 		{"WithExportTimeout", WithExportTimeout(5000), func(o *Options) bool { return o.ExportTimeoutMs == 5000 }},
 		{"WithExtraInstrumentation", WithExtraInstrumentation("SQL,AWS"), func(o *Options) bool { return o.ExtraInstrumentation == "SQL,AWS" }},
-		{"WithResourceAttributes", WithResourceAttributes(attrs), func(o *Options) bool { return o.ResourceAttributes["team"] == "platform" && o.ResourceAttributes["version"] == "1.0" }},
+		{"WithResourceAttributes", WithResourceAttributes(attrs), func(o *Options) bool {
+			return o.ResourceAttributes["team"] == "platform" && o.ResourceAttributes["version"] == "1.0"
+		}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -76,7 +78,7 @@ func TestGetMeterEmptyString(t *testing.T) {
 	}
 }
 
-// --- slog: NewSlogHandler, NewLogger, levelFilterHandler ---
+// --- slog: NewSlogHandler, NewLogger (behavior: logging_test.go) ---
 
 func TestNewSlogHandler(t *testing.T) {
 	h := NewSlogHandler()
@@ -99,94 +101,29 @@ func TestDefaultLogLevelUnknownEnv(t *testing.T) {
 	}
 }
 
-func TestLevelFilterHandlerEnabled(t *testing.T) {
-	var buf bytes.Buffer
-	inner := slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})
-	h := levelFilterHandler{level: slog.LevelWarn, inner: inner}
+// --- gRPC stats handlers / options: assert non-nil ---
 
-	if h.Enabled(context.Background(), slog.LevelInfo) {
-		t.Error("Info should not be enabled when level is Warn")
-	}
-	if !h.Enabled(context.Background(), slog.LevelWarn) {
-		t.Error("Warn should be enabled when level is Warn")
-	}
-	if !h.Enabled(context.Background(), slog.LevelError) {
-		t.Error("Error should be enabled when level is Warn")
+func TestGRPCServerHandler(t *testing.T) {
+	if GRPCServerHandler() == nil {
+		t.Fatal("GRPCServerHandler returned nil")
 	}
 }
 
-func TestLevelFilterHandlerHandle(t *testing.T) {
-	var buf bytes.Buffer
-	inner := slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})
-	h := levelFilterHandler{level: slog.LevelDebug, inner: inner}
-
-	logger := slog.New(h)
-	logger.Info("hello")
-
-	if buf.Len() == 0 {
-		t.Error("Handle should write through to inner handler")
+func TestGRPCClientHandler(t *testing.T) {
+	if GRPCClientHandler() == nil {
+		t.Fatal("GRPCClientHandler returned nil")
 	}
 }
 
-func TestLevelFilterHandlerWithAttrs(t *testing.T) {
-	var buf bytes.Buffer
-	inner := slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})
-	h := levelFilterHandler{level: slog.LevelInfo, inner: inner}
-
-	h2 := h.WithAttrs([]slog.Attr{slog.String("key", "val")})
-	if h2 == nil {
-		t.Fatal("WithAttrs returned nil")
-	}
-	lf, ok := h2.(levelFilterHandler)
-	if !ok {
-		t.Fatal("WithAttrs should return levelFilterHandler")
-	}
-	if lf.level != slog.LevelInfo {
-		t.Error("WithAttrs should preserve level")
+func TestGRPCServerOption(t *testing.T) {
+	if GRPCServerOption() == nil {
+		t.Fatal("GRPCServerOption returned nil")
 	}
 }
 
-func TestLevelFilterHandlerWithGroup(t *testing.T) {
-	var buf bytes.Buffer
-	inner := slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})
-	h := levelFilterHandler{level: slog.LevelWarn, inner: inner}
-
-	h2 := h.WithGroup("grp")
-	if h2 == nil {
-		t.Fatal("WithGroup returned nil")
-	}
-	lf, ok := h2.(levelFilterHandler)
-	if !ok {
-		t.Fatal("WithGroup should return levelFilterHandler")
-	}
-	if lf.level != slog.LevelWarn {
-		t.Error("WithGroup should preserve level")
-	}
-}
-
-// --- gRPC interceptors: assert non-nil ---
-
-func TestUnaryServerInterceptor(t *testing.T) {
-	if UnaryServerInterceptor() == nil {
-		t.Fatal("UnaryServerInterceptor returned nil")
-	}
-}
-
-func TestStreamServerInterceptor(t *testing.T) {
-	if StreamServerInterceptor() == nil {
-		t.Fatal("StreamServerInterceptor returned nil")
-	}
-}
-
-func TestUnaryClientInterceptor(t *testing.T) {
-	if UnaryClientInterceptor() == nil {
-		t.Fatal("UnaryClientInterceptor returned nil")
-	}
-}
-
-func TestStreamClientInterceptor(t *testing.T) {
-	if StreamClientInterceptor() == nil {
-		t.Fatal("StreamClientInterceptor returned nil")
+func TestGRPCDialOption(t *testing.T) {
+	if GRPCDialOption() == nil {
+		t.Fatal("GRPCDialOption returned nil")
 	}
 }
 
@@ -218,6 +155,18 @@ func TestDebugProcessorShutdown(t *testing.T) {
 
 // --- buildResource ---
 
+// The helper's semconv version must match resource.Default()'s, or
+// resource.Merge drops the schema URL from every signal.
+func TestBuildResourceHasSchemaURL(t *testing.T) {
+	res := buildResource(newOptions())
+	if res.SchemaURL() == "" {
+		t.Fatal("buildResource: empty schema URL (semconv version mismatch with resource.Default())")
+	}
+	if got, want := res.SchemaURL(), resource.Default().SchemaURL(); got != want {
+		t.Errorf("schema URL = %q, want resource.Default()'s %q", got, want)
+	}
+}
+
 func TestBuildResource(t *testing.T) {
 	opts := &Options{
 		ServiceName:        "test-svc",
@@ -248,46 +197,7 @@ func TestBuildResource(t *testing.T) {
 
 // --- parseEnvironment default case ---
 
-func TestParseEnvironmentDefault(t *testing.T) {
-	tests := []struct {
-		input string
-		want  DeploymentEnvironment
-	}{
-		{"STAGING", LOCAL},
-		{"production", LOCAL},
-		{"", LOCAL},
-		{"PRD", PRD},
-		{"dev", DEV},
-		{"hml", HML},
-	}
-	for _, tt := range tests {
-		t.Run(tt.input, func(t *testing.T) {
-			got := parseEnvironment(tt.input)
-			if got != tt.want {
-				t.Errorf("parseEnvironment(%q) = %q, want %q", tt.input, got, tt.want)
-			}
-		})
-	}
-}
-
 // --- resolveCollectorHost edge cases ---
-
-func TestResolveCollectorHostEmpty(t *testing.T) {
-	t.Setenv(EnvCollectorEndpoint, "")
-	got := resolveCollectorHost()
-	if got != "" {
-		t.Errorf("resolveCollectorHost() = %q, want %q", got, "")
-	}
-}
-
-func TestResolveCollectorHostBareHost(t *testing.T) {
-	t.Setenv(EnvCollectorEndpoint, "myhost:4317")
-	got := resolveCollectorHost()
-	// No scheme means url.Parse won't extract Host, falls through to return raw
-	if got != "myhost:4317" {
-		t.Errorf("resolveCollectorHost() = %q, want %q", got, "myhost:4317")
-	}
-}
 
 // --- Setup with global tracer provider set ---
 

@@ -16,7 +16,7 @@ go-api (HTTP API)
   ├── POST /detect           → submits detection (calls backend)
   ├── GET /status/{id}       → checks detection status
   ├── GET /metrics/summary   → business metrics
-  └── GET /health            → health check (no tracing)
+  └── GET /health            → health check (counted in metrics, no span)
          │
          │ HTTP :50051
          ▼
@@ -28,12 +28,13 @@ go-backend (Detection Engine)
 
 ## Build
 
-```bash
-cd go/example
+The build context is `go/` (each example's `go.mod` replaces the helper with
+`../../`, so the helper source must be in the context). From the repo root:
 
-docker build -t go-api -f go-api/Dockerfile go-api/
-docker build -t go-backend -f go-backend/Dockerfile go-backend/
-docker build -t go-process -f go-process/Dockerfile go-process/
+```bash
+docker build -t go-api -f go/example/go-api/Dockerfile go/
+docker build -t go-backend -f go/example/go-backend/Dockerfile go/
+docker build -t go-process -f go/example/go-process/Dockerfile go/
 ```
 
 ## Run local
@@ -108,8 +109,8 @@ process.cleanup (root)         — every 3m
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `SERVICE_NAME` | `my-service` | Service name for resource attributes |
-| `ENVIRONMENT` | `LOCAL` | Environment: LOCAL, DEV, HML, PRD |
+| `SERVICE_NAME` | _(unset)_ | Service name (deprecated alias of `OTEL_SERVICE_NAME`, which wins) |
+| `ENVIRONMENT` | _(unset)_ | Deprecated alias of `deployment.environment.name`; unset → attribute absent |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | `http://localhost` | Collector endpoint |
 | `OTEL_HELPER_DEBUG_LEVEL` | `false` | Debug mode |
 | `OTEL_HELPER_SAMPLE_RATIO` | `1.0` | Head sampling ratio (0.0-1.0) |
@@ -122,7 +123,7 @@ go/example/
 ├── go-api/
 │   ├── main.go              # HTTP API with context propagation
 │   ├── Dockerfile           # Production build
-│   ├── Dockerfile.demo      # Demo build (local lib mount)
+│   ├── Dockerfile.demo      # Demo build (same pattern, context go/)
 │   └── go.mod
 ├── go-backend/
 │   ├── main.go              # Detection engine (simulated)

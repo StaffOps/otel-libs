@@ -1,0 +1,11 @@
+# Build context for go/example/*/Dockerfile* (context: go/). The build needs
+# only Go sources and module files.
+**/*.out
+**/*.test
+**/coverage*
+bin/
+example/go-api/go-api
+example/go-backend/go-backend
+example/go-process/go-process
+**/*.md
+**/.git

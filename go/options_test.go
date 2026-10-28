@@ -2,77 +2,11 @@ package otelhelper
 
 import "testing"
 
-func TestOptionsDefaults(t *testing.T) {
-	o := newOptions()
-	if o.ServiceName != "my-service" {
-		t.Errorf("ServiceName = %q, want %q", o.ServiceName, "my-service")
-	}
-	if o.Environment != LOCAL {
-		t.Errorf("Environment = %q, want %q", o.Environment, LOCAL)
-	}
-	if o.SampleRatio != 1.0 {
-		t.Errorf("SampleRatio = %f, want 1.0", o.SampleRatio)
-	}
-	if o.ExportTimeoutMs != 10_000 {
-		t.Errorf("ExportTimeoutMs = %d, want 10000", o.ExportTimeoutMs)
-	}
-	if o.ExtraInstrumentation != "SQL" {
-		t.Errorf("ExtraInstrumentation = %q, want %q", o.ExtraInstrumentation, "SQL")
-	}
-}
-
-func TestOptionsEnvServiceName(t *testing.T) {
-	t.Setenv(EnvServiceName, "from-env")
-	o := newOptions()
-	if o.ServiceName != "from-env" {
-		t.Errorf("ServiceName = %q, want %q", o.ServiceName, "from-env")
-	}
-}
-
-func TestOptionsEnvOtelServiceName(t *testing.T) {
-	t.Setenv(EnvOtelServiceName, "otel-name")
-	o := newOptions()
-	if o.ServiceName != "otel-name" {
-		t.Errorf("ServiceName = %q, want %q", o.ServiceName, "otel-name")
-	}
-}
-
-func TestOptionsServiceNamePriority(t *testing.T) {
-	t.Setenv(EnvServiceName, "primary")
-	t.Setenv(EnvOtelServiceName, "secondary")
-	o := newOptions()
-	if o.ServiceName != "primary" {
-		t.Errorf("SERVICE_NAME should take priority, got %q", o.ServiceName)
-	}
-}
-
 func TestOptionsExplicitOverridesEnv(t *testing.T) {
 	t.Setenv(EnvServiceName, "from-env")
 	o := newOptions(WithServiceName("explicit"))
 	if o.ServiceName != "explicit" {
 		t.Errorf("Explicit option should override env, got %q", o.ServiceName)
-	}
-}
-
-func TestOptionsEnvEnvironment(t *testing.T) {
-	tests := []struct {
-		env  string
-		want DeploymentEnvironment
-	}{
-		{"PRD", PRD},
-		{"prd", PRD},
-		{"DEV", DEV},
-		{"HML", HML},
-		{"unknown", LOCAL},
-	}
-	for _, tt := range tests {
-		t.Run(tt.env, func(t *testing.T) {
-			t.Setenv(EnvEnvironment, tt.env)
-			o := newOptions()
-			if o.Environment != tt.want {
-				t.Errorf("Environment = %q, want %q", o.Environment, tt.want)
-			}
-		})
 	}
 }
 
@@ -100,27 +34,6 @@ func TestOptionsEnvDebugLevel(t *testing.T) {
 	}
 }
 
-func TestOptionsValidateEmptyServiceName(t *testing.T) {
-	o := &Options{ServiceName: "", OtelEndpoint: "localhost:4317", ExportTimeoutMs: 10000}
-	if err := o.validate(); err == nil {
-		t.Error("Expected error for empty ServiceName")
-	}
-}
-
-func TestOptionsValidateEmptyEndpoint(t *testing.T) {
-	o := &Options{ServiceName: "svc", OtelEndpoint: "", ExportTimeoutMs: 10000}
-	if err := o.validate(); err != nil {
-		t.Errorf("Empty OtelEndpoint should be valid (Prometheus fallback), got: %v", err)
-	}
-}
-
-func TestOptionsValidateZeroTimeout(t *testing.T) {
-	o := &Options{ServiceName: "svc", OtelEndpoint: "localhost:4317", ExportTimeoutMs: 0}
-	if err := o.validate(); err == nil {
-		t.Error("Expected error for zero ExportTimeoutMs")
-	}
-}
-
 func TestHasInstrumentation(t *testing.T) {
 	o := &Options{ExtraInstrumentation: "SQL,REDIS"}
 	if !o.HasInstrumentation("sql") {
@@ -138,22 +51,6 @@ func TestHasInstrumentationDebugEnablesAll(t *testing.T) {
 	o := &Options{ExtraInstrumentation: "SQL", DebugLevel: true}
 	if !o.HasInstrumentation("AWS") {
 		t.Error("Debug mode should enable all instrumentations")
-	}
-}
-
-func TestOptionsEnvEndpoint(t *testing.T) {
-	t.Setenv(EnvCollectorEndpoint, "http://collector.monitoring:4317")
-	o := newOptions()
-	if o.OtelEndpoint != "collector.monitoring:4317" {
-		t.Errorf("OtelEndpoint = %q, want %q", o.OtelEndpoint, "collector.monitoring:4317")
-	}
-}
-
-func TestOptionsEnvEndpointNoPort(t *testing.T) {
-	t.Setenv(EnvCollectorEndpoint, "http://collector.monitoring")
-	o := newOptions()
-	if o.OtelEndpoint != "collector.monitoring:4317" {
-		t.Errorf("OtelEndpoint = %q, want %q", o.OtelEndpoint, "collector.monitoring:4317")
 	}
 }
 
@@ -222,89 +119,5 @@ func TestDisabledMetricsEmptyWhenEnvNotSet(t *testing.T) {
 	opts := newOptions()
 	if len(opts.DisabledMetrics) != 0 {
 		t.Errorf("expected empty, got %v", opts.DisabledMetrics)
-	}
-}
-
-func TestInsecureDefaultSecure(t *testing.T) {
-	// No env set, no WithInsecure → secure by default (Insecure=false).
-	t.Setenv(EnvCollectorEndpoint, "gw:4317")
-	o := newOptions()
-	if o.Insecure {
-		t.Error("expected Insecure=false (secure by default) for schemeless endpoint")
-	}
-	if o.OtelEndpoint != "gw:4317" {
-		t.Errorf("OtelEndpoint = %q, want %q", o.OtelEndpoint, "gw:4317")
-	}
-}
-
-func TestInsecureHttpsScheme(t *testing.T) {
-	// https:// scheme → Insecure=false, endpoint stripped to host:port.
-	t.Setenv(EnvCollectorEndpoint, "https://gw:4317")
-	o := newOptions()
-	if o.Insecure {
-		t.Error("expected Insecure=false for https:// endpoint")
-	}
-	if o.OtelEndpoint != "gw:4317" {
-		t.Errorf("OtelEndpoint = %q, want %q", o.OtelEndpoint, "gw:4317")
-	}
-}
-
-func TestInsecureHttpScheme(t *testing.T) {
-	// http:// scheme → Insecure=true.
-	t.Setenv(EnvCollectorEndpoint, "http://gw:4317")
-	o := newOptions()
-	if !o.Insecure {
-		t.Error("expected Insecure=true for http:// endpoint")
-	}
-	if o.OtelEndpoint != "gw:4317" {
-		t.Errorf("OtelEndpoint = %q, want %q", o.OtelEndpoint, "gw:4317")
-	}
-}
-
-func TestInsecureEnvOverridesScheme(t *testing.T) {
-	// OTEL_EXPORTER_OTLP_INSECURE=true overrides https:// scheme.
-	t.Setenv(EnvCollectorEndpoint, "https://gw:4317")
-	t.Setenv(EnvInsecure, "true")
-	o := newOptions()
-	if !o.Insecure {
-		t.Error("expected Insecure=true when env var explicitly set")
-	}
-}
-
-func TestInsecureEnvFalseOverridesHttpScheme(t *testing.T) {
-	// OTEL_EXPORTER_OTLP_INSECURE=false overrides http:// scheme.
-	t.Setenv(EnvCollectorEndpoint, "http://gw:4317")
-	t.Setenv(EnvInsecure, "false")
-	o := newOptions()
-	if o.Insecure {
-		t.Error("expected Insecure=false when env var explicitly set to false")
-	}
-}
-
-func TestWithInsecureExplicitOverridesEverything(t *testing.T) {
-	// WithInsecure(true) is never overridden by env or scheme detection.
-	t.Setenv(EnvCollectorEndpoint, "https://gw:4317")
-	t.Setenv(EnvInsecure, "false")
-	o := newOptions(WithInsecure(true))
-	if !o.Insecure {
-		t.Error("expected explicit WithInsecure(true) to override env and scheme")
-	}
-}
-
-func TestWithInsecureFalseExplicitOverridesEverything(t *testing.T) {
-	// WithInsecure(false) stays false even if http:// and env say insecure.
-	t.Setenv(EnvCollectorEndpoint, "http://gw:4317")
-	t.Setenv(EnvInsecure, "true")
-	o := newOptions(WithInsecure(false))
-	if o.Insecure {
-		t.Error("expected explicit WithInsecure(false) to override env and scheme")
-	}
-}
-
-func TestInsecureNoEndpointDefaultSecure(t *testing.T) {
-	// No endpoint at all → Insecure stays false (secure default).
-	o := newOptions()
-	if o.Insecure {
-		t.Error("expected Insecure=false when no endpoint is configured")
 	}
 }

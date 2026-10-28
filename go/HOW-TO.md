@@ -44,11 +44,11 @@ func main() {
         w.Write([]byte(`{"status":"ok"}`))
     }), "GET /orders"))
 
-    // Health check — no tracing (filtered automatically by NewHTTPHandler,
-    // but here we skip the wrapper entirely for zero overhead)
-    mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
+    // Health check — wrapped so probes count in http.server.request.duration
+    // (failing probes stay visible); the helper sampler drops the span.
+    mux.Handle("GET /health", otelhelper.NewHTTPHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
         w.Write([]byte(`{"status":"healthy"}`))
-    })
+    }), "GET /health"))
 
     srv := &http.Server{Addr: ":8080", Handler: mux}
     go func() {
@@ -63,7 +63,7 @@ func main() {
 }
 ```
 
-Health checks (`/health`, `/healthz`, `/ready`, `/ping`) are automatically filtered from traces by `NewHTTPHandler`.
+Health checks (`/health /healthz /ready /readyz /live /livez /ping /metrics`, exact and case-insensitive) get no span — the sampler `Setup` installs drops it — but still count in `http.server.request.duration`. Replace the list with `otelhelper.WithHealthPaths(...)`.
 
 ---
 
@@ -87,7 +87,7 @@ req, _ := http.NewRequestWithContext(ctx, http.MethodPost, "http://backend/proce
 resp, err := client.Do(req)
 ```
 
-Health paths (`/health`, `/healthz`, `/ready`, `/ping`) are filtered from client spans too.
+Requests to a health path (the same list and matching as the server side, including `WithHealthPaths`) get no client span and no client metric.
 
 To wrap a custom transport:
 
@@ -126,10 +126,7 @@ func main() {
     }
     defer shutdown(ctx)
 
-    srv := grpc.NewServer(
-        grpc.UnaryInterceptor(otelhelper.UnaryServerInterceptor()),
-        grpc.StreamInterceptor(otelhelper.StreamServerInterceptor()),
-    )
+    srv := grpc.NewServer(otelhelper.GRPCServerOption())
 
     // Register your services
     // pb.RegisterMyServiceServer(srv, &myServer{})
@@ -148,10 +145,9 @@ func main() {
 ### gRPC Client
 
 ```go
-conn, err := grpc.Dial("backend:50051",
-    grpc.WithInsecure(),
-    grpc.WithUnaryInterceptor(otelhelper.UnaryClientInterceptor()),
-    grpc.WithStreamInterceptor(otelhelper.StreamClientInterceptor()),
+conn, err := grpc.NewClient("backend:50051",
+    grpc.WithTransportCredentials(insecure.NewCredentials()),
+    otelhelper.GRPCDialOption(),
 )
 defer conn.Close()
 
@@ -160,7 +156,7 @@ client := pb.NewMyServiceClient(conn)
 resp, err := client.MyMethod(ctx, req)
 ```
 
-The gRPC health check (`/grpc.health.v1.Health/Check`) is automatically filtered from traces.
+gRPC health RPCs (the whole `grpc.health.v1.Health` service: Check, Watch, List) are counted in `rpc.server.call.duration` like any other RPC; their server spans are dropped by the helper sampler (the server stats handler installs no filter, because otelgrpc filters drop metrics too). Client calls to any `grpc.health.v1.Health/*` method (Check, Watch, List) through `GRPCDialOption()` get no client span and no `rpc.client.call.duration`.
 
 ---
 
@@ -309,10 +305,8 @@ The `otelhttp` transport (set up by the global propagator) injects `traceparent`
 ### HTTP → gRPC
 
 ```go
-// Service A: call gRPC backend (interceptor propagates context)
-conn, _ := grpc.Dial(addr,
-    grpc.WithUnaryInterceptor(otelhelper.UnaryClientInterceptor()),
-)
+// Service A: call gRPC backend (the stats handler propagates context)
+conn, _ := grpc.NewClient(addr, otelhelper.GRPCDialOption())
 client := pb.NewBackendClient(conn)
 resp, err := client.Process(ctx, req) // trace context in gRPC metadata
 ```
@@ -378,19 +372,29 @@ import (
     otelhelper "github.com/staffops/staffops-otel-libs/go"
 )
 
-// After otelhelper.Setup()
+// Loggers may be created before or after otelhelper.Setup(): each record goes
+// through the OTel bridge while a logs exporter is installed, and to stdout as
+// JSON otherwise (no endpoint, OTEL_LOGS_EXPORTER=none, after Shutdown).
 
 // Option 1: Use NewLogger (recommended) — includes level filter per environment
 logger := otelhelper.NewLogger(otelhelper.PRD, false) // PRD = Warning level
 slog.SetDefault(logger)
 
-// Option 2: Use NewSlogHandler directly (no level filter)
+// Option 2: Use NewSlogHandler directly (no environment level; Info minimum on stdout)
 handler := otelhelper.NewSlogHandler()
 logger := slog.New(handler)
 slog.SetDefault(logger)
 
-// Now all slog calls export via OTLP with trace correlation
+// With a logs exporter, slog calls export via OTLP. Trace correlation
+// (trace_id/span_id) needs the *Context calls: InfoContext, WarnContext, …
+// — slog.Info(...) carries no context, so the record is not correlated.
 slog.InfoContext(ctx, "order completed", "order_id", "123")
+
+// Without a logs exporter each record is one JSON line on stdout:
+// {"time":"…","level":"ERROR","msg":"charge failed","order_id":"123","exception":"card declined"}
+// (time in UTC with milliseconds; the first error-valued attribute passed with
+// the record becomes "exception" — attributes from WithAttrs keep their key;
+// a typed-nil error renders "<nil>", a panicking Error() "!PANIC: …")
 ```
 
 ### Log level per environment
@@ -402,6 +406,7 @@ slog.InfoContext(ctx, "order completed", "order_id", "123")
 | LOCAL | Debug |
 | DEV/HML | Info |
 | PRD | Warning |
+| unset / any other value | Info |
 
 `debug=true` forces Debug in any environment.
 
@@ -422,7 +427,12 @@ func main() {
     if err != nil {
         log.Fatalf("otel setup: %v", err)
     }
-    defer shutdown(ctx) // Flushes all pending telemetry
+    defer func() {
+        // ctx is already cancelled when this runs: flush under a fresh deadline.
+        flushCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+        defer cancel()
+        _ = shutdown(flushCtx) // flushes logs, metrics and traces concurrently
+    }()
 
     // 3. Start server
     srv := &http.Server{Addr: ":8080", Handler: mux}
@@ -443,7 +453,18 @@ func main() {
 **Order matters:**
 1. Signal cancels context → server stops accepting new requests
 2. Server drains in-flight requests
-3. `defer shutdown(ctx)` flushes pending spans/metrics/logs to the Collector
+3. The deferred `shutdown` flushes pending spans/metrics/logs to the Collector.
+   Pass it a fresh context: the signal context is already cancelled, and a
+   cancelled context flushes nothing. The helper installs no signal handlers;
+   without `syscall.SIGTERM` in `NotifyContext`, `docker stop` / Kubernetes
+   kill the process and the deferred call never runs.
+
+A periodic metric export that is in flight when `Shutdown` starts is cancelled
+by the SDK reader and reported once on stderr through the OTel error handler
+(`failed to upload metrics: context canceled`). It is cosmetic: the final
+collection is exported by `Shutdown` itself. The helper does not suppress it,
+because the same message from a deadline that was really too short must stay
+visible.
 
 ---
 
@@ -451,8 +472,9 @@ func main() {
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `SERVICE_NAME` | Service name | `my-service` |
-| `ENVIRONMENT` | Environment (LOCAL/DEV/HML/PRD) | `LOCAL` |
+| `OTEL_SERVICE_NAME` | Service name (beats `service.name` in `OTEL_RESOURCE_ATTRIBUTES`, which beats `SERVICE_NAME`) | SDK `unknown_service:<exe>` + warning |
+| `SERVICE_NAME` | Deprecated service-name alias | _(unset)_ |
+| `ENVIRONMENT` | Deprecated alias for `deployment.environment.name`; `OTEL_RESOURCE_ATTRIBUTES` wins; non-standard values verbatim | _(unset → attribute absent + warning)_ |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | Collector endpoint | `http://localhost` |
 | `OTEL_HELPER_DEBUG_LEVEL` | Debug mode | `false` |
 | `OTEL_HELPER_EXTRA_INSTRUMENTATION` | Extra instrumentations | `SQL` |
@@ -499,7 +521,7 @@ func main() {
 A: No. The SDK exports telemetry asynchronously. If the Collector is unavailable, data is silently discarded after timeout (10s default). The application continues functioning normally.
 
 **Q: Can I call `Setup()` more than once?**
-A: Yes, but only the first call takes effect. Subsequent calls return the same `Shutdown` function (uses `sync.Mutex` with a `setupDone` guard). If the first call fails validation, you can retry with valid config.
+A: Yes. While a pipeline is installed, later calls return its `Shutdown` function (guarded by a `sync.Mutex`). A failed `Setup` installs nothing and releases what it built, so you can retry. After `Shutdown` has run (it is idempotent), the next `Setup` builds a fresh pipeline.
 
 **Q: Do I need to set resource attributes like `k8s.pod.name`?**
 A: No. The Collector enriches automatically via `k8sattributes`.
@@ -604,6 +626,8 @@ mux := http.NewServeMux()
 mux.Handle("/metrics", otelhelper.MetricsHandler())
 ```
 
+Status: `503` before `Setup`, after a failed `Setup` and after `Shutdown`; `200` with an empty body when Prometheus is deliberately off (`OTEL_SDK_DISABLED=true`, or `OTEL_METRICS_EXPORTER` without `prometheus`), so the target isn't reported down.
+
 `MetricsHandler()` serves off a dedicated `prometheus.Registry` — not the `client_golang` global one — so it stays isolated from any metrics the application registers itself.
 
 ### Scoping down what gets scraped
@@ -624,9 +648,9 @@ OTLP export uses TLS by default. The transport is derived from the endpoint sche
 
 | Endpoint | Transport |
 |----------|-----------|
-| `https://host:4317` | TLS (system CA trust store) |
+| `https://host:4317` | TLS (system CA, or `OTEL_EXPORTER_OTLP_CERTIFICATE`) |
 | `http://host:4317` | Plaintext (insecure) |
-| `host:4317` (no scheme) | TLS (secure by default) |
+| `host:4317` (no scheme) | TLS; plaintext only with `OTEL_EXPORTER_OTLP_INSECURE=true` |
 
 Override via env var:
 
@@ -646,7 +670,19 @@ shutdown, err := otelhelper.Setup(ctx,
 )
 ```
 
-Priority: code config (`WithInsecure(true)`) > `OTEL_EXPORTER_OTLP_INSECURE` env var > scheme-based detection.
+`WithInsecure` / `OTEL_EXPORTER_OTLP[_<SIGNAL>]_INSECURE` apply to **schemeless** endpoints only. With `http://` or `https://` the scheme decides; a contradicting `INSECURE` is warned and ignored for that signal. Custom CAs and mTLS come from `OTEL_EXPORTER_OTLP[_<SIGNAL>]_CERTIFICATE` / `_CLIENT_CERTIFICATE` / `_CLIENT_KEY`, read by the SDK.
+
+---
+
+### SDK log output of raw env values
+
+The helper's own warnings never print header values, TLS file paths or URL
+userinfo/query. The OTel Go SDK still parses `OTEL_EXPORTER_OTLP_*` itself and
+reports problems through its global logger (`otel.SetLogger`), which can echo
+the raw value — for example a malformed `OTEL_EXPORTER_OTLP_HEADERS` item or an
+endpoint it cannot parse. The helper does not rewrite environment variables
+(G7), so keep secrets in well-formed headers and route the SDK logger
+accordingly if your logs leave the pod.
 
 ---
 
@@ -668,10 +704,10 @@ shutdown, err := otelhelper.Setup(ctx,
 
 If left unset, the protocol is inferred from the endpoint port: `4318` resolves to `http/protobuf`, any other port (including the default `4317`) resolves to `grpc`.
 
-Priority: code config (`WithOtlpProtocol(...)`) > `OTEL_EXPORTER_OTLP_PROTOCOL` env var > port-based inference (`4318` → `http/protobuf`) > `grpc` default.
+Priority: code config (`WithOtlpProtocol(...)`) > `OTEL_EXPORTER_OTLP_<SIGNAL>_PROTOCOL` > `OTEL_EXPORTER_OTLP_PROTOCOL` > port-based inference on that signal's endpoint (`4318` → `http/protobuf`) > `grpc` default.
 
-`http/json` is a valid value per the OTel spec but has no exporter implementation for traces/metrics/logs in this library — it fails validation at startup instead of silently falling back to another protocol.
+`http/json` is a valid value per the OTel spec but has no Go exporter: in code it fails `Setup`; from the environment it is warned and ignored.
 
-The Go OTLP/HTTP exporters append `/v1/traces`, `/v1/metrics`, `/v1/logs` to the endpoint automatically — do not include them in `OTEL_EXPORTER_OTLP_ENDPOINT`.
+For http/protobuf, `/v1/traces`, `/v1/metrics`, `/v1/logs` are appended to the generic endpoint (env or `WithEndpoint`), keeping any path prefix; per-signal endpoints (`OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`, `WithTracesEndpoint`, …) are used verbatim. A URL without a port uses the scheme default (443/80) for http/protobuf, and `:4317` (with a warning) for gRPC.
 
 For local development with a plaintext collector, the default `http://localhost` already resolves to plaintext — no changes needed.

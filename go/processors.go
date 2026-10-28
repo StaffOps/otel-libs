@@ -22,6 +22,6 @@ func (d *debugProcessor) OnStart(_ context.Context, s sdktrace.ReadWriteSpan) {
 	}
 }
 
-func (d *debugProcessor) OnEnd(_ sdktrace.ReadOnlySpan)     {}
+func (d *debugProcessor) OnEnd(_ sdktrace.ReadOnlySpan)      {}
 func (d *debugProcessor) Shutdown(_ context.Context) error   { return nil }
 func (d *debugProcessor) ForceFlush(_ context.Context) error { return nil }

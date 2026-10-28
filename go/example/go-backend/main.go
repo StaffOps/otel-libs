@@ -3,25 +3,23 @@
 //
 // For real gRPC usage, you would use:
 //
-//	srv := grpc.NewServer(
-//	    grpc.UnaryInterceptor(otelhelper.UnaryServerInterceptor()),
-//	)
+//	srv := grpc.NewServer(otelhelper.GRPCServerOption())
 //
 // And on the client side:
 //
-//	conn, _ := grpc.Dial(addr,
-//	    grpc.WithUnaryInterceptor(otelhelper.UnaryClientInterceptor()),
-//	)
+//	conn, err := grpc.NewClient(addr, otelhelper.GRPCDialOption())
 package main
 
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log"
 	"math/rand"
 	"net/http"
 	"os"
 	"os/signal"
+	"syscall"
 	"time"
 
 	otelhelper "github.com/staffops/staffops-otel-libs/go"
@@ -30,14 +28,32 @@ import (
 )
 
 func main() {
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	// run returns instead of calling log.Fatal, so its deferred telemetry
+	// flush always runs; os.Exit happens only after it.
+	if err := run(); err != nil {
+		log.Printf("%s: %v", "go-backend", err)
+		os.Exit(1)
+	}
+}
+
+func run() error {
+	// SIGTERM is what `docker stop` / Kubernetes send: without it the process
+	// is killed and the deferred Shutdown never flushes buffered telemetry.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
 	shutdown, err := otelhelper.Setup(ctx)
 	if err != nil {
-		log.Fatalf("otel setup: %v", err)
+		return fmt.Errorf("otel setup: %w", err)
 	}
-	defer shutdown(ctx)
+	defer func() {
+		// ctx is already cancelled by the signal here: flush under a fresh deadline.
+		flushCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := shutdown(flushCtx); err != nil {
+			log.Printf("otel shutdown: %v", err)
+		}
+	}()
 
 	tracer := otelhelper.GetTracer("go-backend")
 	meter := otelhelper.GetMeter("go-backend")
@@ -86,13 +102,23 @@ func main() {
 	})
 
 	srv := &http.Server{Addr: ":50051", Handler: mux}
-	go func() {
-		<-ctx.Done()
-		srv.Shutdown(context.Background())
-	}()
-
+	srvErr := make(chan error, 1)
+	go func() { srvErr <- srv.ListenAndServe() }()
 	log.Println("go-backend listening on :50051")
-	if err := srv.ListenAndServe(); err != http.ErrServerClosed {
-		log.Fatal(err)
+
+	var runErr error
+	select {
+	case <-ctx.Done():
+	case err := <-srvErr:
+		runErr = err // e.g. port in use: still drain and flush below
 	}
+
+	// Drain in-flight requests (bounded), then let the deferred Shutdown flush
+	// telemetry: in that order, spans of drained requests are exported too.
+	drainCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := srv.Shutdown(drainCtx); err != nil {
+		log.Printf("http drain: %v", err)
+	}
+	return runErr
 }

@@ -2,12 +2,15 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"math/rand"
 	"net/http"
 	"os"
 	"os/signal"
+	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	otelhelper "github.com/staffops/staffops-otel-libs/go"
@@ -18,16 +21,46 @@ import (
 var pendingAlerts atomic.Int64
 
 func main() {
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	// run returns instead of calling log.Fatal, so its deferred telemetry
+	// flush always runs; os.Exit happens only after it.
+	if err := run(); err != nil {
+		log.Printf("%s: %v", "go-process", err)
+		os.Exit(1)
+	}
+}
+
+func run() error {
+	// SIGTERM is what `docker stop` / Kubernetes send: without it the process
+	// is killed and the deferred Shutdown never flushes buffered telemetry.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
 	shutdown, err := otelhelper.Setup(ctx)
 	if err != nil {
-		log.Fatalf("otel setup: %v", err)
+		return fmt.Errorf("otel setup: %w", err)
 	}
-	defer shutdown(ctx)
+	defer func() {
+		// ctx is already cancelled by the signal here: flush under a fresh deadline.
+		flushCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := shutdown(flushCtx); err != nil {
+			log.Printf("otel shutdown: %v", err)
+		}
+	}()
 
 	tracer := otelhelper.GetTracer("go-process")
+	// OTel-bridged slog logger (stdout JSON without a logs exporter): records
+	// emitted inside a span carry its trace_id/span_id.
+	logger := otelhelper.NewLogger(otelhelper.DeploymentEnvironment(os.Getenv("ENVIRONMENT")), false)
+
+	var workers sync.WaitGroup
+	start := func(name string, interval time.Duration, fn func(context.Context)) {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			worker(ctx, name, interval, fn)
+		}()
+	}
 	meter := otelhelper.GetMeter("go-process")
 
 	scannedMetrics, _ := meter.Int64Counter("process.metrics.scanned", metric.WithDescription("Total metrics scanned"))
@@ -39,7 +72,7 @@ func main() {
 	}, pendingAlertsGauge)
 
 	// Workers
-	go worker(ctx, "anomalyScanner", 30*time.Second, func(ctx context.Context) {
+	start("anomalyScanner", 30*time.Second, func(ctx context.Context) {
 		ctx, span := otelhelper.StartRootSpan(ctx, tracer, "process.anomaly_scan")
 		defer span.End()
 
@@ -48,10 +81,10 @@ func main() {
 		time.Sleep(time.Duration(rand.Intn(200)) * time.Millisecond)
 		scannedMetrics.Add(ctx, int64(batch))
 		pendingAlerts.Add(int64(rand.Intn(5)))
-		log.Printf("anomalyScanner: scanned %d metrics", batch)
+		logger.InfoContext(ctx, "anomaly scan complete", "worker", "anomalyScanner", "batch.size", batch)
 	})
 
-	go worker(ctx, "alertDispatcher", 60*time.Second, func(ctx context.Context) {
+	start("alertDispatcher", 60*time.Second, func(ctx context.Context) {
 		ctx, span := otelhelper.StartRootSpan(ctx, tracer, "process.alert_dispatch")
 		defer span.End()
 
@@ -63,7 +96,7 @@ func main() {
 		log.Printf("alertDispatcher: dispatched %d alerts", count)
 	})
 
-	go worker(ctx, "cleanupWorker", 3*time.Minute, func(ctx context.Context) {
+	start("cleanupWorker", 3*time.Minute, func(ctx context.Context) {
 		_, span := otelhelper.StartRootSpan(ctx, tracer, "process.cleanup")
 		defer span.End()
 
@@ -80,15 +113,26 @@ func main() {
 	})
 
 	srv := &http.Server{Addr: ":8080", Handler: mux}
-	go func() {
-		<-ctx.Done()
-		srv.Shutdown(context.Background())
-	}()
-
+	srvErr := make(chan error, 1)
+	go func() { srvErr <- srv.ListenAndServe() }()
 	log.Println("go-process listening on :8080 (health only)")
-	if err := srv.ListenAndServe(); err != http.ErrServerClosed {
-		log.Fatal(err)
+
+	var runErr error
+	select {
+	case <-ctx.Done():
+	case err := <-srvErr:
+		runErr = err // e.g. port in use: still drain and flush below
 	}
+
+	// Drain in-flight requests (bounded), then let the deferred Shutdown flush
+	// telemetry: in that order, spans of drained requests are exported too.
+	drainCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := srv.Shutdown(drainCtx); err != nil {
+		log.Printf("http drain: %v", err)
+	}
+	workers.Wait() // finish in-flight iterations so their spans end before the flush
+	return runErr
 }
 
 func worker(ctx context.Context, name string, interval time.Duration, fn func(context.Context)) {

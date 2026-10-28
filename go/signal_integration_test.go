@@ -14,46 +14,6 @@ import (
 
 // --- resolveCollectorHost behavior ---
 
-func Test_ResolveCollectorHost_NoScheme_DefaultsToHTTP(t *testing.T) {
-	t.Setenv(EnvCollectorEndpoint, "collector.svc:4317")
-
-	got := resolveCollectorHost()
-	want := "collector.svc:4317"
-	if got != want {
-		t.Errorf("resolveCollectorHost() = %q, want %q", got, want)
-	}
-}
-
-func Test_ResolveCollectorHost_WithScheme_ExtractsHost(t *testing.T) {
-	t.Setenv(EnvCollectorEndpoint, "http://my-collector:4317")
-
-	got := resolveCollectorHost()
-	want := "my-collector:4317"
-	if got != want {
-		t.Errorf("resolveCollectorHost() = %q, want %q", got, want)
-	}
-}
-
-func Test_ResolveCollectorHost_WithScheme_NoPort_Defaults4317(t *testing.T) {
-	t.Setenv(EnvCollectorEndpoint, "https://collector.internal")
-
-	got := resolveCollectorHost()
-	want := "collector.internal:4317"
-	if got != want {
-		t.Errorf("resolveCollectorHost() = %q, want %q", got, want)
-	}
-}
-
-func Test_ResolveCollectorHost_Empty_ReturnsEmpty(t *testing.T) {
-	t.Setenv(EnvCollectorEndpoint, "")
-
-	got := resolveCollectorHost()
-	want := ""
-	if got != want {
-		t.Errorf("resolveCollectorHost() = %q, want %q", got, want)
-	}
-}
-
 // --- Metrics configuration behavior ---
 
 func Test_MetricInterval_Is30Seconds(t *testing.T) {
@@ -71,7 +31,7 @@ func Test_MetricInterval_Is30Seconds(t *testing.T) {
 	}
 
 	res := resource.Default()
-	mp, _, err := configureMetrics(context.Background(), res, opts)
+	mp, _, _, err := configureMetrics(context.Background(), res, opts)
 	if err != nil {
 		t.Fatalf("configureMetrics() error = %v", err)
 	}
@@ -192,31 +152,6 @@ func Test_DebugProcessor_OnEnd_Noop(t *testing.T) {
 	p.OnEnd(nil) // should not panic
 }
 
-func Test_ParseEnvironment_AllValues(t *testing.T) {
-	tests := []struct {
-		input    string
-		expected DeploymentEnvironment
-	}{
-		{"LOCAL", LOCAL},
-		{"local", LOCAL},
-		{"DEV", DEV},
-		{"dev", DEV},
-		{"HML", HML},
-		{"hml", HML},
-		{"PRD", PRD},
-		{"prd", PRD},
-		{"unknown", LOCAL},
-		{"", LOCAL},
-	}
-	for _, tt := range tests {
-		t.Run(tt.input, func(t *testing.T) {
-			if got := parseEnvironment(tt.input); got != tt.expected {
-				t.Errorf("parseEnvironment(%q) = %q, want %q", tt.input, got, tt.expected)
-			}
-		})
-	}
-}
-
 // --- TLS/Insecure configuration tests ---
 
 func Test_ConfigureTracing_Insecure(t *testing.T) {
@@ -271,7 +206,7 @@ func Test_ConfigureMetrics_Insecure(t *testing.T) {
 		SampleRatio:     1.0,
 	}
 	res := resource.Default()
-	mp, _, err := configureMetrics(context.Background(), res, opts)
+	mp, _, _, err := configureMetrics(context.Background(), res, opts)
 	if err != nil {
 		t.Fatalf("configureMetrics(insecure=true) error = %v", err)
 	}
@@ -292,7 +227,7 @@ func Test_ConfigureMetrics_TLS(t *testing.T) {
 		SampleRatio:     1.0,
 	}
 	res := resource.Default()
-	mp, _, err := configureMetrics(context.Background(), res, opts)
+	mp, _, _, err := configureMetrics(context.Background(), res, opts)
 	if err != nil {
 		t.Fatalf("configureMetrics(insecure=false/TLS) error = %v", err)
 	}
@@ -312,7 +247,7 @@ func Test_ConfigureLogging_Insecure(t *testing.T) {
 		ExportTimeoutMs: 10_000,
 	}
 	res := resource.Default()
-	lp, err := configureLogging(context.Background(), res, opts)
+	lp, _, err := configureLogging(context.Background(), res, opts)
 	if err != nil {
 		t.Fatalf("configureLogging(insecure=true) error = %v", err)
 	}
@@ -332,7 +267,7 @@ func Test_ConfigureLogging_TLS(t *testing.T) {
 		ExportTimeoutMs: 10_000,
 	}
 	res := resource.Default()
-	lp, err := configureLogging(context.Background(), res, opts)
+	lp, _, err := configureLogging(context.Background(), res, opts)
 	if err != nil {
 		t.Fatalf("configureLogging(insecure=false/TLS) error = %v", err)
 	}
@@ -364,7 +299,7 @@ func Test_ConfigureMetrics_PrometheusMode(t *testing.T) {
 		PrometheusMetricsPort: 0, // port 0 = standalone listener disabled (won't conflict)
 	}
 	res := resource.Default()
-	mp, _, err := configureMetrics(context.Background(), res, opts)
+	mp, _, _, err := configureMetrics(context.Background(), res, opts)
 	if err != nil {
 		t.Fatalf("configureMetrics(prometheus mode) error = %v", err)
 	}
@@ -461,7 +396,7 @@ func Test_ConfigureMetrics_WithDisabledMetrics_OTLP(t *testing.T) {
 		DisabledMetrics: []string{"http.*"},
 	}
 	res := resource.Default()
-	mp, _, err := configureMetrics(context.Background(), res, opts)
+	mp, _, _, err := configureMetrics(context.Background(), res, opts)
 	if err != nil {
 		t.Fatalf("configureMetrics(disabled metrics) error = %v", err)
 	}
@@ -528,7 +463,7 @@ func Test_ConfigureLogging_NoEndpoint(t *testing.T) {
 		ExportTimeoutMs: 10_000,
 	}
 	res := resource.Default()
-	lp, err := configureLogging(context.Background(), res, opts)
+	lp, hasProcessor, err := configureLogging(context.Background(), res, opts)
 	if err != nil {
 		t.Fatalf("configureLogging(no endpoint) error = %v", err)
 	}
@@ -537,8 +472,8 @@ func Test_ConfigureLogging_NoEndpoint(t *testing.T) {
 	if err := lp.Shutdown(ctx); err != nil {
 		t.Logf("shutdown warning: %v", err)
 	}
-	if logsHaveProcessor {
-		t.Error("logsHaveProcessor should be false when OtelEndpoint is empty")
+	if hasProcessor {
+		t.Error("hasProcessor should be false when OtelEndpoint is empty")
 	}
 }
 
@@ -554,11 +489,12 @@ func Test_NewLogger_NoEndpoint_WritesToStdout(t *testing.T) {
 		ExportTimeoutMs: 10_000,
 	}
 	res := resource.Default()
-	lp, err := configureLogging(context.Background(), res, opts)
+	lp, _, err := configureLogging(context.Background(), res, opts)
 	if err != nil {
 		t.Fatalf("configureLogging(no endpoint) error = %v", err)
 	}
 	defer lp.Shutdown(context.Background())
+	activeLogBridge.Store(nil) // what Setup would publish for this pipeline
 
 	r, w, err := os.Pipe()
 	if err != nil {
@@ -593,13 +529,13 @@ func Test_NewLogger_WithEndpoint_DoesNotWriteRawJSONToStdout(t *testing.T) {
 		Insecure:        true,
 	}
 	res := resource.Default()
-	lp, err := configureLogging(context.Background(), res, opts)
+	lp, hasProcessor, err := configureLogging(context.Background(), res, opts)
 	if err != nil {
 		t.Fatalf("configureLogging(with endpoint) error = %v", err)
 	}
 	defer lp.Shutdown(context.Background())
 
-	if !logsHaveProcessor {
-		t.Error("logsHaveProcessor should be true when OtelEndpoint is set")
+	if !hasProcessor {
+		t.Error("hasProcessor should be true when OtelEndpoint is set")
 	}
 }

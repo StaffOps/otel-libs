@@ -2,78 +2,310 @@ package otelhelper
 
 import (
 	"context"
-	"crypto/tls"
 	"fmt"
 	"log/slog"
 	"os"
+	"reflect"
+	"sync/atomic"
 
 	"go.opentelemetry.io/contrib/bridges/otelslog"
 	"go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc"
 	"go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp"
-	"go.opentelemetry.io/otel/log/global"
 	sdklog "go.opentelemetry.io/otel/sdk/log"
 	"go.opentelemetry.io/otel/sdk/resource"
-	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/credentials/insecure"
 )
 
-func configureLogging(ctx context.Context, res *resource.Resource, opts *Options) (*sdklog.LoggerProvider, error) {
+// otlpLogExporter and consoleLogExporter build the log exporters; variables
+// so tests can inject a build failure or a recorder.
+var (
+	otlpLogExporter    = newOTLPLogExporter
+	consoleLogExporter = newConsoleLogExporter
+)
+
+// configureLogging builds the LoggerProvider without installing it globally
+// (Setup does, after every signal was built — G1). hasProcessor reports
+// whether an export processor is attached; Setup publishes the bridge.
+func configureLogging(ctx context.Context, res *resource.Resource, opts *Options) (lp *sdklog.LoggerProvider, hasProcessor bool, err error) {
 	lpOpts := []sdklog.LoggerProviderOption{
 		sdklog.WithResource(res),
 	}
 
-	if opts.OtelEndpoint != "" {
-		// OTLP push — export logs to collector, over gRPC or HTTP/protobuf
-		// depending on the resolved protocol.
+	var processors []sdklog.Processor
+	for _, name := range opts.signalExporters(signalLogs) {
 		var exporter sdklog.Exporter
+		var bpOpts []sdklog.BatchProcessorOption
 		var err error
-		if opts.resolvedOtlpProtocol() == ProtocolHTTP {
-			httpOpts := []otlploghttp.Option{
-				otlploghttp.WithEndpoint(opts.OtelEndpoint),
+		switch name {
+		case "otlp":
+			e := opts.export(signalLogs)
+			if !e.configured {
+				continue
 			}
-			if opts.Insecure {
-				httpOpts = append(httpOpts, otlploghttp.WithInsecure())
-			} else {
-				httpOpts = append(httpOpts, otlploghttp.WithTLSClientConfig(&tls.Config{}))
+			exporter, err = otlpLogExporter(ctx, e)
+			if e.timeout > 0 {
+				bpOpts = append(bpOpts, sdklog.WithExportTimeout(e.timeout)) // effective deadline
 			}
-			exporter, err = otlploghttp.New(ctx, httpOpts...)
-		} else {
-			grpcOpts := []otlploggrpc.Option{
-				otlploggrpc.WithEndpoint(opts.OtelEndpoint),
-			}
-			if opts.Insecure {
-				grpcOpts = append(grpcOpts, otlploggrpc.WithInsecure())
-			} else {
-				grpcOpts = append(grpcOpts, otlploggrpc.WithTLSCredentials(credentials.NewTLS(&tls.Config{})))
-			}
-			exporter, err = otlploggrpc.New(ctx, grpcOpts...)
+		case "console":
+			exporter, err = consoleLogExporter()
 		}
 		if err != nil {
-			return nil, fmt.Errorf("log exporter: %w", err)
+			// A batch processor runs its own goroutine from creation on.
+			for i := len(processors) - 1; i >= 0; i-- {
+				releaseOnFailure(ctx, "log processor", processors[i].Shutdown)
+			}
+			return nil, false, fmt.Errorf("log exporter: %w", err)
 		}
-		lpOpts = append(lpOpts, sdklog.WithProcessor(sdklog.NewBatchProcessor(exporter)))
+		p := sdklog.NewBatchProcessor(exporter, bpOpts...)
+		processors = append(processors, p)
+		lpOpts = append(lpOpts, sdklog.WithProcessor(p))
 	}
-	// logsHaveProcessor gates NewLogger's handler choice below: called from
-	// Setup(), which already holds mu, so this plain assignment is safe.
-	logsHaveProcessor = opts.OtelEndpoint != ""
 
-	lp := sdklog.NewLoggerProvider(lpOpts...)
-	global.SetLoggerProvider(lp)
-	return lp, nil
+	return sdklog.NewLoggerProvider(lpOpts...), len(processors) > 0, nil
 }
 
-// NewSlogHandler returns an slog.Handler that bridges to OTel logs.
-// Logs emitted within a span context automatically include trace_id and span_id.
+// logBridge is the OTel slog bridge of one installed pipeline, bound to that
+// pipeline's LoggerProvider (not the global one: the global delegate forwards
+// only to the first provider ever installed, so a bridge built from it would
+// keep writing to a shut-down provider after Shutdown → Setup — design D13).
+type logBridge struct{ handler slog.Handler }
+
+// activeLogBridge is non-nil while the installed pipeline has a log export
+// processor (OTLP or console). Setup stores it once every signal is built;
+// Shutdown clears it before flushing. The helper's slog handlers read it per
+// record (design D6), so loggers built before Setup switch to the bridge and
+// loggers outliving Shutdown go back to stdout instead of a dead provider.
+var activeLogBridge atomic.Pointer[logBridge]
+
+// newLogBridge returns the bridge for a pipeline, or nil when the provider
+// has no processor: a processor-less provider silently drops every record.
+func newLogBridge(lp *sdklog.LoggerProvider, hasProcessor bool) *logBridge {
+	if lp == nil || !hasProcessor {
+		return nil
+	}
+	return &logBridge{handler: otelslog.NewHandler("otel-helper", otelslog.WithLoggerProvider(lp))}
+}
+
+// logsBridged reports whether records currently go through the OTel bridge.
+func logsBridged() bool { return activeLogBridge.Load() != nil }
+
+// handlerOp is one WithGroup (group != "") or WithAttrs call, replayed on the
+// bridge of each pipeline the handler meets.
+type handlerOp struct {
+	group string
+	attrs []slog.Attr
+}
+
+// derivedBridge caches a pipeline bridge with a handler's ops applied.
+type derivedBridge struct {
+	base    *logBridge
+	handler slog.Handler
+}
+
+// installedLogLevel is DefaultLogLevel of the environment the last successful
+// Setup resolved (Info until then); it is the stdout level of NewSlogHandler
+// (R4, design D6 "A5 validation rulings"). Kept after Shutdown.
+var installedLogLevel slog.LevelVar
+
+// switchHandler is the helper's slog.Handler (G3, design D6): per record it
+// writes through the active OTel bridge, or — with no logs exporter, before
+// Setup, after Shutdown — as single-line JSON to stdout: time, level
+// (DEBUG/INFO/WARN/ERROR), msg, the attributes, and exception for the first
+// error-valued attribute of the record (the shape the Python helper mirrors).
+// Only attributes passed with the record are renamed; error attributes added
+// with WithAttrs keep their key (slog renders them).
+type switchHandler struct {
+	min     slog.Leveler // NewLogger's level; nil = the destination decides
+	stdout  slog.Handler // JSON handler with ops already applied
+	ops     []handlerOp
+	derived *atomic.Pointer[derivedBridge]
+	// excInScope: an "exception" key already exists in the scope record
+	// attributes land in (WithAttrs since the last WithGroup) — no rename then.
+	excInScope bool
+}
+
+func newSwitchHandler(min slog.Leveler, stdout slog.Handler) *switchHandler {
+	return &switchHandler{min: min, stdout: stdout, derived: new(atomic.Pointer[derivedBridge])}
+}
+
+// newStdoutJSONHandler is the fallback destination: the application's own log
+// output, not helper diagnostics. os.Stdout is read at construction.
+func newStdoutJSONHandler(level slog.Leveler) slog.Handler {
+	return slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: level, ReplaceAttr: stdoutTime})
+}
+
+// stdoutTimeFormat is RFC 3339 with millisecond precision; times are UTC, so
+// the zone is always "Z" (same as the Python helper).
+const stdoutTimeFormat = "2006-01-02T15:04:05.000Z07:00"
+
+// stdoutTime renders the record time in UTC (slog's default keeps local time).
+func stdoutTime(groups []string, a slog.Attr) slog.Attr {
+	if len(groups) == 0 && a.Key == slog.TimeKey && a.Value.Kind() == slog.KindTime {
+		return slog.String(slog.TimeKey, a.Value.Time().UTC().Format(stdoutTimeFormat))
+	}
+	return a
+}
+
+// bridge returns the active bridge with this handler's ops applied, or nil.
+func (h *switchHandler) bridge() slog.Handler {
+	b := activeLogBridge.Load()
+	if b == nil {
+		if h.derived.Load() != nil {
+			h.derived.Store(nil) // don't keep a shut-down provider reachable
+		}
+		return nil
+	}
+	if d := h.derived.Load(); d != nil && d.base == b {
+		return d.handler
+	}
+	bh := b.handler
+	for _, op := range h.ops {
+		if op.group != "" {
+			bh = bh.WithGroup(op.group)
+		} else {
+			bh = bh.WithAttrs(op.attrs)
+		}
+	}
+	h.derived.Store(&derivedBridge{base: b, handler: bh})
+	return bh
+}
+
+func (h *switchHandler) Enabled(ctx context.Context, level slog.Level) bool {
+	if h.min != nil && level < h.min.Level() {
+		return false
+	}
+	if b := h.bridge(); b != nil {
+		return b.Enabled(ctx, level)
+	}
+	return h.stdout.Enabled(ctx, level)
+}
+
+func (h *switchHandler) Handle(ctx context.Context, r slog.Record) error {
+	// Handle can be called without Enabled (handler wrappers do), and the
+	// destination may have changed since Enabled: re-check the level here.
+	if h.min != nil && r.Level < h.min.Level() {
+		return nil
+	}
+	if b := h.bridge(); b != nil {
+		return b.Handle(ctx, r)
+	}
+	if !h.stdout.Enabled(ctx, r.Level) {
+		return nil
+	}
+	if h.excInScope {
+		return h.stdout.Handle(ctx, r)
+	}
+	return h.stdout.Handle(ctx, withException(r))
+}
+
+func isError(v slog.Value) bool {
+	v = v.Resolve()
+	if v.Kind() != slog.KindAny {
+		return false
+	}
+	_, ok := v.Any().(error)
+	return ok
+}
+
+// withException renames the record's first error-valued attribute to
+// "exception" (its Error() text) for the stdout JSON shape.
+// A record that already carries an "exception" attribute is left unchanged.
+func withException(r slog.Record) slog.Record {
+	found := -1
+	i := 0
+	r.Attrs(func(a slog.Attr) bool {
+		if a.Key == "exception" {
+			found = -1
+			return false
+		}
+		if found < 0 && isError(a.Value) {
+			found = i
+		}
+		i++
+		return true
+	})
+	if found < 0 {
+		return r
+	}
+	out := slog.NewRecord(r.Time, r.Level, r.Message, r.PC)
+	i = 0
+	r.Attrs(func(a slog.Attr) bool {
+		if i == found {
+			a = slog.String("exception", errorText(a.Value.Resolve().Any().(error)))
+		}
+		out.AddAttrs(a)
+		i++
+		return true
+	})
+	return out
+}
+
+// errorText is err.Error() rendered the way slog renders an error value: a
+// typed-nil pointer gives "<nil>" and a panicking Error() gives "!PANIC: …",
+// so a bad error value never crashes the caller.
+func errorText(err error) (s string) {
+	defer func() {
+		if r := recover(); r != nil {
+			if v := reflect.ValueOf(err); v.Kind() == reflect.Pointer && v.IsNil() {
+				s = "<nil>"
+				return
+			}
+			s = fmt.Sprintf("!PANIC: %v", r)
+		}
+	}()
+	return err.Error()
+}
+
+func (h *switchHandler) with(op handlerOp, stdout slog.Handler) *switchHandler {
+	ops := make([]handlerOp, len(h.ops), len(h.ops)+1)
+	copy(ops, h.ops)
+	exc := h.excInScope
+	if op.group != "" {
+		exc = false
+	}
+	for _, a := range op.attrs {
+		exc = exc || a.Key == "exception"
+	}
+	return &switchHandler{min: h.min, stdout: stdout, ops: append(ops, op), derived: new(atomic.Pointer[derivedBridge]), excInScope: exc}
+}
+
+func (h *switchHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
+	if len(attrs) == 0 {
+		return h
+	}
+	return h.with(handlerOp{attrs: attrs}, h.stdout.WithAttrs(attrs))
+}
+
+func (h *switchHandler) WithGroup(name string) slog.Handler {
+	if name == "" {
+		return h
+	}
+	return h.with(handlerOp{group: name}, h.stdout.WithGroup(name))
+}
+
+// NewSlogHandler returns the helper's slog.Handler. While Setup has a logs
+// exporter installed (OTLP and/or OTEL_LOGS_EXPORTER=console) records go
+// through the OTel Logs API bridge — trace-correlated (trace_id/span_id from
+// the record's context) — and the LoggerProvider decides which levels are
+// enabled. Otherwise (before Setup, after Shutdown, no endpoint,
+// OTEL_LOGS_EXPORTER=none) records are written to stdout as JSON at the level
+// of the environment Setup resolved (DefaultLogLevel; Info before the first
+// Setup). The choice is made per record, so a handler created before Setup
+// switches once Setup installs the exporter. Trace correlation needs the
+// context-taking slog calls (InfoContext, ...).
 func NewSlogHandler() slog.Handler {
-	return otelslog.NewHandler("otel-helper")
+	return newSwitchHandler(nil, newStdoutJSONHandler(&installedLogLevel))
 }
 
-// DefaultLogLevel returns the appropriate slog.Level for a given environment.
-// LOCAL=Debug, DEV/HML=Info, PRD=Warning.
+// DefaultLogLevel returns the appropriate slog.Level for a given environment
+// (case-insensitive): LOCAL=Debug, DEV/HML=Info, PRD=Warning; unset or any
+// other value = Info (ADR-003).
 func DefaultLogLevel(env DeploymentEnvironment, debug bool) slog.Level {
 	if debug {
 		return slog.LevelDebug
 	}
-	switch env {
+	known, _ := knownEnvironment(string(env))
+	switch known {
 	case LOCAL:
 		return slog.LevelDebug
 	case DEV, HML:
@@ -85,53 +317,55 @@ func DefaultLogLevel(env DeploymentEnvironment, debug bool) slog.Level {
 	}
 }
 
-// NewLogger returns a configured *slog.Logger with environment-appropriate level.
-//
-// When Setup() configured an OTLP endpoint, this bridges slog through the
-// OTel Logs API (NewSlogHandler) so records are trace-correlated and exported
-// via OTLP. Without an endpoint, configureLogging builds a LoggerProvider
-// with NO processor attached (there is nothing to export to) — bridging
-// through it in that case would silently discard every record, since a
-// processor-less provider drops everything handed to it. So instead this
-// falls back to a plain JSON handler on stdout, matching the flat
-// msg/level/time shape the OTel bridge's absence would otherwise lose.
+// NewLogger returns a *slog.Logger with the environment's level
+// (DefaultLogLevel) over the same per-record handler as NewSlogHandler: the
+// OTel bridge while Setup has a logs exporter installed, stdout JSON
+// (msg/level/time) otherwise. Records are never handed to a provider without
+// a processor, which would silently drop them.
 func NewLogger(env DeploymentEnvironment, debug bool) *slog.Logger {
 	level := DefaultLogLevel(env, debug)
+	return slog.New(newSwitchHandler(level, newStdoutJSONHandler(level)))
+}
 
-	mu.Lock()
-	bridged := logsHaveProcessor
-	mu.Unlock()
-
-	var handler slog.Handler
-	if bridged {
-		handler = NewSlogHandler()
-	} else {
-		handler = slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: level})
-		// slog.NewJSONHandler already enforces Level itself; the outer
-		// levelFilterHandler below is redundant here but kept for a uniform
-		// return type/behavior between both branches.
+// newOTLPLogExporter mirrors newOTLPTraceExporter for logs.
+func newOTLPLogExporter(ctx context.Context, e *signalExport) (sdklog.Exporter, error) {
+	if e.protocol == ProtocolHTTP {
+		var o []otlploghttp.Option
+		if e.endpointURL != "" {
+			o = append(o, otlploghttp.WithEndpointURL(e.endpointURL))
+		}
+		if e.timeout > 0 {
+			o = append(o, otlploghttp.WithTimeout(e.timeout))
+		}
+		if e.headers != nil {
+			o = append(o, otlploghttp.WithHeaders(e.headers))
+		}
+		if e.dropTLS {
+			// nil clears the TLS config the SDK loaded from env (options are
+			// applied after env); otherwise New() fails on an http:// endpoint.
+			o = append(o, otlploghttp.WithTLSClientConfig(nil))
+		}
+		if e.compression == CompressionNone {
+			o = append(o, otlploghttp.WithCompression(otlploghttp.NoCompression))
+		} else {
+			o = append(o, otlploghttp.WithCompression(otlploghttp.GzipCompression))
+		}
+		return otlploghttp.New(ctx, o...)
 	}
-	return slog.New(levelFilterHandler{level: level, inner: handler})
-}
-
-// levelFilterHandler wraps an slog.Handler with a minimum level filter.
-type levelFilterHandler struct {
-	level slog.Level
-	inner slog.Handler
-}
-
-func (h levelFilterHandler) Enabled(_ context.Context, level slog.Level) bool {
-	return level >= h.level
-}
-
-func (h levelFilterHandler) Handle(ctx context.Context, r slog.Record) error {
-	return h.inner.Handle(ctx, r)
-}
-
-func (h levelFilterHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
-	return levelFilterHandler{level: h.level, inner: h.inner.WithAttrs(attrs)}
-}
-
-func (h levelFilterHandler) WithGroup(name string) slog.Handler {
-	return levelFilterHandler{level: h.level, inner: h.inner.WithGroup(name)}
+	var o []otlploggrpc.Option
+	if e.endpointURL != "" {
+		o = append(o, otlploggrpc.WithEndpointURL(e.endpointURL))
+	}
+	if e.timeout > 0 {
+		o = append(o, otlploggrpc.WithTimeout(e.timeout))
+	}
+	if e.headers != nil {
+		o = append(o, otlploggrpc.WithHeaders(e.headers))
+	}
+	if e.dropTLS {
+		// The SDK prefers env TLS credentials over Insecure: force plaintext.
+		o = append(o, otlploggrpc.WithTLSCredentials(insecure.NewCredentials()))
+	}
+	o = append(o, otlploggrpc.WithCompressor(e.compression)) // accepts gzip and none
+	return otlploggrpc.New(ctx, o...)
 }

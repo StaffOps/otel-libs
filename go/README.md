@@ -19,16 +19,17 @@ defer shutdown(ctx)
 go get github.com/staffops/staffops-otel-libs/go
 ```
 
-Requires Go 1.22+.
+Requires Go 1.26+.
 
 ## Environment Variables
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `SERVICE_NAME` | `my-service` | Service name (priority over `OTEL_SERVICE_NAME`) |
-| `ENVIRONMENT` | `LOCAL` | Environment: LOCAL, DEV, HML, PRD |
+| `OTEL_SERVICE_NAME` | _(unset)_ | Service name. Order: code > `OTEL_SERVICE_NAME` > `service.name` in `OTEL_RESOURCE_ATTRIBUTES` > `SERVICE_NAME` > SDK `unknown_service:<exe>` (+ warning) |
+| `SERVICE_NAME` | _(unset)_ | Deprecated alias, lowest priority |
+| `ENVIRONMENT` | _(unset)_ | Deprecated alias for `deployment.environment.name` (`OTEL_RESOURCE_ATTRIBUTES` wins). Unset → attribute absent + warning; values other than LOCAL/DEV/HML/PRD are emitted verbatim |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | `http://localhost` | Collector endpoint |
-| `OTEL_EXPORTER_OTLP_INSECURE` | _(unset)_ | TLS override: `true` = plaintext, `false` = TLS. Unset = derived from scheme (secure by default) |
+| `OTEL_EXPORTER_OTLP_INSECURE` | _(unset)_ | `true` = plaintext for **schemeless** endpoints. With `http://`/`https://` the scheme decides; a contradicting value is warned and ignored |
 | `OTEL_HELPER_DEBUG_LEVEL` | `false` | Debug mode: all instrumentations, attribute debug=true |
 | `OTEL_HELPER_EXTRA_INSTRUMENTATION` | `SQL` | Conditional instrumentations: SQL, REDIS, AWS |
 | `OTEL_HELPER_SAMPLE_RATIO` | `1.0` | Head sampling ratio (0.0-1.0). 1.0 = AlwaysOn |
@@ -84,15 +85,19 @@ defer span.End()
 
 ### `NewHTTPHandler(handler http.Handler, operation string) http.Handler`
 
-Wraps an `http.Handler` with OTel tracing. Automatically filters health paths (`/ping`, `/health`, `/healthz`, `/ready`).
+Wraps an `http.Handler` with OTel tracing and HTTP server metrics. Every request is measured, health checks included; health-check spans are dropped by the sampler `Setup` installs (see [Health checks](#health-checks-spans-dropped-metrics-kept)).
+
+Server spans are named `<METHOD> <route>` from the `http.ServeMux` pattern (`GET /orders/{id}`, with `http.route` set), whether the
+handler wraps one route or the whole mux; without a pattern the name is just the method (`GET`). Since 0.3.0 the `operation` argument
+is ignored (kept for source compatibility).
 
 ```go
-mux.Handle("POST /orders", otelhelper.NewHTTPHandler(handler, "POST /orders"))
+mux.Handle("POST /orders", otelhelper.NewHTTPHandler(handler, "orders")) // span name: "POST /orders"
 ```
 
 ### `NewHTTPTransport(base http.RoundTripper) http.RoundTripper`
 
-Wraps an `http.RoundTripper` with OTel tracing for **outgoing** HTTP requests. Health paths are filtered. Pass `nil` to wrap `http.DefaultTransport`.
+Wraps an `http.RoundTripper` with OTel tracing for **outgoing** HTTP requests. Requests to a health path (same list and matching as the server side) get no client span (nor client metric). Pass `nil` to wrap `http.DefaultTransport`.
 
 ```go
 client := &http.Client{Transport: otelhelper.NewHTTPTransport(nil)}
@@ -101,7 +106,7 @@ resp, err := client.Do(req) // automatically creates client spans with context p
 
 ### `NewSlogHandler() slog.Handler`
 
-Returns an `slog.Handler` that bridges to OTel logs via `otelslog`. Logs emitted within a span context automatically include `trace_id` and `span_id`.
+Returns the helper's `slog.Handler`, deciding per record: while `Setup` has a logs exporter installed, records go through the OTel bridge (`otelslog`; records logged with a span context carry `trace_id`/`span_id`); otherwise (before `Setup`, after `Shutdown`, no endpoint, `OTEL_LOGS_EXPORTER=none`) they are written to stdout as one JSON line (`time`, `level`, `msg`, attributes, `exception` for the first error-valued attribute) at the environment's level. Trace correlation needs the `*Context` slog calls (`InfoContext`, …). A handler created before `Setup` switches when `Setup` runs.
 
 ```go
 handler := otelhelper.NewSlogHandler()
@@ -114,35 +119,36 @@ Returns the appropriate `slog.Level` for a given environment: LOCAL=Debug, DEV/H
 
 ### `NewLogger(env DeploymentEnvironment, debug bool) *slog.Logger`
 
-Returns a configured `*slog.Logger` with OTel bridge and environment-appropriate level filter.
+Returns a `*slog.Logger` with the environment's level over the same per-record handler as `NewSlogHandler` (OTel bridge while a logs exporter is installed, stdout JSON otherwise).
 
 ```go
 logger := otelhelper.NewLogger(otelhelper.PRD, false) // Warning level, OTel bridge
 slog.SetDefault(logger)
 ```
 
-### gRPC Interceptors
+### gRPC (stats handlers)
 
 | Function | Description |
 |----------|-------------|
-| `UnaryServerInterceptor()` | Server-side unary interceptor (filters gRPC health checks) |
-| `StreamServerInterceptor()` | Server-side stream interceptor (filters gRPC health checks) |
-| `UnaryClientInterceptor()` | Client-side unary interceptor (filters gRPC health checks) |
-| `StreamClientInterceptor()` | Client-side stream interceptor (filters gRPC health checks) |
+| `GRPCServerOption()` | `grpc.ServerOption` installing the server stats handler (unary + streaming) |
+| `GRPCDialOption()` | `grpc.DialOption` installing the client stats handler (unary + streaming) |
+| `GRPCServerHandler()` | The server `stats.Handler` itself (for `grpc.StatsHandler`) |
+| `GRPCClientHandler()` | The client `stats.Handler` itself (for `grpc.WithStatsHandler`) |
 
 ```go
 // Server
-srv := grpc.NewServer(
-    grpc.UnaryInterceptor(otelhelper.UnaryServerInterceptor()),
-    grpc.StreamInterceptor(otelhelper.StreamServerInterceptor()),
-)
+srv := grpc.NewServer(otelhelper.GRPCServerOption())
 
 // Client
-conn, _ := grpc.Dial(addr,
-    grpc.WithUnaryInterceptor(otelhelper.UnaryClientInterceptor()),
-    grpc.WithStreamInterceptor(otelhelper.StreamClientInterceptor()),
-)
+conn, err := grpc.NewClient(addr, otelhelper.GRPCDialOption())
 ```
+
+Every RPC is counted in `rpc.server.call.duration` /
+`rpc.client.call.duration`, including server-side `grpc.health.v1.Health/*`;
+health server spans are dropped by the helper sampler, and client health calls
+get neither a span nor a client metric. The
+`*Interceptor()` functions were removed in 0.3.0 (otelgrpc dropped interceptors
+in v0.61.0).
 
 ### Functional Options
 
@@ -150,10 +156,12 @@ conn, _ := grpc.Dial(addr,
 |--------|-------------|
 | `WithServiceName(name)` | Override service name |
 | `WithEnvironment(env)` | Override environment |
-| `WithEndpoint(endpoint)` | Override collector endpoint |
+| `WithEndpoint(endpoint)` | Generic collector endpoint (URL or `host:port`); `/v1/<signal>` appended for http/protobuf |
+| `WithTracesEndpoint` / `WithMetricsEndpoint` / `WithLogsEndpoint` | Per-signal endpoint URL, used verbatim |
+| `WithCompression(c)` | `gzip` (default) or `none` |
 | `WithDebug()` | Enable debug mode |
 | `WithSampleRatio(ratio)` | Set head sampling ratio |
-| `WithExportTimeout(ms)` | Set export timeout in ms |
+| `WithExportTimeout(ms)` | Export timeout in ms (unset → `OTEL_EXPORTER_OTLP[_<SIGNAL>]_TIMEOUT`, else SDK 10 s) |
 | `WithExtraInstrumentation(instr)` | Set extra instrumentations |
 | `WithResourceAttributes(attrs)` | Add custom resource attributes |
 
@@ -192,8 +200,8 @@ This enables the standard Kubernetes pattern: deploy without a collector, and le
 
 | Signal | What is captured |
 |--------|-----------------|
-| **Traces** | HTTP requests via `NewHTTPHandler`, HTTP client via `NewHTTPTransport`, gRPC via interceptors, custom spans via `GetTracer` |
-| **Metrics** | Go runtime metrics (goroutines, GC, memory) automatically, custom meters via `GetMeter`, exported via OTLP with exemplars (`OTEL_METRICS_EXEMPLAR_FILTER=trace_based` auto-set). Exported every **30s**. |
+| **Traces** | HTTP requests via `NewHTTPHandler`, HTTP client via `NewHTTPTransport`, gRPC via stats handlers (`GRPCServerOption`/`GRPCDialOption`), custom spans via `GetTracer` |
+| **Metrics** | Go runtime metrics (goroutines, GC, memory) automatically, custom meters via `GetMeter`, exported via OTLP with exemplars (SDK default `trace_based`; `OTEL_METRICS_EXEMPLAR_FILTER` honored). Exported every **30s**. |
 | **Logs** | Exported via OTLP to the Collector; `NewSlogHandler()`/`NewLogger()` for slog bridge with trace correlation |
 
 ## Endpoint Resolution & TLS
@@ -202,11 +210,11 @@ Transport is determined by the endpoint scheme:
 
 | Endpoint | Transport |
 |----------|-----------|
-| `https://host:4317` | TLS (system CA trust store) |
+| `https://host:4317` | TLS (system CA, or `OTEL_EXPORTER_OTLP_CERTIFICATE`) |
 | `http://host:4317` | Plaintext (insecure) |
-| `host:4317` (no scheme) | TLS (secure by default) |
+| `host:4317` (no scheme) | TLS; plaintext only with `OTEL_EXPORTER_OTLP_INSECURE=true` |
 
-Override with `OTEL_EXPORTER_OTLP_INSECURE`: `true` forces plaintext, `false` forces TLS. Explicit code config (`WithInsecure(true)`) always wins over env/scheme.
+The scheme always wins: `OTEL_EXPORTER_OTLP[_<SIGNAL>]_INSECURE` applies only to schemeless endpoints, and a value that contradicts the scheme is warned and ignored. `WithInsecure` likewise applies to schemeless endpoints (it must agree with a code URL's scheme). Certificates, mTLS (`OTEL_EXPORTER_OTLP[_<SIGNAL>]_CERTIFICATE`, `_CLIENT_CERTIFICATE`, `_CLIENT_KEY`), headers, timeouts and per-signal endpoints are read by the OTel SDK itself.
 
 For a local plaintext collector, use `http://` in the endpoint or set `OTEL_EXPORTER_OTLP_INSECURE=true`.
 
@@ -247,11 +255,19 @@ db, err := otelsql.Open(driver, dsn)
 
 > **Note**: `OTEL_HELPER_EXTRA_INSTRUMENTATION` env var still works for backward compatibility but explicit extensions are recommended.
 
-### Health Checks Filtered
+### Health checks: spans dropped, metrics kept
 
-The lib **does not generate spans** for:
-- `/ping`, `/health`, `/healthz`, `/ready` (HTTP)
-- `/grpc.health.v1.Health/Check` (gRPC)
+The sampler `Setup` installs drops the **server** span of a health check that
+has no local parent (none, or a remote `traceparent`); spans the handler starts
+follow it (with the default ParentBased sampler). The requests stay in
+`http.server.request.duration` / `rpc.server.call.duration`, so failing probes
+remain visible — exclude health routes in SLI queries.
+
+- HTTP: `/health /healthz /ready /readyz /live /livez /ping /metrics` — exact,
+  case-insensitive, trailing slash and query ignored (`/users/ping` is traced).
+  Replace the list with `WithHealthPaths("/status", ...)`; `WithHealthPaths()`
+  traces every path.
+- gRPC: the whole `grpc.health.v1.Health/` service — Check, Watch, List (always).
 
 ---
 
@@ -279,7 +295,7 @@ The lib **does not generate spans** for:
 ### Run unit tests
 
 ```bash
-docker run --rm -v "$(pwd)/go:/src" -w /src golang:1.22 go test ./...
+docker run --rm -v "$(pwd)/go:/src" -w /src golang:1.26 go test ./...
 ```
 
 ### Run examples with Collector
@@ -314,7 +330,7 @@ go/
 ├── tracing.go             # TracerProvider + StartRootSpan
 ├── metrics.go             # MeterProvider + runtime metrics
 ├── logging.go             # LoggerProvider + NewSlogHandler, NewLogger, DefaultLogLevel
-├── middleware.go          # NewHTTPHandler, NewHTTPTransport + gRPC interceptors
+├── middleware.go          # NewHTTPHandler, NewHTTPTransport + gRPC stats handlers
 ├── instrumentation.go     # InstrumentSQL placeholder
 ├── processors.go          # debugProcessor (debug=true attribute)
 ├── doc.go                 # Package documentation

@@ -85,31 +85,109 @@ func Test_Exporters_ExplicitOptionBeatsEnv(t *testing.T) {
 	}
 }
 
-func Test_Exporters_UnknownValue_FailsValidation(t *testing.T) {
+// R8 (0.3.0): invalid env values warn and fall back; the same values passed
+// in code fail Setup. Before A3 the env cases below failed validation
+// (parity metrics.exporter_env_unknown_warns, metrics.otlp_env_without_endpoint_warns,
+// metrics.exporter_none_combined_warns were xfail:A3).
+
+func Test_Exporters_UnknownEnvValue_WarnsAndFallsBack(t *testing.T) {
+	logs := captureDiag(t)
 	t.Setenv(EnvMetricsExporter, "statsd")
 	o := resolvedOptions(t, WithServiceName("svc"))
-	err := o.validate()
-	if err == nil || !strings.Contains(err.Error(), "statsd") || !strings.Contains(err.Error(), "valid values") {
-		t.Errorf("validate() = %v, want unknown-exporter error listing valid values", err)
+	if err := o.validate(); err != nil {
+		t.Fatalf("validate() = %v, want nil (env values warn, never fail)", err)
+	}
+	if got := o.resolvedMetricExporters(); !reflect.DeepEqual(got, []string{"prometheus"}) {
+		t.Errorf("resolvedMetricExporters() = %v, want legacy inference [prometheus]", got)
+	}
+	if !strings.Contains(logs.String(), EnvMetricsExporter) || !strings.Contains(logs.String(), "statsd") {
+		t.Errorf("no warning naming %s/statsd: %q", EnvMetricsExporter, logs.String())
 	}
 }
 
-func Test_Exporters_OtlpWithoutEndpoint_FailsValidation(t *testing.T) {
+func Test_Exporters_UnknownCodeValue_FailsValidation(t *testing.T) {
+	o := resolvedOptions(t, WithServiceName("svc"), WithMetricExporters("statsd"))
+	err := o.validate()
+	if err == nil || !strings.Contains(err.Error(), "statsd") || !strings.Contains(err.Error(), "valid values") ||
+		!strings.Contains(err.Error(), "WithMetricExporters") {
+		t.Errorf("validate() = %v, want unknown-exporter error naming the option and valid values", err)
+	}
+}
+
+func Test_Exporters_OtlpEnvWithoutEndpoint_WarnsAndInfers(t *testing.T) {
+	logs := captureDiag(t)
 	t.Setenv(EnvCollectorEndpoint, "")
 	t.Setenv(EnvMetricsExporter, "otlp")
 	o := resolvedOptions(t, WithServiceName("svc"))
+	if err := o.validate(); err != nil {
+		t.Fatalf("validate() = %v, want nil", err)
+	}
+	if got := o.resolvedMetricExporters(); !reflect.DeepEqual(got, []string{"prometheus"}) {
+		t.Errorf("resolvedMetricExporters() = %v, want [prometheus]", got)
+	}
+	if !strings.Contains(logs.String(), EnvMetricsExporter) {
+		t.Errorf("no warning naming %s: %q", EnvMetricsExporter, logs.String())
+	}
+}
+
+func Test_Exporters_OtlpCodeWithoutEndpoint_FailsValidation(t *testing.T) {
+	t.Setenv(EnvCollectorEndpoint, "")
+	o := resolvedOptions(t, WithServiceName("svc"), WithMetricExporters("otlp"))
 	err := o.validate()
 	if err == nil || !strings.Contains(err.Error(), "requires an endpoint") {
 		t.Errorf("validate() = %v, want otlp-without-endpoint error", err)
 	}
 }
 
-func Test_Exporters_NoneCombined_FailsValidation(t *testing.T) {
+func Test_Exporters_OtlpEnvWithPerSignalEndpoint_IsOtlp(t *testing.T) {
+	t.Setenv(EnvMetricsExporter, "otlp")
+	t.Setenv("OTEL_EXPORTER_OTLP_METRICS_ENDPOINT", "http://collector:4318/v1/metrics")
+	o := resolvedOptions(t, WithServiceName("svc"))
+	if got := o.resolvedMetricExporters(); !reflect.DeepEqual(got, []string{"otlp"}) {
+		t.Errorf("resolvedMetricExporters() = %v, want [otlp]", got)
+	}
+}
+
+func Test_Exporters_NoneCombinedEnv_WarnsAndDisables(t *testing.T) {
+	logs := captureDiag(t)
 	t.Setenv(EnvMetricsExporter, "none,prometheus")
 	o := resolvedOptions(t, WithServiceName("svc"))
+	if err := o.validate(); err != nil {
+		t.Fatalf("validate() = %v, want nil", err)
+	}
+	if got := o.resolvedMetricExporters(); len(got) != 0 {
+		t.Errorf("resolvedMetricExporters() = %v, want none", got)
+	}
+	if !strings.Contains(logs.String(), "combined") {
+		t.Errorf("no none-combined warning: %q", logs.String())
+	}
+}
+
+func Test_Exporters_NoneCombinedCode_FailsValidation(t *testing.T) {
+	o := resolvedOptions(t, WithServiceName("svc"), WithMetricExporters("none", "prometheus"))
 	err := o.validate()
 	if err == nil || !strings.Contains(err.Error(), "cannot be combined") {
 		t.Errorf("validate() = %v, want none-combined error", err)
+	}
+}
+
+func Test_Exporters_LoggingIsConsole(t *testing.T) {
+	logs := captureDiag(t)
+	t.Setenv(EnvMetricsExporter, "logging")
+	o := resolvedOptions(t, WithServiceName("svc"))
+	if got := o.resolvedMetricExporters(); !reflect.DeepEqual(got, []string{"console"}) {
+		t.Errorf("resolvedMetricExporters() = %v, want [console]", got)
+	}
+	if !strings.Contains(logs.String(), "logging") {
+		t.Errorf("no deprecation warning for logging: %q", logs.String())
+	}
+	// Same in code (deprecated value, not invalid).
+	o = resolvedOptions(t, WithServiceName("svc"), WithMetricExporters("logging"))
+	if err := o.validate(); err != nil {
+		t.Fatalf("validate() = %v", err)
+	}
+	if got := o.resolvedMetricExporters(); !reflect.DeepEqual(got, []string{"console"}) {
+		t.Errorf("code: resolvedMetricExporters() = %v, want [console]", got)
 	}
 }
 
@@ -139,10 +217,25 @@ func Test_Interval_ExplicitBeatsEnv(t *testing.T) {
 }
 
 func Test_Interval_InvalidEnvFallsBack(t *testing.T) {
-	t.Setenv(EnvMetricExportInterval, "not-a-number")
-	o := resolvedOptions(t)
-	if o.ExportIntervalMs != 30_000 {
-		t.Errorf("ExportIntervalMs = %d, want 30000", o.ExportIntervalMs)
+	for _, v := range []string{"not-a-number", "0", "-5"} {
+		logs := captureDiag(t)
+		t.Setenv(EnvMetricExportInterval, v)
+		o := resolvedOptions(t)
+		if o.ExportIntervalMs != 30_000 {
+			t.Errorf("%q: ExportIntervalMs = %d, want 30000", v, o.ExportIntervalMs)
+		}
+		if !strings.Contains(logs.String(), EnvMetricExportInterval) {
+			t.Errorf("%q: no warning naming %s", v, EnvMetricExportInterval)
+		}
+	}
+}
+
+func Test_Interval_InvalidCodeFails(t *testing.T) {
+	for _, v := range []int{0, -1} {
+		err := resolvedOptions(t, WithExportInterval(v)).validate()
+		if err == nil || !strings.Contains(err.Error(), "WithExportInterval") {
+			t.Errorf("WithExportInterval(%d): validate() = %v, want error naming the option", v, err)
+		}
 	}
 }
 
@@ -160,10 +253,13 @@ func Test_DualMode_CounterVisibleOnMetricsHandler(t *testing.T) {
 		ExportIntervalMs:      30_000,
 		PrometheusMetricsPort: 0, // mounted-handler mode
 	}
-	mp, srvShutdown, err := configureMetrics(context.Background(), resource.Default(), opts)
+	mp, srvShutdown, reg, err := configureMetrics(context.Background(), resource.Default(), opts)
 	if err != nil {
 		t.Fatalf("configureMetrics(dual) error = %v", err)
 	}
+	// Setup publishes the registry on install; do it by hand here.
+	setPromRegistry(reg)
+	defer setPromRegistry(nil)
 	if srvShutdown != nil {
 		t.Error("srvShutdown should be nil when the standalone listener is disabled")
 	}
@@ -203,7 +299,7 @@ func Test_PrometheusOnly_WithEndpoint_NoOtlp(t *testing.T) {
 		MetricExporters:       []string{"prometheus"},
 		PrometheusMetricsPort: 0,
 	}
-	mp, _, err := configureMetrics(context.Background(), resource.Default(), opts)
+	mp, _, _, err := configureMetrics(context.Background(), resource.Default(), opts)
 	if err != nil {
 		t.Fatalf("configureMetrics(prometheus-only) error = %v", err)
 	}
@@ -234,7 +330,7 @@ func Test_Listener_BusyPort_FailsSetupFast(t *testing.T) {
 		MetricExporters:       []string{"prometheus"},
 		PrometheusMetricsPort: busyPort,
 	}
-	_, _, err = configureMetrics(context.Background(), resource.Default(), opts)
+	_, _, _, err = configureMetrics(context.Background(), resource.Default(), opts)
 	if err == nil || !strings.Contains(err.Error(), "MetricsHandler") {
 		t.Errorf("configureMetrics(busy port) = %v, want actionable listener error", err)
 	}
@@ -256,7 +352,7 @@ func Test_Listener_ServesAndJoinsShutdownChain(t *testing.T) {
 		MetricExporters:       []string{"prometheus"},
 		PrometheusMetricsPort: freePort,
 	}
-	mp, srvShutdown, err := configureMetrics(context.Background(), resource.Default(), opts)
+	mp, srvShutdown, _, err := configureMetrics(context.Background(), resource.Default(), opts)
 	if err != nil {
 		t.Fatalf("configureMetrics(listener) error = %v", err)
 	}

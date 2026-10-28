@@ -5,40 +5,147 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"time"
+
+	"github.com/prometheus/client_golang/prometheus"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/log/global"
+	nooplog "go.opentelemetry.io/otel/log/noop"
 	"go.opentelemetry.io/otel/metric"
 	noopmetric "go.opentelemetry.io/otel/metric/noop"
-	"go.opentelemetry.io/otel/propagation"
+	sdklog "go.opentelemetry.io/otel/sdk/log"
+	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/resource"
-	semconv "go.opentelemetry.io/otel/semconv/v1.26.0"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	semconv "go.opentelemetry.io/otel/semconv/v1.43.0"
 	"go.opentelemetry.io/otel/trace"
 	nooptrace "go.opentelemetry.io/otel/trace/noop"
 )
 
-// Shutdown flushes and shuts down all telemetry providers.
+// Shutdown flushes and shuts down all telemetry providers: logs, metrics
+// (listener, then provider) and traces concurrently, under ctx, errors joined.
+// It is idempotent: later or concurrent calls return the result of the first
+// one. After it returns, Setup builds a fresh pipeline; a Setup called while
+// it is in flight waits for it. Tracers, meters and instrumented handlers
+// obtained before the new Setup stay bound to the old, shut-down providers
+// (the global delegates forward once — design D13): obtain them after Setup.
 type Shutdown func(ctx context.Context) error
 
 var (
 	mu         sync.Mutex
 	setupDone  bool
 	shutdownFn Shutdown
-	setupErr   error
-	// logsHaveProcessor is true once configureLogging attaches a real export
-	// processor (i.e. an OTLP endpoint was configured). NewLogger reads this to
-	// decide whether it's safe to bridge slog through the OTel Logs API — see
-	// the comment on NewLogger in logging.go for why this matters.
-	logsHaveProcessor bool
+	// installed is the Options the last successful Setup resolved and acted
+	// on (parity-test seam: adapters read decisions from here instead of
+	// re-running the resolver, which would repeat its warnings).
+	installed *Options
+	// current is the installed pipeline; its Shutdown resets the state above
+	// only while it is still current.
+	current *pipeline
 )
+
+// installedOptions returns the options of the last successful Setup, or nil.
+func installedOptions() *Options {
+	mu.Lock()
+	defer mu.Unlock()
+	return installed
+}
 
 // noopShutdown is returned when Setup fails so callers always get a safe function.
 func noopShutdown(_ context.Context) error { return nil }
 
-// Setup configures tracing, metrics, and logging. Call once at startup.
-// Returns a Shutdown function for deferred cleanup.
+// cleanupTimeout bounds the release of a partially built pipeline.
+const cleanupTimeout = 5 * time.Second
+
+// releaseOnFailure shuts down one component of a pipeline that failed to
+// build. The caller's context may already be cancelled (that can be why the
+// build failed), so it runs detached with its own deadline; errors only reach
+// the diagnostics channel, since the build error is the one to return.
+func releaseOnFailure(ctx context.Context, what string, shutdown func(context.Context) error) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), cleanupTimeout)
+	defer cancel()
+	if err := shutdown(ctx); err != nil {
+		diagLogger.Warn("otelhelper: releasing "+what+" after a failed Setup", "error", err)
+	}
+}
+
+// pipeline is one built set of providers. Each group (logs; metrics:
+// listener then provider; traces) runs its steps in order; the groups run
+// concurrently on Shutdown.
+type pipeline struct {
+	once   sync.Once
+	err    error
+	groups [][]func(context.Context) error
+	// closing is set (under mu) when Shutdown of the current pipeline starts;
+	// done is closed when it has finished and the state is reset. Setup waits
+	// on done instead of returning a dying pipeline.
+	closing bool
+	done    chan struct{}
+}
+
+func newPipeline() *pipeline { return &pipeline{done: make(chan struct{})} }
+
+func (p *pipeline) shutdown(ctx context.Context) error {
+	p.once.Do(func() {
+		// Stop advertising this pipeline before blocking on flushes: new
+		// loggers fall back to stdout and MetricsHandler answers 503. mu is
+		// not held across the provider Shutdown calls, which may block. A
+		// pipeline that is no longer current (a stale Shutdown kept by the
+		// caller after a newer Setup) touches no shared state.
+		mu.Lock()
+		owner := current == p
+		if owner {
+			p.closing = true
+			activeLogBridge.Store(nil) // loggers go back to stdout, not to a closing provider
+			setPromRegistry(nil)
+		}
+		mu.Unlock()
+
+		errs := make([]error, len(p.groups))
+		var wg sync.WaitGroup
+		for i, group := range p.groups {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				for _, step := range group {
+					errs[i] = errors.Join(errs[i], step(ctx))
+				}
+			}()
+		}
+		wg.Wait()
+		p.err = errors.Join(errs...)
+
+		mu.Lock()
+		if owner {
+			setupDone, shutdownFn, installed, current = false, nil, nil, nil
+		}
+		mu.Unlock()
+		close(p.done)
+	})
+	return p.err
+}
+
+// Setup configures tracing, metrics, and logging. Call once at startup;
+// further calls return the installed Shutdown until it has run.
+//
+// Every signal is built before anything is installed: when Setup returns an
+// error, what was already built is shut down in reverse order, the global
+// providers, propagator and MetricsHandler are left as they were, and Setup
+// can be called again.
 func Setup(ctx context.Context, opts ...Option) (Shutdown, error) {
 	mu.Lock()
+	for current != nil && current.closing {
+		done := current.done
+		mu.Unlock()
+		select {
+		case <-done:
+		case <-ctx.Done():
+			return noopShutdown, fmt.Errorf("otelhelper: waiting for an in-flight Shutdown: %w", ctx.Err())
+		}
+		mu.Lock()
+	}
 	defer mu.Unlock()
 
 	if setupDone {
@@ -51,60 +158,110 @@ func Setup(ctx context.Context, opts ...Option) (Shutdown, error) {
 		return noopShutdown, fmt.Errorf("otelhelper: %w", err)
 	}
 
+	p := newPipeline()
+	if options.sdkDisabled {
+		// OTEL_SDK_DISABLED=true: no-op providers for every signal; context
+		// propagation keeps working.
+		otel.SetTracerProvider(nooptrace.NewTracerProvider())
+		otel.SetMeterProvider(noopmetric.NewMeterProvider())
+		global.SetLoggerProvider(nooplog.NewLoggerProvider())
+		otel.SetTextMapPropagator(options.propagator)
+		setPromInactive() // Prometheus deliberately off: 200, empty body
+		commit(p, options, nil)
+		return shutdownFn, nil
+	}
+
 	res := buildResource(options)
 
-	var shutdowns []func(context.Context) error
+	// built holds release functions in build order; fail runs them in reverse.
+	var built []func(context.Context) error
+	fail := func(err error) (Shutdown, error) {
+		for i := len(built) - 1; i >= 0; i-- {
+			releaseOnFailure(ctx, "telemetry pipeline", built[i])
+		}
+		return noopShutdown, fmt.Errorf("otelhelper: %w", err)
+	}
+
+	var (
+		tp       *sdktrace.TracerProvider
+		mp       *sdkmetric.MeterProvider
+		registry *prometheus.Registry
+		lp       *sdklog.LoggerProvider
+		hasProc  bool
+	)
 
 	if options.IsSignalEnabled("traces") {
-		tp, err := configureTracing(ctx, res, options)
-		if err != nil {
-			return noopShutdown, fmt.Errorf("otelhelper: %w", err)
+		var err error
+		if tp, err = configureTracing(ctx, res, options); err != nil {
+			return fail(err)
 		}
-		shutdowns = append(shutdowns, tp.Shutdown)
-	} else {
-		otel.SetTracerProvider(nooptrace.NewTracerProvider())
+		built = append(built, tp.Shutdown)
+		p.groups = append(p.groups, []func(context.Context) error{tp.Shutdown})
 	}
 
 	if options.IsSignalEnabled("metrics") && len(options.resolvedMetricExporters()) > 0 {
-		mp, srvShutdown, err := configureMetrics(ctx, res, options)
-		if err != nil {
-			noopShutdown(ctx) // best-effort cleanup
-			return noopShutdown, fmt.Errorf("otelhelper: %w", err)
+		var (
+			release func(context.Context) error
+			err     error
+		)
+		if mp, release, registry, err = configureMetrics(ctx, res, options); err != nil {
+			return fail(err)
 		}
-		if srvShutdown != nil {
-			shutdowns = append(shutdowns, srvShutdown)
+		built = append(built, mp.Shutdown)
+		group := []func(context.Context) error{mp.Shutdown}
+		if release != nil {
+			// Listener first on Shutdown: stop serving scrapes, then flush.
+			built = append(built, release)
+			group = append([]func(context.Context) error{release}, group...)
 		}
-		shutdowns = append(shutdowns, mp.Shutdown)
-	} else {
-		otel.SetMeterProvider(noopmetric.NewMeterProvider())
+		p.groups = append(p.groups, group)
 	}
 
 	if options.IsSignalEnabled("logs") {
-		lp, err := configureLogging(ctx, res, options)
-		if err != nil {
-			for _, fn := range shutdowns {
-				fn(ctx)
-			}
-			return noopShutdown, fmt.Errorf("otelhelper: %w", err)
+		var err error
+		if lp, hasProc, err = configureLogging(ctx, res, options); err != nil {
+			return fail(err)
 		}
-		shutdowns = append(shutdowns, lp.Shutdown)
+		built = append(built, lp.Shutdown)
+		p.groups = append(p.groups, []func(context.Context) error{lp.Shutdown})
 	}
 
-	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(
-		propagation.TraceContext{},
-		propagation.Baggage{},
-	))
-
-	shutdownFn = func(ctx context.Context) error {
-		var errs []error
-		for _, fn := range shutdowns {
-			errs = append(errs, fn(ctx))
-		}
-		return errors.Join(errs...)
+	// Everything built: install.
+	if tp != nil {
+		otel.SetTracerProvider(tp)
+	} else {
+		otel.SetTracerProvider(nooptrace.NewTracerProvider())
 	}
-	setupDone = true
-	setupErr = nil
+	if mp != nil {
+		otel.SetMeterProvider(mp)
+	} else {
+		otel.SetMeterProvider(noopmetric.NewMeterProvider())
+	}
+	if lp != nil {
+		global.SetLoggerProvider(lp)
+	}
+	otel.SetTextMapPropagator(options.propagator)
+	if registry != nil {
+		setPromRegistry(registry)
+	} else {
+		setPromInactive() // no "prometheus" metrics exporter: 200, empty body
+	}
+
+	commit(p, options, newLogBridge(lp, hasProc))
 	return shutdownFn, nil
+}
+
+// commit records p as the installed pipeline and publishes its log bridge
+// (nil = stdout). Callers hold mu.
+func commit(p *pipeline, options *Options, bridge *logBridge) {
+	options.metricIntervalMs = effectiveIntervalMs(options)
+	current = p
+	shutdownFn = p.shutdown
+	activeLogBridge.Store(bridge)
+	installedLogLevel.Set(DefaultLogLevel(options.Environment, options.DebugLevel))
+	paths := healthPathSet(options.healthPaths())
+	installedHealthPaths.Store(&paths)
+	setupDone, installed = true, options
 }
 
 // GetTracer returns a Tracer from the global provider.
@@ -125,21 +282,38 @@ func GetMeter(name ...string) metric.Meter {
 	return otel.Meter(n)
 }
 
+// buildResource layers, lowest to highest precedence: the SDK default
+// resource (telemetry.sdk.*, OTEL_SERVICE_NAME, OTEL_RESOURCE_ATTRIBUTES,
+// unknown_service:<exe>), the helper fallbacks for keys the environment does
+// not set (SERVICE_NAME, ENVIRONMENT, service.instance.id) and code values.
+// A helper default never overwrites an OTEL_RESOURCE_ATTRIBUTES key (R5).
 func buildResource(opts *Options) *resource.Resource {
-	// "deployment.environment.name" is the semconv >= v1.27 key. The otel module
-	// version pinned in go.mod (v1.31.0) only bundles semconv up to v1.26.0, which
-	// has no typed constant for it — using the literal string keeps this in sync
-	// with Python/.NET without forcing an unrelated SDK-wide version bump.
-	attrs := []attribute.KeyValue{
-		semconv.ServiceName(opts.ServiceName),
-		attribute.String("deployment.environment.name", string(opts.Environment)),
+	if !opts.identityResolved {
+		opts.resolveIdentity(resource.Default())
+	}
+	var code []attribute.KeyValue
+	if opts.codeServiceName {
+		code = append(code, semconv.ServiceName(opts.ServiceName))
+	}
+	if opts.codeEnvironment {
+		code = append(code, semconv.DeploymentEnvironmentNameKey.String(string(opts.Environment)))
 	}
 	for k, v := range opts.ResourceAttributes {
-		attrs = append(attrs, attribute.String(k, v))
+		code = append(code, attribute.String(k, v))
 	}
-	res, _ := resource.Merge(
-		resource.Default(),
-		resource.NewWithAttributes(semconv.SchemaURL, attrs...),
-	)
+	// The semconv version must match the one resource.Default() uses (v1.43.0
+	// for sdk v1.47.0): resource.Merge drops the schema URL when the two differ.
+	res := resource.Default()
+	for _, layer := range [][]attribute.KeyValue{opts.resourceFallbacks, code} {
+		if len(layer) == 0 {
+			continue
+		}
+		merged, err := resource.Merge(res, resource.NewWithAttributes(semconv.SchemaURL, layer...))
+		if err != nil {
+			// Merge still returns the merged attributes (without a schema URL).
+			diagLogger.Warn("otelhelper: resource merge", "error", err)
+		}
+		res = merged
+	}
 	return res
 }
