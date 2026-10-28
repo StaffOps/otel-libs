@@ -952,6 +952,10 @@ Unsupported instrumentation versions, task A10 (P18):
 
 ### Internal
 
+- **License: Apache-2.0** (`LICENSE`, the official text; same as
+  OpenTelemetry). Declared in `python/pyproject.toml` (`license`) and the
+  NuGet packages (`PackageLicenseExpression`). Before this the repository had
+  no license, so reuse was not legally granted.
 - **Spec-driven tooling (`specs/repo-tooling/`).** `testing/verify.sh` runs
   the CI risk matrix locally (Go + ext, Python 3.10/lower, 3.13/lower,
   3.13/latest, e2e, `mkdocs --strict`, spec checks; `--quick`, `--only`);

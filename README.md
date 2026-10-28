@@ -277,3 +277,7 @@ agnostic.
 - [Specs and decision records](specs/README.md)
 - [Contributor and agent guide](AGENTS.md)
 - [Documentation site](https://staffops.github.io/otel-libs/)
+
+## License
+
+[Apache License 2.0](LICENSE) — the same license as OpenTelemetry.

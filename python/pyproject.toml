@@ -7,6 +7,7 @@ name = "otel-helper"
 version = "0.3.0rc2"
 description = "OpenTelemetry instrumentation helper for Python"
 requires-python = ">=3.10"
+license = "Apache-2.0"
 dependencies = [
     # Lockstep bounds (design D9.a): contrib betas pin semconv/instrumentation
     # exactly, which couples them to one SDK minor (0.63b0 -> 1.42, 0.66b1 ->
