@@ -577,6 +577,11 @@ and `opentelemetry-instrumentation-logging`) `>=0.63b0,<0.67b0`. CI: py
 
 ## D10 — Release
 
+> **Amended 2026-10-28 (owner):** there is no DEV/HML environment; the rc
+> soak is the local simulation in [`specs/soak-simulation/`](../soak-simulation/)
+> (Docker Compose; Kubernetes deferred as its Phase K). Its acceptance replaces
+> "soaked in DEV/HML" below.
+
 **Choice**: one coordinated `0.3.0` for Go + Python, preceded by
 `0.3.0-rc.1` soaked in DEV/HML; no legacy-behavior flag; .NET stays on 0.2.x
 until Phase C ([ADR-004](../decisions/ADR-004-phased-rollout-go-python-first.md)).
@@ -753,6 +758,11 @@ Owned outside this repo; each item blocks the 0.3.0 **rollout** (not the rc).
    PRD service cannot force 100% retention of every trace it touches (ADR-006).
 3. Gateway: `loadbalancingexporter` with `routing_key: traceID`;
    `decision_wait` ≥ observed p99 trace duration (unmeasured — measure first);
+   *corrected 2026-10-28 (soak S-D8): p99 trace duration alone is too short —
+   spans of one trace reach the gateway spread over the SDK batch schedule
+   delay (5 s default) and the agent batch timeout; use p99 duration + max
+   SDK batch delay + agent batch timeout + export time + margin, and enable
+   `decision_cache.sampled_cache_size` > 0 (default 0 = off)*;
    sampled-decision cache enabled for late spans (ADR-006 rationale depends on it).
 4. Charts: set `OTEL_SERVICE_NAME`; `OTEL_RESOURCE_ATTRIBUTES` with
    `deployment.environment.name`. Do **not** set `service.instance.id` for
