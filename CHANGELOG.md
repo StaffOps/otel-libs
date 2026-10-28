@@ -130,8 +130,8 @@ Behavior changes, with migration notes:
   back (was a Setup error). The same invalid values in code fail Setup with an
   error naming the option. `http/json` from env is warned and ignored.
 - **New env support:** `OTEL_{TRACES,METRICS,LOGS}_EXPORTER` = `otlp`,
-  `console` (compact JSON, not parity-checked; official stdout exporters, new
-  dependencies **pending owner approval**, isolated in `go/console.go`:
+  `console` (compact JSON, not parity-checked; official stdout exporters,
+  regular dependencies imported only by `go/console.go`:
   `go.opentelemetry.io/otel/exporters/stdout/{stdouttrace,stdoutmetric}` v1.47.0
   and `stdoutlog` v0.23.0), `none`; `logging` = deprecated `console` (warned);
   `none,x` = none (warned). `OTEL_SDK_DISABLED=true` installs no-op
@@ -231,6 +231,56 @@ Behavior changes, with migration notes:
   `NewLogger` enforces its level in `Handle` too and `NewSlogHandler` lets the
   `LoggerProvider` decide. Trace↔log correlation needs the `*Context` slog
   calls (`InfoContext`…).
+- **Deprecations (A9, design D8).** Setting `SERVICE_NAME`, `ENVIRONMENT`,
+  `OTEL_HELPER_SAMPLE_RATIO` or `OTEL_HELPER_DISABLED_SIGNALS` logs one warning
+  per process on the helper's diagnostics logger, naming the variable and its
+  replacement (`OTEL_SERVICE_NAME`; `deployment.environment.name` in
+  `OTEL_RESOURCE_ATTRIBUTES`; `OTEL_TRACES_SAMPLER`/`_ARG`;
+  `OTEL_{TRACES,METRICS,LOGS}_EXPORTER=none`) — also when the standard
+  variable wins. Behavior is unchanged; removal is planned for 1.0. The
+  schemeless `http/protobuf` endpoint deprecation (A3) is now also once per
+  process.
+- **BREAKING — removed `WithExtraInstrumentation`, `Options.HasInstrumentation`
+  and the `Options.ExtraInstrumentation` field (A9, G9).** They never changed
+  what the helper instruments in Go; import `ext/otelsql`, `ext/otelredis` or
+  `ext/otelaws`. `OTEL_HELPER_EXTRA_INSTRUMENTATION` has no effect and warns
+  once when set.
+- **Debug marker on entry spans (A9, R9, ADR-006).** With
+  `OTEL_HELPER_DEBUG_LEVEL=true` (or `WithDebug`) `debug=true` is set on every
+  span whose parent is absent **or remote** (was: no parent only, so a service
+  called by another never marked its spans). Spans with a local parent are not
+  marked; inbound tracestate/baggage never sets it; tracestate is not written.
+- **`ext/otelsql` (A10, G6, design D14).** Driver names map to `db.system.name`
+  (semconv v1.43.0): `pgx`, `pgx/v5`, `postgres` → `postgresql`; `sqlite`,
+  `sqlite3` → `sqlite`; `mysql`; `sqlserver`, `mssql` →
+  `microsoft.sql_server`; anything else → `other_sql` (was the raw driver name
+  in `db.system`). The legacy `db.system` key is still emitted until 1.0 with
+  the semconv v1.26.0 values (`postgresql`, `sqlite`, `mysql`, `mssql`,
+  `other_sql`), on spans and on the `db.sql.*` pool metrics, unless
+  `OTEL_SEMCONV_STABILITY_OPT_IN` contains `database` without `database/dup`
+  (then only `db.system.name`). **BREAKING:** `Open` returns
+  `(db, closeDB, err)` — call `defer closeDB()` instead of `db.Close()`; it
+  unregisters the pool-metrics callback (which previously kept reporting a
+  closed pool) and closes the pool. `Open` also returns an error (and closes
+  the database) when the pool metrics can't be registered, instead of
+  dropping it. `github.com/XSAM/otelsql` v0.35.0 → v0.44.0.
+- **`ext/otelredis` (A10, G6, design D14).** `Instrument` also installs pool
+  metrics (`redisotel.InstrumentMetrics` with `WithSemConvCompliantMetrics`):
+  `db.client.connections.*` — Prometheus `db_client_connections_usage`,
+  `_max`, `_idle_max`, `_idle_min`, `_waits_total`,
+  `_waits_duration_nanoseconds`, `_timeouts_total`, `_hits_total`,
+  `_misses_total`, `_create_time_milliseconds_*`, `_use_time_milliseconds_*`.
+  Spans gain `db.system.name=redis` and no longer carry command values
+  (`db.statement`, previously the full command including values) or
+  `db.connection_string`. Call once per client; when the metrics step fails
+  the error is returned and tracing is already installed. go-redis and
+  `redisotel` v9.7.3 → v9.23.0.
+- **Ext module tests (A10).** `ext/otelsql` (in-memory `modernc.org/sqlite`),
+  `ext/otelredis` (`miniredis`), `ext/otelaws` (SQS client on a stub HTTP
+  transport); test-only dependencies approved by the owner:
+  `modernc.org/sqlite` v1.61.0 (BSD-3-Clause), `github.com/alicebob/miniredis/v2`
+  v2.40.0 (MIT), `github.com/aws/aws-sdk-go-v2/{credentials,service/sqs}`
+  (Apache-2.0). `aws-sdk-go-v2` v1.47.1 → v1.47.5.
 
 ### Python
 
@@ -238,8 +288,8 @@ Config contract, task A3 (`specs/config-contract-v0.3/`, ADR-001, ADR-003,
 design D1/D4/D12). Behavior changes, with migration notes:
 
 - **BREAKING — stable HTTP semantic conventions (R10/D12).** `setup_telemetry()`
-  and the `otel_helper.ext.*` entry points default `OTEL_SEMCONV_STABILITY_OPT_IN=http`
-  before any instrumentor runs: `http.server.duration` (ms, `http.method`,
+  and the `otel_helper.ext.*` entry points default `OTEL_SEMCONV_STABILITY_OPT_IN`
+  to `http,database/dup` (A10 validation: was `http`) before any instrumentor runs: `http.server.duration` (ms, `http.method`,
   `http.target`) becomes `http.server.request.duration` (s, `http.request.method`,
   `http.route`, `url.scheme`), same for the client. A user value always wins;
   `http/dup` emits both generations. A value without `http`, or an
@@ -472,6 +522,61 @@ Health exclusion and instrumentation, task A7-py (R7, P11, P13, design D5):
   instrumented like `grpc.aio` (spans + propagation).
 - New `instrument_fastapi(app)` for apps whose `FastAPI` class was imported
   before `setup_telemetry()` (idempotent).
+
+Deprecations and debug marker, task A9 (R8, R9, D8, ADR-006):
+
+- **Deprecated (removed in 1.0), warned once per process** on the `otel_helper`
+  logger, naming the replacement and never the value. Each warns whenever it is
+  set, also when a standard variable or a code value wins; behavior is unchanged:
+  `SERVICE_NAME` → `OTEL_SERVICE_NAME`; `ENVIRONMENT` →
+  `OTEL_RESOURCE_ATTRIBUTES=deployment.environment.name=<value>`;
+  `OTEL_HELPER_SAMPLE_RATIO` → `OTEL_TRACES_SAMPLER=parentbased_traceidratio` +
+  `OTEL_TRACES_SAMPLER_ARG`; `OTEL_HELPER_DISABLED_SIGNALS` →
+  `OTEL_{TRACES,METRICS,LOGS}_EXPORTER=none`; `OTEL_HELPER_EXTRA_INSTRUMENTATION`
+  (also when empty, which still turns the `SQL` default off) → the explicit
+  `otel_helper.ext.{sql,redis,aws}.instrument_*()` calls. An empty
+  `OTEL_HELPER_EXTRA_INSTRUMENTATION` warns in Python (it still turns the `SQL`
+  default off) but not in Go (no effect there): intentional. Schemeless
+  http/protobuf endpoints (warned since A3) now warn once per process with Go's
+  wording ("schemeless endpoint is deprecated for http/protobuf and will be
+  removed in 1.0").
+- The implicit `SQL` default is kept (SQLAlchemy is still instrumented globally
+  when the `[sql]` extra and SQLAlchemy are installed), but it now logs one
+  warning, as do debug-mode-enabled extension instrumentors. **Migration:** call
+  `otel_helper.ext.sql.instrument_sql()` (or `instrument_redis()` / `instrument_aws()`)
+  **before** `setup_telemetry()`. Setup then finds the instrumentor active and
+  logs nothing.
+- **Debug marker on entry spans:** with debug mode on, `debug=true` is set on
+  spans with no parent **or a remote parent** (0.2.0: parentless spans only, so
+  a service called by an instrumented client never marked its server spans).
+  Spans with a local parent are not marked. Debug mode comes from local config
+  only (`OTEL_HELPER_DEBUG_LEVEL` / `debug_level`): inbound tracestate or baggage
+  never sets the marker, and the helper writes no tracestate.
+
+Unsupported instrumentation versions, task A10 (P18):
+
+- Re-validated 2026-10-28 on contrib 0.63b0 and 0.66b1: with SQLAlchemy 2.1.x
+  (2.1.6), `SQLAlchemyInstrumentor` (`sqlalchemy >= 1.0.0, < 2.1.0`) instruments
+  nothing. Upstream logs one ERROR record that does not name the helper and,
+  on 0.63b0, does not say that nothing was instrumented. SQLAlchemy 2.0.55 works.
+  The redis (`redis >= 2.6`) and botocore (`botocore~=1.0`) instrumentors accept
+  redis 8.1.0 and botocore 1.43.120 on both legs.
+- When an instrumentor (auto-instrumented by `setup_telemetry()`, or through
+  `otel_helper.ext`) refuses an **installed** library version, the helper now
+  logs one warning per process naming the instrumentor, the contrib version, the
+  installed version and the supported range. A library that is not installed
+  stays silent.
+- `otel_helper.ext.instrument_sql()` / `instrument_redis()` / `instrument_aws()`
+  now return `True` when the instrumentor is active and `False` when it refused
+  (0.2.0: `None`).
+- **Pin SQLAlchemy `<2.1` until a contrib release supports 2.1** (none within
+  the current `<0.67b0` cap).
+- **Database semconv (R10):** the default opt-in now includes `database/dup`,
+  so SQLAlchemy spans carry `db.system.name` **and** `db.system` (0.2.0:
+  `db.system` only), matching Go's `ext/otelsql`. Verified on contrib 0.63b0 and
+  0.66b1 with SQLAlchemy 2.0.55. A user value wins (`database` → new keys only).
+  **Known gap:** contrib copies the dialect name unmapped (SQL Server → `mssql`;
+  Go → `microsoft.sql_server`).
 
 ### Changed
 

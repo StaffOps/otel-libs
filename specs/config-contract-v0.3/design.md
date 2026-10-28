@@ -700,6 +700,26 @@ change BREAKING (0.2.0 served the global registry, incl. `process_*`/`python_*`)
 
 ---
 
+## D14 — Go ext modules API (A10 validation)
+
+- `otelsql.Open(driver, dsn) (db *sql.DB, closeDB func() error, err error)`:
+  `closeDB` unregisters the pool-metrics callback and closes the pool (call it
+  instead of `db.Close`, mirroring `Setup`'s shutdown func) — otherwise every
+  open/close cycle leaks a callback that keeps exporting a closed pool.
+- `otelredis.Instrument`: tracing + metrics with
+  `redisotel.WithSemConvCompliantMetrics(true)` (metrics are new in 0.3, so no
+  consumer depends on the old instrument types); spans also carry
+  `db.system.name=redis` and never carry command values or the connection
+  string (`WithDBStatement(false)` or a sanitizer equivalent to Python's
+  `SET ? ?`). Metric names are `db.client.connections.*` (as emitted
+  by redisotel v9.23) — documented with their Prometheus names. Call once per
+  client; on a metrics error tracing may already be installed (documented).
+- Debug marker limit (ADR-006): under the default ParentBased sampler an entry
+  span with an unsampled remote parent is dropped before the marker runs, so
+  debug mode cannot force retention of traces an upstream caller didn't sample.
+
+---
+
 ## D11 — Collector / platform prerequisites (reference checklist)
 
 Owned outside this repo; each item blocks the 0.3.0 **rollout** (not the rc).

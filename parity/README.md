@@ -153,6 +153,11 @@ package's stderr `diagLogger`, which the Go runner hooks.
   timeout on the wire; A3 covers it with unit tests. gRPC timeouts are
   asserted through `grpc-timeout` (`export.timeout_env_grpc`,
   `export.per_signal_timeout_grpc`).
+- **Database semconv keys** (R10, `db.system.name` + `db.system`): no fixture
+  kind drives a SQL driver. Covered per language: Python
+  `tests/test_a10_db_semconv.py` (contrib stability mode always; real
+  SQLAlchemy + sqlite spans when SQLAlchemy is installed), Go `ext/otelsql`
+  tests. Adding a `sql` kind would need a driver step in both runners.
 
 ## Adding or flipping a case
 

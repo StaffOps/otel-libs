@@ -774,8 +774,8 @@
         "warning": "SERVICE_NAME"
       },
       "status": {
-        "go": "xfail:A9",
-        "python": "xfail:A9",
+        "go": "pass",
+        "python": "pass",
         "dotnet": "xfail:phase-c",
         "nodejs": "skip:phase-b"
       }
@@ -793,8 +793,8 @@
         "warning": "ENVIRONMENT"
       },
       "status": {
-        "go": "xfail:A9",
-        "python": "xfail:A9",
+        "go": "pass",
+        "python": "pass",
         "dotnet": "xfail:phase-c",
         "nodejs": "skip:phase-b"
       }
@@ -812,8 +812,8 @@
         "warning": "OTEL_HELPER_SAMPLE_RATIO"
       },
       "status": {
-        "go": "xfail:A9",
-        "python": "xfail:A9",
+        "go": "pass",
+        "python": "pass",
         "dotnet": "xfail:phase-c",
         "nodejs": "skip:phase-b"
       }
@@ -831,8 +831,8 @@
         "warning": "OTEL_HELPER_DISABLED_SIGNALS"
       },
       "status": {
-        "go": "xfail:A9",
-        "python": "xfail:A9",
+        "go": "pass",
+        "python": "pass",
         "dotnet": "xfail:phase-c",
         "nodejs": "skip:phase-b"
       }
@@ -850,8 +850,8 @@
         "warning": "OTEL_HELPER_EXTRA_INSTRUMENTATION"
       },
       "status": {
-        "go": "xfail:A9",
-        "python": "xfail:A9",
+        "go": "pass",
+        "python": "pass",
         "dotnet": "xfail:phase-c",
         "nodejs": "skip:phase-b"
       }
@@ -870,8 +870,8 @@
         }
       },
       "status": {
-        "go": "xfail:A9",
-        "python": "xfail:A9",
+        "go": "pass",
+        "python": "pass",
         "dotnet": "xfail:phase-c",
         "nodejs": "skip:phase-b"
       }
@@ -1098,7 +1098,7 @@
       "code": {},
       "expect": {
         "helper_log": {
-          "not_contains": "deprecat"
+          "not_contains": "schemeless endpoint is deprecated"
         },
         "log": {
           "all": [
@@ -1111,7 +1111,7 @@
           ]
         }
       },
-      "note": "Negative: schemeless gRPC is legal per spec; only http/protobuf schemeless is deprecated (D8). All channels: no diagnostic about the endpoint at all (a deprecation warning must name the variable, R8); 'deprecat' is checked on helper_log only because the Python SDK emits an unrelated LoggingHandler DeprecationWarning.",
+      "note": "Negative: schemeless gRPC is legal per spec; only http/protobuf schemeless is deprecated (D8). All channels: no diagnostic about the endpoint at all (a deprecation warning must name the variable, R8). helper_log checks the schemeless deprecation wording (shared by Go and Python), not any 'deprecat': the Python SDK emits an unrelated LoggingHandler DeprecationWarning and, with SQLAlchemy installed, the Python helper warns that the implicit SQL default is deprecated (A9).",
       "status": {
         "go": "pass",
         "python": "pass",
@@ -3031,8 +3031,8 @@
         }
       },
       "status": {
-        "go": "xfail:A9",
-        "python": "xfail:A9",
+        "go": "pass",
+        "python": "pass",
         "dotnet": "xfail:phase-c",
         "nodejs": "skip:phase-b"
       }

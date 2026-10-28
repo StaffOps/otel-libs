@@ -51,6 +51,9 @@ bug in Context is exactly that ambiguity.)
   another library setting `debug` could trigger the policy.
 ### Neutral
 - .NET changes in Phase C.
+- Under the default ParentBased sampler an entry span whose remote parent is
+  unsampled is dropped before the marker runs, so debug mode cannot force
+  retention of traces an upstream caller didn't sample (A10 validation).
 
 ## When this decision would be wrong
 

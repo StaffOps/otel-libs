@@ -29,8 +29,8 @@ Branch: `feat/v0.3-config-contract`. Spec: [requirements](requirements.md), [des
 | A7-go Health sampler + gRPC health (stats handlers) | A2, A4 | R7, D5 | ✅ Done 2026-10-28 — validated with A5. |
 | A7-py Health sampler, `instrument_fastapi(app)`, sync gRPC | A4 | R7, P11, P13, D5 | ✅ Done 2026-10-28 — validated with A5. |
 | A8 Python dedicated Prometheus registry, `py.typed`, no `_internal` imports | A1 | P14, P17 | ✅ Done 2026-10-28 — dedicated registry, py.typed (CI wheel check), no _internal imports; /metrics status table (both languages). Validated with A4/A6. |
-| A9 Deprecation warnings, remove Go `EXTRA_INSTRUMENTATION` (warn if set), `debug=true` on entry spans | A3 | R8, R9, G9, D8, ADR-006 | ☐ |
-| A10 Ext modules: Go `db.system.name` mapping + legacy key, redis metrics, tests; Python SQLAlchemy 2.1 re-validation ⚠️ | A2 | G6, P18 | ☐ |
+| A9 Deprecation warnings, remove Go `EXTRA_INSTRUMENTATION` (warn if set), `debug=true` on entry spans | A3 | R8, R9, G9, D8, ADR-006 | ✅ Done 2026-10-28 — Go + Python; validated (observability, dev, code-review). |
+| A10 Ext modules: Go `db.system.name` mapping + legacy key, redis metrics, tests; Python SQLAlchemy 2.1 re-validation ⚠️ | A2 | G6, P18 | ✅ Done 2026-10-28 — Go ext modules tested (otelsql closeDB API, redis semconv + no command values), Python unsupported-version warning, DB semconv dup default; validated. |
 | A11 Cut `0.3.0-rc.1` | **A13** | D10 | ☐ |
 | A12 Collector/platform prerequisites | — | D11 | External — **blocks the 0.3.0 rollout, not the rc** |
 | **A13 MANDATORY — full documentation + examples pass** (see below) | A1–A10 done **and validated** | F9, AC-docs | ☐ Pending — starts only after every task above is done and validated |
@@ -57,6 +57,7 @@ validated, so the docs describe validated behavior — never a target. Not optio
 - [ ] README/HOW-TO (Python): explicit warning that `import otel_helper` must precede any `opentelemetry.*` import when `OTEL_PROPAGATORS` has unsupported values, incl. an isort note (`# isort: skip`) — isort orders `opentelemetry` first (A3 dev L9).
 - [ ] Stale statements found in A3 round 3 (fix in this pass): default endpoint `http://localhost` (README.md:80, go/README.md:31, go/HOW-TO.md:452,697); defaults `my-service`/`LOCAL` (README.md:77-78); `http/json` "fails validation loudly" (README.md:90 — env now warns); env-rule rows missing from go/HOW-TO.md §9 and python/HOW-TO.md (~236): `*_TIMEOUT` ms + clamp, `*_COMPRESSION`, `*_HEADERS` rules, per-signal → generic → default fallback, `*_INSECURE`; python/HOW-TO.md:442 add "per-signal endpoints are used as-is"; go/README.md (~277) still says "SDK uses AlwaysOnSampler (default)" — now ParentBased (A4); migration notes: basic-auth-in-URL → `Authorization=Basic%20<b64>` header, header-key restriction (`x+y` now skipped) and keys lowercased, Python INSECURE before/after table.
 - [ ] parity/README.md "Notes" still says Go `grpc.health_*_no_span` are `xfail:A7-go` (now pass); AGENTS.md F7 "health-path filtering diverges" line — update once A7-py lands.
+- [ ] Mark `OTEL_HELPER_EXTRA_INSTRUMENTATION` as deprecated in python/HOW-TO.md (~212-235, ~330) and python/README.md (~42); fix the `ext` ImportError hint ("pip install otel-helper[sql]") when the extra is installed but the library is not (A9/A10).
 - [ ] Examples are exercised: each runs in `docker compose` against a real
       Collector and the custom span, metric and log are visible in the
       Collector debug exporter output (recorded in the PR).

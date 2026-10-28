@@ -256,6 +256,13 @@ old, silently.
 - WHEN the effective HTTP mode is not stable (user value without `http`, or
   stability already initialized before the helper ran) THEN one warning SHALL
   be logged.
+- Database semconv (A10 validation, 2026-10-28): WHEN `OTEL_SEMCONV_STABILITY_OPT_IN`
+  is unset THEN both languages SHALL emit **both** the new (`db.system.name`, semconv
+  v1.43) and legacy (`db.system`) keys (Python defaults the variable to
+  `http,database/dup`; Go's ext/otelsql emits both); WHEN it contains `database`
+  but not `database/dup` THEN only the new keys SHALL be emitted (Go too).
+  Known gap: Python contrib copies the raw vendor into `db.system.name`
+  (SQL Server → `mssql`, Go → `microsoft.sql_server`) — documented.
 - RPC metrics follow each upstream (Python grpc contrib emits none). Runtime
   metrics are language-specific namespaces (`go.*` vs `process.runtime.cpython.*`)
   and out of parity scope.
