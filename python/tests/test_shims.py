@@ -440,7 +440,7 @@ class TestSemconvDefault:
     def test_defaults_to_http(self, monkeypatch):
         monkeypatch.setattr(_semconv, "_late_initialized_old_http", lambda: False)
         _semconv.ensure_semconv_default()
-        assert os.environ["OTEL_SEMCONV_STABILITY_OPT_IN"] == "http"
+        assert os.environ["OTEL_SEMCONV_STABILITY_OPT_IN"] == "http,database/dup"
 
     @pytest.mark.parametrize("value", ["http/dup", "database,http"])
     def test_user_value_with_http_wins_silently(self, value, monkeypatch, caplog):
@@ -509,7 +509,7 @@ class TestSetupContract:
         from otel_helper import setup_telemetry
 
         setup_telemetry(TelemetryOptions(service_name="s", metric_exporters=["none"]))
-        assert os.environ["OTEL_SEMCONV_STABILITY_OPT_IN"] == "http"
+        assert os.environ["OTEL_SEMCONV_STABILITY_OPT_IN"] == "http,database/dup"
 
     def test_setup_installs_helper_propagator(self, monkeypatch):
         import otel_helper.setup as setup_mod

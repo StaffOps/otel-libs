@@ -27,6 +27,8 @@ from typing import Literal
 import re
 from urllib.parse import SplitResult, unquote, urlsplit, urlunsplit
 
+from otel_helper._diag import warn_once_per_process
+
 _log = logging.getLogger("otel_helper.config")
 
 # Exactly what both helper languages trim (D1 edge-case rulings): not Unicode
@@ -101,6 +103,34 @@ def _env(name: str) -> str | None:
     if value is None or not value.strip(TRIM_CHARS):
         return None
     return value.strip(TRIM_CHARS)
+
+
+# Deprecated environment variables (R8/D8): warned once per process, removed in 1.0.
+# Values: the replacement named in the warning. Values are never printed.
+_DEPRECATED_ENV = {
+    ENV_SERVICE_NAME: "OTEL_SERVICE_NAME",
+    ENV_ENVIRONMENT: "OTEL_RESOURCE_ATTRIBUTES=deployment.environment.name=<value>",
+    ENV_SAMPLE_RATIO: "OTEL_TRACES_SAMPLER=parentbased_traceidratio with OTEL_TRACES_SAMPLER_ARG=<ratio>",
+    ENV_DISABLED_SIGNALS: "OTEL_TRACES_EXPORTER / OTEL_METRICS_EXPORTER / OTEL_LOGS_EXPORTER=none",
+    ENV_EXTRA_INSTRUMENTATION: ("otel_helper.ext.sql.instrument_sql() / .redis.instrument_redis() / "
+                                ".aws.instrument_aws(), called before setup_telemetry()"),
+}
+
+
+def _warn_deprecated_env() -> None:
+    """One warning per deprecated variable that is set, naming its replacement.
+
+    Warned whether or not the variable takes effect (a standard variable or a
+    code value may win). Whitespace-only counts as unset, except for
+    ``OTEL_HELPER_EXTRA_INSTRUMENTATION``, whose empty value still turns the
+    default ``SQL`` off.
+    """
+    for var, replacement in _DEPRECATED_ENV.items():
+        is_set = os.environ.get(var) is not None if var == ENV_EXTRA_INSTRUMENTATION else _env(var) is not None
+        if is_set:
+            warn_once_per_process(_log, f"deprecated:{var}",
+                                  "[OtelHelper] %s is deprecated and will be removed in 1.0; use %s.",
+                                  var, replacement)
 
 
 def _split(raw: str) -> SplitResult:
@@ -424,6 +454,7 @@ class TelemetryOptions:
         from opentelemetry.sdk.resources import OTELResourceDetector
 
         self._validate_code()
+        _warn_deprecated_env()
         whitespace_name = ENV_OTEL_SERVICE_NAME in os.environ and _env(ENV_OTEL_SERVICE_NAME) is None
         saved = os.environ.pop(ENV_OTEL_SERVICE_NAME) if whitespace_name else None
         try:
@@ -743,9 +774,10 @@ class TelemetryOptions:
             port = port or (_DEFAULT_OTLP_HTTP_PORT if protocol == PROTOCOL_HTTP else _DEFAULT_OTLP_PORT)
             explicit = True
             if protocol == PROTOCOL_HTTP:
-                self._warn_once(f"schemeless:{name}", "[OtelHelper] %s=%s has no scheme; schemeless "
-                                "OTLP/HTTP endpoints are deprecated, use http:// or https://.",
-                                name, redact_url(raw))
+                # Deprecation (D8): once per process, same wording as Go.
+                warn_once_per_process(_log, f"deprecated:schemeless:{name}", "[OtelHelper] %s=%s: schemeless "
+                                      "endpoint is deprecated for http/protobuf and will be removed in 1.0; "
+                                      "use a URL (http:// or https://).", name, redact_url(raw))
         else:
             if port is None and protocol == PROTOCOL_GRPC:
                 self._warn_once(f"port:{name}", "[OtelHelper] %s=%s has no port; gRPC has no scheme "

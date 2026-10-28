@@ -1,10 +1,13 @@
-"""Stable HTTP semantic conventions by default (design D12, R10).
+"""Stable HTTP and dual database semantic conventions by default (design D12, R10).
 
 Contrib instrumentations read ``OTEL_SEMCONV_STABILITY_OPT_IN`` once, at the
 first ``instrument()`` call, and default to the old HTTP generation
-(``http.server.duration`` in ms). Go can only emit the stable one, so the helper
-defaults the variable to ``http`` before any instrumentor runs. A value set by
-the user always wins (including ``http/dup``).
+(``http.server.duration`` in ms) and the legacy database keys (``db.system``).
+Go can only emit stable HTTP and its ext/otelsql emits both ``db.system.name``
+and ``db.system``, so the helper defaults the variable to ``http,database/dup``
+before any instrumentor runs (verified on contrib sqlalchemy 0.63b0 and 0.66b1:
+both keys). A value set by the user always wins (``http`` alone keeps only the
+legacy database keys; ``database`` without ``/dup`` emits only the new ones).
 """
 
 from __future__ import annotations
@@ -17,6 +20,7 @@ from otel_helper.config import TRIM_CHARS
 _log = logging.getLogger("otel_helper.semconv")
 
 ENV_SEMCONV_OPT_IN = "OTEL_SEMCONV_STABILITY_OPT_IN"
+DEFAULT_SEMCONV_OPT_IN = "http,database/dup"
 _STABLE_HTTP_TOKENS = frozenset({"http", "http/dup"})
 _warned = False
 
@@ -42,9 +46,9 @@ def _late_initialized_old_http() -> bool:
 
 
 def ensure_semconv_default() -> None:
-    """Default ``OTEL_SEMCONV_STABILITY_OPT_IN`` to ``http``; warn once if HTTP stays on the old generation."""
+    """Default ``OTEL_SEMCONV_STABILITY_OPT_IN`` to ``http,database/dup``; warn once if HTTP stays old."""
     global _warned
-    os.environ.setdefault(ENV_SEMCONV_OPT_IN, "http")
+    os.environ.setdefault(ENV_SEMCONV_OPT_IN, DEFAULT_SEMCONV_OPT_IN)
     value = os.environ[ENV_SEMCONV_OPT_IN]
     tokens = {t.strip(TRIM_CHARS).lower() for t in value.split(",")}
     if not tokens & _STABLE_HTTP_TOKENS:

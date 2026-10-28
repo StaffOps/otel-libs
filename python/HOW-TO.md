@@ -145,7 +145,7 @@ In non-debug mode, `opentelemetry.*` logs are filtered to WARNING+ (avoids noise
 When `OTEL_HELPER_DEBUG_LEVEL=true`:
 - Log level: DEBUG
 - Extra instrumentations: all active
-- Span attribute `debug=true` on root spans → Collector keeps 100% of these traces
+- Span attribute `debug=true` on entry spans (no parent or a remote parent; never from inbound tracestate/baggage) → Collector keeps 100% of these traces
 
 The Collector uses the `debug-forced-attribute` policy (type: string_attribute, key: debug, values: ["true"]) to ensure debug traces are never dropped by tail sampling.
 
@@ -381,27 +381,38 @@ from otel_helper.ext.aws import instrument_aws
 from otel_helper.ext.redis import instrument_redis
 from otel_helper.ext.sql import instrument_sql
 
+# Call the ext functions BEFORE setup_telemetry(): setup then finds them active and
+# does not log the implicit-instrumentation deprecation warning (0.3).
+instrument_aws()    # AWS SDK (boto3/botocore)
+instrument_redis()  # Redis
+instrument_sql()    # SQLAlchemy, all engines; or instrument_sql(engine=my_engine)
+
 setup_telemetry()
-
-# AWS SDK (boto3/botocore) instrumentation
-instrument_aws()
-
-# Redis instrumentation
-instrument_redis()
-
-# SQL instrumentation (SQLAlchemy)
-instrument_sql()  # auto-detects engine
-# Or with explicit engine:
-# instrument_sql(engine=my_engine)
 ```
 
 | Module | Function | What it instruments |
 |--------|----------|---------------------|
-| `otel_helper.ext.aws` | `instrument_aws()` | boto3/botocore (S3, SQS, DynamoDB, etc.) |
-| `otel_helper.ext.redis` | `instrument_redis()` | redis-py commands |
-| `otel_helper.ext.sql` | `instrument_sql(engine=None)` | SQLAlchemy queries |
+| `otel_helper.ext.aws` | `instrument_aws() -> bool` | boto3/botocore (S3, SQS, DynamoDB, etc.) |
+| `otel_helper.ext.redis` | `instrument_redis() -> bool` | redis-py commands |
+| `otel_helper.ext.sql` | `instrument_sql(engine=None) -> bool` | SQLAlchemy queries |
 
-> **Note**: The `OTEL_HELPER_EXTRA_INSTRUMENTATION` env var still works for backward compatibility, but the ext modules are the recommended modern approach.
+Each function returns `True` when the instrumentor is active and `False` when the
+installed contrib refuses the installed library version. In that case one warning
+on the `otel_helper` logger names the instrumentor, the installed version and the
+supported range (the same warning is logged when `setup_telemetry()`
+auto-instruments). Known case: SQLAlchemy 2.1 is not supported by
+`opentelemetry-instrumentation-sqlalchemy` 0.63b0–0.66b1 (`< 2.1.0`); pin
+`sqlalchemy<2.1`.
+
+**Database attributes:** the helper defaults `OTEL_SEMCONV_STABILITY_OPT_IN` to
+`http,database/dup`, so SQL spans carry both `db.system.name` (semconv v1.43) and
+the legacy `db.system`, like Go's `ext/otelsql`. A value you set wins (`database`
+→ new keys only; `http` alone → legacy keys only). Known gap: Python contrib copies
+the SQLAlchemy dialect name into `db.system.name` unmapped, e.g. SQL Server →
+`mssql`, where Go emits `microsoft.sql_server`; filter on both values in
+cross-language queries.
+
+> **Note**: `OTEL_HELPER_EXTRA_INSTRUMENTATION` is deprecated (removed in 1.0) and warns once when set; use the ext functions above.
 
 ---
 

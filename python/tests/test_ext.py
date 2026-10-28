@@ -1,9 +1,8 @@
 """Tests for opt-in instrumentation extensions (otel_helper.ext).
 
-The optional instrumentation packages are NOT installed in the test
-environment (they live in the [aws]/[redis]/[sql] extras), so the
-installed-package path is exercised by injecting fake instrumentor
-modules into sys.modules.
+Both paths are simulated through sys.modules (the test env may or may not have
+the libraries — SQLAlchemy is a test dependency since A10): ``None`` makes the
+import fail; a fake module stands in for an installed instrumentor.
 """
 
 import sys
@@ -27,15 +26,18 @@ def _fake_instrumentor_module(monkeypatch, module_name: str, class_name: str) ->
 
 
 class TestExtraNotInstalled:
-    def test_aws_raises_actionable_import_error(self):
+    def test_aws_raises_actionable_import_error(self, monkeypatch):
+        monkeypatch.setitem(sys.modules, "opentelemetry.instrumentation.botocore", None)  # import fails
         with pytest.raises(ImportError, match=r"pip install otel-helper\[aws\]"):
             instrument_aws()
 
-    def test_redis_raises_actionable_import_error(self):
+    def test_redis_raises_actionable_import_error(self, monkeypatch):
+        monkeypatch.setitem(sys.modules, "opentelemetry.instrumentation.redis", None)  # import fails
         with pytest.raises(ImportError, match=r"pip install otel-helper\[redis\]"):
             instrument_redis()
 
-    def test_sql_raises_actionable_import_error(self):
+    def test_sql_raises_actionable_import_error(self, monkeypatch):
+        monkeypatch.setitem(sys.modules, "opentelemetry.instrumentation.sqlalchemy", None)  # import fails
         with pytest.raises(ImportError, match=r"pip install otel-helper\[sql\]"):
             instrument_sql()
 

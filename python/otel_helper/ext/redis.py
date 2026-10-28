@@ -1,10 +1,15 @@
 """Opt-in Redis instrumentation extension."""
 
 from otel_helper._semconv import ensure_semconv_default
+from otel_helper._support import warn_if_unsupported
 
 
-def instrument_redis() -> None:
-    """Enable Redis tracing instrumentation."""
+def instrument_redis() -> bool:
+    """Enable Redis tracing instrumentation.
+
+    Returns True when the instrumentor is active. False (with a warning on the
+    ``otel_helper`` logger) when it refuses the installed library version (P18).
+    """
     ensure_semconv_default()  # before the instrumentor reads it (design D12)
     try:
         from opentelemetry.instrumentation.redis import RedisInstrumentor
@@ -13,4 +18,7 @@ def instrument_redis() -> None:
             "Redis instrumentation not installed. Run: pip install otel-helper[redis]"
         ) from e
 
-    RedisInstrumentor().instrument()
+    instrumentor = RedisInstrumentor()
+    instrumentor.instrument()
+    warn_if_unsupported(instrumentor)  # P18: refused library version → helper warning
+    return bool(instrumentor.is_instrumented_by_opentelemetry)

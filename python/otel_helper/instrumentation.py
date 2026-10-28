@@ -11,11 +11,14 @@ exact path match; upstream ``excluded_urls`` drops the client metric too).
 """
 
 import importlib
+import logging
 import os
 import re
 from contextlib import contextmanager
 
-from otel_helper.config import TelemetryOptions
+from otel_helper._diag import warn_once_per_process
+from otel_helper._support import warn_if_unsupported
+from otel_helper.config import ENV_EXTRA_INSTRUMENTATION, TelemetryOptions
 from otel_helper.tracing import DEFAULT_HEALTH_PATHS, normalize_health_path
 
 _GRPC = frozenset(["GrpcInstrumentorServer", "GrpcAioInstrumentorServer",
@@ -24,6 +27,11 @@ _ENV_GRPC_EXCLUDED_SERVICES = "OTEL_PYTHON_GRPC_EXCLUDED_SERVICES"
 _ENV_EXCLUDED_URLS = "OTEL_PYTHON_EXCLUDED_URLS"
 _ENV_HTTPX_EXCLUDED_URLS = "OTEL_PYTHON_HTTPX_EXCLUDED_URLS"
 _ENV_REQUESTS_EXCLUDED_URLS = "OTEL_PYTHON_REQUESTS_EXCLUDED_URLS"
+_log = logging.getLogger("otel_helper.instrumentation")
+# Explicit replacement per OTEL_HELPER_EXTRA_INSTRUMENTATION flag (deprecated, R8/D8).
+_EXT_ENTRY_POINTS = {"SQL": "otel_helper.ext.sql.instrument_sql()",
+                     "REDIS": "otel_helper.ext.redis.instrument_redis()",
+                     "AWS": "otel_helper.ext.aws.instrument_aws()"}
 
 # (module, class, helper EXTRA_INSTRUMENTATION flag or None = always on)
 _INSTRUMENTORS = (
@@ -114,6 +122,7 @@ def configure_instrumentations(options: TelemetryOptions, instrumented: list | N
     paths = DEFAULT_HEALTH_PATHS if options.health_paths is None else options.health_paths
     health = health_url_pattern(paths)
 
+    implicit: list[str] = []
     for module_name, class_name, flag in _INSTRUMENTORS:
         if flag is not None and not options.has_instrumentation(flag):
             continue
@@ -135,10 +144,36 @@ def configure_instrumentations(options: TelemetryOptions, instrumented: list | N
                 instrumentor.instrument(**kwargs)
         except ImportError:
             continue
-        # instrument() is a no-op (with its own warning) when the library is missing.
+        # instrument() is a no-op when the library is missing (skipped silently) or
+        # installed in a version the instrumentor refuses (warned, P18).
         if instrumentor.is_instrumented_by_opentelemetry:
             instrumented.append(instrumentor)
+            if flag is not None:
+                implicit.append(flag)
+        else:
+            warn_if_unsupported(instrumentor)
+    _warn_implicit_extras(implicit)
     return instrumented
+
+
+def _warn_implicit_extras(flags: list[str]) -> None:
+    """Extension instrumentors turned on by the deprecated flag mechanism without the env var.
+
+    That is the ``extra_instrumentation`` default (``SQL``: SQLAlchemy is instrumented
+    globally just because it is installed), a code value, or debug mode. When the
+    env var is set its own deprecation warning already covers this (config.py).
+    The explicit ``otel_helper.ext`` call, made before ``setup_telemetry()``, is the
+    one mechanism from 0.3 and leaves nothing for this path to turn on.
+    """
+    if not flags or os.getenv(ENV_EXTRA_INSTRUMENTATION) is not None:
+        return
+    warn_once_per_process(
+        _log, "extra-instrumentation:implicit",
+        "[OtelHelper] %s instrumented implicitly through the deprecated %s mechanism (default "
+        "'SQL', or debug mode); the implicit instrumentation is removed in 1.0. Call %s before "
+        "setup_telemetry() instead.",
+        ", ".join(flags), ENV_EXTRA_INSTRUMENTATION, ", ".join(_EXT_ENTRY_POINTS[f] for f in flags),
+    )
 
 
 def instrument_fastapi(app):
