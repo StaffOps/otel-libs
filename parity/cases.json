@@ -1,0 +1,5204 @@
+{
+  "$comment": "Shared parity fixture (ADR-008, design.md D2). Hand-maintained: edit this file directly. Format and runners: parity/README.md. Never delete a case to make CI green.",
+  "version": 1,
+  "cases": [
+    {
+      "id": "svc.otel_service_name_only",
+      "kind": "resolve",
+      "requirement": "R5",
+      "env": {
+        "OTEL_SERVICE_NAME": "svc-std"
+      },
+      "code": {},
+      "expect": {
+        "resource": {
+          "service.name": "svc-std"
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "svc.otel_service_name_beats_legacy",
+      "kind": "resolve",
+      "requirement": "R5",
+      "env": {
+        "OTEL_SERVICE_NAME": "svc-std",
+        "SERVICE_NAME": "svc-legacy"
+      },
+      "code": {},
+      "expect": {
+        "resource": {
+          "service.name": "svc-std"
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "svc.legacy_alias_still_honored",
+      "kind": "resolve",
+      "requirement": "R5",
+      "env": {
+        "SERVICE_NAME": "svc-legacy"
+      },
+      "code": {},
+      "expect": {
+        "resource": {
+          "service.name": "svc-legacy"
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "svc.code_beats_env",
+      "kind": "resolve",
+      "requirement": "R5",
+      "env": {
+        "OTEL_SERVICE_NAME": "svc-std"
+      },
+      "code": {
+        "service_name": "svc-code"
+      },
+      "expect": {
+        "resource": {
+          "service.name": "svc-code"
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "svc.resource_attributes_beat_legacy",
+      "kind": "resolve",
+      "requirement": "R5",
+      "env": {
+        "OTEL_RESOURCE_ATTRIBUTES": "service.name=svc-ra",
+        "SERVICE_NAME": "svc-legacy"
+      },
+      "code": {},
+      "expect": {
+        "resource": {
+          "service.name": "svc-ra"
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "svc.otel_service_name_beats_resource_attributes",
+      "kind": "resolve",
+      "requirement": "R5",
+      "env": {
+        "OTEL_SERVICE_NAME": "svc-std",
+        "OTEL_RESOURCE_ATTRIBUTES": "service.name=svc-ra"
+      },
+      "code": {},
+      "expect": {
+        "resource": {
+          "service.name": "svc-std"
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "svc.unset_uses_sdk_default_and_warns",
+      "kind": "resolve",
+      "requirement": "R5",
+      "env": {},
+      "code": {},
+      "expect": {
+        "resource": {
+          "service.name": {
+            "regex": "^unknown_service(:.+)?$"
+          }
+        },
+        "warning": "OTEL_SERVICE_NAME"
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      },
+      "note": "The :<exe> suffix is SDK-version dependent (R5): Python 1.42 has none."
+    },
+    {
+      "id": "resource.env_attribute_not_overwritten",
+      "kind": "resolve",
+      "requirement": "R5",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_RESOURCE_ATTRIBUTES": "deployment.environment.name=HML"
+      },
+      "code": {},
+      "expect": {
+        "resource": {
+          "deployment.environment.name": "HML"
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "resource.code_beats_resource_attributes_per_key",
+      "kind": "resolve",
+      "requirement": "R5",
+      "env": {
+        "OTEL_RESOURCE_ATTRIBUTES": "service.name=svc-ra,team.name=payments"
+      },
+      "code": {
+        "service_name": "svc-code"
+      },
+      "expect": {
+        "resource": {
+          "service.name": "svc-code",
+          "team.name": "payments"
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "resource.instance_id_generated",
+      "kind": "resolve",
+      "requirement": "R5/D4",
+      "note": "Python sdk >= 1.45 ships a default service.instance.id detector (D4).",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc"
+      },
+      "code": {},
+      "expect": {
+        "resource": {
+          "service.instance.id": {
+            "regex": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+          }
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "resource.instance_id_from_env_kept",
+      "kind": "resolve",
+      "requirement": "R5/D4",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_RESOURCE_ATTRIBUTES": "service.instance.id=inst-1"
+      },
+      "code": {},
+      "expect": {
+        "resource": {
+          "service.instance.id": "inst-1"
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "fork.instance_ids_distinct_post_fork",
+      "kind": "fork",
+      "requirement": "R5/D4",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc"
+      },
+      "code": {},
+      "expect": {
+        "instance_ids_distinct": true
+      },
+      "note": "Pre-fork model: setup in each forked worker (gunicorn post_fork). Go has no pre-fork server model.",
+      "status": {
+        "go": "skip:no-prefork-model",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "fork.env_instance_id_warns_and_kept",
+      "kind": "fork",
+      "requirement": "R5/D4",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_RESOURCE_ATTRIBUTES": "service.instance.id=inst-fixed"
+      },
+      "code": {},
+      "expect": {
+        "instance_ids": [
+          "inst-fixed",
+          "inst-fixed"
+        ],
+        "helper_log": {
+          "regex": "service\\.instance\\.id"
+        }
+      },
+      "status": {
+        "go": "skip:no-prefork-model",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "env.known_value",
+      "kind": "resolve",
+      "requirement": "R4",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "ENVIRONMENT": "PRD"
+      },
+      "code": {},
+      "expect": {
+        "resource": {
+          "deployment.environment.name": "PRD"
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "env.unset_absent_and_warns",
+      "kind": "resolve",
+      "requirement": "R4",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc"
+      },
+      "code": {},
+      "expect": {
+        "resource": {
+          "deployment.environment.name": {
+            "absent": true
+          }
+        },
+        "warning": "deployment.environment.name"
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "env.unknown_value_verbatim",
+      "kind": "resolve",
+      "requirement": "R4",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "ENVIRONMENT": "staging"
+      },
+      "code": {},
+      "expect": {
+        "resource": {
+          "deployment.environment.name": "staging"
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "env.resource_attributes_beat_alias",
+      "kind": "resolve",
+      "requirement": "R4",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_RESOURCE_ATTRIBUTES": "deployment.environment.name=PRD",
+        "ENVIRONMENT": "DEV"
+      },
+      "code": {},
+      "expect": {
+        "resource": {
+          "deployment.environment.name": "PRD"
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "env.code_beats_resource_attributes",
+      "kind": "resolve",
+      "requirement": "R4",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_RESOURCE_ATTRIBUTES": "deployment.environment.name=DEV"
+      },
+      "code": {
+        "environment": "PRD"
+      },
+      "expect": {
+        "resource": {
+          "deployment.environment.name": "PRD"
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "env.unset_warns_once",
+      "kind": "resolve",
+      "requirement": "R4",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc"
+      },
+      "code": {},
+      "expect": {
+        "warning_count": {
+          "deployment.environment.name": 1
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "log_level.local_is_debug",
+      "kind": "resolve",
+      "requirement": "R4",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "ENVIRONMENT": "LOCAL"
+      },
+      "code": {},
+      "expect": {
+        "log_level": "DEBUG"
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "log_level.unset_is_info",
+      "kind": "resolve",
+      "requirement": "R4",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc"
+      },
+      "code": {},
+      "expect": {
+        "log_level": "INFO"
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "log_level.unknown_is_info",
+      "kind": "resolve",
+      "requirement": "R4",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "ENVIRONMENT": "staging"
+      },
+      "code": {},
+      "expect": {
+        "log_level": "INFO"
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "protocol.env_unknown_warns_and_defaults",
+      "kind": "export",
+      "requirement": "R8",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "http://{receiver}:4317",
+        "OTEL_EXPORTER_OTLP_PROTOCOL": "bogus"
+      },
+      "code": {},
+      "expect": {
+        "error": {
+          "absent": true
+        },
+        "warning": "OTEL_EXPORTER_OTLP_PROTOCOL",
+        "received": {
+          "traces": {
+            "proto": "grpc",
+            "port": 4317,
+            "tls": false
+          }
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "protocol.code_unknown_fails",
+      "kind": "resolve",
+      "requirement": "R8",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "http://collector:4317"
+      },
+      "code": {
+        "otlp_protocol": "bogus"
+      },
+      "expect": {
+        "error": "bogus"
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "metrics.exporter_console_accepted",
+      "kind": "resolve",
+      "requirement": "R8",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_METRICS_EXPORTER": "console"
+      },
+      "code": {},
+      "expect": {
+        "error": {
+          "absent": true
+        },
+        "metric_exporters": [
+          "console"
+        ]
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "metrics.exporter_env_unknown_warns",
+      "kind": "resolve",
+      "requirement": "R8",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_METRICS_EXPORTER": "bogus"
+      },
+      "code": {},
+      "expect": {
+        "error": {
+          "absent": true
+        },
+        "warning": "OTEL_METRICS_EXPORTER"
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "metrics.exporter_code_unknown_fails",
+      "kind": "resolve",
+      "requirement": "R8",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc"
+      },
+      "code": {
+        "metric_exporters": [
+          "bogus"
+        ]
+      },
+      "expect": {
+        "error": "bogus"
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "metrics.exporter_logging_is_console",
+      "kind": "resolve",
+      "requirement": "R8",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_METRICS_EXPORTER": "logging"
+      },
+      "code": {},
+      "expect": {
+        "error": {
+          "absent": true
+        },
+        "metric_exporters": [
+          "console"
+        ],
+        "warning": "OTEL_METRICS_EXPORTER"
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "metrics.exporter_none_combined_warns",
+      "kind": "resolve",
+      "requirement": "R8",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "http://collector:4317",
+        "OTEL_METRICS_EXPORTER": "none,otlp"
+      },
+      "code": {},
+      "expect": {
+        "error": {
+          "absent": true
+        },
+        "metric_exporters": [],
+        "warning": "OTEL_METRICS_EXPORTER"
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "metrics.otlp_env_without_endpoint_warns",
+      "kind": "resolve",
+      "requirement": "R2",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_METRICS_EXPORTER": "otlp"
+      },
+      "code": {},
+      "expect": {
+        "error": {
+          "absent": true
+        },
+        "warning": "OTEL_METRICS_EXPORTER",
+        "metric_exporters": [
+          "prometheus"
+        ]
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "metrics.otlp_code_without_endpoint_fails",
+      "kind": "resolve",
+      "requirement": "R2",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc"
+      },
+      "code": {
+        "metric_exporters": [
+          "otlp"
+        ]
+      },
+      "expect": {
+        "error": "requires an endpoint"
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "metrics.interval_default_30s",
+      "kind": "resolve",
+      "requirement": "D1",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc"
+      },
+      "code": {},
+      "expect": {
+        "metric_export_interval_ms": 30000
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "metrics.interval_env_honored",
+      "kind": "resolve",
+      "requirement": "D1",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_METRIC_EXPORT_INTERVAL": "5000"
+      },
+      "code": {},
+      "expect": {
+        "metric_export_interval_ms": 5000
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "metrics.interval_env_unparseable_warns",
+      "kind": "resolve",
+      "requirement": "R8",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_METRIC_EXPORT_INTERVAL": "abc"
+      },
+      "code": {},
+      "expect": {
+        "metric_export_interval_ms": 30000,
+        "warning": "OTEL_METRIC_EXPORT_INTERVAL"
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "metrics.interval_env_zero_falls_back",
+      "kind": "resolve",
+      "requirement": "R8",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_METRIC_EXPORT_INTERVAL": "0"
+      },
+      "code": {},
+      "expect": {
+        "error": {
+          "absent": true
+        },
+        "metric_export_interval_ms": 30000,
+        "warning": "OTEL_METRIC_EXPORT_INTERVAL"
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "deprecation.service_name_warns",
+      "kind": "resolve",
+      "requirement": "R8/D8",
+      "env": {
+        "SERVICE_NAME": "svc-legacy"
+      },
+      "code": {},
+      "expect": {
+        "warning": "SERVICE_NAME"
+      },
+      "status": {
+        "go": "xfail:A9",
+        "python": "xfail:A9",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "deprecation.environment_warns",
+      "kind": "resolve",
+      "requirement": "R8/D8",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "ENVIRONMENT": "DEV"
+      },
+      "code": {},
+      "expect": {
+        "warning": "ENVIRONMENT"
+      },
+      "status": {
+        "go": "xfail:A9",
+        "python": "xfail:A9",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "deprecation.sample_ratio_warns",
+      "kind": "resolve",
+      "requirement": "R8/D8",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_HELPER_SAMPLE_RATIO": "0.5"
+      },
+      "code": {},
+      "expect": {
+        "warning": "OTEL_HELPER_SAMPLE_RATIO"
+      },
+      "status": {
+        "go": "xfail:A9",
+        "python": "xfail:A9",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "deprecation.disabled_signals_warns",
+      "kind": "resolve",
+      "requirement": "R8/D8",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_HELPER_DISABLED_SIGNALS": "logs"
+      },
+      "code": {},
+      "expect": {
+        "warning": "OTEL_HELPER_DISABLED_SIGNALS"
+      },
+      "status": {
+        "go": "xfail:A9",
+        "python": "xfail:A9",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "deprecation.extra_instrumentation_warns",
+      "kind": "resolve",
+      "requirement": "R8/D8/G9",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_HELPER_EXTRA_INSTRUMENTATION": "SQL"
+      },
+      "code": {},
+      "expect": {
+        "warning": "OTEL_HELPER_EXTRA_INSTRUMENTATION"
+      },
+      "status": {
+        "go": "xfail:A9",
+        "python": "xfail:A9",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "deprecation.service_name_warns_once",
+      "kind": "resolve",
+      "requirement": "R8/D8",
+      "env": {
+        "SERVICE_NAME": "svc-legacy"
+      },
+      "code": {},
+      "expect": {
+        "warning_count": {
+          "SERVICE_NAME": 1
+        }
+      },
+      "status": {
+        "go": "xfail:A9",
+        "python": "xfail:A9",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "redaction.headers_never_logged",
+      "kind": "resolve",
+      "requirement": "R8",
+      "note": "Valid secret header + a helper-warned trigger (bogus protocol); asserted on helper diagnostics only (R8: SDK messages are out of scope).",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "http://collector:4317",
+        "OTEL_EXPORTER_OTLP_PROTOCOL": "bogus",
+        "OTEL_EXPORTER_OTLP_HEADERS": "authorization=parity-secret-token"
+      },
+      "code": {},
+      "expect": {
+        "helper_log": {
+          "all": [
+            {
+              "regex": "OTEL_EXPORTER_OTLP_PROTOCOL"
+            },
+            {
+              "not_contains": "parity-secret-token"
+            }
+          ]
+        },
+        "log": {
+          "not_contains": "parity-secret-token"
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "redaction.endpoint_userinfo_query",
+      "kind": "resolve",
+      "requirement": "R8",
+      "note": "Portless gRPC URL triggers the D1.b warning; helper diagnostics must not print userinfo/query. A3 must also strip userinfo from gRPC endpoints before passing them to the SDK (R8). The all-channel `log` assertion becomes satisfiable only once A3 strips userinfo (SDK export-failure messages print the endpoint).",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "http://u:parity-secret-pw@collector?token=parity-secret-q"
+      },
+      "code": {},
+      "expect": {
+        "helper_log": {
+          "all": [
+            {
+              "regex": "explicit port"
+            },
+            {
+              "not_contains": "parity-secret-pw"
+            },
+            {
+              "not_contains": "parity-secret-q"
+            }
+          ]
+        },
+        "log": {
+          "all": [
+            {
+              "not_contains": "parity-secret-pw"
+            },
+            {
+              "not_contains": "parity-secret-q"
+            }
+          ]
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "redaction.client_key_with_plaintext",
+      "kind": "resolve",
+      "requirement": "R8",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "http://collector:4317",
+        "OTEL_EXPORTER_OTLP_CERTIFICATE": "/x/ca.pem",
+        "OTEL_EXPORTER_OTLP_CLIENT_KEY": "/x/parity-secret-key.pem"
+      },
+      "code": {},
+      "expect": {
+        "helper_log": {
+          "all": [
+            {
+              "regex": "OTEL_EXPORTER_OTLP_CERTIFICATE"
+            },
+            {
+              "not_contains": "parity-secret-key"
+            }
+          ]
+        },
+        "log": {
+          "not_contains": "parity-secret-key"
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "tls.certificate_with_plaintext_warns",
+      "kind": "resolve",
+      "requirement": "R2",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "http://collector:4317",
+        "OTEL_EXPORTER_OTLP_CERTIFICATE": "/nonexistent/ca.pem"
+      },
+      "code": {},
+      "expect": {
+        "warning": "OTEL_EXPORTER_OTLP_CERTIFICATE"
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "tls.insecure_conflict_warns",
+      "kind": "resolve",
+      "requirement": "R2/D1.c",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "https://collector:4317",
+        "OTEL_EXPORTER_OTLP_INSECURE": "true"
+      },
+      "code": {},
+      "expect": {
+        "warning": "OTEL_EXPORTER_OTLP_INSECURE"
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "tls.insecure_conflict_warns_http_secure",
+      "kind": "resolve",
+      "requirement": "R2/D1.c",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "http://collector:4317",
+        "OTEL_EXPORTER_OTLP_INSECURE": "false"
+      },
+      "code": {},
+      "expect": {
+        "warning": "OTEL_EXPORTER_OTLP_INSECURE"
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "endpoint.grpc_url_without_port_warns",
+      "kind": "resolve",
+      "requirement": "R1/D1.b",
+      "note": "Warning text must recommend an explicit port (design D1.b).",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "http://collector"
+      },
+      "code": {},
+      "expect": {
+        "warning": "explicit port"
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "endpoint.schemeless_http_deprecated_warns",
+      "kind": "resolve",
+      "requirement": "R1/D8",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "collector:4318",
+        "OTEL_EXPORTER_OTLP_PROTOCOL": "http/protobuf",
+        "OTEL_EXPORTER_OTLP_INSECURE": "true"
+      },
+      "code": {},
+      "expect": {
+        "warning": "OTEL_EXPORTER_OTLP_ENDPOINT"
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "endpoint.schemeless_grpc_not_deprecated",
+      "kind": "resolve",
+      "requirement": "R1/D8",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "collector:4317",
+        "OTEL_EXPORTER_OTLP_INSECURE": "true"
+      },
+      "code": {},
+      "expect": {
+        "helper_log": {
+          "not_contains": "deprecat"
+        },
+        "log": {
+          "all": [
+            {
+              "not_contains": "OTEL_EXPORTER_OTLP_ENDPOINT"
+            },
+            {
+              "not_contains": "schemeless"
+            }
+          ]
+        }
+      },
+      "note": "Negative: schemeless gRPC is legal per spec; only http/protobuf schemeless is deprecated (D8). All channels: no diagnostic about the endpoint at all (a deprecation warning must name the variable, R8); 'deprecat' is checked on helper_log only because the Python SDK emits an unrelated LoggingHandler DeprecationWarning.",
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "config.sdk_disabled_unparseable_warns",
+      "kind": "resolve",
+      "requirement": "R8",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_SDK_DISABLED": "maybe"
+      },
+      "code": {},
+      "expect": {
+        "warning": "OTEL_SDK_DISABLED",
+        "resource": {
+          "service.name": "parity-svc"
+        }
+      },
+      "note": "Unparseable boolean: warn and use the default (enabled).",
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "export.http_port_4318_inferred",
+      "kind": "export",
+      "requirement": "R1/D1.a",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "http://{receiver}:4318"
+      },
+      "code": {},
+      "expect": {
+        "received": {
+          "traces": {
+            "proto": "http",
+            "port": 4318,
+            "tls": false,
+            "path": "/v1/traces"
+          },
+          "metrics": {
+            "proto": "http",
+            "port": 4318,
+            "tls": false,
+            "path": "/v1/metrics"
+          },
+          "logs": {
+            "proto": "http",
+            "port": 4318,
+            "tls": false,
+            "path": "/v1/logs"
+          }
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "export.grpc_plaintext",
+      "kind": "export",
+      "requirement": "R1",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "http://{receiver}:4317"
+      },
+      "code": {},
+      "expect": {
+        "received": {
+          "traces": {
+            "proto": "grpc",
+            "port": 4317,
+            "tls": false
+          },
+          "metrics": {
+            "proto": "grpc",
+            "port": 4317,
+            "tls": false
+          },
+          "logs": {
+            "proto": "grpc",
+            "port": 4317,
+            "tls": false
+          }
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "export.grpc_tls_custom_ca",
+      "kind": "export",
+      "requirement": "R2/G8",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "https://{receiver}:14317",
+        "OTEL_EXPORTER_OTLP_CERTIFICATE": "{receiver_ca}"
+      },
+      "code": {},
+      "expect": {
+        "received": {
+          "traces": {
+            "proto": "grpc",
+            "port": 14317,
+            "tls": true
+          },
+          "metrics": {
+            "proto": "grpc",
+            "port": 14317,
+            "tls": true
+          },
+          "logs": {
+            "proto": "grpc",
+            "port": 14317,
+            "tls": true
+          }
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "export.http_tls_custom_ca",
+      "kind": "export",
+      "requirement": "R2/G8",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "https://{receiver}:14318",
+        "OTEL_EXPORTER_OTLP_PROTOCOL": "http/protobuf",
+        "OTEL_EXPORTER_OTLP_CERTIFICATE": "{receiver_ca}"
+      },
+      "code": {},
+      "expect": {
+        "received": {
+          "traces": {
+            "proto": "http",
+            "port": 14318,
+            "tls": true,
+            "path": "/v1/traces"
+          },
+          "metrics": {
+            "proto": "http",
+            "port": 14318,
+            "tls": true,
+            "path": "/v1/metrics"
+          },
+          "logs": {
+            "proto": "http",
+            "port": 14318,
+            "tls": true,
+            "path": "/v1/logs"
+          }
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "export.http_https_url_without_port_443",
+      "kind": "export",
+      "requirement": "R1",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "https://{receiver}",
+        "OTEL_EXPORTER_OTLP_PROTOCOL": "http/protobuf",
+        "OTEL_EXPORTER_OTLP_CERTIFICATE": "{receiver_ca}"
+      },
+      "code": {},
+      "expect": {
+        "received": {
+          "traces": {
+            "proto": "http",
+            "port": 443,
+            "tls": true,
+            "path": "/v1/traces"
+          },
+          "metrics": {
+            "proto": "http",
+            "port": 443,
+            "tls": true,
+            "path": "/v1/metrics"
+          },
+          "logs": {
+            "proto": "http",
+            "port": 443,
+            "tls": true,
+            "path": "/v1/logs"
+          }
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "export.http_http_url_without_port_80",
+      "kind": "export",
+      "requirement": "R1",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "http://{receiver}",
+        "OTEL_EXPORTER_OTLP_PROTOCOL": "http/protobuf"
+      },
+      "code": {},
+      "expect": {
+        "received": {
+          "traces": {
+            "proto": "http",
+            "port": 80,
+            "tls": false,
+            "path": "/v1/traces"
+          },
+          "metrics": {
+            "proto": "http",
+            "port": 80,
+            "tls": false,
+            "path": "/v1/metrics"
+          },
+          "logs": {
+            "proto": "http",
+            "port": 80,
+            "tls": false,
+            "path": "/v1/logs"
+          }
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "export.grpc_url_without_port_4317",
+      "kind": "export",
+      "requirement": "R1/D1.b",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "http://{receiver}"
+      },
+      "code": {},
+      "expect": {
+        "received": {
+          "traces": {
+            "proto": "grpc",
+            "port": 4317,
+            "tls": false
+          },
+          "metrics": {
+            "proto": "grpc",
+            "port": 4317,
+            "tls": false
+          },
+          "logs": {
+            "proto": "grpc",
+            "port": 4317,
+            "tls": false
+          }
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "export.grpc_https_url_without_port_4317_tls",
+      "kind": "export",
+      "requirement": "R1/D1.b",
+      "note": "{receiver_tls} serves TLS on 4317, so the D1.b default port is checked with TLS.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "https://{receiver_tls}",
+        "OTEL_EXPORTER_OTLP_CERTIFICATE": "{receiver_ca}"
+      },
+      "code": {},
+      "expect": {
+        "received": {
+          "traces": {
+            "proto": "grpc",
+            "port": 4317,
+            "tls": true
+          },
+          "metrics": {
+            "proto": "grpc",
+            "port": 4317,
+            "tls": true
+          },
+          "logs": {
+            "proto": "grpc",
+            "port": 4317,
+            "tls": true
+          }
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "export.http_path_prefix",
+      "kind": "export",
+      "requirement": "R1",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "http://{receiver}:4318/otlp",
+        "OTEL_EXPORTER_OTLP_PROTOCOL": "http/protobuf"
+      },
+      "code": {},
+      "expect": {
+        "received": {
+          "traces": {
+            "proto": "http",
+            "port": 4318,
+            "tls": false,
+            "path": "/otlp/v1/traces"
+          },
+          "metrics": {
+            "proto": "http",
+            "port": 4318,
+            "tls": false,
+            "path": "/otlp/v1/metrics"
+          },
+          "logs": {
+            "proto": "http",
+            "port": 4318,
+            "tls": false,
+            "path": "/otlp/v1/logs"
+          }
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "export.ipv6_literal_grpc",
+      "kind": "export",
+      "requirement": "R1",
+      "note": "Needs the receiver on IPv6 loopback (FAKEOTLP_HOST_IPV6): skipped locally without it, fails under PARITY_REQUIRE_FAKEOTLP. Port 24318 keeps it apart from other tests.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "http://{receiver_ipv6}:24318"
+      },
+      "code": {},
+      "expect": {
+        "received": {
+          "traces": {
+            "proto": "grpc",
+            "port": 24318,
+            "tls": false
+          },
+          "metrics": {
+            "proto": "grpc",
+            "port": 24318,
+            "tls": false
+          },
+          "logs": {
+            "proto": "grpc",
+            "port": 24318,
+            "tls": false
+          }
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "export.ipv6_literal_http",
+      "kind": "export",
+      "requirement": "R1",
+      "note": "Needs the receiver on IPv6 loopback (FAKEOTLP_HOST_IPV6): skipped locally without it, fails under PARITY_REQUIRE_FAKEOTLP. Port 24318 keeps it apart from other tests.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "http://{receiver_ipv6}:24318",
+        "OTEL_EXPORTER_OTLP_PROTOCOL": "http/protobuf"
+      },
+      "code": {},
+      "expect": {
+        "received": {
+          "traces": {
+            "proto": "http",
+            "port": 24318,
+            "tls": false,
+            "path": "/v1/traces"
+          },
+          "metrics": {
+            "proto": "http",
+            "port": 24318,
+            "tls": false,
+            "path": "/v1/metrics"
+          },
+          "logs": {
+            "proto": "http",
+            "port": 24318,
+            "tls": false,
+            "path": "/v1/logs"
+          }
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "export.code_generic_endpoint_gets_signal_path",
+      "kind": "export",
+      "requirement": "R1",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc"
+      },
+      "code": {
+        "otel_endpoint": "http://{receiver}:4318",
+        "otlp_protocol": "http/protobuf"
+      },
+      "expect": {
+        "received": {
+          "traces": {
+            "proto": "http",
+            "port": 4318,
+            "tls": false,
+            "path": "/v1/traces"
+          }
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "export.code_generic_endpoint_path_prefix",
+      "kind": "export",
+      "requirement": "R1",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc"
+      },
+      "code": {
+        "otel_endpoint": "http://{receiver}:4318/otlp",
+        "otlp_protocol": "http/protobuf"
+      },
+      "expect": {
+        "received": {
+          "traces": {
+            "proto": "http",
+            "port": 4318,
+            "tls": false,
+            "path": "/otlp/v1/traces"
+          },
+          "metrics": {
+            "proto": "http",
+            "port": 4318,
+            "tls": false,
+            "path": "/otlp/v1/metrics"
+          },
+          "logs": {
+            "proto": "http",
+            "port": 4318,
+            "tls": false,
+            "path": "/otlp/v1/logs"
+          }
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "export.code_per_signal_endpoint_verbatim",
+      "kind": "export",
+      "requirement": "R1",
+      "note": "Neither library has a per-signal endpoint option yet; A3 adds it, maps `traces_endpoint` in both adapters and flips this to pass.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc"
+      },
+      "code": {
+        "traces_endpoint": "http://{receiver}:4318/custom/traces",
+        "otlp_protocol": "http/protobuf"
+      },
+      "expect": {
+        "received": {
+          "traces": {
+            "proto": "http",
+            "port": 4318,
+            "tls": false,
+            "path": "/custom/traces"
+          }
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "export.schemeless_grpc_tls",
+      "kind": "export",
+      "requirement": "R1",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "{receiver}:14317",
+        "OTEL_EXPORTER_OTLP_CERTIFICATE": "{receiver_ca}"
+      },
+      "code": {},
+      "expect": {
+        "received": {
+          "traces": {
+            "proto": "grpc",
+            "port": 14317,
+            "tls": true
+          },
+          "metrics": {
+            "proto": "grpc",
+            "port": 14317,
+            "tls": true
+          },
+          "logs": {
+            "proto": "grpc",
+            "port": 14317,
+            "tls": true
+          }
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "export.schemeless_grpc_insecure",
+      "kind": "export",
+      "requirement": "R1",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "{receiver}:4317",
+        "OTEL_EXPORTER_OTLP_INSECURE": "true"
+      },
+      "code": {},
+      "expect": {
+        "received": {
+          "traces": {
+            "proto": "grpc",
+            "port": 4317,
+            "tls": false
+          },
+          "metrics": {
+            "proto": "grpc",
+            "port": 4317,
+            "tls": false
+          },
+          "logs": {
+            "proto": "grpc",
+            "port": 4317,
+            "tls": false
+          }
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "export.schemeless_http_insecure",
+      "kind": "export",
+      "requirement": "R1",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "{receiver}:4318",
+        "OTEL_EXPORTER_OTLP_INSECURE": "true",
+        "OTEL_EXPORTER_OTLP_PROTOCOL": "http/protobuf"
+      },
+      "code": {},
+      "expect": {
+        "received": {
+          "traces": {
+            "proto": "http",
+            "port": 4318,
+            "tls": false,
+            "path": "/v1/traces"
+          },
+          "metrics": {
+            "proto": "http",
+            "port": 4318,
+            "tls": false,
+            "path": "/v1/metrics"
+          },
+          "logs": {
+            "proto": "http",
+            "port": 4318,
+            "tls": false,
+            "path": "/v1/logs"
+          }
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "export.schemeless_without_port_grpc",
+      "kind": "export",
+      "requirement": "R1",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "{receiver}",
+        "OTEL_EXPORTER_OTLP_INSECURE": "true"
+      },
+      "code": {},
+      "expect": {
+        "received": {
+          "traces": {
+            "proto": "grpc",
+            "port": 4317,
+            "tls": false
+          },
+          "metrics": {
+            "proto": "grpc",
+            "port": 4317,
+            "tls": false
+          },
+          "logs": {
+            "proto": "grpc",
+            "port": 4317,
+            "tls": false
+          }
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "export.schemeless_without_port_http",
+      "kind": "export",
+      "requirement": "R1",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "{receiver}",
+        "OTEL_EXPORTER_OTLP_INSECURE": "true",
+        "OTEL_EXPORTER_OTLP_PROTOCOL": "http/protobuf"
+      },
+      "code": {},
+      "expect": {
+        "received": {
+          "traces": {
+            "proto": "http",
+            "port": 4318,
+            "tls": false,
+            "path": "/v1/traces"
+          },
+          "metrics": {
+            "proto": "http",
+            "port": 4318,
+            "tls": false,
+            "path": "/v1/metrics"
+          },
+          "logs": {
+            "proto": "http",
+            "port": 4318,
+            "tls": false,
+            "path": "/v1/logs"
+          }
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "export.code_schemeless_endpoint",
+      "kind": "export",
+      "requirement": "R1",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_INSECURE": "true"
+      },
+      "code": {
+        "otel_endpoint": "{receiver}:4317"
+      },
+      "expect": {
+        "received": {
+          "traces": {
+            "proto": "grpc",
+            "port": 4317,
+            "tls": false
+          },
+          "metrics": {
+            "proto": "grpc",
+            "port": 4317,
+            "tls": false
+          },
+          "logs": {
+            "proto": "grpc",
+            "port": 4317,
+            "tls": false
+          }
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "export.per_signal_endpoint_only",
+      "kind": "export",
+      "requirement": "R2",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT": "http://{receiver}:4318/v1/traces",
+        "OTEL_EXPORTER_OTLP_PROTOCOL": "http/protobuf"
+      },
+      "code": {},
+      "expect": {
+        "received": {
+          "traces": {
+            "proto": "http",
+            "port": 4318,
+            "tls": false,
+            "path": "/v1/traces"
+          },
+          "metrics": {
+            "absent": true
+          },
+          "logs": {
+            "absent": true
+          }
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "export.per_signal_grpc_endpoint_only",
+      "kind": "export",
+      "requirement": "R2",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT": "http://{receiver}:4317"
+      },
+      "code": {},
+      "expect": {
+        "received": {
+          "traces": {
+            "proto": "grpc",
+            "port": 4317,
+            "tls": false
+          },
+          "metrics": {
+            "absent": true
+          },
+          "logs": {
+            "absent": true
+          }
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "export.per_signal_endpoint_drives_4318_inference",
+      "kind": "export",
+      "requirement": "R2/D1.a",
+      "note": "With no protocol set, the port-4318 inference for a signal uses that signal's endpoint.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT": "http://{receiver}:4318/v1/traces"
+      },
+      "code": {},
+      "expect": {
+        "received": {
+          "traces": {
+            "proto": "http",
+            "port": 4318,
+            "tls": false,
+            "path": "/v1/traces"
+          },
+          "metrics": {
+            "absent": true
+          },
+          "logs": {
+            "absent": true
+          }
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "export.per_signal_endpoint_beats_generic",
+      "kind": "export",
+      "requirement": "R2",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "http://{receiver}:4318",
+        "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT": "http://{receiver}:80/custom/traces",
+        "OTEL_EXPORTER_OTLP_PROTOCOL": "http/protobuf"
+      },
+      "code": {},
+      "expect": {
+        "received": {
+          "traces": {
+            "proto": "http",
+            "port": 80,
+            "tls": false,
+            "path": "/custom/traces"
+          },
+          "metrics": {
+            "proto": "http",
+            "port": 4318,
+            "tls": false,
+            "path": "/v1/metrics"
+          }
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "export.per_signal_protocol",
+      "kind": "export",
+      "requirement": "R2",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "http://{receiver}:4317",
+        "OTEL_EXPORTER_OTLP_TRACES_PROTOCOL": "http/protobuf"
+      },
+      "code": {},
+      "expect": {
+        "received": {
+          "traces": {
+            "proto": "http",
+            "port": 4317,
+            "tls": false,
+            "path": "/v1/traces"
+          },
+          "metrics": {
+            "proto": "grpc",
+            "port": 4317,
+            "tls": false
+          }
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "export.tls_conflict_https_insecure_grpc",
+      "kind": "export",
+      "requirement": "R2/D1.c",
+      "note": "Go passes since A2 only because of upstream credential precedence: the env CA (OTEL_EXPORTER_OTLP_CERTIFICATE) wins over WithInsecure in all three gRPC exporters (otlploggrpc v0.7.0 ignored it and sent logs in plaintext; v0.23.0 honours it). The helper still does not resolve https + INSECURE=true: without a CA it exports plaintext (A3, D1.c).",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "https://{receiver}:14317",
+        "OTEL_EXPORTER_OTLP_INSECURE": "true",
+        "OTEL_EXPORTER_OTLP_CERTIFICATE": "{receiver_ca}"
+      },
+      "code": {},
+      "expect": {
+        "received": {
+          "traces": {
+            "proto": "grpc",
+            "port": 14317,
+            "tls": true
+          },
+          "metrics": {
+            "proto": "grpc",
+            "port": 14317,
+            "tls": true
+          },
+          "logs": {
+            "proto": "grpc",
+            "port": 14317,
+            "tls": true
+          }
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "export.tls_conflict_https_insecure_http",
+      "kind": "export",
+      "requirement": "R2/D1.c",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "https://{receiver}:14318",
+        "OTEL_EXPORTER_OTLP_INSECURE": "true",
+        "OTEL_EXPORTER_OTLP_PROTOCOL": "http/protobuf",
+        "OTEL_EXPORTER_OTLP_CERTIFICATE": "{receiver_ca}"
+      },
+      "code": {},
+      "expect": {
+        "received": {
+          "traces": {
+            "proto": "http",
+            "port": 14318,
+            "tls": true,
+            "path": "/v1/traces"
+          },
+          "metrics": {
+            "proto": "http",
+            "port": 14318,
+            "tls": true,
+            "path": "/v1/metrics"
+          },
+          "logs": {
+            "proto": "http",
+            "port": 14318,
+            "tls": true,
+            "path": "/v1/logs"
+          }
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "export.tls_conflict_http_secure_grpc",
+      "kind": "export",
+      "requirement": "R2/D1.c",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "http://{receiver}:4317",
+        "OTEL_EXPORTER_OTLP_INSECURE": "false"
+      },
+      "code": {},
+      "expect": {
+        "received": {
+          "traces": {
+            "proto": "grpc",
+            "port": 4317,
+            "tls": false
+          },
+          "metrics": {
+            "proto": "grpc",
+            "port": 4317,
+            "tls": false
+          },
+          "logs": {
+            "proto": "grpc",
+            "port": 4317,
+            "tls": false
+          }
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "export.per_signal_insecure_conflict",
+      "kind": "export",
+      "requirement": "R2/D1.c",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "https://{receiver}:14317",
+        "OTEL_EXPORTER_OTLP_TRACES_INSECURE": "true",
+        "OTEL_EXPORTER_OTLP_CERTIFICATE": "{receiver_ca}"
+      },
+      "code": {},
+      "expect": {
+        "received": {
+          "traces": {
+            "proto": "grpc",
+            "port": 14317,
+            "tls": true
+          }
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "export.tls_conflict_http_secure_http",
+      "kind": "export",
+      "requirement": "R2/D1.c",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "http://{receiver}:4318",
+        "OTEL_EXPORTER_OTLP_INSECURE": "false",
+        "OTEL_EXPORTER_OTLP_PROTOCOL": "http/protobuf"
+      },
+      "code": {},
+      "expect": {
+        "received": {
+          "traces": {
+            "proto": "http",
+            "port": 4318,
+            "tls": false,
+            "path": "/v1/traces"
+          },
+          "metrics": {
+            "proto": "http",
+            "port": 4318,
+            "tls": false,
+            "path": "/v1/metrics"
+          },
+          "logs": {
+            "proto": "http",
+            "port": 4318,
+            "tls": false,
+            "path": "/v1/logs"
+          }
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "export.compression_default_gzip",
+      "kind": "export",
+      "requirement": "R2/D1.d",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "http://{receiver}:4318"
+      },
+      "code": {},
+      "expect": {
+        "received": {
+          "traces": {
+            "encoding": "gzip"
+          },
+          "metrics": {
+            "encoding": "gzip"
+          },
+          "logs": {
+            "encoding": "gzip"
+          }
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "export.compression_default_gzip_grpc",
+      "kind": "export",
+      "requirement": "R2/D1.d",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "http://{receiver}:4317"
+      },
+      "code": {},
+      "expect": {
+        "received": {
+          "traces": {
+            "encoding": "gzip"
+          },
+          "metrics": {
+            "encoding": "gzip"
+          },
+          "logs": {
+            "encoding": "gzip"
+          }
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "export.compression_env_none",
+      "kind": "export",
+      "requirement": "R2/G10",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "http://{receiver}:4318",
+        "OTEL_EXPORTER_OTLP_COMPRESSION": "none"
+      },
+      "code": {},
+      "expect": {
+        "received": {
+          "traces": {
+            "encoding": ""
+          },
+          "metrics": {
+            "encoding": ""
+          },
+          "logs": {
+            "encoding": ""
+          }
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "export.headers_env",
+      "kind": "export",
+      "requirement": "R2",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "http://{receiver}:4318",
+        "OTEL_EXPORTER_OTLP_HEADERS": "x-parity=1"
+      },
+      "code": {},
+      "expect": {
+        "received": {
+          "traces": {
+            "headers": {
+              "x-parity": "1"
+            }
+          },
+          "metrics": {
+            "headers": {
+              "x-parity": "1"
+            }
+          },
+          "logs": {
+            "headers": {
+              "x-parity": "1"
+            }
+          }
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "export.per_signal_headers",
+      "kind": "export",
+      "requirement": "R2",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "http://{receiver}:4318",
+        "OTEL_EXPORTER_OTLP_TRACES_HEADERS": "x-parity-t=1"
+      },
+      "code": {},
+      "expect": {
+        "received": {
+          "traces": {
+            "headers": {
+              "x-parity-t": "1"
+            }
+          },
+          "metrics": {
+            "headers": {
+              "x-parity-t": {
+                "absent": true
+              }
+            }
+          }
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "export.per_signal_compression",
+      "kind": "export",
+      "requirement": "R2",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "http://{receiver}:4318",
+        "OTEL_EXPORTER_OTLP_TRACES_COMPRESSION": "none",
+        "OTEL_EXPORTER_OTLP_LOGS_COMPRESSION": "gzip"
+      },
+      "code": {},
+      "expect": {
+        "received": {
+          "traces": {
+            "encoding": ""
+          },
+          "logs": {
+            "encoding": "gzip"
+          }
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "export.timeout_env_grpc",
+      "kind": "export",
+      "requirement": "R2",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "http://{receiver}:4317",
+        "OTEL_EXPORTER_OTLP_TIMEOUT": "500"
+      },
+      "code": {},
+      "expect": {
+        "received": {
+          "traces": {
+            "timeout_ms": {
+              "lte": 600,
+              "gte": 1
+            }
+          },
+          "metrics": {
+            "timeout_ms": {
+              "lte": 600,
+              "gte": 1
+            }
+          },
+          "logs": {
+            "timeout_ms": {
+              "lte": 600,
+              "gte": 1
+            }
+          }
+        }
+      },
+      "note": "Asserted via the grpc-timeout header (gRPC only; HTTP timeouts stay in A3 unit tests). Python: the SDK parses *_TIMEOUT as seconds while the spec says milliseconds (design D1.e); A3 adds the helper ms→s shim. Go: the SDK applies the env since A3 (G10: the helper passes no timeout unless set in code). Bound is lte 600, not 500: grpc encodes the remaining deadline and can round it up (501m observed with timeout=0.5 s passed by the helper); 600 still separates ms (500) from a seconds misread (500000) and the 10 s default (10000).",
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "export.per_signal_timeout_grpc",
+      "kind": "export",
+      "requirement": "R2",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "http://{receiver}:4317",
+        "OTEL_EXPORTER_OTLP_TRACES_TIMEOUT": "500"
+      },
+      "code": {},
+      "expect": {
+        "received": {
+          "traces": {
+            "timeout_ms": {
+              "lte": 600,
+              "gte": 1
+            }
+          },
+          "metrics": {
+            "timeout_ms": {
+              "gte": 1000
+            }
+          }
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      },
+      "note": "Asserted via the grpc-timeout header (gRPC only; HTTP timeouts stay in A3 unit tests). Python: the SDK parses *_TIMEOUT as seconds while the spec says milliseconds (design D1.e); A3 adds the helper ms→s shim. Go: the SDK applies the env since A3 (G10: the helper passes no timeout unless set in code). Bound is lte 600, not 500: grpc encodes the remaining deadline and can round it up (501m observed with timeout=0.5 s passed by the helper); 600 still separates ms (500) from a seconds misread (500000) and the 10 s default (10000)."
+    },
+    {
+      "id": "export.traces_exporter_none",
+      "kind": "export",
+      "requirement": "R8",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "http://{receiver}:4317",
+        "OTEL_TRACES_EXPORTER": "none"
+      },
+      "code": {},
+      "expect": {
+        "received": {
+          "traces": {
+            "absent": true
+          },
+          "metrics": {}
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "export.logs_exporter_none",
+      "kind": "export",
+      "requirement": "R8",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "http://{receiver}:4317",
+        "OTEL_LOGS_EXPORTER": "none"
+      },
+      "code": {},
+      "expect": {
+        "received": {
+          "logs": {
+            "absent": true
+          },
+          "traces": {}
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "export.metrics_exporter_none",
+      "kind": "export",
+      "requirement": "R8",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "http://{receiver}:4317",
+        "OTEL_METRICS_EXPORTER": "none"
+      },
+      "code": {},
+      "expect": {
+        "received": {
+          "metrics": {
+            "absent": true
+          },
+          "traces": {}
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "export.logs_exporter_console",
+      "kind": "export",
+      "requirement": "R8",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "http://{receiver}:4317",
+        "OTEL_LOGS_EXPORTER": "console"
+      },
+      "code": {},
+      "expect": {
+        "console": {
+          "regex": "parity-log"
+        },
+        "received": {
+          "logs": {
+            "absent": true
+          }
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "export.logs_exporter_logging_alias",
+      "kind": "export",
+      "requirement": "R8",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "http://{receiver}:4317",
+        "OTEL_LOGS_EXPORTER": "logging"
+      },
+      "code": {},
+      "expect": {
+        "console": {
+          "regex": "parity-log"
+        },
+        "warning": "OTEL_LOGS_EXPORTER",
+        "received": {
+          "logs": {
+            "absent": true
+          }
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "export.logs_exporter_none_list",
+      "kind": "export",
+      "requirement": "R8",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "http://{receiver}:4317",
+        "OTEL_LOGS_EXPORTER": "none,otlp"
+      },
+      "code": {},
+      "expect": {
+        "warning": "OTEL_LOGS_EXPORTER",
+        "received": {
+          "logs": {
+            "absent": true
+          }
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "export.traces_exporter_console",
+      "kind": "export",
+      "requirement": "R8",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "http://{receiver}:4317",
+        "OTEL_TRACES_EXPORTER": "console"
+      },
+      "code": {},
+      "expect": {
+        "console": {
+          "regex": "parity-span"
+        },
+        "received": {
+          "traces": {
+            "absent": true
+          }
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "export.traces_exporter_logging_alias",
+      "kind": "export",
+      "requirement": "R8",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "http://{receiver}:4317",
+        "OTEL_TRACES_EXPORTER": "logging"
+      },
+      "code": {},
+      "expect": {
+        "console": {
+          "regex": "parity-span"
+        },
+        "warning": "OTEL_TRACES_EXPORTER",
+        "received": {
+          "traces": {
+            "absent": true
+          }
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "export.traces_exporter_none_list",
+      "kind": "export",
+      "requirement": "R8",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "http://{receiver}:4317",
+        "OTEL_TRACES_EXPORTER": "none,otlp"
+      },
+      "code": {},
+      "expect": {
+        "warning": "OTEL_TRACES_EXPORTER",
+        "received": {
+          "traces": {
+            "absent": true
+          }
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "export.sdk_disabled",
+      "kind": "export",
+      "requirement": "D1",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "http://{receiver}:4317",
+        "OTEL_SDK_DISABLED": "true"
+      },
+      "code": {},
+      "expect": {
+        "received": {
+          "traces": {
+            "absent": true
+          },
+          "metrics": {
+            "absent": true
+          },
+          "logs": {
+            "absent": true
+          }
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "sampler.default_root_sampled",
+      "kind": "sampler",
+      "requirement": "R6",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc"
+      },
+      "code": {},
+      "input": {
+        "scenario": "root"
+      },
+      "expect": {
+        "sampled": true
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "sampler.default_remote_sampled_parent",
+      "kind": "sampler",
+      "requirement": "R6",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc"
+      },
+      "code": {},
+      "input": {
+        "scenario": "remote_sampled"
+      },
+      "expect": {
+        "sampled": true
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "sampler.default_remote_unsampled_parent",
+      "kind": "sampler",
+      "requirement": "R6",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc"
+      },
+      "code": {},
+      "input": {
+        "scenario": "remote_unsampled"
+      },
+      "expect": {
+        "sampled": false
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "sampler.default_local_child_inherits",
+      "kind": "sampler",
+      "requirement": "R6",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc"
+      },
+      "code": {},
+      "input": {
+        "scenario": "local_child_of_remote_unsampled"
+      },
+      "expect": {
+        "sampled": false
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "sampler.local_child_of_root_sampled",
+      "kind": "sampler",
+      "requirement": "R6",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc"
+      },
+      "code": {},
+      "input": {
+        "scenario": "local_child_of_root"
+      },
+      "expect": {
+        "sampled": true
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "sampler.ratio_alias_is_parentbased",
+      "kind": "sampler",
+      "requirement": "R6",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_HELPER_SAMPLE_RATIO": "0"
+      },
+      "code": {},
+      "input": {
+        "scenario": "remote_sampled"
+      },
+      "expect": {
+        "sampled": true
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "sampler.ratio_alias_applies_to_roots",
+      "kind": "sampler",
+      "requirement": "R6",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_HELPER_SAMPLE_RATIO": "0"
+      },
+      "code": {},
+      "input": {
+        "scenario": "root"
+      },
+      "expect": {
+        "sampled": false
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "sampler.standard_env_beats_alias",
+      "kind": "sampler",
+      "requirement": "R6",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_TRACES_SAMPLER": "always_off",
+        "OTEL_HELPER_SAMPLE_RATIO": "1"
+      },
+      "code": {},
+      "input": {
+        "scenario": "root"
+      },
+      "expect": {
+        "sampled": false
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "sampler.traces_sampler_arg_honored",
+      "kind": "sampler",
+      "requirement": "R6",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_TRACES_SAMPLER": "traceidratio",
+        "OTEL_TRACES_SAMPLER_ARG": "0"
+      },
+      "code": {},
+      "input": {
+        "scenario": "root"
+      },
+      "expect": {
+        "sampled": false
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "sampler.unknown_env_uses_default",
+      "kind": "sampler",
+      "requirement": "R6",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_TRACES_SAMPLER": "bogus"
+      },
+      "code": {},
+      "input": {
+        "scenario": "root"
+      },
+      "expect": {
+        "sampled": true,
+        "error": {
+          "absent": true
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "sampler.unknown_env_warns",
+      "kind": "sampler",
+      "requirement": "R6",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_TRACES_SAMPLER": "bogus"
+      },
+      "code": {},
+      "input": {
+        "scenario": "root"
+      },
+      "expect": {
+        "warning": "OTEL_TRACES_SAMPLER"
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "debug.root_span_marked",
+      "kind": "sampler",
+      "requirement": "R9",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_HELPER_DEBUG_LEVEL": "true"
+      },
+      "code": {},
+      "input": {
+        "scenario": "root"
+      },
+      "expect": {
+        "attributes": {
+          "debug": "true"
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "debug.remote_parent_entry_span_marked",
+      "kind": "sampler",
+      "requirement": "R9",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_HELPER_DEBUG_LEVEL": "true"
+      },
+      "code": {},
+      "input": {
+        "scenario": "remote_sampled"
+      },
+      "expect": {
+        "attributes": {
+          "debug": "true"
+        }
+      },
+      "status": {
+        "go": "xfail:A9",
+        "python": "xfail:A9",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "debug.local_child_not_marked",
+      "kind": "sampler",
+      "requirement": "R9",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_HELPER_DEBUG_LEVEL": "true"
+      },
+      "code": {},
+      "input": {
+        "scenario": "local_child_of_root"
+      },
+      "expect": {
+        "attributes": {
+          "debug": {
+            "absent": true
+          }
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "debug.off_ignores_inbound_tracestate",
+      "kind": "sampler",
+      "requirement": "R9",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc"
+      },
+      "code": {},
+      "input": {
+        "scenario": "remote_sampled_debug_tracestate"
+      },
+      "expect": {
+        "attributes": {
+          "debug": {
+            "absent": true
+          }
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "debug.off_ignores_inbound_baggage",
+      "kind": "sampler",
+      "requirement": "R9",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc"
+      },
+      "code": {},
+      "input": {
+        "scenario": "remote_sampled_debug_baggage"
+      },
+      "expect": {
+        "attributes": {
+          "debug": {
+            "absent": true
+          }
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "propagation.default_w3c",
+      "kind": "propagation",
+      "requirement": "R8",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc"
+      },
+      "code": {},
+      "expect": {
+        "headers": [
+          "baggage",
+          "traceparent"
+        ]
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "propagation.env_honored",
+      "kind": "propagation",
+      "requirement": "R8",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_PROPAGATORS": "baggage"
+      },
+      "code": {},
+      "expect": {
+        "headers": [
+          "baggage"
+        ]
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "http.health_exact_no_span",
+      "kind": "http_server",
+      "requirement": "R7",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc"
+      },
+      "code": {},
+      "input": {
+        "requests": [
+          "/health",
+          "/healthz",
+          "/ready",
+          "/ping"
+        ]
+      },
+      "expect": {
+        "server_spans": 0
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "http.health_with_remote_parent_no_span",
+      "kind": "http_server",
+      "requirement": "R7",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc"
+      },
+      "code": {},
+      "input": {
+        "requests": [
+          "/health"
+        ],
+        "traceparent": "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01"
+      },
+      "expect": {
+        "server_spans": 0
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "http.health_child_span_dropped",
+      "kind": "http_server",
+      "requirement": "R7",
+      "note": "A span the handler starts under a health request must not be recorded either (D5: children follow the DROP).",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc"
+      },
+      "code": {},
+      "input": {
+        "requests": [
+          "/health"
+        ],
+        "child_span": true
+      },
+      "expect": {
+        "server_spans": 0,
+        "handler_child_spans": 0
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "http.health_case_insensitive",
+      "kind": "http_server",
+      "requirement": "R7",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc"
+      },
+      "code": {},
+      "input": {
+        "requests": [
+          "/Health",
+          "/READY"
+        ]
+      },
+      "expect": {
+        "server_spans": 0
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "http.health_trailing_slash_and_query",
+      "kind": "http_server",
+      "requirement": "R7",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc"
+      },
+      "code": {},
+      "input": {
+        "requests": [
+          "/health/",
+          "/healthz?probe=1"
+        ]
+      },
+      "expect": {
+        "server_spans": 0
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "http.health_full_default_list",
+      "kind": "http_server",
+      "requirement": "R7",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc"
+      },
+      "code": {},
+      "input": {
+        "requests": [
+          "/readyz",
+          "/live",
+          "/livez",
+          "/metrics"
+        ]
+      },
+      "expect": {
+        "server_spans": 0
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "http.health_prefix_or_substring_traced",
+      "kind": "http_server",
+      "requirement": "R7",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc"
+      },
+      "code": {},
+      "input": {
+        "requests": [
+          "/users/ping",
+          "/healthcare",
+          "/health/live"
+        ]
+      },
+      "expect": {
+        "server_spans": 3
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "http.health_counted_in_metrics",
+      "kind": "http_server",
+      "requirement": "R7",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc"
+      },
+      "code": {},
+      "input": {
+        "requests": [
+          "/health"
+        ]
+      },
+      "expect": {
+        "requests_counted": 1
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "http.non_health_traced_and_counted",
+      "kind": "http_server",
+      "requirement": "R7",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc"
+      },
+      "code": {},
+      "input": {
+        "requests": [
+          "/orders"
+        ]
+      },
+      "expect": {
+        "server_spans": 1,
+        "requests_counted": 1
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "http.health_paths_override",
+      "kind": "http_server",
+      "requirement": "R7",
+      "note": "A code option replaces the default health list (Go WithHealthPaths, design D5 'list overridable in code'); matching rules unchanged.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc"
+      },
+      "code": {
+        "health_paths": [
+          "/status"
+        ]
+      },
+      "input": {
+        "requests": [
+          "/Status/",
+          "/health"
+        ]
+      },
+      "expect": {
+        "server_spans": 1,
+        "requests_counted": 2
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "skip:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "grpc.health_check_no_span",
+      "kind": "grpc_server",
+      "requirement": "R7",
+      "note": "Go 0.2.0: the unary-server filter reads InterceptorInfo.Method, which otelgrpc v0.56 leaves empty for unary servers, so Check is traced (and counted). Since A7-go the D5 health sampler drops the span (the RPC is still counted).",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc"
+      },
+      "code": {},
+      "input": {
+        "method": "/grpc.health.v1.Health/Check"
+      },
+      "expect": {
+        "server_spans": 0
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "grpc.health_call_succeeds",
+      "kind": "grpc_server",
+      "requirement": "R7",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc"
+      },
+      "code": {},
+      "input": {
+        "method": "/grpc.health.v1.Health/Check"
+      },
+      "expect": {
+        "call_ok": true
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "grpc.health_watch_no_span",
+      "kind": "grpc_server",
+      "requirement": "R7",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc"
+      },
+      "code": {},
+      "input": {
+        "method": "/grpc.health.v1.Health/Watch"
+      },
+      "expect": {
+        "server_spans": 0
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "grpc.health_counted_in_metrics",
+      "kind": "grpc_server",
+      "requirement": "R7",
+      "note": "R7: counted only where the instrumentation emits RPC metrics; Python contrib grpc emits none (documented gap, not a task).",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc"
+      },
+      "code": {},
+      "input": {
+        "method": "/grpc.health.v1.Health/Check"
+      },
+      "expect": {
+        "rpcs_counted": 1
+      },
+      "status": {
+        "go": "pass",
+        "python": "skip:no-upstream-rpc-metrics",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "grpc.health_watch_counted_in_metrics",
+      "kind": "grpc_server",
+      "requirement": "R7",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc"
+      },
+      "code": {},
+      "input": {
+        "method": "/grpc.health.v1.Health/Watch"
+      },
+      "expect": {
+        "rpcs_counted": 1
+      },
+      "status": {
+        "go": "pass",
+        "python": "skip:no-upstream-rpc-metrics",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      },
+      "note": "otelgrpc v0.56 stream interceptors recorded no RPC duration metric; the v0.72 stats handler (A2) counts Watch in rpc.server.call.duration."
+    },
+    {
+      "id": "grpc.non_health_traced",
+      "kind": "grpc_server",
+      "requirement": "R7",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc"
+      },
+      "code": {},
+      "input": {
+        "method": "/parity.v1.Echo/Ping"
+      },
+      "expect": {
+        "server_spans": 1
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "logging.console_when_no_exporter",
+      "kind": "logging",
+      "requirement": "D6/G3/P10",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "ENVIRONMENT": "DEV"
+      },
+      "code": {},
+      "expect": {
+        "console": {
+          "regex": "parity-console-record"
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "logging.console_when_logs_exporter_none",
+      "kind": "logging",
+      "requirement": "D6/R8",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "ENVIRONMENT": "DEV",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "http://127.0.0.1:9",
+        "OTEL_LOGS_EXPORTER": "none"
+      },
+      "code": {},
+      "expect": {
+        "console": {
+          "regex": "parity-console-record"
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "metrics.scrape_only_otel_series",
+      "kind": "metrics_scrape",
+      "requirement": "P14",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc"
+      },
+      "code": {},
+      "expect": {
+        "scrape": {
+          "all": [
+            {
+              "regex": "parity_requests_total"
+            },
+            {
+              "not_contains": "process_cpu_seconds_total"
+            },
+            {
+              "not_contains": "python_gc_objects_collected_total"
+            }
+          ]
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "metrics.scrape_inactive_exporter_none",
+      "kind": "metrics_scrape",
+      "requirement": "G1",
+      "note": "Design 'Mounted /metrics handler status': Prometheus deliberately not active answers 200 with an empty body (a 503 would mark the target up=0); 503 stays for before/failed/after-shutdown, covered by unit tests.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_METRICS_EXPORTER": "none"
+      },
+      "code": {},
+      "expect": {
+        "scrape_status": 200,
+        "scrape": ""
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "metrics.scrape_inactive_sdk_disabled",
+      "kind": "metrics_scrape",
+      "requirement": "G1",
+      "note": "Design 'Mounted /metrics handler status': Prometheus deliberately not active answers 200 with an empty body (a 503 would mark the target up=0); 503 stays for before/failed/after-shutdown, covered by unit tests.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_SDK_DISABLED": "true"
+      },
+      "code": {},
+      "expect": {
+        "scrape_status": 200,
+        "scrape": ""
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "export.certificate_with_plaintext_http_does_not_fail",
+      "kind": "export",
+      "requirement": "R8/D1.c",
+      "note": "Go SDK New() rejects TLS config on an insecure HTTP endpoint; the helper drops the env TLS config for that signal and warns (design D1.c corollary).",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "http://{receiver}:4318",
+        "OTEL_EXPORTER_OTLP_PROTOCOL": "http/protobuf",
+        "OTEL_EXPORTER_OTLP_CERTIFICATE": "{receiver_ca}"
+      },
+      "code": {},
+      "expect": {
+        "error": {
+          "absent": true
+        },
+        "warning": "OTEL_EXPORTER_OTLP_CERTIFICATE",
+        "received": {
+          "traces": {
+            "proto": "http",
+            "port": 4318,
+            "tls": false,
+            "path": "/v1/traces"
+          },
+          "metrics": {
+            "proto": "http",
+            "port": 4318,
+            "tls": false,
+            "path": "/v1/metrics"
+          },
+          "logs": {
+            "proto": "http",
+            "port": 4318,
+            "tls": false,
+            "path": "/v1/logs"
+          }
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "propagation.env_unsupported_b3_warns",
+      "kind": "propagation",
+      "requirement": "R8",
+      "note": "Only tracecontext, baggage and none are supported (design D1 propagators row); other values warn and are skipped, leaving the default when nothing supported remains.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_PROPAGATORS": "b3"
+      },
+      "code": {},
+      "expect": {
+        "headers": [
+          "baggage",
+          "traceparent"
+        ],
+        "warning": "OTEL_PROPAGATORS"
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "export.code_generic_endpoint_beats_env_per_signal",
+      "kind": "export",
+      "requirement": "R1/R2 (D1 precedence)",
+      "note": "Precedence: code per-signal > code generic > env per-signal > env generic.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT": "http://{receiver}:80/custom/traces"
+      },
+      "code": {
+        "otel_endpoint": "http://{receiver}:4318",
+        "otlp_protocol": "http/protobuf"
+      },
+      "expect": {
+        "received": {
+          "traces": {
+            "proto": "http",
+            "port": 4318,
+            "tls": false,
+            "path": "/v1/traces"
+          }
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "export.certificate_with_plaintext_grpc",
+      "kind": "export",
+      "requirement": "R2/D1 edge-case rulings",
+      "note": "Scheme wins: http:// stays plaintext although a readable CA is set (Go SDK prefers env TLS credentials over Insecure).",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "http://{receiver}:4317",
+        "OTEL_EXPORTER_OTLP_CERTIFICATE": "{receiver_ca}"
+      },
+      "code": {},
+      "expect": {
+        "warning": "OTEL_EXPORTER_OTLP_CERTIFICATE",
+        "received": {
+          "traces": {
+            "proto": "grpc",
+            "port": 4317,
+            "tls": false
+          },
+          "metrics": {
+            "proto": "grpc",
+            "port": 4317,
+            "tls": false
+          },
+          "logs": {
+            "proto": "grpc",
+            "port": 4317,
+            "tls": false
+          }
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "export.per_signal_certificate_with_plaintext_grpc",
+      "kind": "export",
+      "requirement": "R2/D1 edge-case rulings",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "http://{receiver}:4317",
+        "OTEL_EXPORTER_OTLP_TRACES_CERTIFICATE": "{receiver_ca}"
+      },
+      "code": {},
+      "expect": {
+        "warning": "OTEL_EXPORTER_OTLP_TRACES_CERTIFICATE",
+        "received": {
+          "traces": {
+            "proto": "grpc",
+            "port": 4317,
+            "tls": false
+          },
+          "metrics": {
+            "proto": "grpc",
+            "port": 4317,
+            "tls": false
+          },
+          "logs": {
+            "proto": "grpc",
+            "port": 4317,
+            "tls": false
+          }
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "export.schemeless_insecure_with_certificate_grpc",
+      "kind": "export",
+      "requirement": "R1/R2/D1 edge-case rulings",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "{receiver}:4317",
+        "OTEL_EXPORTER_OTLP_INSECURE": "true",
+        "OTEL_EXPORTER_OTLP_CERTIFICATE": "{receiver_ca}"
+      },
+      "code": {},
+      "expect": {
+        "warning": "OTEL_EXPORTER_OTLP_CERTIFICATE",
+        "received": {
+          "traces": {
+            "proto": "grpc",
+            "port": 4317,
+            "tls": false
+          },
+          "metrics": {
+            "proto": "grpc",
+            "port": 4317,
+            "tls": false
+          },
+          "logs": {
+            "proto": "grpc",
+            "port": 4317,
+            "tls": false
+          }
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "export.compression_env_uppercase_gzip",
+      "kind": "export",
+      "requirement": "R2/D1 edge-case rulings",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "http://{receiver}:4318",
+        "OTEL_EXPORTER_OTLP_COMPRESSION": "GZIP"
+      },
+      "code": {},
+      "expect": {
+        "received": {
+          "traces": {
+            "encoding": "gzip"
+          },
+          "metrics": {
+            "encoding": "gzip"
+          },
+          "logs": {
+            "encoding": "gzip"
+          }
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "export.compression_env_unknown_warns",
+      "kind": "export",
+      "requirement": "R2/R8/D1 edge-case rulings",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "http://{receiver}:4318",
+        "OTEL_EXPORTER_OTLP_COMPRESSION": "zstd"
+      },
+      "code": {},
+      "expect": {
+        "warning": "OTEL_EXPORTER_OTLP_COMPRESSION",
+        "received": {
+          "traces": {
+            "encoding": "gzip"
+          },
+          "metrics": {
+            "encoding": "gzip"
+          },
+          "logs": {
+            "encoding": "gzip"
+          }
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "export.per_signal_timeout_invalid_falls_back_grpc",
+      "kind": "export",
+      "requirement": "R8/D1 edge-case rulings",
+      "note": "Garbage per-signal timeout falls back to the generic one (ms). Bound 600: grpc-timeout carries the remaining deadline.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "http://{receiver}:4317",
+        "OTEL_EXPORTER_OTLP_TIMEOUT": "500",
+        "OTEL_EXPORTER_OTLP_TRACES_TIMEOUT": "abc"
+      },
+      "code": {},
+      "expect": {
+        "warning": "OTEL_EXPORTER_OTLP_TRACES_TIMEOUT",
+        "received": {
+          "traces": {
+            "timeout_ms": {
+              "lte": 600,
+              "gte": 1
+            }
+          }
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "export.timeout_env_zero_falls_back_grpc",
+      "kind": "export",
+      "requirement": "R8/D1 edge-case rulings",
+      "note": "Zero is invalid: warn and use 10000 ms. Runners shut down with a ~5 s deadline, which caps the grpc-timeout seen on metrics/logs, hence gte 1000.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "http://{receiver}:4317",
+        "OTEL_EXPORTER_OTLP_TIMEOUT": "0"
+      },
+      "code": {},
+      "expect": {
+        "warning": "OTEL_EXPORTER_OTLP_TIMEOUT",
+        "received": {
+          "traces": {
+            "timeout_ms": {
+              "gte": 1000,
+              "lte": 10100
+            }
+          },
+          "metrics": {
+            "timeout_ms": {
+              "gte": 1000,
+              "lte": 10100
+            }
+          },
+          "logs": {
+            "timeout_ms": {
+              "gte": 1000,
+              "lte": 10100
+            }
+          }
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "export.headers_malformed_item_skipped",
+      "kind": "export",
+      "requirement": "R2/R8/D1 edge-case rulings",
+      "note": "Valid pairs reach every signal; the malformed item is warned by position only. SDK messages (which echo the raw item) are out of scope, so redaction is asserted on helper_log.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "http://{receiver}:4317",
+        "OTEL_EXPORTER_OTLP_HEADERS": "x-parity-a=1,parity-secret-broken"
+      },
+      "code": {},
+      "expect": {
+        "warning": "OTEL_EXPORTER_OTLP_HEADERS",
+        "helper_log": {
+          "all": [
+            {
+              "not_contains": "parity-secret-broken"
+            },
+            {
+              "not_contains": "x-parity-a=1"
+            }
+          ]
+        },
+        "received": {
+          "traces": {
+            "headers": {
+              "x-parity-a": "1"
+            }
+          },
+          "metrics": {
+            "headers": {
+              "x-parity-a": "1"
+            }
+          },
+          "logs": {
+            "headers": {
+              "x-parity-a": "1"
+            }
+          }
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "export.unsupported_scheme_not_configured",
+      "kind": "export",
+      "requirement": "R2/D1 edge-case rulings",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "http://{receiver}:4317",
+        "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT": "unix:///tmp/parity.sock"
+      },
+      "code": {},
+      "expect": {
+        "warning": "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT",
+        "received": {
+          "traces": {
+            "absent": true
+          },
+          "metrics": {
+            "proto": "grpc",
+            "port": 4317,
+            "tls": false
+          }
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "export.invalid_per_signal_endpoint_falls_back",
+      "kind": "export",
+      "requirement": "R2/D1 edge-case rulings",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "http://{receiver}:4317",
+        "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT": "http://[::1"
+      },
+      "code": {},
+      "expect": {
+        "warning": "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT",
+        "received": {
+          "traces": {
+            "proto": "grpc",
+            "port": 4317,
+            "tls": false
+          }
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "export.endpoint_userinfo_query_stripped_http",
+      "kind": "export",
+      "requirement": "R8/D1 edge-case rulings",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "http://u:parity-secret-pw@{receiver}:4318/otlp?token=parity-secret-q",
+        "OTEL_EXPORTER_OTLP_PROTOCOL": "http/protobuf"
+      },
+      "code": {},
+      "expect": {
+        "warning": "OTEL_EXPORTER_OTLP_ENDPOINT",
+        "log": {
+          "all": [
+            {
+              "not_contains": "parity-secret-pw"
+            },
+            {
+              "not_contains": "parity-secret-q"
+            }
+          ]
+        },
+        "received": {
+          "traces": {
+            "proto": "http",
+            "port": 4318,
+            "tls": false,
+            "path": "/otlp/v1/traces"
+          },
+          "logs": {
+            "path": "/otlp/v1/logs"
+          }
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "svc.whitespace_otel_service_name_is_unset",
+      "kind": "resolve",
+      "requirement": "R5/D1 edge-case rulings",
+      "env": {
+        "OTEL_SERVICE_NAME": "   ",
+        "OTEL_RESOURCE_ATTRIBUTES": "service.name=svc-ra"
+      },
+      "code": {},
+      "expect": {
+        "resource": {
+          "service.name": "svc-ra"
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "config.code_sample_ratio_out_of_range_fails",
+      "kind": "resolve",
+      "requirement": "R8/D1 edge-case rulings",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc"
+      },
+      "code": {
+        "sample_ratio": 1.5
+      },
+      "expect": {
+        "error": "sample_ratio"
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "propagation.env_mixed_case",
+      "kind": "propagation",
+      "requirement": "R8/D1 edge-case rulings",
+      "note": "Propagator names are case-insensitive; Python crashed at import before A3 validation.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_PROPAGATORS": "TraceContext,Baggage"
+      },
+      "code": {},
+      "expect": {
+        "error": {
+          "absent": true
+        },
+        "headers": [
+          "baggage",
+          "traceparent"
+        ]
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "propagation.env_empty_tokens",
+      "kind": "propagation",
+      "requirement": "R8/D1 edge-case rulings",
+      "note": "Empty tokens and a trailing comma are dropped.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_PROPAGATORS": "tracecontext,,baggage,"
+      },
+      "code": {},
+      "expect": {
+        "error": {
+          "absent": true
+        },
+        "headers": [
+          "baggage",
+          "traceparent"
+        ]
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "export.insecure_invalid_value_is_false",
+      "kind": "export",
+      "requirement": "R2/D1 edge-case rulings",
+      "note": "A non-boolean INSECURE is false (warned); with http:// the scheme wins: plaintext.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "http://{receiver}:4317",
+        "OTEL_EXPORTER_OTLP_INSECURE": "yes"
+      },
+      "code": {},
+      "expect": {
+        "warning": "OTEL_EXPORTER_OTLP_INSECURE",
+        "received": {
+          "traces": {
+            "proto": "grpc",
+            "port": 4317,
+            "tls": false
+          },
+          "metrics": {
+            "proto": "grpc",
+            "port": 4317,
+            "tls": false
+          },
+          "logs": {
+            "proto": "grpc",
+            "port": 4317,
+            "tls": false
+          }
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "config.code_insecure_contradicts_scheme_fails",
+      "kind": "resolve",
+      "requirement": "R8/D1 edge-case rulings",
+      "note": "Code insecure contradicting a code URL's scheme fails fast naming the option.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc"
+      },
+      "code": {
+        "otel_endpoint": "https://collector:4317",
+        "insecure": true
+      },
+      "expect": {
+        "error": "insecure"
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "config.sdk_disabled_short_circuits",
+      "kind": "resolve",
+      "requirement": "R8/D1 edge-case rulings",
+      "note": "OTEL_SDK_DISABLED=true: no SDK providers installed (the resource snapshot comes from the installed TracerProvider).",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_SDK_DISABLED": "true"
+      },
+      "code": {},
+      "expect": {
+        "error": {
+          "absent": true
+        },
+        "resource": {
+          "service.name": {
+            "absent": true
+          }
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "export.per_signal_empty_host_falls_back",
+      "kind": "export",
+      "requirement": "R2/D1 edge-case rulings (fallback order)",
+      "note": "A parseable but rejected per-signal URL (empty host) falls back to the generic endpoint, which must actually receive the signal.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "http://{receiver}:4317",
+        "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT": "http:///v1/traces"
+      },
+      "code": {},
+      "expect": {
+        "warning": "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT",
+        "received": {
+          "traces": {
+            "proto": "grpc",
+            "port": 4317,
+            "tls": false
+          }
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "export.per_signal_schemeless_insecure_override_tls",
+      "kind": "export",
+      "requirement": "R1/R2/D1 edge-case rulings",
+      "note": "Schemeless per-signal endpoint; the per-signal INSECURE=false beats the generic INSECURE=true, so metrics use TLS.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_METRICS_ENDPOINT": "{receiver}:14317",
+        "OTEL_EXPORTER_OTLP_INSECURE": "true",
+        "OTEL_EXPORTER_OTLP_METRICS_INSECURE": "false",
+        "OTEL_EXPORTER_OTLP_CERTIFICATE": "{receiver_ca}"
+      },
+      "code": {},
+      "expect": {
+        "received": {
+          "metrics": {
+            "proto": "grpc",
+            "port": 14317,
+            "tls": true
+          },
+          "traces": {
+            "absent": true
+          },
+          "logs": {
+            "absent": true
+          }
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "export.endpoint_whitespace_trimmed",
+      "kind": "export",
+      "requirement": "R1/D1 edge-case rulings",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "  http://{receiver}:4317\n"
+      },
+      "code": {},
+      "expect": {
+        "received": {
+          "traces": {
+            "proto": "grpc",
+            "port": 4317,
+            "tls": false
+          },
+          "metrics": {
+            "proto": "grpc",
+            "port": 4317,
+            "tls": false
+          },
+          "logs": {
+            "proto": "grpc",
+            "port": 4317,
+            "tls": false
+          }
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "export.headers_duplicate_keys_last_wins",
+      "kind": "export",
+      "requirement": "R2/D1 edge-case rulings (header details)",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "http://{receiver}:4317",
+        "OTEL_EXPORTER_OTLP_HEADERS": "x-parity-d=1,X-Parity-D=2"
+      },
+      "code": {},
+      "expect": {
+        "received": {
+          "traces": {
+            "headers": {
+              "x-parity-d": "2"
+            }
+          },
+          "metrics": {
+            "headers": {
+              "x-parity-d": "2"
+            }
+          },
+          "logs": {
+            "headers": {
+              "x-parity-d": "2"
+            }
+          }
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "export.headers_encoded_key_skipped",
+      "kind": "export",
+      "requirement": "R2/R8/D1 edge-case rulings (header details)",
+      "note": "Keys are not percent-decoded: x-parity%2Dk is outside [A-Za-z0-9._-] and skipped; the other pair is delivered.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "http://{receiver}:4317",
+        "OTEL_EXPORTER_OTLP_HEADERS": "x-parity%2Dk=v,x-parity-a=1"
+      },
+      "code": {},
+      "expect": {
+        "warning": "OTEL_EXPORTER_OTLP_HEADERS",
+        "received": {
+          "traces": {
+            "headers": {
+              "x-parity-a": "1",
+              "x-parity-k": {
+                "absent": true
+              }
+            }
+          },
+          "metrics": {
+            "headers": {
+              "x-parity-a": "1",
+              "x-parity-k": {
+                "absent": true
+              }
+            }
+          },
+          "logs": {
+            "headers": {
+              "x-parity-a": "1",
+              "x-parity-k": {
+                "absent": true
+              }
+            }
+          }
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "export.headers_invalid_escape_literal",
+      "kind": "export",
+      "requirement": "R2/D1 edge-case rulings (header details)",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "http://{receiver}:4317",
+        "OTEL_EXPORTER_OTLP_HEADERS": "x-parity-e=a%zzb"
+      },
+      "code": {},
+      "expect": {
+        "warning": "OTEL_EXPORTER_OTLP_HEADERS",
+        "helper_log": {
+          "not_contains": "a%zzb"
+        },
+        "received": {
+          "traces": {
+            "headers": {
+              "x-parity-e": "a%zzb"
+            }
+          },
+          "metrics": {
+            "headers": {
+              "x-parity-e": "a%zzb"
+            }
+          },
+          "logs": {
+            "headers": {
+              "x-parity-e": "a%zzb"
+            }
+          }
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "export.per_signal_compression_invalid_falls_back",
+      "kind": "export",
+      "requirement": "R2/D1 edge-case rulings (fallback order)",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "http://{receiver}:4318",
+        "OTEL_EXPORTER_OTLP_TRACES_COMPRESSION": "deflate",
+        "OTEL_EXPORTER_OTLP_COMPRESSION": "none"
+      },
+      "code": {},
+      "expect": {
+        "warning": "OTEL_EXPORTER_OTLP_TRACES_COMPRESSION",
+        "received": {
+          "traces": {
+            "encoding": ""
+          },
+          "metrics": {
+            "encoding": ""
+          }
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "redaction.password_with_slash",
+      "kind": "resolve",
+      "requirement": "R8/D1 edge-case rulings",
+      "note": "A '/' in the password ends the authority for URL parsers; diagnostics must show <unparseable URL> or the host, never the password.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "http://user:parity-secret/pw@collector:4317"
+      },
+      "code": {},
+      "expect": {
+        "error": {
+          "absent": true
+        },
+        "helper_log": {
+          "all": [
+            {
+              "regex": "OTEL_EXPORTER_OTLP_ENDPOINT"
+            },
+            {
+              "not_contains": "parity-secret"
+            }
+          ]
+        },
+        "log": {
+          "not_contains": "parity-secret"
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "redaction.password_with_hash",
+      "kind": "resolve",
+      "requirement": "R8/D1 edge-case rulings",
+      "note": "A '#' in the password starts a fragment for URL parsers.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "http://user:parity-secret#pw@collector:4317"
+      },
+      "code": {},
+      "expect": {
+        "error": {
+          "absent": true
+        },
+        "helper_log": {
+          "all": [
+            {
+              "regex": "OTEL_EXPORTER_OTLP_ENDPOINT"
+            },
+            {
+              "not_contains": "parity-secret"
+            }
+          ]
+        },
+        "log": {
+          "not_contains": "parity-secret"
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "redaction.headers_all_malformed_never_logged",
+      "kind": "resolve",
+      "requirement": "R8/D1 edge-case rulings",
+      "note": "No valid header item: the SDK must not re-parse the env var and echo it (Python masks it during exporter construction). Go: helper diagnostics pass (position only) but the OTel Go SDK's global logger echoes the raw value (parse headers) — out of the helper's control per the design D1 edge-case ruling on the SDK's own log output (G7 forbids masking env).",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "http://collector:4317",
+        "OTEL_EXPORTER_OTLP_HEADERS": "Authorization Bearer parity-secret-tok"
+      },
+      "code": {},
+      "expect": {
+        "error": {
+          "absent": true
+        },
+        "warning": "OTEL_EXPORTER_OTLP_HEADERS",
+        "log": {
+          "not_contains": "parity-secret-tok"
+        }
+      },
+      "status": {
+        "go": "skip:go-sdk-logs-env-values",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "config.timeout_env_out_of_range_clamped",
+      "kind": "export",
+      "requirement": "R8/D1 edge-case rulings",
+      "note": "Valid decimal above 24 h is clamped to 24 h with a warning; the wire timeout must exceed the 10 s default (it is bounded by the runner's shutdown deadline).",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "http://{receiver}:4317",
+        "OTEL_EXPORTER_OTLP_TIMEOUT": "999999999999"
+      },
+      "code": {},
+      "expect": {
+        "error": {
+          "absent": true
+        },
+        "warning": "OTEL_EXPORTER_OTLP_TIMEOUT",
+        "received": {
+          "traces": {
+            "timeout_ms": {
+              "gte": 10001
+            }
+          }
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "export.code_compression_none_beats_env_gzip_grpc",
+      "kind": "export",
+      "requirement": "R2/D1 (code > env)",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_COMPRESSION": "gzip"
+      },
+      "code": {
+        "otel_endpoint": "http://{receiver}:4317",
+        "compression": "none"
+      },
+      "expect": {
+        "received": {
+          "traces": {
+            "encoding": {
+              "not_contains": "gzip"
+            }
+          },
+          "metrics": {
+            "encoding": {
+              "not_contains": "gzip"
+            }
+          },
+          "logs": {
+            "encoding": {
+              "not_contains": "gzip"
+            }
+          }
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "export.code_compression_none_beats_env_gzip_http",
+      "kind": "export",
+      "requirement": "R2/D1 (code > env)",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_COMPRESSION": "gzip"
+      },
+      "code": {
+        "otel_endpoint": "http://{receiver}:4318",
+        "otlp_protocol": "http/protobuf",
+        "compression": "none"
+      },
+      "expect": {
+        "received": {
+          "traces": {
+            "encoding": {
+              "not_contains": "gzip"
+            }
+          },
+          "metrics": {
+            "encoding": {
+              "not_contains": "gzip"
+            }
+          },
+          "logs": {
+            "encoding": {
+              "not_contains": "gzip"
+            }
+          }
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "export.timeout_env_above_batch_default_grpc",
+      "kind": "export",
+      "requirement": "R2/D1 edge-case rulings (effective export deadline)",
+      "note": "The resolved timeout must bound the export beyond the SDK processors' own 30 s timeouts. Runners need a shutdown deadline above 60 s for this case. The metrics assertion checks only the exporter's grpc-timeout; the periodic reader's own deadline is covered by Go's TestPeriodicReaderUsesResolvedTimeout.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "http://{receiver}:4317",
+        "OTEL_EXPORTER_OTLP_TIMEOUT": "60000"
+      },
+      "code": {},
+      "expect": {
+        "received": {
+          "traces": {
+            "timeout_ms": {
+              "gte": 30001,
+              "lte": 60100
+            }
+          },
+          "metrics": {
+            "timeout_ms": {
+              "gte": 30001,
+              "lte": 60100
+            }
+          },
+          "logs": {
+            "timeout_ms": {
+              "gte": 30001,
+              "lte": 60100
+            }
+          }
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "export.timeout_env_exponent_falls_back_default_grpc",
+      "kind": "export",
+      "requirement": "R8/D1 edge-case rulings (timeout syntax)",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "http://{receiver}:4317",
+        "OTEL_EXPORTER_OTLP_TIMEOUT": "1e3"
+      },
+      "code": {},
+      "expect": {
+        "warning": "OTEL_EXPORTER_OTLP_TIMEOUT",
+        "received": {
+          "traces": {
+            "timeout_ms": {
+              "gte": 9000,
+              "lte": 10100
+            }
+          },
+          "metrics": {
+            "timeout_ms": {
+              "gte": 9000,
+              "lte": 10100
+            }
+          },
+          "logs": {
+            "timeout_ms": {
+              "gte": 9000,
+              "lte": 10100
+            }
+          }
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "export.timeout_env_sign_falls_back_default_grpc",
+      "kind": "export",
+      "requirement": "R8/D1 edge-case rulings (timeout syntax)",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "http://{receiver}:4317",
+        "OTEL_EXPORTER_OTLP_TIMEOUT": "+5"
+      },
+      "code": {},
+      "expect": {
+        "warning": "OTEL_EXPORTER_OTLP_TIMEOUT",
+        "received": {
+          "traces": {
+            "timeout_ms": {
+              "gte": 9000,
+              "lte": 10100
+            }
+          },
+          "metrics": {
+            "timeout_ms": {
+              "gte": 9000,
+              "lte": 10100
+            }
+          },
+          "logs": {
+            "timeout_ms": {
+              "gte": 9000,
+              "lte": 10100
+            }
+          }
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "export.per_signal_timeout_leading_dot_falls_back_grpc",
+      "kind": "export",
+      "requirement": "R8/D1 edge-case rulings (timeout syntax)",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "http://{receiver}:4317",
+        "OTEL_EXPORTER_OTLP_TIMEOUT": "500",
+        "OTEL_EXPORTER_OTLP_TRACES_TIMEOUT": ".5"
+      },
+      "code": {},
+      "expect": {
+        "warning": "OTEL_EXPORTER_OTLP_TRACES_TIMEOUT",
+        "received": {
+          "traces": {
+            "timeout_ms": {
+              "gte": 100,
+              "lte": 600
+            }
+          }
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      },
+      "note": "gte lowered 300→100 (2026-10-28): 212 ms observed under load; 100 still separates the 1 ms clamp from the 500 ms fallback."
+    },
+    {
+      "id": "export.per_signal_timeout_trailing_dot_falls_back_grpc",
+      "kind": "export",
+      "requirement": "R8/D1 edge-case rulings (timeout syntax)",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "http://{receiver}:4317",
+        "OTEL_EXPORTER_OTLP_TIMEOUT": "500",
+        "OTEL_EXPORTER_OTLP_TRACES_TIMEOUT": "5."
+      },
+      "code": {},
+      "expect": {
+        "warning": "OTEL_EXPORTER_OTLP_TRACES_TIMEOUT",
+        "received": {
+          "traces": {
+            "timeout_ms": {
+              "gte": 100,
+              "lte": 600
+            }
+          }
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      },
+      "note": "gte lowered 300→100 (2026-10-28): 212 ms observed under load; 100 still separates the 1 ms clamp from the 500 ms fallback."
+    },
+    {
+      "id": "export.headers_value_literal_whole",
+      "kind": "export",
+      "requirement": "R2/D1 edge-case rulings (header details)",
+      "note": "One invalid escape keeps the whole value literal (no partial decoding).",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "http://{receiver}:4317",
+        "OTEL_EXPORTER_OTLP_HEADERS": "x-parity-l=a%20b%zz"
+      },
+      "code": {},
+      "expect": {
+        "warning": "OTEL_EXPORTER_OTLP_HEADERS",
+        "received": {
+          "traces": {
+            "headers": {
+              "x-parity-l": "a%20b%zz"
+            }
+          },
+          "metrics": {
+            "headers": {
+              "x-parity-l": "a%20b%zz"
+            }
+          },
+          "logs": {
+            "headers": {
+              "x-parity-l": "a%20b%zz"
+            }
+          }
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "export.headers_value_non_utf8_literal",
+      "kind": "export",
+      "requirement": "R2/D1 edge-case rulings (header details)",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "http://{receiver}:4317",
+        "OTEL_EXPORTER_OTLP_HEADERS": "x-parity-u=%FF"
+      },
+      "code": {},
+      "expect": {
+        "warning": "OTEL_EXPORTER_OTLP_HEADERS",
+        "received": {
+          "traces": {
+            "headers": {
+              "x-parity-u": "%FF"
+            }
+          },
+          "metrics": {
+            "headers": {
+              "x-parity-u": "%FF"
+            }
+          },
+          "logs": {
+            "headers": {
+              "x-parity-u": "%FF"
+            }
+          }
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "export.headers_value_control_char_skipped",
+      "kind": "export",
+      "requirement": "R2/D1 edge-case rulings (header details)",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "http://{receiver}:4317",
+        "OTEL_EXPORTER_OTLP_HEADERS": "x-parity-c=x%0D%0Ay,x-parity-a=1"
+      },
+      "code": {},
+      "expect": {
+        "warning": "OTEL_EXPORTER_OTLP_HEADERS",
+        "received": {
+          "traces": {
+            "headers": {
+              "x-parity-a": "1",
+              "x-parity-c": {
+                "absent": true
+              }
+            }
+          },
+          "metrics": {
+            "headers": {
+              "x-parity-a": "1",
+              "x-parity-c": {
+                "absent": true
+              }
+            }
+          },
+          "logs": {
+            "headers": {
+              "x-parity-a": "1",
+              "x-parity-c": {
+                "absent": true
+              }
+            }
+          }
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "export.endpoint_control_char_host_falls_back_grpc",
+      "kind": "export",
+      "requirement": "R8/D1 edge-case rulings",
+      "note": "A tab inside the per-signal URL (host) makes it unparseable; traces fall back to the generic endpoint. Python's urlsplit would silently strip it.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "http://{receiver}:4317",
+        "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT": "http://{receiver}\t:4317"
+      },
+      "code": {},
+      "expect": {
+        "warning": "<unparseable URL>",
+        "received": {
+          "traces": {
+            "proto": "grpc",
+            "port": 4317,
+            "tls": false
+          }
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "export.endpoint_control_char_port_falls_back_grpc",
+      "kind": "export",
+      "requirement": "R8/D1 edge-case rulings",
+      "note": "A tab inside the port: unparseable, fall back to the generic endpoint.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "http://{receiver}:4317",
+        "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT": "http://{receiver}:43\t17"
+      },
+      "code": {},
+      "expect": {
+        "warning": "<unparseable URL>",
+        "received": {
+          "traces": {
+            "proto": "grpc",
+            "port": 4317,
+            "tls": false
+          }
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "export.endpoint_control_char_path_falls_back_http",
+      "kind": "export",
+      "requirement": "R8/D1 edge-case rulings",
+      "note": "A newline inside the path: unparseable, fall back to the generic endpoint + /v1/traces. The bad path differs from /v1/traces even with the control character stripped, so silent stripping cannot pass.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "http://{receiver}:4318",
+        "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT": "http://{receiver}:4318/v1/x\ny",
+        "OTEL_EXPORTER_OTLP_PROTOCOL": "http/protobuf"
+      },
+      "code": {},
+      "expect": {
+        "warning": "<unparseable URL>",
+        "received": {
+          "traces": {
+            "proto": "http",
+            "port": 4318,
+            "tls": false,
+            "path": "/v1/traces"
+          }
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "export.opaque_scheme_not_configured",
+      "kind": "export",
+      "requirement": "R2/D1 edge-case rulings (opaque-scheme values)",
+      "note": "A value without // matching <scheme>:/ is an unsupported scheme: the signal is not exported (no fallback to the generic endpoint).",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "http://{receiver}:4317",
+        "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT": "unix:/tmp/parity.sock"
+      },
+      "code": {},
+      "expect": {
+        "warning": "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT",
+        "received": {
+          "traces": {
+            "absent": true
+          },
+          "metrics": {
+            "proto": "grpc",
+            "port": 4317,
+            "tls": false
+          },
+          "logs": {
+            "proto": "grpc",
+            "port": 4317,
+            "tls": false
+          }
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    }
+  ]
+}

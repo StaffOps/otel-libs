@@ -7,29 +7,72 @@ on:
   pull_request:
     branches: [main]
 
+# Least privilege: jobs that publish raise their own permissions.
 permissions:
-  contents: write
-  packages: write
+  contents: read
 
 jobs:
   # ─── Test Jobs ───────────────────────────────────────────────────────
 
   go-test:
-    name: Go (test + coverage)
+    name: Go ${{ matrix.go }} (test + parity + coverage)
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # go.mod floor (1.26, ADR-005) and the latest release.
+        go: ['1.26.x', '1.27.x']
     defaults:
       run:
         working-directory: go
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/fakeotlp
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.22'
-      - run: go test ./... -coverprofile=coverage.out -covermode=atomic
+          go-version: ${{ matrix.go }}
+          cache-dependency-path: |
+            go/**/go.sum
+            testing/e2e/go-smoke/go.sum
+      # Includes TestParity (parity/cases.json, strict xfail). Parity cases run
+      # in child processes that write coverage to PARITY_GOCOVERDIR; it is
+      # merged into the profile (go tool cover sums duplicate blocks).
+      - name: Test
+        run: |
+          mkdir -p "$RUNNER_TEMP/parity-cov"
+          PARITY_GOCOVERDIR="$RUNNER_TEMP/parity-cov" go test -race -timeout 20m ./... -coverprofile=coverage.out -covermode=atomic
+          go tool covdata textfmt -i="$RUNNER_TEMP/parity-cov" -o parity.out
+          tail -n +2 parity.out >> coverage.out
+      - name: Coverage gate (>= 90%)
+        run: |
+          total=$(go tool cover -func=coverage.out | awk '/^total:/ {sub("%", "", $3); print $3}')
+          echo "Go coverage: ${total}%"
+          awk -v t="$total" 'BEGIN { exit !(t >= 90) }'
+      - name: Ext modules (build + vet + test) and examples (build + vet)
+        run: |
+          for d in ext/otelaws ext/otelredis ext/otelsql; do
+            (cd "$d" && go build ./... && go vet ./... && go test ./...)
+          done
+          for d in example/go-api example/go-backend example/go-process ../testing/e2e/go-smoke; do
+            (cd "$d" && go build -o /dev/null ./... && go vet ./...)
+          done
+      - name: govulncheck (reachable vulnerabilities fail the job)
+        # Results don't depend on the toolchain minor; one leg is enough.
+        if: matrix.go == '1.27.x'
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@v1.9.0
+          for d in . ext/otelaws ext/otelredis ext/otelsql example/go-api example/go-backend example/go-process ../testing/e2e/go-smoke; do
+            echo "== $d"; (cd "$d" && "$(go env GOPATH)/bin/govulncheck" ./...)
+          done
+      - name: Fake receiver logs
+        if: failure()
+        run: docker logs fakeotlp || true
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: go-coverage
+          name: go-coverage-${{ matrix.go }}
           path: go/coverage.out
 
   dotnet-test:
@@ -46,6 +89,8 @@ jobs:
       DOTNET_ROLL_FORWARD: Major
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: ${{ matrix.dotnet }}
@@ -68,28 +113,60 @@ jobs:
           path: dotnet/OtelHelper.Tests/coverage/
 
   python-test:
-    name: Python (test + coverage)
+    name: Python ${{ matrix.python }} / ${{ matrix.deps }} deps (test + parity + coverage)
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Full grid: 3.10 = declared floor, 3.11 = org runtime pin, 3.13 = newest.
+        # lower = declared lower bounds (python/ci/lower.txt), latest = newest allowed (P15, D9.a).
+        python: ['3.10', '3.11', '3.13']
+        deps: [lower, latest]
     defaults:
       run:
         working-directory: python
+    env:
+      # Parity driver subprocesses write parallel coverage files that pytest-cov combines.
+      PARITY_COVERAGE_DATA: ${{ github.workspace }}/python/.coverage
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/fakeotlp
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
-      - run: pip install -e ".[dev]" grpcio -q
+          python-version: ${{ matrix.python }}
+          cache: pip
+          cache-dependency-path: python/pyproject.toml
+      - run: pip install -q -c ci/${{ matrix.deps }}.txt -e ".[dev,all]"
+      - run: pip list | grep -E '^opentelemetry-(sdk|instrumentation) '
+      # Includes tests/test_parity.py (parity/cases.json, strict xfail).
       - run: >
-          pytest tests/ --ignore=tests/test_propagation.py -v
+          pytest tests/ -v
           --cov=otel_helper
           --cov-report=term-missing
           --cov-report=xml:coverage.xml
           --cov-fail-under=90
+      - name: Fake receiver logs
+        if: failure()
+        run: docker logs fakeotlp || true
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: python-coverage
+          name: python-coverage-${{ matrix.python }}-${{ matrix.deps }}
           path: python/coverage.xml
+
+  e2e-smoke:
+    name: e2e smoke (Collector, Go + Python, grpc/http-prefix/per-signal/tls)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - run: testing/e2e/smoke.sh
+      - name: Collector logs
+        if: failure()
+        run: docker compose -f testing/docker-compose.yml --profile e2e logs collector || true
 
   # ─── Build Jobs ──────────────────────────────────────────────────────
 
@@ -99,6 +176,8 @@ jobs:
     needs: [go-test, dotnet-test, python-test]
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '8.0.x'
@@ -111,6 +190,8 @@ jobs:
             dotnet pack "dotnet/$proj/$proj.csproj" -c Release -o packages
           done
       - run: pip install build -q && python -m build --outdir packages python
+      - name: Python wheel ships py.typed (P17)
+        run: unzip -l packages/otel_helper-*.whl | grep -q 'otel_helper/py.typed'
       - uses: actions/upload-artifact@v4
         with:
           name: packages
@@ -118,7 +199,7 @@ jobs:
           retention-days: 1
 
   example-images:
-    name: Build example images (consume prebuilt package)
+    name: Build example images (.NET/Python consume the prebuilt package; Go builds from source)
     runs-on: ubuntu-latest
     needs: [build-lib]
     strategy:
@@ -137,9 +218,23 @@ jobs:
             dockerfile: python/example/python-backend/Dockerfile.demo
           - context: python
             dockerfile: python/example/python-process/Dockerfile.demo
+          # Go examples build from the helper source in go/ (replace ../../);
+          # they consume no prebuilt package.
+          - context: go
+            dockerfile: go/example/go-api/Dockerfile.demo
+            source: true
+          - context: go
+            dockerfile: go/example/go-backend/Dockerfile.demo
+            source: true
+          - context: go
+            dockerfile: go/example/go-process/Dockerfile.demo
+            source: true
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/download-artifact@v4
+        if: ${{ !matrix.source }}
         with:
           name: packages
           path: ${{ matrix.context }}/packages
@@ -156,14 +251,19 @@ jobs:
 
   publish-dotnet:
     name: Publish .NET to GitHub NuGet
+    permissions:
+      contents: read
+      packages: write
     runs-on: ubuntu-latest
-    needs: [dotnet-test]
+    needs: [dotnet-test, go-test, python-test, e2e-smoke]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     defaults:
       run:
         working-directory: dotnet
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '8.0.x'
@@ -186,14 +286,19 @@ jobs:
 
   publish-dotnet-release:
     name: Publish .NET release to GitHub NuGet
+    permissions:
+      contents: read
+      packages: write
     runs-on: ubuntu-latest
-    needs: [dotnet-test]
+    needs: [dotnet-test, go-test, python-test, e2e-smoke]
     if: startsWith(github.ref, 'refs/tags/v')
     defaults:
       run:
         working-directory: dotnet
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '8.0.x'
@@ -218,14 +323,18 @@ jobs:
 
   publish-python-release:
     name: Publish Python to GitHub Release
+    permissions:
+      contents: write
     runs-on: ubuntu-latest
-    needs: [python-test]
+    needs: [python-test, go-test, e2e-smoke]
     if: startsWith(github.ref, 'refs/tags/v')
     defaults:
       run:
         working-directory: python
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'

@@ -1,0 +1,101 @@
+# e2e smoke Collector (testing/e2e/smoke.sh). Each receiver tags its data with
+# resource attribute e2e.receiver, so the debug output shows where each batch arrived.
+receivers:
+  otlp/default:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+  otlp/prefix:
+    protocols:
+      http:
+        endpoint: 0.0.0.0:4320
+        traces_url_path: /otlp/v1/traces
+        metrics_url_path: /otlp/v1/metrics
+        logs_url_path: /otlp/v1/logs
+  otlp/persignal:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4319
+  otlp/tls:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:14317
+        tls:
+          cert_file: /certs/cert.pem
+          key_file: /certs/key.pem
+processors:
+  resource/default:
+    attributes:
+      - key: e2e.receiver
+        value: default
+        action: upsert
+  resource/prefix:
+    attributes:
+      - key: e2e.receiver
+        value: prefix
+        action: upsert
+  resource/persignal:
+    attributes:
+      - key: e2e.receiver
+        value: persignal
+        action: upsert
+  resource/tls:
+    attributes:
+      - key: e2e.receiver
+        value: tls
+        action: upsert
+exporters:
+  debug:
+    verbosity: detailed
+service:
+  pipelines:
+    traces/default:
+      receivers: [otlp/default]
+      processors: [resource/default]
+      exporters: [debug]
+    metrics/default:
+      receivers: [otlp/default]
+      processors: [resource/default]
+      exporters: [debug]
+    logs/default:
+      receivers: [otlp/default]
+      processors: [resource/default]
+      exporters: [debug]
+    traces/prefix:
+      receivers: [otlp/prefix]
+      processors: [resource/prefix]
+      exporters: [debug]
+    metrics/prefix:
+      receivers: [otlp/prefix]
+      processors: [resource/prefix]
+      exporters: [debug]
+    logs/prefix:
+      receivers: [otlp/prefix]
+      processors: [resource/prefix]
+      exporters: [debug]
+    traces/persignal:
+      receivers: [otlp/persignal]
+      processors: [resource/persignal]
+      exporters: [debug]
+    metrics/persignal:
+      receivers: [otlp/persignal]
+      processors: [resource/persignal]
+      exporters: [debug]
+    logs/persignal:
+      receivers: [otlp/persignal]
+      processors: [resource/persignal]
+      exporters: [debug]
+    traces/tls:
+      receivers: [otlp/tls]
+      processors: [resource/tls]
+      exporters: [debug]
+    metrics/tls:
+      receivers: [otlp/tls]
+      processors: [resource/tls]
+      exporters: [debug]
+    logs/tls:
+      receivers: [otlp/tls]
+      processors: [resource/tls]
+      exporters: [debug]

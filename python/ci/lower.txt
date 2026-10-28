@@ -1,0 +1,25 @@
+# Lower-bound constraints for the "lower" CI leg (P15, design D9.a): the oldest
+# versions pyproject.toml declares. Contrib betas move in lockstep with the SDK.
+opentelemetry-api==1.42.0
+opentelemetry-sdk==1.42.0
+opentelemetry-exporter-otlp-proto-grpc==1.42.0
+opentelemetry-exporter-otlp-proto-http==1.42.0
+opentelemetry-exporter-prometheus==0.63b0
+opentelemetry-instrumentation==0.63b0
+opentelemetry-semantic-conventions==0.63b0
+opentelemetry-instrumentation-fastapi==0.63b0
+opentelemetry-instrumentation-httpx==0.63b0
+opentelemetry-instrumentation-requests==0.63b0
+opentelemetry-instrumentation-grpc==0.63b0
+opentelemetry-instrumentation-system-metrics==0.63b0
+opentelemetry-instrumentation-logging==0.63b0
+opentelemetry-instrumentation-botocore==0.63b0
+opentelemetry-instrumentation-redis==0.63b0
+opentelemetry-instrumentation-sqlalchemy==0.63b0
+# Transitive floors that matter for the lower leg:
+prometheus-client==0.20.0
+# opentelemetry-proto 1.42.0: protobuf>=5.0,<7 — 5.26.0 is the first 5.x release.
+protobuf==5.26.0
+# opentelemetry-exporter-otlp-proto-grpc 1.42.0 floors (vary by Python version).
+grpcio==1.63.2; python_version < "3.13"
+grpcio==1.66.2; python_version >= "3.13"

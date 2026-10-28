@@ -1,0 +1,151 @@
+# Test harness for the parity fixture (parity/cases.json) and the e2e smoke.
+#
+#   docker compose -f testing/docker-compose.yml run --rm go-tests
+#   docker compose -f testing/docker-compose.yml run --rm python-tests
+#   PY_VERSION=3.10 PY_DEPS=lower docker compose -f testing/docker-compose.yml run --rm python-tests
+#   testing/e2e/smoke.sh
+#
+# Each suite has its own receiver (fakeotlp-go / fakeotlp-py) and shares its
+# network namespace, so Go and Python can run concurrently without seeing each
+# other's requests. Two runs of the SAME suite at once need separate projects
+# (`docker compose -p <name> ...`). The receiver binds only the case addresses
+# (127.0.0.2, 127.0.0.3, [::1]:24318): other unit tests exporting to
+# localhost:4317 get connection-refused instead of polluting the request log.
+# CI uses the same addresses with `--network host` (.github/actions/fakeotlp).
+name: otel-libs-testing
+
+x-fakeotlp: &fakeotlp
+  build: ./fakeotlp
+  image: otel-libs/fakeotlp:local
+  # Listen addresses: the receiver's defaults (127.0.0.2, 127.0.0.3:4317 TLS, [::1]:24318).
+  healthcheck:
+    test: ["CMD", "wget", "-qO-", "http://127.0.0.2:8888/requests"]
+    interval: 1s
+    timeout: 2s
+    retries: 30
+
+x-fakeotlp-env: &fakeotlp-env
+  FAKEOTLP_HOST: 127.0.0.2
+  FAKEOTLP_HOST_TLS: 127.0.0.3
+  FAKEOTLP_HOST_IPV6: "[::1]"
+  FAKEOTLP_ADMIN: http://127.0.0.2:8888
+  FAKEOTLP_CA: /fakeotlp/ca.pem
+  PARITY_REQUIRE_FAKEOTLP: "1"
+
+services:
+  fakeotlp-go:
+    <<: *fakeotlp
+    volumes: [fakeotlp-go-out:/out]
+
+  fakeotlp-py:
+    <<: *fakeotlp
+    volumes: [fakeotlp-py-out:/out]
+
+  go-tests:
+    # Debian-based image: `-race` needs cgo + gcc. Version follows go.mod (go 1.26).
+    image: golang:1.26
+    network_mode: "service:fakeotlp-go"
+    depends_on:
+      fakeotlp-go:
+        condition: service_healthy
+    working_dir: /src/go
+    environment:
+      <<: *fakeotlp-env
+    volumes:
+      - ..:/src:ro
+      - fakeotlp-go-out:/fakeotlp:ro
+      - go-mod-cache:/go/pkg/mod
+      - go-build-cache:/root/.cache/go-build
+    # Parity children write coverage to PARITY_GOCOVERDIR; it is merged into
+    # the profile before the gate (go tool cover sums duplicate blocks).
+    command:
+      - sh
+      - -ec
+      - |
+        rm -rf /tmp/covdir && mkdir -p /tmp/covdir
+        PARITY_GOCOVERDIR=/tmp/covdir go test -race -count=1 ./... -coverprofile=/tmp/coverage.out -covermode=atomic
+        go tool covdata textfmt -i=/tmp/covdir -o /tmp/parity.out
+        tail -n +2 /tmp/parity.out >> /tmp/coverage.out
+        go tool cover -func=/tmp/coverage.out | tail -1
+
+  python-tests:
+    image: python:${PY_VERSION:-3.13}-slim
+    network_mode: "service:fakeotlp-py"
+    depends_on:
+      fakeotlp-py:
+        condition: service_healthy
+    environment:
+      <<: *fakeotlp-env
+      PY_DEPS: ${PY_DEPS:-latest}
+      PIP_DISABLE_PIP_VERSION_CHECK: "1"
+      PARITY_CASES: /src/parity/cases.json
+      PARITY_COVERAGE_DATA: /work/.coverage
+    volumes:
+      - ../python:/src/python:ro
+      - ../parity:/src/parity:ro
+      - fakeotlp-py-out:/fakeotlp:ro
+      - pip-cache:/root/.cache/pip
+    # Copy out of the read-only mount so the editable install never writes into the repo.
+    command:
+      - sh
+      - -ec
+      - |
+        cp -r /src/python /work && cd /work
+        pip install -q -c ci/$${PY_DEPS}.txt -e '.[dev,all]'
+        pip list 2>/dev/null | grep -E '^opentelemetry-(sdk|instrumentation) '
+        python -m pytest tests/ -p no:cacheprovider -q --cov=otel_helper --cov-report=term --cov-fail-under=90
+
+  # ── e2e smoke (testing/e2e/smoke.sh) ──────────────────────────────────
+  e2e-certs:
+    # CA + server certificate for the Collector's TLS receiver (fakeotlp's cert mode).
+    image: otel-libs/fakeotlp:local
+    build: ./fakeotlp
+    profiles: ["e2e"]
+    environment:
+      CERTS_ONLY: "1"
+      TLS_HOSTS: collector
+    volumes: [e2e-certs:/out]
+
+  collector:
+    image: otel/opentelemetry-collector-contrib:0.160.0
+    profiles: ["e2e"]
+    depends_on:
+      e2e-certs:
+        condition: service_completed_successfully
+    command: ["--config=/etc/otelcol/config.yaml"]
+    volumes:
+      - ./e2e/collector.yaml:/etc/otelcol/config.yaml:ro
+      - e2e-certs:/certs:ro
+
+  go-smoke:
+    image: golang:1.26
+    profiles: ["e2e"]
+    working_dir: /src/testing/e2e
+    volumes:
+      - ..:/src:ro
+      - e2e-certs:/certs:ro
+      - go-mod-cache:/go/pkg/mod
+      - go-build-cache:/root/.cache/go-build
+    command: ["sh", "run-go.sh"]
+
+  python-smoke:
+    # Same base as python/example/python-process/Dockerfile (its aiohttp pin has no 3.13 wheel).
+    image: python:3.11-slim
+    profiles: ["e2e"]
+    working_dir: /src/testing/e2e
+    environment:
+      PIP_DISABLE_PIP_VERSION_CHECK: "1"
+    volumes:
+      - ../python:/src/python:ro
+      - ./e2e:/src/testing/e2e:ro
+      - e2e-certs:/certs:ro
+      - pip-cache:/root/.cache/pip
+    command: ["sh", "run-python.sh"]
+
+volumes:
+  fakeotlp-go-out:
+  fakeotlp-py-out:
+  go-mod-cache:
+  go-build-cache:
+  pip-cache:
+  e2e-certs:
