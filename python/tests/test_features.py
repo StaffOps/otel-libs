@@ -5,7 +5,7 @@ import pytest
 
 from opentelemetry import trace
 from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.sdk.trace.sampling import ALWAYS_ON, TraceIdRatioBased
+from opentelemetry.sdk.trace.sampling import ParentBased
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
 from otel_helper.config import TelemetryOptions, DeploymentEnvironment
@@ -43,11 +43,12 @@ class TestSampleRatio:
         opts.resolve_from_env()
         assert opts.sample_ratio == 1.0
 
-    def test_env_var_negative_clamped(self):
+    def test_env_var_negative_rejected(self):
+        # Plain-decimal grammar (design D3): a sign is not accepted -> warn, 1.0.
         os.environ["OTEL_HELPER_SAMPLE_RATIO"] = "-0.5"
         opts = TelemetryOptions(service_name="test", otel_endpoint="http://localhost:4317")
         opts.resolve_from_env()
-        assert opts.sample_ratio == 0.0
+        assert opts.sample_ratio == 1.0
 
     def test_invalid_env_var_ignored(self):
         os.environ["OTEL_HELPER_SAMPLE_RATIO"] = "not_a_number"
@@ -66,16 +67,18 @@ class TestSampleRatio:
         opts = TelemetryOptions(service_name="test", otel_endpoint="http://localhost:4317", sample_ratio=0.5)
         resource = Resource.create({"service.name": "test"})
         provider = configure_tracing(resource, opts)
-        sampler = provider.sampler
-        assert isinstance(sampler, TraceIdRatioBased)
+        sampler = provider.sampler.inner
+        assert isinstance(sampler, ParentBased)
+        assert "root:TraceIdRatioBased{0.5}" in sampler.get_description()
 
     def test_ratio_1_uses_always_on(self):
         from opentelemetry.sdk.resources import Resource
         opts = TelemetryOptions(service_name="test", otel_endpoint="http://localhost:4317", sample_ratio=1.0)
         resource = Resource.create({"service.name": "test"})
         provider = configure_tracing(resource, opts)
-        sampler = provider.sampler
-        assert not isinstance(sampler, TraceIdRatioBased)
+        sampler = provider.sampler.inner
+        assert isinstance(sampler, ParentBased)
+        assert "root:AlwaysOnSampler" in sampler.get_description()
 
 
 class TestDebugProcessor:

@@ -2,6 +2,8 @@
 
 import os
 import asyncio
+import signal
+import sys
 import time
 import random
 import logging
@@ -10,7 +12,7 @@ import httpx
 from opentelemetry import trace, context
 from opentelemetry.propagate import inject
 
-from otel_helper import setup_telemetry, get_tracer, get_meter, TelemetryOptions
+from otel_helper import setup_telemetry, shutdown_telemetry, get_tracer, get_meter, TelemetryOptions
 from otel_helper.tracing import start_root_span
 
 logger = logging.getLogger(__name__)
@@ -155,4 +157,14 @@ async def main():
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    # Python's default SIGTERM handler kills the process without running atexit or
+    # finally blocks, so `docker stop` / a Kubernetes rollout would drop the spans,
+    # logs and metrics still buffered. Turn SIGTERM into a normal exit instead.
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
+    try:
+        asyncio.run(main())
+    finally:
+        try:
+            shutdown_telemetry(timeout_ms=10_000)  # flush before the grace period ends
+        except RuntimeError as e:
+            logger.warning("telemetry shutdown incomplete: %s", e)

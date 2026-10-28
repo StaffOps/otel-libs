@@ -24,23 +24,30 @@ def _resource():
     return Resource.create({"service.name": "protocol-test"})
 
 
+def _opts(**kwargs) -> TelemetryOptions:
+    opts = TelemetryOptions(**kwargs)
+    opts.resolve_from_env()
+    return opts
+
+
 class TestTracingProtocolSelection:
     def test_grpc_endpoint_uses_grpc_exporter(self):
         with patch("opentelemetry.exporter.otlp.proto.grpc.trace_exporter.OTLPSpanExporter") as grpc_exp, \
              patch("opentelemetry.exporter.otlp.proto.http.trace_exporter.OTLPSpanExporter") as http_exp:
             grpc_exp.return_value = MagicMock()
-            opts = TelemetryOptions(service_name="svc", otel_endpoint="http://collector:4317")
+            opts = _opts(service_name="svc", otel_endpoint="http://collector:4317")
             configure_tracing(_resource(), opts)
 
             grpc_exp.assert_called_once()
             http_exp.assert_not_called()
             assert grpc_exp.call_args.kwargs["endpoint"] == "http://collector:4317"
+            assert grpc_exp.call_args.kwargs["insecure"] is True
 
     def test_http_endpoint_uses_http_exporter_with_path_appended(self):
         with patch("opentelemetry.exporter.otlp.proto.grpc.trace_exporter.OTLPSpanExporter") as grpc_exp, \
              patch("opentelemetry.exporter.otlp.proto.http.trace_exporter.OTLPSpanExporter") as http_exp:
             http_exp.return_value = MagicMock()
-            opts = TelemetryOptions(service_name="svc", otel_endpoint="http://collector:4318")
+            opts = _opts(service_name="svc", otel_endpoint="http://collector:4318")
             configure_tracing(_resource(), opts)
 
             http_exp.assert_called_once()
@@ -52,7 +59,7 @@ class TestTracingProtocolSelection:
     def test_http_endpoint_with_trailing_slash_no_double_path(self):
         with patch("opentelemetry.exporter.otlp.proto.http.trace_exporter.OTLPSpanExporter") as http_exp:
             http_exp.return_value = MagicMock()
-            opts = TelemetryOptions(service_name="svc", otel_endpoint="http://collector:4318/")
+            opts = _opts(service_name="svc", otel_endpoint="http://collector:4318/")
             configure_tracing(_resource(), opts)
             assert http_exp.call_args.kwargs["endpoint"] == "http://collector:4318/v1/traces"
 
@@ -60,7 +67,7 @@ class TestTracingProtocolSelection:
         with patch("opentelemetry.exporter.otlp.proto.http.trace_exporter.OTLPSpanExporter") as http_exp:
             http_exp.return_value = MagicMock()
             # Port 4317 would normally infer grpc; explicit protocol overrides it.
-            opts = TelemetryOptions(
+            opts = _opts(
                 service_name="svc", otel_endpoint="http://collector:4317", otlp_protocol="http/protobuf",
             )
             configure_tracing(_resource(), opts)
@@ -73,7 +80,7 @@ class TestMetricsProtocolSelection:
         with patch("opentelemetry.exporter.otlp.proto.grpc.metric_exporter.OTLPMetricExporter") as grpc_exp, \
              patch("opentelemetry.exporter.otlp.proto.http.metric_exporter.OTLPMetricExporter") as http_exp:
             grpc_exp.return_value = MagicMock()
-            opts = TelemetryOptions(
+            opts = _opts(
                 service_name="svc", otel_endpoint="http://collector:4317", metric_exporters=["otlp"],
             )
             provider = configure_metrics(_resource(), opts)
@@ -81,13 +88,14 @@ class TestMetricsProtocolSelection:
                 grpc_exp.assert_called_once()
                 http_exp.assert_not_called()
                 assert grpc_exp.call_args.kwargs["endpoint"] == "http://collector:4317"
+                assert grpc_exp.call_args.kwargs["insecure"] is True
             finally:
                 provider.shutdown()
 
     def test_http_endpoint_uses_http_exporter_with_path_appended(self):
         with patch("opentelemetry.exporter.otlp.proto.http.metric_exporter.OTLPMetricExporter") as http_exp:
             http_exp.return_value = MagicMock()
-            opts = TelemetryOptions(
+            opts = _opts(
                 service_name="svc", otel_endpoint="http://collector:4318", metric_exporters=["otlp"],
             )
             provider = configure_metrics(_resource(), opts)
@@ -103,17 +111,18 @@ class TestLoggingProtocolSelection:
         with patch("opentelemetry.exporter.otlp.proto.grpc._log_exporter.OTLPLogExporter") as grpc_exp, \
              patch("opentelemetry.exporter.otlp.proto.http._log_exporter.OTLPLogExporter") as http_exp:
             grpc_exp.return_value = MagicMock()
-            opts = TelemetryOptions(service_name="svc", otel_endpoint="http://collector:4317")
+            opts = _opts(service_name="svc", otel_endpoint="http://collector:4317")
             configure_logging(_resource(), opts)
 
             grpc_exp.assert_called_once()
             http_exp.assert_not_called()
             assert grpc_exp.call_args.kwargs["endpoint"] == "http://collector:4317"
+            assert grpc_exp.call_args.kwargs["insecure"] is True
 
     def test_http_endpoint_uses_http_exporter_with_path_appended(self):
         with patch("opentelemetry.exporter.otlp.proto.http._log_exporter.OTLPLogExporter") as http_exp:
             http_exp.return_value = MagicMock()
-            opts = TelemetryOptions(service_name="svc", otel_endpoint="http://collector:4318")
+            opts = _opts(service_name="svc", otel_endpoint="http://collector:4318")
             configure_logging(_resource(), opts)
 
             http_exp.assert_called_once()

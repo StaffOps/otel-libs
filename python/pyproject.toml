@@ -8,29 +8,38 @@ version = "0.2.0"
 description = "OpenTelemetry instrumentation helper for Python"
 requires-python = ">=3.10"
 dependencies = [
-    "opentelemetry-api>=1.42,<2",
-    "opentelemetry-sdk>=1.42,<2",
-    "opentelemetry-exporter-otlp-proto-grpc>=1.42,<2",
-    "opentelemetry-exporter-otlp-proto-http>=1.42,<2",
-    "opentelemetry-exporter-prometheus>=0.63b0",
+    # Lockstep bounds (design D9.a): contrib betas pin semconv/instrumentation
+    # exactly, which couples them to one SDK minor (0.63b0 -> 1.42, 0.66b1 ->
+    # 1.45), so both ranges are capped at the newest pair CI has tested. Raise both caps together, in a PR that
+    # runs the "latest" leg.
+    "opentelemetry-api>=1.42,<1.46",
+    "opentelemetry-sdk>=1.42,<1.46",
+    "opentelemetry-exporter-otlp-proto-grpc>=1.42,<1.46",
+    "opentelemetry-exporter-otlp-proto-http>=1.42,<1.46",
+    "opentelemetry-exporter-prometheus>=0.63b0,<0.67b0",
     "prometheus-client>=0.20.0",
-    # Always-on instrumentations (web/HTTP frameworks + runtime metrics).
-    # SQL/Redis/AWS live in the optional extras below.
-    "opentelemetry-instrumentation-fastapi>=0.63b0",
-    "opentelemetry-instrumentation-httpx>=0.63b0",
-    "opentelemetry-instrumentation-requests>=0.63b0",
-    "opentelemetry-instrumentation-grpc>=0.63b0",
-    "opentelemetry-instrumentation-system-metrics>=0.63b0",
+    # Always-on instrumentations (web/HTTP frameworks + runtime metrics + the
+    # stdlib logging bridge). SQL/Redis/AWS live in the optional extras below.
+    "opentelemetry-instrumentation-fastapi>=0.63b0,<0.67b0",
+    "opentelemetry-instrumentation-httpx>=0.63b0,<0.67b0",
+    "opentelemetry-instrumentation-requests>=0.63b0,<0.67b0",
+    "opentelemetry-instrumentation-grpc>=0.63b0,<0.67b0",
+    "opentelemetry-instrumentation-system-metrics>=0.63b0,<0.67b0",
+    "opentelemetry-instrumentation-logging>=0.63b0,<0.67b0",
 ]
 
 [project.optional-dependencies]
-aws = ["opentelemetry-instrumentation-botocore>=0.63b0"]
-redis = ["opentelemetry-instrumentation-redis>=0.63b0"]
-sql = ["opentelemetry-instrumentation-sqlalchemy>=0.63b0"]
+aws = ["opentelemetry-instrumentation-botocore>=0.63b0,<0.67b0"]
+redis = ["opentelemetry-instrumentation-redis>=0.63b0,<0.67b0"]
+sql = ["opentelemetry-instrumentation-sqlalchemy>=0.63b0,<0.67b0"]
 all = ["otel-helper[aws,redis,sql]"]
 dev = [
     "pytest>=7.0",
     "pytest-cov>=4.0",
+    # Test-only: parity fixture http_server / grpc_server kinds and propagation tests.
+    "fastapi>=0.110",
+    "httpx>=0.27",
+    "grpcio>=1.60",
 ]
 
 [tool.hatch.build.targets.wheel]

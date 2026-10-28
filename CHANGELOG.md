@@ -9,8 +9,511 @@ currently aligned at the same version.
 
 ## [Unreleased]
 
+### Breaking — telemetry output changes (dashboards/alerts)
+
+Go (otel v1.47 / contrib v0.72) and Python (lockstep bounds) change what
+reaches the backend. Review dashboards, recording rules and alerts before
+upgrading.
+
+| Signal | 0.2.0 | 0.3.0 | Escape hatch |
+|---|---|---|---|
+| **BREAKING** Go runtime metrics | `process.runtime.go.*` (`goroutines`, `gc.count`, `gc.pause_ns`, `mem.heap_*`), `runtime.uptime` | `go.memory.used`, `go.memory.limit`, `go.memory.allocated`, `go.memory.allocations`, `go.memory.gc.goal`, `go.goroutine.count`, `go.processor.limit`, `go.config.gogc` | `OTEL_GO_X_DEPRECATED_RUNTIME_METRICS=true` emits the old `process.runtime.go.*` / `runtime.uptime` set **in addition to** the new one (additive in contrib `runtime` v0.72) |
+| **BREAKING** Go HTTP server / client metrics | `http.server.duration` / `http.client.duration` (ms; `http.method`, `http.status_code`, `net.host.name`) | `http.server.request.duration` / `http.client.request.duration` (s; `http.request.method`, `http.response.status_code`, `server.address`) | none: otelhttp v0.72 emits only the stable semconv |
+| **BREAKING** Go HTTP size metrics | `http.server.request.size`, `http.server.response.size`, `http.client.request.size`, `http.client.response.size` (counters) | `http.server.request.body.size`, `http.server.response.body.size`, `http.client.request.body.size` (histograms); `http.client.response.size` has no replacement | none |
+| **BREAKING** Go gRPC metrics | `rpc.server.duration` / `rpc.client.duration` (ms; `rpc.system`, `rpc.service`, `rpc.method="Method"`, `rpc.grpc.status_code` int) | `rpc.server.call.duration` / `rpc.client.call.duration` (s; `rpc.system.name`, `rpc.method="pkg.Svc/Method"`, `rpc.response.status_code`) | `OTEL_SEMCONV_STABILITY_OPT_IN=rpc/dup` (both sets) or `rpc/old` (otelgrpc v0.72); `rpc/old` is not a full restore: the status attribute is `rpc.response.status_code` (string) even then |
+| **BREAKING** Go `ext/otelaws` attributes | semconv v1.21 (`rpc.system` + `rpc.service`) | semconv v1.43 (`rpc.system.name`) | none |
+| **BREAKING** Go HTTP server span names | the `operation` argument of `NewHTTPHandler` | `<METHOD> <route>` from the `http.ServeMux` pattern (`GET /orders/{id}`), or `<METHOD>` without a pattern | none; `dashboards/03-traces-reliability.json` groups by span name, so those series break |
+| Go gRPC health RPCs | `Check` traced and counted in `rpc.server.duration` (the server filter never matched); `Watch` and all client RPCs emitted no metrics; client-side health spans dropped | `Check` and `Watch` counted in `rpc.server.call.duration` (only `Watch` counting is new), their server spans dropped by the health sampler (A7-go); client RPCs counted in the new `rpc.client.call.duration`, except health calls (no client span, no client metric) | exclude `rpc_method=~"grpc.health.v1.Health/.*"` in SLO queries (long-lived `Watch` streams inflate tail latency) |
+| **BREAKING** Go HTTP health requests | `/ping /health /healthz /ready` (exact) through `NewHTTPHandler`: no span **and no metric** | `/health /healthz /ready /readyz /live /livez /ping /metrics` (exact, case-insensitive, trailing slash and query ignored): no server span, but **counted** in `http.server.request.duration` | exclude health routes (`http_route` / probe paths) in SLI queries; `WithHealthPaths(...)` changes the list |
+| Go resource `schema_url` | `https://opentelemetry.io/schemas/1.26.0` | `https://opentelemetry.io/schemas/1.43.0` (the helper's semconv now matches sdk v1.47's `resource.Default()`; a mismatch would make `resource.Merge` drop the schema URL, and a merge error is now logged) | — |
+| Python resource | — | on sdk ≥ 1.45 the SDK adds `service.instance.id` (one value per process: a new label per restart where resource attributes become labels) | — |
+
+Python HTTP metrics switch to the stable semconv too in 0.3.0 (R10/D12 — see
+the Python section below), so both languages emit `http.server.request.duration`
+in seconds.
+`python/example/EXAMPLES.md`'s `rpc_server_duration_seconds{rpc_method="GetStatus"}`
+is a Python query and is not affected by the Go gRPC change.
+
+Migration:
+- Span-name queries: filter on `http.route` instead, or on
+  `name =~ "<METHOD> /…"`.
+- Go floor 1.26: consumers on an older toolchain fail with
+  `go: go.mod requires go >= 1.26.0`.
+- Removed interceptors fail to compile with
+  `undefined: otelhelper.UnaryServerInterceptor` (and `StreamServerInterceptor`,
+  `UnaryClientInterceptor`, `StreamClientInterceptor`); replace them with
+  `grpc.NewServer(otelhelper.GRPCServerOption())` and
+  `grpc.NewClient(target, otelhelper.GRPCDialOption())`.
+
+### Go
+
+Config contract, task A3 (`specs/config-contract-v0.3/`, ADR-001, ADR-003).
+Behavior changes, with migration notes:
+
+- **BREAKING — OTLP env resolution follows the spec (ADR-001, second
+  correction).** Endpoint, compression, timeout, headers and the plaintext TLS
+  override are helper-resolved and passed explicitly for every configured
+  signal (the SDK never re-reads a raw env endpoint the helper judged
+  differently); certificates and protocol defaults stay with the SDK. Now
+  honored: `OTEL_EXPORTER_OTLP_<SIGNAL>_*` (endpoint verbatim,
+  protocol, insecure, headers, timeout, compression), path prefixes
+  (`…/otlp` → `/otlp/v1/<signal>`), `OTEL_EXPORTER_OTLP[_<SIGNAL>]_CERTIFICATE`
+  / `_CLIENT_CERTIFICATE` / `_CLIENT_KEY` (G8: the helper used to pass an
+  empty `tls.Config`, so a custom CA failed with `x509: certificate signed by
+  unknown authority`). *Migration:* `https://host` without a port under
+  http/protobuf now goes to **443** (was 4317); remove `/v1/<signal>` you may
+  have added to work around the dropped prefix.
+- **OTLP is configured per signal**: only `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`
+  set → traces exported, metrics fall back to Prometheus, logs to stdout
+  (before: nothing exported, no error).
+- **Shims** (design D1.b–d): schemeless `host:port` → `https://` (`http://`
+  only with `OTEL_EXPORTER_OTLP_INSECURE=true`), default port 4317/4318,
+  deprecation warning for http/protobuf (before: the SDK failed to parse it
+  and silently dialed `localhost:4317`); a gRPC URL without a port gets
+  `:4317` plus a warning ("set an explicit port"); `INSECURE` contradicting
+  the scheme → the scheme wins for that signal, warned (before: `INSECURE`
+  overrode the scheme); `gzip` is the default for every signal unless env or
+  code sets compression (HTTP metrics/logs were uncompressed); a TLS file
+  (`OTEL_EXPORTER_OTLP[_<SIGNAL>]_CERTIFICATE`, `_CLIENT_*`) with a plaintext
+  `http://` (or schemeless + `INSECURE=true`) endpoint is warned and ignored
+  for that signal, both protocols — gRPC used to dial TLS and lose the signal,
+  http/protobuf failed `Setup`.
+- **Helper-resolved env (design D1 edge-case rulings):** every per-signal
+  value falls back per-signal → generic → default with a warning. Compression
+  is case-insensitive `gzip`/`none` (`deflate`, `zstd`, … warn); `*_TIMEOUT`
+  is decimal milliseconds (garbage/`0`/negative/hex warn; clamped to
+  [1 ms, 24 h]; was an SDK error or a ~30 s deadline); `*_HEADERS` keys must
+  match `[A-Za-z0-9._-]+`, are compared case-insensitively (last wins) and not
+  decoded, values are percent-decoded (an invalid escape or non-UTF-8 result
+  keeps the whole value literal and warns; a decoded control character skips
+  the item), malformed items are skipped and warned by position only, and the
+  result goes to every signal (the log SDK dropped all headers on one bad
+  item); an unparseable or empty-host per-signal endpoint falls back to the
+  generic one; an unsupported scheme (`unix://`, `unix:/path`) warns and the
+  signal is not exported; endpoint whitespace (e.g. a trailing newline, which
+  lost all logs) is trimmed; userinfo/query in any endpoint are stripped with a
+  redacted warning.
+- **Effective export deadline:** the resolved timeout is also given to the
+  batch span/log processors and the periodic metric reader (their own 30 s
+  timeouts used to cap it). `WithCompression("none")` now wins over an env
+  `gzip` on gRPC traces/metrics too (identity compressor).
+- **Code values fail fast:** `WithSampleRatio` ∉ [0,1]/NaN,
+  `WithPrometheusMetricsPort` ∉ [0,65535], unknown `WithDisabledSignals`
+  names. New constants `CompressionGzip` / `CompressionNone`.
+  *Migration:* `OTEL_EXPORTER_OTLP_INSECURE=true` with `https://` no longer
+  gives plaintext — use `http://`.
+- **Code endpoints** accept URLs: `WithEndpoint("http://c:4318/otlp")` appends
+  `/v1/<signal>` for http/protobuf (before: `too many colons`). New
+  `WithTracesEndpoint` / `WithMetricsEndpoint` / `WithLogsEndpoint` (verbatim)
+  and `WithCompression("gzip"|"none")`. `WithInsecure` now applies to
+  schemeless endpoints; contradicting a code URL's scheme fails `Setup`.
+- **G10**: no default timeout is passed any more (`ExportTimeoutMs` default
+  0 = unset), so `OTEL_EXPORTER_OTLP[_<SIGNAL>]_TIMEOUT` (ms) works;
+  `WithExportTimeout` now applies to all three signals (was traces only).
+- **BREAKING — identity (ADR-003).** `service.name`: code >
+  `OTEL_SERVICE_NAME` > `OTEL_RESOURCE_ATTRIBUTES` > `SERVICE_NAME` > SDK
+  `unknown_service:<exe>` + warning (was: `SERVICE_NAME` first, default
+  `my-service`). `deployment.environment.name`: code >
+  `OTEL_RESOURCE_ATTRIBUTES` > `ENVIRONMENT` > **absent** + one warning (was
+  `LOCAL`); unknown values emitted verbatim (were coerced to `LOCAL`); a helper
+  value never overwrites an `OTEL_RESOURCE_ATTRIBUTES` key. Unset/unknown
+  environment → `DefaultLogLevel` INFO. A per-process UUID
+  `service.instance.id` is added unless code or `OTEL_RESOURCE_ATTRIBUTES`
+  set one. *Migration:* set `OTEL_SERVICE_NAME` and
+  `OTEL_RESOURCE_ATTRIBUTES=deployment.environment.name=…`; local development
+  without an environment no longer logs at DEBUG; the Collector needs a
+  tail-sampling branch for spans without the attribute (design D11).
+- **R8 — env never fails Setup.** Unknown/unparseable env values warn and use
+  the default (`OTEL_METRICS_EXPORTER=statsd`, `OTEL_EXPORTER_OTLP_PROTOCOL`,
+  `OTEL_METRIC_EXPORT_INTERVAL=0|abc`, `OTEL_SDK_DISABLED`, booleans, ratio,
+  port); env `OTEL_METRICS_EXPORTER=otlp` without an endpoint warns and falls
+  back (was a Setup error). The same invalid values in code fail Setup with an
+  error naming the option. `http/json` from env is warned and ignored.
+- **New env support:** `OTEL_{TRACES,METRICS,LOGS}_EXPORTER` = `otlp`,
+  `console` (compact JSON, not parity-checked; official stdout exporters, new
+  dependencies **pending owner approval**, isolated in `go/console.go`:
+  `go.opentelemetry.io/otel/exporters/stdout/{stdouttrace,stdoutmetric}` v1.47.0
+  and `stdoutlog` v0.23.0), `none`; `logging` = deprecated `console` (warned);
+  `none,x` = none (warned). `OTEL_SDK_DISABLED=true` installs no-op
+  providers. `OTEL_PROPAGATORS` (`tracecontext`, `baggage`, `none`; `b3`,
+  `jaeger`, `xray`, `ottrace` are warned and skipped; with nothing supported
+  left, the default `tracecontext,baggage` stays active).
+- **G7**: the helper no longer calls `os.Setenv` (it forced
+  `OTEL_METRICS_EXEMPLAR_FILTER=trace_based`, the SDK default anyway).
+- **Diagnostics**: helper warnings (including a failed Go runtime-metrics
+  start) go to a package stderr `slog` logger (never
+  `slog.Default()`); helper diagnostics never print header values,
+  client-key paths, or URL userinfo/query. Enforced by
+  `go/diag_channel_test.go`. *Limitation:* the OTel Go SDK's own global logger
+  may still echo raw env values (e.g. a malformed `OTEL_EXPORTER_OTLP_HEADERS`
+  item, an unparseable endpoint) when it parses env itself; the helper cannot
+  mask env (G7). See `go/HOW-TO.md` §15.
+
+- **Lifecycle (G1, G2, design D13).** `Setup` builds every signal before
+  installing anything: on error it releases what was already built in reverse
+  order (span/log batch processors and their exporters, metric readers, the
+  `/metrics` listener — its port is free at once; no goroutine is left), leaves
+  the global providers and propagator as they were, and can be retried.
+  `Shutdown` flushes logs, metrics (listener, then provider) and traces
+  **concurrently** under the caller's context, errors joined; it is
+  idempotent (later or concurrent calls return the first result) and resets
+  the helper, so a following `Setup` builds a fresh pipeline; a `Setup` called
+  while a `Shutdown` is in flight waits for it. *Caveat:* tracers, meters and
+  instrumented handlers obtained **before** that new `Setup` stay bound to the
+  shut-down providers (the global delegates forward once) — obtain them after.
+- **BREAKING — `MetricsHandler()` status.** 503 before `Setup`, after a failed
+  `Setup` and after `Shutdown`; **200 with an empty body** when Prometheus is
+  deliberately off (`OTEL_SDK_DISABLED=true`, or `OTEL_METRICS_EXPORTER`
+  without `prometheus`) — previously 503, which marks the target `up=0`.
+- **Examples** handle `SIGTERM` (`signal.NotifyContext`) and call `Shutdown`
+  with a fresh deadline: before, `docker stop` killed them unflushed, and the
+  deferred call used the already-cancelled context. They now drain HTTP
+  (bounded `srv.Shutdown`) and go-process workers before the flush, return
+  errors instead of `log.Fatal` (which skipped it), and go-process logs via
+  `NewLogger`. The helper installs no signal handlers (see `go/HOW-TO.md` §8).
+  A `Setup` waiting on an in-flight `Shutdown` returns `ctx.Err()` when its
+  own context ends first.
+- **Sampler (A4, design D3).** The helper parses `OTEL_TRACES_SAMPLER` /
+  `_ARG` itself (ADR-001 owned inputs) in one `buildSampler`: the six spec
+  names, case-insensitive and trimmed. An unknown name warns naming the
+  variable, and `jaeger_remote` / `parentbased_jaeger_remote` / `xray` warn
+  "unsupported by this helper"; both use `parentbased_always_on`. `_ARG` and
+  the deprecated `OTEL_HELPER_SAMPLE_RATIO` share the timeout grammar
+  (`^[0-9]+(\.[0-9]+)?$`: no hex, sign, exponent or `_`): invalid or out of
+  [0, 1] warns and uses 1.0 (the alias used to clamp silently and accept
+  hex). A code ratio below 1 or the alias (only while `OTEL_TRACES_SAMPLER` is
+  unset; blank counts as unset) → `ParentBased(TraceIDRatioBased(x))`.
+  *Limitation:* the SDK still parses the same env when the provider is built,
+  so an unknown name or invalid `_ARG` is reported once more via `otel.Handle`
+  (`unsupported sampler: …` / invalid argument); the helper cannot mask env (G7).
+- **Health-check exclusion in the sampler (A7-go, R7, design D5).** `Setup`
+  wraps `buildSampler` so a SERVER span with no local parent (none, or a
+  remote `traceparent` — a sampled probe is still dropped) is not recorded
+  when its `url.path` (`http.target` fallback) is a health path, or its name /
+  `rpc.method` is in the `grpc.health.v1.Health/` service (Check, Watch, List); the parent's
+  tracestate is kept, and spans the handler starts follow the DROP through
+  ParentBased (the default; `always_on` / `traceidratio` ignore the parent, so
+  they sample those children as they would under any unsampled parent).
+  Defaults: `/health /healthz /ready /readyz /live /livez /ping /metrics`,
+  exact, case-insensitive, trailing slash and query ignored (`/users/ping`,
+  `/healthcare`, `/health/live` stay traced). New `WithHealthPaths(paths...)`
+  / `Options.HealthPaths` replaces the list (`WithHealthPaths()` = none); a
+  path that is not ASCII, does not start with `/` or carries `?`, `#` or `,`
+  fails `Setup`. **BREAKING:**
+  `NewHTTPHandler` no longer installs an otelhttp `WithFilter`, so health
+  requests now appear in `http.server.request.duration` (see the table
+  above). Client side (design D6 "A5 validation rulings"): `NewHTTPTransport`
+  now uses the same list and matching (was exact `/ping /health /healthz
+  /ready`; `WithHealthPaths` applies too) and `GRPCClientHandler` /
+  `GRPCDialOption` filter the whole `grpc.health.v1.Health/` service (Check,
+  Watch, List; the server sampler matches the same way) — health client calls get
+  **no client span and no client metric** (upstream filter behavior;
+  **BREAKING** for `rpc.client.call.duration`, which counted them). The
+  `go-api` example now wraps `/health` so probes stay in the RED metrics.
+- **Per-record log handler (A5, G3, design D6).** `NewLogger` and
+  `NewSlogHandler` share one handler that decides **per record** (atomic):
+  while `Setup` has a logs exporter installed (OTLP and/or
+  `OTEL_LOGS_EXPORTER=console`; `otlp,console` feeds both) records go through
+  the OTel bridge, bound to that pipeline's `LoggerProvider`; otherwise —
+  before `Setup`, with no endpoint, `OTEL_LOGS_EXPORTER=none`, or after
+  `Shutdown` — they are written to stdout as JSON (`time`/`level`/`msg`, the
+  0.2.0 fallback shape). Fixed: `NewSlogHandler` with no endpoint dropped every
+  record (`Enabled(Info)=false`); loggers created before `Setup` stayed on
+  stdout forever; loggers kept across `Shutdown` wrote to the closed provider
+  (records lost) and, after a new `Setup`, kept writing to the old one.
+  Stdout shape (shared with Python): one JSON line with `time` (RFC 3339,
+  milliseconds, UTC `Z`; slog's default was local time), `level`
+  (`DEBUG/INFO/WARN/ERROR`), `msg`, the attributes, and `exception` (the
+  text of the first error-valued attribute passed with the record, which is
+  renamed — not when an `exception` key already exists; rendered like slog:
+  typed-nil → `<nil>`, panicking `Error()` → `!PANIC: …`). Both handlers apply the environment level on stdout (`NewSlogHandler`
+  the one the last `Setup` resolved, Info before it); on the bridge
+  `NewLogger` enforces its level in `Handle` too and `NewSlogHandler` lets the
+  `LoggerProvider` decide. Trace↔log correlation needs the `*Context` slog
+  calls (`InfoContext`…).
+
+### Python
+
+Config contract, task A3 (`specs/config-contract-v0.3/`, ADR-001, ADR-003,
+design D1/D4/D12). Behavior changes, with migration notes:
+
+- **BREAKING — stable HTTP semantic conventions (R10/D12).** `setup_telemetry()`
+  and the `otel_helper.ext.*` entry points default `OTEL_SEMCONV_STABILITY_OPT_IN=http`
+  before any instrumentor runs: `http.server.duration` (ms, `http.method`,
+  `http.target`) becomes `http.server.request.duration` (s, `http.request.method`,
+  `http.route`, `url.scheme`), same for the client. A user value always wins;
+  `http/dup` emits both generations. A value without `http`, or an
+  instrumentation initialized before the helper, logs one warning. This
+  matches the Go HTTP row above.
+- **BREAKING — OTLP env vars are left to the SDK (ADR-001).** An absolute
+  `http(s)://` env endpoint is no longer rewritten: the path prefix is kept
+  (`.../otlp` → `/otlp/v1/<signal>`), an HTTP URL without a port uses 443/80
+  instead of 4317, IPv6 literals work, and `OTEL_EXPORTER_OTLP_<SIGNAL>_ENDPOINT`
+  / `_PROTOCOL` / `_HEADERS` / `_COMPRESSION` / `_TIMEOUT` are honored.
+  "OTLP configured" is per signal: only a traces endpoint → traces exported,
+  metrics fall back to Prometheus, logs stay local (no silent `localhost:4317`).
+- **Helper-owned shims** (each warned where the input is suspicious):
+  schemeless `host[:port]` → `https://` (`http://` only with
+  `OTEL_EXPORTER_OTLP_INSECURE=true`), default port 4317/4318, deprecated for
+  http/protobuf; a gRPC URL without a port → 4317 + "set an explicit port";
+  `INSECURE` contradicting the scheme → the scheme wins for that signal;
+  `CERTIFICATE` with a plaintext endpoint → warning; URL userinfo/query are
+  stripped from gRPC targets.
+- **BREAKING — `OTEL_EXPORTER_OTLP[_<SIGNAL>]_TIMEOUT` is milliseconds** (spec;
+  the Python SDK reads seconds — D1.e). `10` now means 10 ms (warned as "looks
+  like seconds"); use `10000`. `TelemetryOptions.export_timeout_ms` defaults to
+  `None` (SDK default 10 s) instead of always passing 10 000.
+- **gzip by default** when neither code (`TelemetryOptions.compression`, new)
+  nor `OTEL_EXPORTER_OTLP[_<SIGNAL>]_COMPRESSION` sets it (D1.d). Env values are
+  case-insensitive `gzip`/`none` (`none` no longer crashes the gRPC exporter);
+  anything else, including `deflate`, warns and uses gzip.
+- **Edge-case rulings** (design "D1 edge-case rulings"): boolean env values
+  other than `true` (case-insensitive) are false with a warning
+  (`INSECURE=yes` was ignored before); `OTEL_SDK_DISABLED=true` installs only
+  propagators (no providers, exporters, `/metrics` listener or log handlers);
+  `OTEL_EXPORTER_OTLP[_<SIGNAL>]_HEADERS` are parsed by the helper (malformed
+  items skipped, warned by position only); URL userinfo/query/fragment are
+  stripped from every endpoint (put credentials in `*_HEADERS`) — this also
+  fixes `.../otlp?x=1` losing every HTTP signal; an invalid per-signal endpoint
+  or timeout falls back to the generic one; `unix://`/`ftp://` endpoints leave
+  the signal unconfigured; whitespace-only `OTEL_SERVICE_NAME`/`SERVICE_NAME` is
+  unset; forking after setup on sdk 1.42–1.44 (`--preload`) warns. Header
+  keys must match `[A-Za-z0-9._-]+` (case-insensitive, last wins; values
+  percent-decoded, invalid escapes kept and warned); env timeouts are decimal
+  milliseconds only (`^[0-9]+(\.[0-9]+)?$`: `1e3`, `.5`, `+5` warn and fall back)
+  clamped to [1 ms, 24 h]; unparseable endpoints — including a control
+  character inside the URL — are shown as `<unparseable URL>` and fall back;
+  endpoint env values are trimmed; an invalid `%` escape or non-UTF-8 header
+  value is kept whole and literal, a decoded control character skips the item;
+  IPv6 zone ids warn over http/protobuf (urllib3 can't resolve them).
+- **Code values fail fast**, naming the option: wrong types, `sample_ratio`
+  outside [0, 1] or NaN, `prometheus_metrics_port` outside [0, 65535],
+  unknown `disabled_signals`, `insecure` contradicting the code URL's scheme.
+- **BREAKING — service name (R5).** `OTEL_SERVICE_NAME` and
+  `OTEL_RESOURCE_ATTRIBUTES` now beat `SERVICE_NAME`; with none set the helper
+  sets nothing (SDK `unknown_service*`) and warns; the `my-service` default is
+  gone (`TelemetryOptions.service_name` defaults to `None`).
+- **BREAKING — environment (R4, ADR-003).** Unset → `deployment.environment.name`
+  absent + one warning, log level INFO (was `LOCAL`/DEBUG); unknown values are
+  emitted verbatim (were `LOCAL`); `OTEL_RESOURCE_ATTRIBUTES` beats `ENVIRONMENT`
+  and is never overwritten. `TelemetryOptions.environment` defaults to `None`
+  and also accepts a string.
+- **`service.instance.id` (D4).** When neither code nor `OTEL_RESOURCE_ATTRIBUTES`
+  nor the SDK (≥ 1.45) provides one, the helper adds a per-process UUID (sdk
+  1.42–1.44). An explicit id in a worker forked after import warns (never
+  rewritten). Call `setup_telemetry()` only in each worker (gunicorn
+  `post_fork`), not in the preloaded module — a second call in a worker is a
+  no-op; a worker forked after setup ran in the parent warns on its next
+  helper call.
+- **Env parsing never raises (R8).** Unknown/unparseable env values warn and
+  fall back: `OTEL_METRICS_EXPORTER` (unknown, `none,x` → none, `otlp` without a
+  metrics endpoint → legacy inference), `OTEL_METRIC_EXPORT_INTERVAL` ≤ 0 or
+  garbage, `OTEL_EXPORTER_OTLP_PROTOCOL`, `_INSECURE`, `_TIMEOUT`,
+  `_COMPRESSION`, `OTEL_SDK_DISABLED`, `OTEL_HELPER_*` numbers/booleans. Invalid
+  values passed in code still raise `ValueError` naming the field.
+- **`OTEL_{TRACES,METRICS,LOGS}_EXPORTER`**: `none`, `console` (new),
+  deprecated `logging` (→ `console` + warning) and lists; they beat the
+  deprecated `OTEL_HELPER_DISABLED_SIGNALS` for their signal.
+- **`OTEL_PROPAGATORS` is honored** for `tracecontext`, `baggage` and `none`;
+  any other value (`b3`, `jaeger`, `xray`, …) is warned and skipped (W3C default
+  when nothing supported is left) instead of the API's `ValueError`; casing and
+  empty tokens are normalized. This needs `otel_helper` imported before any
+  other OpenTelemetry module.
+- **New options**: `traces_endpoint` / `metrics_endpoint` / `logs_endpoint`
+  (used verbatim), `compression`. A generic `otel_endpoint` set in code always
+  gets `/v1/<signal>` appended for http/protobuf: a code value already ending in
+  `/v1/traces` now becomes `/v1/traces/v1/traces` — pass it as
+  `traces_endpoint` instead. `resolve_insecure()` was removed (TLS follows the
+  scheme).
+- **`TelemetryOptions` after setup**: `service_name` is `None` when nothing
+  configures one, and `environment` is `None` when unset or a plain `str` for
+  values outside LOCAL/DEV/HML/PRD — code reading `options.environment.value`
+  must handle both.
+- **Examples**: `python-api` / `python-backend` pin grpcio 1.76 and
+  `protobuf>=6.33.5,<7`, and drop the redundant contrib `0.63b1` pins. The old
+  `protobuf==5.27.0` pin crashed at start with `VersionError`: the unpinned
+  `googleapis-common-protos` (1.76.0, a dependency of the OTLP exporters, whose
+  `google/rpc/*_pb2.py` the gRPC exporter imports) is generated with protobuf
+  6.33.5 (opentelemetry-proto itself is 5.26.1 gencode).
+- **Diagnostics** go only to the `otel_helper.*` loggers and never print
+  `*_HEADERS`, `*_CLIENT_KEY` or URL userinfo/query values; a source-scan test
+  enforces the channel.
+
+Sampler, task A4 (R6, design D3, ADR-002):
+
+- **BREAKING — the sampler is ParentBased.** Default is `parentbased_always_on`:
+  a child of a remote `traceparent` with `sampled=0` is no longer recorded
+  (was: always sampled). `sample_ratio < 1.0` in code and the deprecated
+  `OTEL_HELPER_SAMPLE_RATIO` (used only while `OTEL_TRACES_SAMPLER` is unset)
+  now build `ParentBased(TraceIdRatioBased(x))` instead of a bare ratio sampler.
+  Migration: prefer `OTEL_TRACES_SAMPLER=parentbased_traceidratio` +
+  `OTEL_TRACES_SAMPLER_ARG`.
+- `OTEL_TRACES_SAMPLER` / `_ARG` are parsed by the helper (spec names,
+  case-insensitive, whitespace trimmed). An unknown name logs one warning on
+  `otel_helper.tracing` and uses the default; an invalid or out-of-range `_ARG`
+  warns and uses 1.0 (SDK 1.42 raised `ValueError` at setup for e.g. `_ARG=2`).
+  The spec names the helper does not implement (`jaeger_remote`,
+  `parentbased_jaeger_remote`, `xray`) warn "unsupported by this helper".
+- `_ARG` and `OTEL_HELPER_SAMPLE_RATIO` accept plain decimals only
+  (`^[0-9]+(\.[0-9]+)?$`, as the timeouts): `2.5e-1`, `0.2_5`, `+0.5`, `.5` and
+  full-width digits now warn and use 1.0 (were accepted by `float()`).
+
+Packaging and Prometheus, task A8 (P14, P17):
+
+- **BREAKING — `/metrics` uses a dedicated `CollectorRegistry`.** The standalone
+  listener and `metrics_app()` serve only OTel-produced series: no `process_*`,
+  `python_gc_*`, `python_info`, and no metrics the application registered on
+  `prometheus_client.REGISTRY` (serve those yourself if you need them). The OTel
+  series no longer appear on the global `REGISTRY`. A failed listener bind now
+  unregisters the reader.
+- The package ships `py.typed` and no longer imports `opentelemetry.*._internal`
+  (`TraceBasedExemplarFilter` comes from `opentelemetry.sdk.metrics`); a test
+  enforces both.
+
+Lifecycle, task A6 (P12; mirrors Go G1/G2):
+
+- **BREAKING — a second `setup_telemetry()` returns the first resolved options**
+  (was: the options passed to it, unresolved), ignoring its argument.
+- **Setup is all-or-nothing.** Every signal is built before anything global is
+  installed. If building fails (exporter error, `/metrics` port in use, an
+  instrumentation error), what was built is shut down and the instrumentors it
+  turned on are uninstrumented, the previous propagator and log levels stay, no
+  handler is attached, and a later call can retry. Before, a busy port left a
+  global TracerProvider installed and the helper half set up.
+- **New `shutdown_telemetry(timeout_ms=30000)`**: flushes and shuts down the
+  trace, metric and log providers concurrently under one deadline, uninstruments
+  what setup instrumented, removes and closes the helper's log handler (restoring
+  the log levels it changed) and stops the standalone `/metrics` listener.
+  Thread-safe: the first call does the work, and every later or concurrent call
+  repeats its result — `None`, or the same `RuntimeError` (joining every error or
+  timeout) — until the next successful setup. It is registered with `atexit`
+  (errors logged there) and replaces the SDK's per-provider exit hooks.
+  **Python skips `atexit` on an unhandled SIGTERM** (`docker stop`, Kubernetes):
+  handle SIGTERM in the app or call it from the server's shutdown hook (HOW-TO
+  "Shutdown and SIGTERM"; `example/python-process` shows it). The helper
+  installs no signal handler.
+- **Limitation, Python only:** the OpenTelemetry Python API sets the global
+  Tracer/MeterProvider once per process, so a setup after `shutdown_telemetry()`
+  re-enables logs and propagators but not traces/metrics (a warning says so, and
+  `options.is_signal_enabled("traces"/"metrics")` returns False). Go rebuilds all
+  three.
+- **BREAKING — mounted `metrics_app()` status codes** (same table as Go's
+  `MetricsHandler`): **503** before setup, after a failed setup and after
+  shutdown; **200 with an empty body** when Prometheus is off by configuration
+  (`OTEL_SDK_DISABLED=true`, metrics disabled, or `OTEL_METRICS_EXPORTER` without
+  `prometheus`); the OTel series otherwise. 0.2.0 always answered 200 and served
+  the global registry (`process_*`/`python_*` even with no helper metrics), so a
+  target scraped before setup or after shutdown now reports `up=0` and can fire
+  TargetDown-style alerts — scrape only while the app is serving.
+- `reset_telemetry()` (testing) now calls `shutdown_telemetry()`.
+
+Logging, task A5 (P10, P16, design D6):
+
+- **BREAKING — no OTel log handler without a logs exporter.** 0.2.0 always put
+  the SDK `LoggingHandler` on root, so with no endpoint (or
+  `OTEL_LOGS_EXPORTER=none`) records went nowhere and `logging.basicConfig()`
+  did nothing. Now: logs exporter active → the
+  `opentelemetry-instrumentation-logging` handler (the SDK one is deprecated) on
+  root and on uvicorn's non-propagating `uvicorn`/`uvicorn.error`/`uvicorn.access`
+  loggers, each record exported once, kept across `basicConfig`/`dictConfig`/
+  `fileConfig` (which otherwise skip or drop it); no exporter → no OTel handler,
+  and while the app configures no root handler its records go to stdout as
+  single-line JSON (`time`, `level` DEBUG/INFO/WARN/ERROR, `msg`, `logger`, extra
+  attributes, `exception`; same shape as Go) at the environment level — a
+  console fallback installed as `logging.lastResort`, so a later
+  `basicConfig()` simply takes over. `OTEL_LOGS_EXPORTER=otlp,console` → both.
+- Helper diagnostics (`otel_helper.*`, INFO+; that logger is set to INFO when
+  left NOTSET) and SDK diagnostics (`opentelemetry.*`, WARNING+) always reach
+  stderr, also with a logs exporter active (until the app configures a root
+  handler; re-enabled after `dictConfig(disable_existing_loggers=True)`). `opentelemetry.*` records are never exported through OTLP (no
+  export-failure feedback loop); `otel_helper.*` records are also exported.
+- A second OpenTelemetry `LoggingHandler` on root (`opentelemetry-instrument`,
+  `LoggingInstrumentor().instrument()`) is removed with a warning, so records
+  are exported once; set `OTEL_PYTHON_LOG_AUTO_INSTRUMENTATION=false`. It is
+  removed before the helper installs its providers.
+- **BREAKING — root level.** Set to the environment level (R4: unset/unknown →
+  INFO) only when root has no handlers and is at the stdlib default WARNING;
+  quieted framework loggers (`urllib3`, `grpc`, …) only when they are NOTSET.
+  Shutdown restores what it changed.
+- **BREAKING —** `code.file.path`/`code.function.name`/`code.line.number` are no longer added
+  by default (0.2.0 always did); set `OTEL_PYTHON_LOG_CODE_ATTRIBUTES=true`
+  (upstream variable). Matches Go.
+- `set_logger_provider()` is called (once per process), so code using the OTel
+  Logs API (`opentelemetry._logs`) exports too.
+
+Health exclusion and instrumentation, task A7-py (R7, P11, P13, design D5):
+
+- **BREAKING — health requests stay in HTTP server metrics.** FastAPI no longer
+  gets `excluded_urls`; a sampler wrapping the helper sampler drops SERVER spans
+  (no parent or remote parent) whose `url.path`/`http.target` is one of
+  `/health /healthz /ready /readyz /live /livez /ping /metrics` (exact,
+  case-insensitive, trailing slash/query ignored; 0.2.0: `/ping /health /healthz
+  /ready` as regexes, so `/users/ping` was not traced). Children follow under a
+  parent-based sampler (not with an explicit `always_on`/`traceidratio`).
+  `TelemetryOptions(health_paths=[...])` replaces the HTTP list (`[]` = none).
+  User `OTEL_PYTHON_FASTAPI_EXCLUDED_URLS`/`OTEL_PYTHON_EXCLUDED_URLS` keep their
+  upstream meaning (span and metric dropped). **Migration:** probes now count in
+  `http_server_request_duration_seconds`; SLI/latency queries should exclude
+  health routes (`http_route!~"/health|/healthz|/ready.*|/live.*|/ping|/metrics"`).
+- **BREAKING — client-side health exclusion is exact.** httpx/requests calls to
+  the same health list (incl. `health_paths`) drop the client span and metric
+  (upstream `excluded_urls`, anchored patterns merged with the user's
+  `OTEL_PYTHON_*_EXCLUDED_URLS`); 0.2.0 matched `/ping` etc. as substrings
+  (`/users/ping` dropped) and wrote `OTEL_PYTHON_HTTPX/REQUESTS_EXCLUDED_URLS`
+  into the environment — the helper no longer mutates env.
+- gRPC servers and clients (sync and aio): the whole `grpc.health.v1.Health`
+  service is not traced (native filter). `health_paths` must be ASCII without
+  `?`, `#` or `,`. `OTEL_PYTHON_GRPC_EXCLUDED_SERVICES` is folded into
+  that filter (upstream would OR it with any filter and re-enable the excluded
+  services). Spans a health servicer starts become roots (no server span).
+- Removed `otel_helper.tracing.HEALTH_PATHS` / `otel_helper.instrumentation.HEALTH_PATHS`;
+  use `otel_helper.DEFAULT_HEALTH_PATHS`.
+- Sync `grpc.server()` / `grpc.insecure_channel()` / `grpc.secure_channel()` are
+  instrumented like `grpc.aio` (spans + propagation).
+- New `instrument_fastapi(app)` for apps whose `FastAPI` class was imported
+  before `setup_telemetry()` (idempotent).
+
+### Changed
+
+- **BREAKING — Go: dependency floor raised to Go 1.26 (0.3.0 task A2, ADR-005).**
+  `go.mod` is `go 1.26.0`; otel / sdk / trace / metric / log / sdk/log and the
+  OTLP trace + metric exporters v1.47.0 (logs API now stable), OTLP log
+  exporters v0.23.0, `exporters/prometheus` v0.69.0, contrib `otelhttp` /
+  `otelgrpc` / `runtime` v0.72.0, `otelslog` v0.21.0, gRPC v1.83.2,
+  `golang.org/x/net` v0.62.0 (GO-2026-6611/-6612/-6617/-6860/-6866); `ext/otelredis` go-redis v9.7.3 (GO-2025-3540). The `ext/*` modules
+  (contrib `otelaws` v0.72.0) and examples follow. CI tests Go 1.26.x and
+  1.27.x and runs `govulncheck`.
+- **Go: `NewHTTPHandler`'s `operation` argument is ignored** (kept for source
+  compatibility): spans are named after the route (table above).
+- **Python: lockstep dependency bounds (design D9.a).** api / sdk / OTLP
+  exporters `>=1.42,<1.46`; every contrib package (core and the `aws` /
+  `redis` / `sql` extras) `>=0.63b0,<0.67b0`. Contrib betas pin
+  semconv/instrumentation exactly, which couples them to one SDK minor, so
+  unbounded ranges pulled in untested SDKs. New core dependency
+  `opentelemetry-instrumentation-logging` (same bounds; Apache-2.0), the log
+  handler since A5.
+- **Go examples:** Dockerfiles build with context `go/` (the old per-example
+  context could not see the `replace ../../` helper source) and run as
+  uid 65534.
+
+### Removed
+
+- **BREAKING — Go: `UnaryServerInterceptor`, `StreamServerInterceptor`,
+  `UnaryClientInterceptor`, `StreamClientInterceptor`** (otelgrpc removed
+  interceptors in v0.61.0). Use the stats-handler API:
+  `grpc.NewServer(otelhelper.GRPCServerOption())`,
+  `grpc.NewClient(target, otelhelper.GRPCDialOption())`; `GRPCServerHandler()`
+  / `GRPCClientHandler()` return the `stats.Handler` itself.
+
 ### Fixed
 
+- **Security — Go: OTLP/gRPC logs ignored `OTEL_EXPORTER_OTLP_CERTIFICATE`
+  under `OTEL_EXPORTER_OTLP_INSECURE=true` and were sent in plaintext**
+  (otlploggrpc v0.7.0). v0.23.0 uses TLS with the env CA, as traces and
+  metrics already did.
+- **Go: IPv6 literal collector endpoints.** `http://[::1]:4318` became
+  `::1:4318`, which the v1.47 OTLP/HTTP exporters reject at setup and OTLP/gRPC
+  could not dial; the host is now re-bracketed (`[::1]:4318`).
 - **Go: `NewLogger` silently discarded every log record when no OTLP endpoint
   was configured.** `NewLogger` always bridged `slog` through the OTel Logs
   API (`otelslog.NewHandler`) into the process's `LoggerProvider`. When
@@ -24,6 +527,23 @@ currently aligned at the same version.
   attached a processor; without one, it falls back to a plain
   `slog.NewJSONHandler` on stdout (same flat `msg`/`level`/`time` shape
   consuming apps already parse) instead of the OTel bridge.
+
+### Internal
+
+- **Cross-language parity harness and CI matrix (0.3.0 task A1, ADR-008).**
+  `parity/cases.json` (135 hand-maintained cases) describes the 0.2.0 behavior of Go and
+  Python and marks every 0.3.0 target as a strict `xfail:<task>`; it runs in
+  both suites (`go/parity_test.go`, `python/tests/test_parity.py`, one
+  process per case). Wire-level `export` cases run against a fake OTLP
+  receiver (`testing/fakeotlp/`); `testing/docker-compose.yml` runs both
+  suites and an e2e smoke against a real Collector (`testing/e2e/smoke.sh`).
+  CI: Python now runs py 3.10/3.11/3.13 × lower-bound/latest dependencies, Go
+  gets a ≥ 90% coverage gate (parity child processes included), both jobs run
+  the export cases, the e2e smoke is its own job, and the workflow token is
+  read-only except on the publish jobs.
+  `tests/test_propagation.py` is a real test module; tests no longer read the
+  private `MeterProvider._metric_readers`. No library behavior changed.
+  Test-only dev extras: `fastapi`, `httpx`, `grpcio`.
 
 ## [0.2.0] - 2026-07-15
 

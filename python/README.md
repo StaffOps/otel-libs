@@ -33,14 +33,14 @@ setup_telemetry(TelemetryOptions(
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `SERVICE_NAME` | `my-service` | Service name (priority over `OTEL_SERVICE_NAME`) |
-| `OTEL_SERVICE_NAME` | `my-service` | Fallback for service name |
-| `ENVIRONMENT` | `LOCAL` | Environment: LOCAL, DEV, HML, PRD |
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | `http://localhost` | Collector endpoint |
-| `OTEL_EXPORTER_OTLP_INSECURE` | _(unset)_ | TLS override: `true` = plaintext, `false` = TLS. Unset = derived from scheme (secure by default) |
+| `OTEL_SERVICE_NAME` | _(unset)_ | Service name. Unset everywhere → SDK default `unknown_service*` + a warning |
+| `SERVICE_NAME` | _(unset)_ | Legacy alias, used only when neither `OTEL_SERVICE_NAME` nor `OTEL_RESOURCE_ATTRIBUTES` sets `service.name` |
+| `ENVIRONMENT` | _(unset)_ | Legacy alias for `deployment.environment.name` (`OTEL_RESOURCE_ATTRIBUTES` wins). Unset → attribute absent + a warning; unknown values emitted verbatim |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | _(unset)_ | Collector endpoint. Per-signal `OTEL_EXPORTER_OTLP_<SIGNAL>_ENDPOINT` also honored (used verbatim) |
+| `OTEL_EXPORTER_OTLP_INSECURE` | _(unset)_ | Applies to schemeless endpoints only (`true` = plaintext; any other value = false, non-`false` values warned); an `http://`/`https://` scheme always wins (a conflict is warned) |
 | `OTEL_HELPER_DEBUG_LEVEL` | `false` | Debug mode: DEBUG log, all instrumentations, attribute debug=true |
 | `OTEL_HELPER_EXTRA_INSTRUMENTATION` | `SQL` | Conditional instrumentations: SQL, REDIS, AWS |
-| `OTEL_HELPER_SAMPLE_RATIO` | `1.0` | Head sampling ratio (0.0-1.0). 1.0 = AlwaysOn |
+| `OTEL_HELPER_SAMPLE_RATIO` | `1.0` | Deprecated: root-span ratio (0.0-1.0) as `parentbased_traceidratio`; prefer `OTEL_TRACES_SAMPLER`. 1.0 = `parentbased_always_on` |
 | `OTEL_HELPER_METRICS_PORT` | `9464` | Prometheus `/metrics` port when no OTLP endpoint is configured |
 
 ## Behavior by Environment
@@ -50,6 +50,7 @@ setup_telemetry(TelemetryOptions(
 | LOCAL | DEBUG |
 | DEV/HML | INFO |
 | PRD | WARNING |
+| unset / other value | INFO |
 
 `OTEL_HELPER_DEBUG_LEVEL=true` forces DEBUG log level in any environment.
 
@@ -71,7 +72,7 @@ This enables the standard Kubernetes pattern: deploy without a collector, and le
 
 | Signal | What is captured |
 |--------|-----------------|
-| **Traces** | FastAPI requests, HTTPX/requests calls, gRPC client+server (async), SQLAlchemy (if SQL), botocore (if AWS) |
+| **Traces** | FastAPI requests, HTTPX/requests calls, gRPC client+server (sync and async), SQLAlchemy (if SQL), botocore (if AWS) |
 | **Metrics** | System metrics (CPU, memory, GC, network), custom meters via OTLP, exemplars (trace-based). Exported every **30s**. |
 | **Logs** | Python logging exported via OTLP with traceId/spanId automatically |
 
@@ -83,11 +84,11 @@ Transport is determined by the endpoint scheme:
 |----------|-----------|
 | `https://host:4317` | TLS (system CA trust store) |
 | `http://host:4317` | Plaintext (insecure) |
-| `host:4317` (no scheme) | TLS (secure by default) |
+| `host:4317` (no scheme) | TLS; plaintext only with `OTEL_EXPORTER_OTLP_INSECURE=true` (or `TelemetryOptions(insecure=True)`) |
 
-Override with `OTEL_EXPORTER_OTLP_INSECURE`: `true` forces plaintext, `false` forces TLS. Explicit code config (`TelemetryOptions(insecure=True)`) always wins over env/scheme.
+The scheme always wins over `OTEL_EXPORTER_OTLP_INSECURE` (OTLP spec); a contradicting value is logged as a warning. A gRPC URL without a port uses 4317 (with a warning); an HTTP URL without a port uses the scheme default (443/80).
 
-For a local plaintext collector, use `http://` in the endpoint or set `OTEL_EXPORTER_OTLP_INSECURE=true`.
+For a local plaintext collector, use `http://` in the endpoint.
 
 ## Opt-in Extensions
 
@@ -131,7 +132,7 @@ instrument_sql(engine=None)  # pass SQLAlchemy engine if available
 Tempo / VictoriaMetrics / Loki
 ```
 
-- SDK uses AlwaysOnSampler (default) — sampling is done at the Collector
+- SDK uses `parentbased_always_on` (default) — sampling is done at the Collector
 - SDK only sets `service.name` — resource attributes are enriched by the Collector
 - Everything exports via OTLP gRPC to the Collector, never directly to backends
 

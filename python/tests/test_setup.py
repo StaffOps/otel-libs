@@ -40,8 +40,9 @@ class TestSetupTelemetry:
             service_name="second",
             otel_endpoint="http://localhost:4317",
         ))
-        # Second call should be no-op
-        assert opts2.service_name == "second"  # returns the passed options but doesn't re-init
+        # Second call is a no-op that returns the first resolved options (P12).
+        assert opts2 is opts1
+        assert opts2.service_name == "first"
 
     def test_sets_tracer_provider(self):
         setup_telemetry(TelemetryOptions(

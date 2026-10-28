@@ -1,7 +1,9 @@
 setuptools
 otel-helper
-grpcio==1.65.0
-grpcio-tools==1.65.0
-grpcio-health-checking==1.65.0
-protobuf==5.27.0
-opentelemetry-instrumentation-grpc==0.63b1
+grpcio==1.76.0
+grpcio-tools==1.76.0
+grpcio-health-checking==1.76.0
+# googleapis-common-protos 1.76 (pulled by the OTLP exporters) ships google/rpc/*_pb2.py
+# generated with protobuf 6.33.5, which the gRPC exporter imports; grpcio-tools 1.76
+# generates the app stubs for protobuf 6.31.1. An older runtime fails with VersionError.
+protobuf>=6.33.5,<7

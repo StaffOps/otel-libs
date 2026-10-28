@@ -1,119 +1,38 @@
 # Tests — otel-helper (Python)
 
-153 unit tests (pytest), `--ignore=tests/test_propagation.py`. Coverage: ≥90% line (CI gate).
+Unit tests (pytest) plus the shared parity fixture (`tests/test_parity.py`,
+see [`parity/README.md`](../parity/README.md)). Coverage: ≥90% line (CI gate),
+including the parity driver subprocesses (`PARITY_COVERAGE_DATA`).
 
 ```bash
-docker run --rm -v $(pwd):/app -w /app python:3.11-slim sh -c "pip install -e '.[dev]' grpcio -q && pytest tests/ --ignore=tests/test_propagation.py -v"
+# from the repo root — includes the fake OTLP receiver the parity export cases need
+docker compose -f testing/docker-compose.yml run --rm python-tests
 ```
 
----
-
-## test_config.py (59 tests)
-
-### TestDefaults (5 tests)
-
-| Test | Description |
-|------|-------------|
-| `test_default_service_name` | Default ServiceName is "my-service" |
-| `test_default_environment` | Default Environment is LOCAL |
-| `test_default_debug_level` | Debug disabled by default |
-| `test_default_extra_instrumentation` | Default extra instrumentation is "SQL" |
-| `test_default_export_timeout` | Default export timeout is 10000ms |
-
-### TestEnvResolution (14 tests)
-
-| Test | Description |
-|------|-------------|
-| `test_service_name_from_env` | SERVICE_NAME resolves service_name |
-| `test_otel_service_name_fallback` | OTEL_SERVICE_NAME as fallback |
-| `test_service_name_priority` | SERVICE_NAME has priority over OTEL_SERVICE_NAME |
-| `test_environment_from_env` | ENVIRONMENT=PRD resolves correctly |
-| `test_environment_invalid_falls_back_to_local` | Invalid value → LOCAL |
-| `test_collector_endpoint_from_env` | OTEL_EXPORTER_OTLP_ENDPOINT resolves endpoint |
-| `test_collector_endpoint_default_empty` | No env var → endpoint stays empty (Prometheus fallback) |
-| `test_collector_endpoint_preserves_custom_port` | `https://gw:14317` keeps port 14317 (P3) |
-| `test_collector_endpoint_defaults_port_when_absent` | `https://gw` (no port) → defaults to :4317 |
-| `test_collector_endpoint_schemeless_preserves_port` | `gw:14317` (no scheme) keeps the port |
-| `test_collector_endpoint_strips_path` | Scheme+host+port kept; path suffix dropped |
-| `test_debug_level_from_env` | OTEL_HELPER_DEBUG_LEVEL=true resolves |
-| `test_extra_instrumentation_from_env` | OTEL_HELPER_EXTRA_INSTRUMENTATION resolves |
-| `test_explicit_value_overrides_env` | Explicit value has priority over env var |
-
-### TestValidation (5 tests)
-
-| Test | Description |
-|------|-------------|
-| `test_valid_options` | Valid options pass |
-| `test_empty_service_name_fails` | Empty ServiceName → ValueError |
-| `test_empty_endpoint_is_valid` | Empty endpoint is valid (Prometheus fallback mode, not an error) |
-| `test_invalid_endpoint_fails` | Invalid URI → ValueError |
-| `test_zero_timeout_fails` | Timeout ≤ 0 → ValueError |
-
-### TestHasInstrumentation (4 tests)
-
-| Test | Description |
-|------|-------------|
-| `test_sql_enabled_by_default` | SQL enabled by default |
-| `test_aws_not_enabled_by_default` | AWS disabled by default |
-| `test_debug_enables_all` | Debug mode enables all |
-| `test_case_insensitive` | Case insensitive (sql = SQL) |
-
-### TestLogLevel (5 tests)
-
-| Test | Description |
-|------|-------------|
-| `test_local_debug` | LOCAL → DEBUG |
-| `test_dev_info` | DEV → INFO |
-| `test_hml_info` | HML → INFO |
-| `test_prd_warning` | PRD → WARNING |
-| `test_debug_override` | Debug mode → DEBUG in any environment |
-
-### TestEnvironmentParsing (3 tests)
-
-| Test | Description |
-|------|-------------|
-| `test_valid_values` | LOCAL, DEV, HML, PRD parse correctly |
-| `test_case_insensitive` | prd, dev work |
-| `test_invalid_falls_back` | Invalid value → LOCAL |
-
-### TestResolveInsecure (11 tests)
-
-TLS auto-detection via `resolve_insecure()`.
-
-| Test | Description |
-|------|-------------|
-| `test_https_endpoint_is_secure` | `https://` endpoint → secure (insecure=False) |
-| `test_http_endpoint_is_insecure` | `http://` endpoint → insecure=True |
-| `test_empty_endpoint_is_insecure` | No endpoint → insecure=True (irrelevant, Prometheus mode) |
-| `test_env_override_false_with_http_endpoint` | OTEL_EXPORTER_OTLP_INSECURE=false wins over http:// scheme |
-| `test_env_override_true_with_https_endpoint` | OTEL_EXPORTER_OTLP_INSECURE=true wins over https:// scheme |
-| `test_env_override_case_insensitive` | "False" (mixed case) parsed correctly |
-| `test_env_override_with_whitespace` | "  true  " (whitespace) parsed correctly |
-| `test_explicit_insecure_false_overrides_scheme` | Explicit `insecure=False` wins over http:// scheme |
-| `test_explicit_insecure_true_overrides_scheme` | Explicit `insecure=True` wins over https:// scheme |
-| `test_explicit_overrides_env` | Explicit value wins over env var |
-| `test_default_insecure_is_none` | `insecure` field defaults to None (unset) |
-
-### TestResolvedOtlpProtocol (12 tests)
-
-`resolved_otlp_protocol()` — explicit > `OTEL_EXPORTER_OTLP_PROTOCOL` > port 4318 inference > `grpc` default. Cross-language parity with `go/otlp_protocol_test.go` and `dotnet/OtelHelper.Tests/OtlpProtocolTests.cs`.
-
-| Test | Description |
-|------|-------------|
-| `test_default_is_grpc` | Endpoint on port 4317, no env var → grpc |
-| `test_no_endpoint_defaults_to_grpc` | No endpoint at all → grpc |
-| `test_port_4318_infers_http` | Endpoint on port 4318 → http/protobuf |
-| `test_port_4317_infers_grpc` | Endpoint on port 4317 → grpc |
-| `test_other_port_infers_grpc` | Endpoint on an unrelated port → grpc |
-| `test_env_var_wins_over_port_inference` | `OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf` wins over a :4317 endpoint that would infer grpc |
-| `test_env_var_grpc_wins_over_http_port_inference` | `OTEL_EXPORTER_OTLP_PROTOCOL=grpc` wins over a :4318 endpoint that would infer http |
-| `test_explicit_option_beats_env_var` | `otlp_protocol=` kwarg wins over the env var |
-| `test_env_var_case_and_whitespace_tolerant` | `"  HTTP/PROTOBUF  "` normalizes correctly |
-| `test_unknown_protocol_fails_validation` | Unknown protocol value → `ValueError` |
-| `test_unsupported_but_spec_valid_http_json_fails_validation` | `http/json` is a valid OTel spec value but unsupported here → fails validation |
-| `test_grpc_and_http_protobuf_pass_validation` | `grpc` and `http/protobuf` both pass validation |
+> Full per-test inventory below predates the 0.3.0 harness; refreshed in task A13.
 
 ---
+
+## test_config.py (0.3.0 resolution contract)
+
+Pure resolution, no exporters: service-name precedence (R5), environment
+precedence / verbatim / warn-once (R4), log level per environment, env values
+that must warn and fall back instead of raising (R8), `OTEL_{TRACES,LOGS}_EXPORTER`
+(`none`, `console`, `logging` alias, `none` in a list), per-signal "OTLP
+configured" (R2), protocol precedence incl. per-signal and port-4318 inference
+on the signal's own endpoint, code-value validation (raises naming the field),
+URL redaction, `has_instrumentation`.
+
+## test_shims.py (0.3.0 helper-owned OTLP shims)
+
+What the helper passes to the SDK exporters (design D1, ADR-001): nothing for
+absolute env URLs; code generic endpoint + `/v1/<signal>` vs per-signal verbatim;
+schemeless endpoints (D1 table), portless gRPC → 4317 + warning (D1.b), TLS
+conflicts (D1.c), certificate with plaintext, gRPC userinfo/query stripping,
+timeout ms → s incl. the "looks like seconds" warning and invalid values (D1.e),
+gzip default and env `none` for both protocols (D1.d), stable HTTP semconv default
+and its warnings (D12), `OTEL_PROPAGATORS`, `service.instance.id` (D4) and a source
+scan enforcing the helper-diagnostics channel (`otel_helper*` loggers only).
 
 ## test_setup.py (9 tests)
 
@@ -122,7 +41,7 @@ TLS auto-detection via `resolve_insecure()`.
 | Test | Description |
 |------|-------------|
 | `test_returns_resolved_options` | Returns resolved options |
-| `test_double_init_guard` | Second call is no-op |
+| `test_double_init_guard` | Second call is a no-op returning the first resolved options |
 | `test_sets_tracer_provider` | Global TracerProvider configured |
 | `test_resource_emits_deployment_environment_name` | Resource carries `deployment.environment.name` (semconv ≥ v1.27), not the legacy key (P8) |
 | `test_sets_meter_provider` | Global MeterProvider configured |
@@ -145,8 +64,8 @@ TLS auto-detection via `resolve_insecure()`.
 | `test_env_var_negative_clamped` | Value < 0.0 clamped to 0.0 |
 | `test_invalid_env_var_ignored` | Non-numeric value ignored |
 | `test_explicit_value_overrides_env` | Explicit value has priority |
-| `test_ratio_below_1_uses_trace_id_sampler` | Ratio < 1.0 → TraceIdRatioBased |
-| `test_ratio_1_uses_always_on` | Ratio 1.0 → not TraceIdRatioBased |
+| `test_ratio_below_1_uses_trace_id_sampler` | Ratio < 1.0 → `ParentBased(TraceIdRatioBased)` |
+| `test_ratio_1_uses_always_on` | Ratio 1.0 → `ParentBased(AlwaysOn)` |
 
 ### TestDebugProcessor (2 tests)
 
@@ -227,7 +146,7 @@ Opt-in instrumentation extensions (`otel_helper.ext`) — the optional packages 
 
 `OTEL_METRICS_EXPORTER` / `OTEL_METRIC_EXPORT_INTERVAL` contract (US-1, US-2, US-6 of the metrics-exporter-contract spec). Cross-language parity with `go/metrics_contract_test.go` and `dotnet/OtelHelper.Tests/MetricsContractTests.cs`.
 
-### TestExporterResolution (11 tests)
+### TestExporterResolution (18 tests)
 
 | Test | Description |
 |------|-------------|
@@ -239,18 +158,25 @@ Opt-in instrumentation extensions (`otel_helper.ext`) — the optional packages 
 | `test_none_disables_metrics` | `none` → empty list (metrics disabled) |
 | `test_case_and_whitespace_tolerant` | " OTLP , Prometheus " parses correctly |
 | `test_explicit_option_beats_env` | `metric_exporters=[...]` option wins over the env var |
-| `test_unknown_value_fails_validation` | Unknown value → ValueError listing valid values |
-| `test_otlp_without_endpoint_fails_validation` | `otlp` without an endpoint → ValueError |
-| `test_none_combined_with_other_fails_validation` | `none,prometheus` → ValueError |
+| `test_unknown_env_value_warns_and_uses_inference` | Unknown env value → warning, legacy inference (R8) |
+| `test_unknown_code_value_fails_validation` | Unknown code value → ValueError listing valid values |
+| `test_otlp_env_without_endpoint_warns_and_falls_back` | Env `otlp` without a metrics endpoint → warning, `["prometheus"]` (R2) |
+| `test_otlp_env_without_endpoint_keeps_other_exporters` | Env `otlp,console` without endpoint → `["console"]` |
+| `test_otlp_code_without_endpoint_fails_validation` | Code `["otlp"]` without an endpoint → ValueError |
+| `test_otlp_per_signal_metrics_endpoint_counts_as_configured` | `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT` satisfies `otlp` |
+| `test_none_combined_env_warns_and_is_none` | Env `none,prometheus` → warning, `[]` |
+| `test_none_combined_code_fails_validation` | Code `["none", "prometheus"]` → ValueError |
+| `test_logging_alias_is_console` | Env `logging` → `["console"]` + deprecation warning |
 
-### TestExportInterval (5 tests)
+### TestExportInterval (7 tests)
 
 | Test | Description |
 |------|-------------|
 | `test_default_is_30s` | Default export_interval_ms is 30000 |
 | `test_env_var_honored` | OTEL_METRIC_EXPORT_INTERVAL resolves the interval |
 | `test_explicit_beats_env` | Explicit `export_interval_ms` wins over the env var |
-| `test_invalid_env_falls_back_to_default` | Non-numeric env value → falls back to 30000 |
+| `test_invalid_env_falls_back_to_default` | Non-numeric env value → warning, 30000 |
+| `test_non_positive_env_warns_and_falls_back` | Env `0` / `-5` → warning, 30000 (R8) |
 | `test_non_positive_fails_validation` | `export_interval_ms=0` → ValueError |
 
 ### TestDualModePipeline (4 tests)
@@ -314,7 +240,7 @@ OTLP wire protocol selection (grpc vs http/protobuf) — tracing, metrics, loggi
 
 | Test | Description |
 |------|-------------|
-| `test_helper_var_only_applies_ratio` | Only `OTEL_HELPER_SAMPLE_RATIO` set → ratio applied, `TraceIdRatioBased` sampler |
+| `test_helper_var_only_applies_parentbased_ratio` | Only `OTEL_HELPER_SAMPLE_RATIO` set → `ParentBased(TraceIdRatioBased)` |
 | `test_standard_var_only_wins` | Only `OTEL_TRACES_SAMPLER=always_off` set → SDK's own env handling wins |
 | `test_standard_var_beats_helper_var` | Both set → standard var wins, helper ratio ignored entirely |
 | `test_explicit_ratio_beats_standard_var` | Explicit `sample_ratio` in code wins over the standard env var |
@@ -357,9 +283,9 @@ Integration tests using `InMemorySpanExporter` to verify spans are actually crea
 
 | Test | Description |
 |------|-------------|
-| `test_ratio_0_5_uses_trace_id_ratio` | `sample_ratio=0.5` → `TraceIdRatioBased` sampler |
-| `test_ratio_0_01_uses_trace_id_ratio` | `sample_ratio=0.01` → `TraceIdRatioBased` sampler |
-| `test_ratio_1_uses_always_on` | `sample_ratio=1.0` → `ALWAYS_ON` sampler |
+| `test_ratio_0_5_uses_trace_id_ratio` | `sample_ratio=0.5` → `ParentBased(TraceIdRatioBased)` |
+| `test_ratio_0_01_uses_trace_id_ratio` | `sample_ratio=0.01` → `ParentBased(TraceIdRatioBased)` |
+| `test_ratio_1_uses_always_on` | `sample_ratio=1.0` → `ParentBased(AlwaysOn)` |
 
 ### TestStartRootSpanCreatesIndependentTrace (4 tests)
 

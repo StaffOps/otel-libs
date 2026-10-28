@@ -7,7 +7,7 @@ from opentelemetry import trace
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
-from opentelemetry.sdk.trace.sampling import TraceIdRatioBased, ALWAYS_ON
+from opentelemetry.sdk.trace.sampling import ParentBased
 from opentelemetry.sdk.resources import Resource, SERVICE_NAME
 
 from otel_helper.config import TelemetryOptions
@@ -179,7 +179,7 @@ class TestDebugProcessorDoesNotSetOnChild:
 
 
 class TestSampleRatioBelowOneUsesTraceIdSampler:
-    """Verify that sample_ratio < 1.0 configures TraceIdRatioBased sampler."""
+    """sample_ratio < 1.0 configures ParentBased(TraceIdRatioBased) (R6, ADR-002)."""
 
     def test_ratio_0_5_uses_trace_id_ratio(self):
         resource = Resource.create({SERVICE_NAME: "sampler-test"})
@@ -189,7 +189,8 @@ class TestSampleRatioBelowOneUsesTraceIdSampler:
             sample_ratio=0.5,
         )
         provider = configure_tracing(resource, opts)
-        assert isinstance(provider.sampler, TraceIdRatioBased)
+        assert isinstance(provider.sampler.inner, ParentBased)
+        assert "root:TraceIdRatioBased{0.5}" in provider.sampler.get_description()
 
     def test_ratio_0_01_uses_trace_id_ratio(self):
         resource = Resource.create({SERVICE_NAME: "sampler-test"})
@@ -199,7 +200,8 @@ class TestSampleRatioBelowOneUsesTraceIdSampler:
             sample_ratio=0.01,
         )
         provider = configure_tracing(resource, opts)
-        assert isinstance(provider.sampler, TraceIdRatioBased)
+        assert isinstance(provider.sampler.inner, ParentBased)
+        assert "root:TraceIdRatioBased{0.01}" in provider.sampler.get_description()
 
     def test_ratio_1_uses_always_on(self):
         resource = Resource.create({SERVICE_NAME: "sampler-test"})
@@ -209,7 +211,8 @@ class TestSampleRatioBelowOneUsesTraceIdSampler:
             sample_ratio=1.0,
         )
         provider = configure_tracing(resource, opts)
-        assert provider.sampler is ALWAYS_ON
+        assert isinstance(provider.sampler.inner, ParentBased)
+        assert "root:AlwaysOnSampler" in provider.sampler.get_description()
 
 
 class TestStartRootSpanCreatesIndependentTrace:

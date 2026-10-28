@@ -1,5 +1,7 @@
 """Opt-in SQLAlchemy instrumentation extension."""
 
+from otel_helper._semconv import ensure_semconv_default
+
 
 def instrument_sql(engine=None) -> None:
     """Enable SQLAlchemy tracing instrumentation.
@@ -8,6 +10,7 @@ def instrument_sql(engine=None) -> None:
         engine: Optional SQLAlchemy engine instance. If provided, instruments
                 only that engine; otherwise instruments all engines globally.
     """
+    ensure_semconv_default()  # before the instrumentor reads it (design D12)
     try:
         from opentelemetry.instrumentation.sqlalchemy import SQLAlchemyInstrumentor
     except ImportError as e:
