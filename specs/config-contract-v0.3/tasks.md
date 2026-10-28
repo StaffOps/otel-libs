@@ -31,7 +31,7 @@ Branch: `feat/v0.3-config-contract`. Spec: [requirements](requirements.md), [des
 | A8 Python dedicated Prometheus registry, `py.typed`, no `_internal` imports | A1 | P14, P17 | ✅ Done 2026-10-28 — dedicated registry, py.typed (CI wheel check), no _internal imports; /metrics status table (both languages). Validated with A4/A6. |
 | A9 Deprecation warnings, remove Go `EXTRA_INSTRUMENTATION` (warn if set), `debug=true` on entry spans | A3 | R8, R9, G9, D8, ADR-006 | ✅ Done 2026-10-28 — Go + Python; validated (observability, dev, code-review). |
 | A10 Ext modules: Go `db.system.name` mapping + legacy key, redis metrics, tests; Python SQLAlchemy 2.1 re-validation ⚠️ | A2 | G6, P18 | ✅ Done 2026-10-28 — Go ext modules tested (otelsql closeDB API, redis semconv + no command values), Python unsupported-version warning, DB semconv dup default; validated. |
-| A11 Cut `0.3.0-rc.1` | **A13** | D10 | ✅ 2026-10-28 — tags `v0.3.0-rc.1`, `go/v0.3.0-rc.1`, `go/ext/*/v0.3.0-rc.1`; per-language tag rule (D10 A11 ruling) |
+| A11 Cut `0.3.0-rc.1` | **A13** | D10 | ✅ 2026-10-28 — shipped as `0.3.0-rc.2` (tags `v0.3.0-rc.2`, `go/v0.3.0-rc.2`, `go/ext/*/v0.3.0-rc.2`; rc.1's CI failed, fixed in rc.2); per-language tag rule (D10 A11 ruling) |
 | A12 Collector/platform prerequisites | — | D11 | External — **blocks the 0.3.0 rollout, not the rc** |
 | **A13 MANDATORY — full documentation + examples pass** (see below) | A1–A10 done **and validated** | F9, AC-docs | ✅ Done 2026-10-28 — validated by observability + dev + code-review (2 rounds); library defects it surfaced fixed in `efb5088`, docs in `fb78d74` |
 

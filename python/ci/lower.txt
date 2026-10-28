@@ -17,7 +17,7 @@ opentelemetry-instrumentation-botocore==0.63b0
 opentelemetry-instrumentation-redis==0.63b0
 opentelemetry-instrumentation-sqlalchemy==0.63b0
 # Test-only dev dependency (pyproject [dev]), oldest allowed:
-sqlalchemy==2.0.0
+sqlalchemy==2.0.31
 # Transitive floors that matter for the lower leg:
 prometheus-client==0.20.0
 # opentelemetry-proto 1.42.0: protobuf>=5.0,<7 — 5.26.0 is the first 5.x release.

@@ -10,9 +10,12 @@ currently aligned at the same version.
 ## [Unreleased]
 
 Target: **`0.3.0` for Go and Python** (one coordinated release, preceded by
-`0.3.0-rc.1`; design D10). **`0.3.0-rc.1` cut on 2026-10-28** — tags
-`v0.3.0-rc.1` (Python `0.3.0rc1`), `go/v0.3.0-rc.1` and
-`go/ext/{otelaws,otelredis,otelsql}/v0.3.0-rc.1`; .NET releases are now tagged
+`0.3.0-rc.1`; design D10). **Release candidate: `0.3.0-rc.2`** (2026-10-28) — tags
+`v0.3.0-rc.2` (Python `0.3.0rc2`), `go/v0.3.0-rc.2` and
+`go/ext/{otelaws,otelredis,otelsql}/v0.3.0-rc.2`. `rc.1` was tagged the same
+day but its CI failed (SQLAlchemy test floor on Python 3.13, e2e VCS stamping),
+so no Python release was published for it; its Go tags exist and are superseded
+by `rc.2`. .NET releases are now tagged
 `dotnet/vX.Y.Z` (design D10 A11 ruling). It implements the cross-language config contract in
 [`specs/config-contract-v0.3/`](https://github.com/StaffOps/otel-libs/tree/main/specs/config-contract-v0.3) (ADR-001 to
 ADR-008). **.NET is unchanged and stays on 0.2.x**: it adopts the same contract
@@ -29,7 +32,7 @@ the detailed record of every change.
 (and `…/go/ext/{otelaws,otelredis,otelsql}`), matching the repository name.
 Rewrite imports, e.g.
 `grep -rl staffops-otel-libs --include='*.go' --include=go.mod . | xargs sed -i 's#staffops/staffops-otel-libs#staffops/otel-libs#g'`,
-then `go get github.com/staffops/otel-libs/go@v0.3.0-rc.1 && go mod tidy`.
+then `go get github.com/staffops/otel-libs/go@v0.3.0-rc.2 && go mod tidy`.
 Pinned `go/v0.2.x` releases keep the old path.
 
 Build and API (compile errors):
@@ -941,6 +944,11 @@ Unsupported instrumentation versions, task A10 (P18):
 
 ### Internal
 
+- **CI fixes found by the `v0.3.0-rc.1` tag run.** SQLAlchemy test floor
+  `>=2.0.31` (2.0.0 does not import on Python 3.13; `python/ci/lower.txt`), and
+  the e2e Go smoke builds with `-buildvcs=false` (the read-only repo mount owned
+  by another uid made VCS stamping fail). The built smoke binary is no longer
+  tracked.
 - **Cross-language parity harness and CI matrix (0.3.0 task A1, ADR-008).**
   `parity/cases.json` (135 hand-maintained cases at A1, 184 at the end of
   Phase A — Go 181 pass / 3 skip, Python 182 pass / 2 skip at the end of

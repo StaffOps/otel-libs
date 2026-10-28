@@ -9,11 +9,11 @@ All packages require authentication — see [Creating a read:packages token](#cr
 | Language | Latest release | Next | Requirements |
 |----------|----------------|------|--------------|
 | .NET | `0.2.0` | 0.3 contract in Phase C (from now on .NET releases are tagged `dotnet/vX.Y.Z`) | .NET 8 (runs on .NET 10 via roll-forward) |
-| Python | `0.2.0` | `0.3.0-rc.1` (release candidate, tag `v0.3.0-rc.1`; wheel version `0.3.0rc1`) | Python ≥ 3.10; OpenTelemetry `>=1.42,<1.46`, contrib `>=0.63b0,<0.67b0` from 0.3 |
-| Go | `go/v0.2.1` | `v0.3.0-rc.1` (tags `go/v0.3.0-rc.1`, `go/ext/<module>/v0.3.0-rc.1`; new module path, see ADR-010) | Go ≥ 1.22 for 0.2.x, **Go ≥ 1.26 from 0.3** |
+| Python | `0.2.0` | `0.3.0-rc.2` (release candidate, tag `v0.3.0-rc.2`; wheel version `0.3.0rc2`) | Python ≥ 3.10; OpenTelemetry `>=1.42,<1.46`, contrib `>=0.63b0,<0.67b0` from 0.3 |
+| Go | `go/v0.2.1` | `v0.3.0-rc.2` (tags `go/v0.3.0-rc.2`, `go/ext/<module>/v0.3.0-rc.2`; new module path, see ADR-010) | Go ≥ 1.22 for 0.2.x, **Go ≥ 1.26 from 0.3** |
 
 The commands below install the latest release. When a 0.3 release candidate is
-published, replace the version (Python release `v0.3.0-rc.1`; Go `@v0.3.0-rc.1`, which resolves the `go/v0.3.0-rc.1` tag) and read the
+published, replace the version (Python release `v0.3.0-rc.2`; Go `@v0.3.0-rc.2`, which resolves the `go/v0.3.0-rc.2` tag) and read the
 [migration guide](CHANGELOG.md#unreleased) before upgrading — 0.3 changes
 defaults, metric names and APIs.
 
