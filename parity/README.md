@@ -171,10 +171,8 @@ package's stderr `diagLogger`, which the Go runner hooks.
 
 - `grpc.health_*_counted_in_metrics` are `skip:no-upstream-rpc-metrics` in
   Python: the contrib gRPC instrumentation emits no RPC metrics (R7, amended).
-- Go `grpc.health_{check,watch}_no_span` are `xfail:A7-go`. In 0.2.0 the
+- Go `grpc.health_{check,watch}_no_span` pass since A7-go. In 0.2.0 the
   unary-server filter read `InterceptorInfo.Method`, which otelgrpc v0.56 left
-  empty, so health checks were traced; the stream interceptors recorded no RPC
-  metric, so `Watch` wasn't counted. Since A2 the helper uses otelgrpc v0.72
+  empty, so health checks were traced. Since A2 the helper uses otelgrpc v0.72
   stats handlers **without** `WithFilter` (it would drop metrics too — design
-  D5): every health RPC is traced and counted until A7-go's sampler drops the
-  spans.
+  D5), and the A7 health sampler drops the spans while the RPC stays counted.

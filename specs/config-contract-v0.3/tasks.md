@@ -33,35 +33,35 @@ Branch: `feat/v0.3-config-contract`. Spec: [requirements](requirements.md), [des
 | A10 Ext modules: Go `db.system.name` mapping + legacy key, redis metrics, tests; Python SQLAlchemy 2.1 re-validation ⚠️ | A2 | G6, P18 | ✅ Done 2026-10-28 — Go ext modules tested (otelsql closeDB API, redis semconv + no command values), Python unsupported-version warning, DB semconv dup default; validated. |
 | A11 Cut `0.3.0-rc.1` | **A13** | D10 | ☐ |
 | A12 Collector/platform prerequisites | — | D11 | External — **blocks the 0.3.0 rollout, not the rc** |
-| **A13 MANDATORY — full documentation + examples pass** (see below) | A1–A10 done **and validated** | F9, AC-docs | ☐ Pending — starts only after every task above is done and validated |
+| **A13 MANDATORY — full documentation + examples pass** (see below) | A1–A10 done **and validated** | F9, AC-docs | ✅ Done 2026-10-28 — validated by observability + dev + code-review (2 rounds); library defects it surfaced fixed in `efb5088`, docs in `fb78d74` |
 
 ### A13 — Documentation and examples (mandatory, last)
 
 Owner requirement (2026-10-27): runs **only after** A1–A10 are implemented and
 validated, so the docs describe validated behavior — never a target. Not optional.
 
-- [ ] Repo docs match the code: root `README.md` (env table, principles),
+- [x] Repo docs match the code: root `README.md` (env table, principles),
       `CONSUMING.md`, `AGENTS.md`, per-language `README.md` / `HOW-TO.md` /
       `TESTS.md`, `CHANGELOG.md` with migration notes (0.2.0 → 0.3.0), and the
       F9 doc-drift list cleared.
-- [ ] MkDocs site `docs/site/**` and `mkdocs.yml` nav updated to the same
+- [x] MkDocs site `docs/site/**` and `mkdocs.yml` nav updated to the same
       content (the site mirrors the repo docs — no divergent copies); site builds
       cleanly (`mkdocs build --strict` via Docker).
-- [ ] **Per language, a runnable example of creating custom signals**: a custom
+- [x] **Per language, a runnable example of creating custom signals**: a custom
       span (child span, attributes, events, status/error recording, root span
       helper), a custom metric (counter, histogram, up-down counter/gauge, with
       attributes), and a custom structured log correlated with the active trace
       (trace_id/span_id). Go and Python complete in Phase A; .NET verified for
       its shipped 0.2.x API; Node.js ships with the same set in Phase B.
-- [ ] Go example `Dockerfile` vs `Dockerfile.demo` are byte-identical apart from comments — give `.demo` a real purpose or consolidate (A2 review L2); fix stale trace trees in go/example/README.md and go/HOW-TO.md after otelhttp v0.72 span names (`HTTP POST` client spans) (A2 review L6).
-- [ ] README/HOW-TO (Python): explicit warning that `import otel_helper` must precede any `opentelemetry.*` import when `OTEL_PROPAGATORS` has unsupported values, incl. an isort note (`# isort: skip`) — isort orders `opentelemetry` first (A3 dev L9).
-- [ ] Stale statements found in A3 round 3 (fix in this pass): default endpoint `http://localhost` (README.md:80, go/README.md:31, go/HOW-TO.md:452,697); defaults `my-service`/`LOCAL` (README.md:77-78); `http/json` "fails validation loudly" (README.md:90 — env now warns); env-rule rows missing from go/HOW-TO.md §9 and python/HOW-TO.md (~236): `*_TIMEOUT` ms + clamp, `*_COMPRESSION`, `*_HEADERS` rules, per-signal → generic → default fallback, `*_INSECURE`; python/HOW-TO.md:442 add "per-signal endpoints are used as-is"; go/README.md (~277) still says "SDK uses AlwaysOnSampler (default)" — now ParentBased (A4); migration notes: basic-auth-in-URL → `Authorization=Basic%20<b64>` header, header-key restriction (`x+y` now skipped) and keys lowercased, Python INSECURE before/after table.
-- [ ] parity/README.md "Notes" still says Go `grpc.health_*_no_span` are `xfail:A7-go` (now pass); AGENTS.md F7 "health-path filtering diverges" line — update once A7-py lands.
-- [ ] Mark `OTEL_HELPER_EXTRA_INSTRUMENTATION` as deprecated in python/HOW-TO.md (~212-235, ~330) and python/README.md (~42); fix the `ext` ImportError hint ("pip install otel-helper[sql]") when the extra is installed but the library is not (A9/A10).
-- [ ] Examples are exercised: each runs in `docker compose` against a real
+- [x] Go example `Dockerfile` vs `Dockerfile.demo` are byte-identical apart from comments — give `.demo` a real purpose or consolidate (A2 review L2); fix stale trace trees in go/example/README.md and go/HOW-TO.md after otelhttp v0.72 span names (`HTTP POST` client spans) (A2 review L6).
+- [x] README/HOW-TO (Python): explicit warning that `import otel_helper` must precede any `opentelemetry.*` import when `OTEL_PROPAGATORS` has unsupported values, incl. an isort note (`# isort: skip`) — isort orders `opentelemetry` first (A3 dev L9).
+- [x] Stale statements found in A3 round 3 (fix in this pass): default endpoint `http://localhost` (README.md:80, go/README.md:31, go/HOW-TO.md:452,697); defaults `my-service`/`LOCAL` (README.md:77-78); `http/json` "fails validation loudly" (README.md:90 — env now warns); env-rule rows missing from go/HOW-TO.md §9 and python/HOW-TO.md (~236): `*_TIMEOUT` ms + clamp, `*_COMPRESSION`, `*_HEADERS` rules, per-signal → generic → default fallback, `*_INSECURE`; python/HOW-TO.md:442 add "per-signal endpoints are used as-is"; go/README.md (~277) still says "SDK uses AlwaysOnSampler (default)" — now ParentBased (A4); migration notes: basic-auth-in-URL → `Authorization=Basic%20<b64>` header, header-key restriction (`x+y` now skipped) and keys lowercased, Python INSECURE before/after table.
+- [x] parity/README.md "Notes" still says Go `grpc.health_*_no_span` are `xfail:A7-go` (now pass); AGENTS.md F7 "health-path filtering diverges" line — update once A7-py lands.
+- [x] Mark `OTEL_HELPER_EXTRA_INSTRUMENTATION` as deprecated in python/HOW-TO.md (~212-235, ~330) and python/README.md (~42); fix the `ext` ImportError hint ("pip install otel-helper[sql]") when the extra is installed but the library is not (A9/A10).
+- [x] Examples are exercised: each runs in `docker compose` against a real
       Collector and the custom span, metric and log are visible in the
       Collector debug exporter output (recorded in the PR).
-- [ ] Validated like every other task: `observability` + `dev` refutation
+- [x] Validated like every other task: `observability` + `dev` refutation
       rounds and `code-review`.
 
 ## Deferred
