@@ -55,7 +55,7 @@ jobs:
           for d in ext/otelaws ext/otelredis ext/otelsql; do
             (cd "$d" && go build ./... && go vet ./... && go test ./...)
           done
-          for d in example/go-api example/go-backend example/go-process ../testing/e2e/go-smoke; do
+          for d in example/go-api example/go-backend example/go-process example/go-custom-signals ../testing/e2e/go-smoke; do
             (cd "$d" && go build -o /dev/null ./... && go vet ./...)
           done
       - name: govulncheck (reachable vulnerabilities fail the job)
@@ -63,7 +63,7 @@ jobs:
         if: matrix.go == '1.27.x'
         run: |
           go install golang.org/x/vuln/cmd/govulncheck@v1.9.0
-          for d in . ext/otelaws ext/otelredis ext/otelsql example/go-api example/go-backend example/go-process ../testing/e2e/go-smoke; do
+          for d in . ext/otelaws ext/otelredis ext/otelsql example/go-api example/go-backend example/go-process example/go-custom-signals ../testing/e2e/go-smoke; do
             echo "== $d"; (cd "$d" && "$(go env GOPATH)/bin/govulncheck" ./...)
           done
       - name: Fake receiver logs
