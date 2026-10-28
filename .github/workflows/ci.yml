@@ -345,5 +345,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          # A tag with a SemVer pre-release part (v0.3.0-rc.2) must not become "Latest".
+          pre=(); case "${{ github.ref_name }}" in *-*) pre=(--prerelease --latest=false);; esac
           gh release upload "${{ github.ref_name }}" dist/* --clobber \
-            || gh release create "${{ github.ref_name }}" dist/* --generate-notes
+            || gh release create "${{ github.ref_name }}" dist/* --generate-notes "${pre[@]}"
