@@ -100,13 +100,14 @@ def _sampler_from_env() -> Sampler:
 def build_sampler(options: TelemetryOptions) -> Sampler:
     """The helper's sampler (R6, design D3, ADR-002) — the single place it is built.
 
-    Precedence: a ratio below 1.0 set in code, or the deprecated
-    OTEL_HELPER_SAMPLE_RATIO alias (resolved only while OTEL_TRACES_SAMPLER is
-    unset) -> ``ParentBased(TraceIdRatioBased(ratio))``; else
-    OTEL_TRACES_SAMPLER/_ARG; else the spec default ``parentbased_always_on``.
+    Precedence: a ratio set in code (any value, 1.0 included — D1 A13 ruling),
+    or the deprecated OTEL_HELPER_SAMPLE_RATIO alias (resolved only while
+    OTEL_TRACES_SAMPLER is unset) -> ``ParentBased(TraceIdRatioBased(ratio))``;
+    else OTEL_TRACES_SAMPLER/_ARG; else the spec default ``parentbased_always_on``.
     """
-    if options.sample_ratio < 1.0:
-        return ParentBased(TraceIdRatioBased(options.sample_ratio))
+    resolved = options.resolved
+    if resolved.sample_ratio_set:
+        return ParentBased(TraceIdRatioBased(resolved.sample_ratio))
     return _sampler_from_env()
 
 
@@ -182,7 +183,7 @@ def build_tracer_provider(resource: Resource, options: TelemetryOptions) -> Trac
 
             provider.add_span_processor(BatchSpanProcessor(ConsoleSpanExporter()))
 
-        if options.debug_level:
+        if options.resolved.debug_level:
             provider.add_span_processor(DebugProcessor())
     except BaseException:
         provider.shutdown()  # stops the BatchSpanProcessor threads already added

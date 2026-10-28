@@ -104,4 +104,4 @@ class TestSetupTelemetry:
             otel_endpoint="http://localhost:4317",
             debug_level=True,
         ))
-        assert opts.debug_level is True
+        assert opts.resolved.debug_level is True

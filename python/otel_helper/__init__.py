@@ -25,7 +25,8 @@ def get_tracer(name: str | None = None) -> _trace.Tracer:
     """Get a Tracer instance. Uses the global TracerProvider.
 
     Args:
-        name: Tracer name. If None, uses the service name from env.
+        name: Instrumentation scope name (your module or library). Defaults
+              to ``"otel-helper"``; the service name comes from the resource.
     """
     _emit_fork_warning()
     return _trace.get_tracer(name or "otel-helper")
@@ -35,7 +36,8 @@ def get_meter(name: str | None = None) -> _metrics.Meter:
     """Get a Meter instance. Uses the global MeterProvider.
 
     Args:
-        name: Meter name. If None, uses the service name from env.
+        name: Instrumentation scope name (your module or library). Defaults
+              to ``"otel-helper"``; the service name comes from the resource.
     """
     _emit_fork_warning()
     return _metrics.get_meter(name or "otel-helper")

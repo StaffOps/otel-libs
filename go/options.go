@@ -72,9 +72,12 @@ type Options struct {
 	exportIntervalSet  bool
 	sampleRatioSet     bool
 	disabledSignalsSet bool
+	disabledMetricsSet bool
+	metricsPortSet     bool
 
 	// Resolution results (filled by resolveFromEnv / lazily).
 	identityResolved       bool
+	sampleRatioFromEnv     bool // SampleRatio came from OTEL_HELPER_SAMPLE_RATIO
 	codeServiceName        bool
 	codeEnvironment        bool
 	resourceFallbacks      []attribute.KeyValue
@@ -149,8 +152,10 @@ func WithOtlpProtocol(protocol string) Option {
 	return func(o *Options) { o.OtlpProtocol = protocol }
 }
 
-// WithSampleRatio sets the head-sampling ratio in [0, 1] for root spans
-// (deprecated alias OTEL_HELPER_SAMPLE_RATIO). Out-of-range or NaN fails Setup.
+// WithSampleRatio sets the head-sampling ratio in [0, 1] for root spans:
+// ParentBased(TraceIDRatioBased(ratio)), overriding OTEL_TRACES_SAMPLER and the
+// deprecated OTEL_HELPER_SAMPLE_RATIO whatever the value (1.0 included).
+// Out-of-range or NaN fails Setup.
 func WithSampleRatio(ratio float64) Option {
 	return func(o *Options) { o.SampleRatio = ratio; o.sampleRatioSet = true }
 }
@@ -173,21 +178,25 @@ func WithResourceAttributes(attrs map[string]string) Option {
 }
 
 // WithDisabledSignals disables "traces", "metrics" and/or "logs"; other
-// names fail Setup. Overrides OTEL_HELPER_DISABLED_SIGNALS (deprecated).
+// names fail Setup. Overrides OTEL_HELPER_DISABLED_SIGNALS (deprecated); a
+// non-nil empty slice disables nothing and still overrides it, nil means "not
+// set" (env).
 func WithDisabledSignals(signals []string) Option {
-	return func(o *Options) { o.DisabledSignals = signals; o.disabledSignalsSet = true }
+	return func(o *Options) { o.DisabledSignals = signals; o.disabledSignalsSet = signals != nil }
 }
 
 // WithDisabledMetrics drops instruments whose name matches any path.Match
-// pattern, overriding OTEL_HELPER_DISABLED_METRICS.
+// pattern, overriding OTEL_HELPER_DISABLED_METRICS. A non-nil empty slice
+// disables nothing and still overrides the env; nil means "not set" (env).
 func WithDisabledMetrics(patterns []string) Option {
-	return func(o *Options) { o.DisabledMetrics = patterns }
+	return func(o *Options) { o.DisabledMetrics = patterns; o.disabledMetricsSet = patterns != nil }
 }
 
 // WithPrometheusMetricsPort sets the standalone /metrics listener port in
-// [0, 65535] (0 = no listener), overriding OTEL_HELPER_METRICS_PORT.
+// [0, 65535] (0 = no listener), overriding OTEL_HELPER_METRICS_PORT whatever
+// the value (9464 included).
 func WithPrometheusMetricsPort(port int) Option {
-	return func(o *Options) { o.PrometheusMetricsPort = port }
+	return func(o *Options) { o.PrometheusMetricsPort = port; o.metricsPortSet = true }
 }
 
 // WithMetricExporters selects the active metric exporters ("otlp",
@@ -211,7 +220,7 @@ func WithExportInterval(ms int) Option {
 // WithoutMetricsListener disables the standalone /metrics listener. The
 // Prometheus reader stays active; mount MetricsHandler() on the app's own mux.
 func WithoutMetricsListener() Option {
-	return func(o *Options) { o.PrometheusMetricsPort = 0 }
+	return func(o *Options) { o.PrometheusMetricsPort = 0; o.metricsPortSet = true }
 }
 
 // WithHealthPaths replaces DefaultHealthPaths: server spans of requests to

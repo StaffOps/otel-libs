@@ -75,8 +75,10 @@ class HelperLogHandler(LoggingHandler):
 
 
 def build_logging_level(options: TelemetryOptions) -> int:
-    """Level of the helper's handlers: code value, else by environment (R4)."""
-    return options.minimum_log_level or get_default_log_level(options.environment, options.debug_level)
+    """Level of the helper's handlers: code value (``0``/NOTSET included), else by environment (R4)."""
+    if options.minimum_log_level is not None:
+        return options.minimum_log_level
+    return get_default_log_level(options.environment, options.resolved.debug_level)
 
 
 def build_logging(resource: Resource, options: TelemetryOptions):

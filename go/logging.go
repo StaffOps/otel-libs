@@ -103,8 +103,9 @@ type derivedBridge struct {
 }
 
 // installedLogLevel is DefaultLogLevel of the environment the last successful
-// Setup resolved (Info until then); it is the stdout level of NewSlogHandler
-// (R4, design D6 "A5 validation rulings"). Kept after Shutdown.
+// Setup resolved (Info until then); it is the level of NewSlogHandler on both
+// the bridge and the stdout path (R4, design D6 "A5" and "A13" rulings). Kept
+// after Shutdown.
 var installedLogLevel slog.LevelVar
 
 // switchHandler is the helper's slog.Handler (G3, design D6): per record it
@@ -115,7 +116,7 @@ var installedLogLevel slog.LevelVar
 // Only attributes passed with the record are renamed; error attributes added
 // with WithAttrs keep their key (slog renders them).
 type switchHandler struct {
-	min     slog.Leveler // NewLogger's level; nil = the destination decides
+	min     slog.Leveler // minimum level on every path (NewLogger: fixed; NewSlogHandler: installedLogLevel); nil = the destination decides
 	stdout  slog.Handler // JSON handler with ops already applied
 	ops     []handlerOp
 	derived *atomic.Pointer[derivedBridge]
@@ -286,15 +287,16 @@ func (h *switchHandler) WithGroup(name string) slog.Handler {
 // NewSlogHandler returns the helper's slog.Handler. While Setup has a logs
 // exporter installed (OTLP and/or OTEL_LOGS_EXPORTER=console) records go
 // through the OTel Logs API bridge — trace-correlated (trace_id/span_id from
-// the record's context) — and the LoggerProvider decides which levels are
-// enabled. Otherwise (before Setup, after Shutdown, no endpoint,
-// OTEL_LOGS_EXPORTER=none) records are written to stdout as JSON at the level
-// of the environment Setup resolved (DefaultLogLevel; Info before the first
-// Setup). The choice is made per record, so a handler created before Setup
-// switches once Setup installs the exporter. Trace correlation needs the
-// context-taking slog calls (InfoContext, ...).
+// the record's context). Otherwise (before Setup, after Shutdown, no endpoint,
+// OTEL_LOGS_EXPORTER=none) records are written to stdout as JSON. Both paths
+// drop records below the level of the environment Setup resolved
+// (DefaultLogLevel: LOCAL=Debug, DEV/HML/unset=Info, PRD=Warn; Info before the
+// first Setup) — R4, design D6. Destination and level are read per record, so
+// a handler created before Setup switches once Setup installs the exporter and
+// uses the level Setup resolved. Trace correlation needs the context-taking
+// slog calls (InfoContext, ...).
 func NewSlogHandler() slog.Handler {
-	return newSwitchHandler(nil, newStdoutJSONHandler(&installedLogLevel))
+	return newSwitchHandler(&installedLogLevel, newStdoutJSONHandler(&installedLogLevel))
 }
 
 // DefaultLogLevel returns the appropriate slog.Level for a given environment

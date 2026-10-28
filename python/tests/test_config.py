@@ -33,8 +33,23 @@ class TestDefaults:
         assert opts.export_timeout_ms is None
         assert opts.compression is None
         assert opts.insecure is None
-        assert opts.debug_level is False
-        assert opts.extra_instrumentation == "SQL"
+        # None = "not set in code" (D1 A13 ruling); resolution never writes these fields.
+        assert opts.debug_level is None
+        assert opts.extra_instrumentation is None
+        assert opts.sample_ratio is None
+        assert opts.prometheus_metrics_port is None
+        assert opts.disabled_signals is None
+        assert opts.disabled_metrics is None
+
+    def test_defaults_after_resolution(self):
+        opts = _resolved(service_name="s")
+        assert opts.sample_ratio is None and opts.debug_level is None  # code values untouched
+        assert opts.resolved.debug_level is False
+        assert opts.resolved.extra_instrumentation == "SQL"
+        assert opts.resolved.sample_ratio == 1.0
+        assert opts.resolved.prometheus_metrics_port == 9464
+        assert opts.resolved.disabled_signals == []
+        assert opts.resolved.disabled_metrics == []
 
 
 class TestServiceName:
@@ -135,11 +150,11 @@ class TestEnvironment:
 class TestHasInstrumentation:
     def test_from_env(self):
         os.environ["OTEL_HELPER_EXTRA_INSTRUMENTATION"] = "SQL,AWS"
-        assert _resolved(service_name="s").extra_instrumentation == "SQL,AWS"
+        assert _resolved(service_name="s").resolved.extra_instrumentation == "SQL,AWS"
 
     def test_debug_level_from_env(self):
         os.environ["OTEL_HELPER_DEBUG_LEVEL"] = "true"
-        assert _resolved(service_name="s").debug_level is True
+        assert _resolved(service_name="s").resolved.debug_level is True
 
     def test_sql_enabled_by_default(self):
         opts = TelemetryOptions()
@@ -216,9 +231,9 @@ class TestEnvParsingNeverRaises:
         os.environ["OTEL_HELPER_METRICS_PORT"] = "http"
         os.environ["OTEL_HELPER_DEBUG_LEVEL"] = "maybe"
         opts = _resolved(service_name="s")
-        assert opts.sample_ratio == 1.0
-        assert opts.prometheus_metrics_port == 9464
-        assert opts.debug_level is False
+        assert opts.resolved.sample_ratio == 1.0
+        assert opts.resolved.prometheus_metrics_port == 9464
+        assert opts.resolved.debug_level is False
 
     def test_sdk_disabled_valid_values_do_not_warn(self, caplog):
         os.environ["OTEL_SDK_DISABLED"] = "TRUE"
@@ -429,7 +444,7 @@ class TestValidationRound:
     def test_boolean_env_anything_but_true_is_false(self, raw, expected, caplog):
         os.environ["OTEL_HELPER_DEBUG_LEVEL"] = raw
         with caplog.at_level(logging.WARNING, logger="otel_helper"):
-            assert _resolved(service_name="s").debug_level is expected
+            assert _resolved(service_name="s").resolved.debug_level is expected
         assert ("OTEL_HELPER_DEBUG_LEVEL" in caplog.text) is (raw.lower() not in ("true", "false"))
 
     def test_sdk_disabled_true(self):
@@ -458,19 +473,19 @@ class TestValidationRound:
     def test_env_ratio_clamped_with_warning(self, caplog):
         os.environ["OTEL_HELPER_SAMPLE_RATIO"] = "2"
         with caplog.at_level(logging.WARNING, logger="otel_helper"):
-            assert _resolved(service_name="s").sample_ratio == 1.0
+            assert _resolved(service_name="s").resolved.sample_ratio == 1.0
         assert "outside [0, 1]" in caplog.text
 
     def test_env_ratio_nan_ignored(self, caplog):
         os.environ["OTEL_HELPER_SAMPLE_RATIO"] = "nan"
         with caplog.at_level(logging.WARNING, logger="otel_helper"):
-            assert _resolved(service_name="s").sample_ratio == 1.0
+            assert _resolved(service_name="s").resolved.sample_ratio == 1.0
         assert "OTEL_HELPER_SAMPLE_RATIO" in caplog.text
 
     def test_env_port_out_of_range(self, caplog):
         os.environ["OTEL_HELPER_METRICS_PORT"] = "70000"
         with caplog.at_level(logging.WARNING, logger="otel_helper"):
-            assert _resolved(service_name="s").prometheus_metrics_port == 9464
+            assert _resolved(service_name="s").resolved.prometheus_metrics_port == 9464
 
     @pytest.mark.parametrize("signal", ["traces", "logs"])
     def test_otlp_exporter_without_endpoint_warns(self, signal, caplog):
@@ -517,3 +532,126 @@ class TestRound2:
     def test_code_disabled_signals_normalized(self):
         opts = _resolved(service_name="s", disabled_signals=[" Traces "])
         assert not opts.is_signal_enabled("traces")
+
+
+class TestCodeValueEqualToDefaultBeatsEnv:
+    """D1 A13 ruling: "set in code" is tracked with None sentinels, never by comparing to the default."""
+
+    def test_metrics_port_9464_beats_env(self):
+        os.environ["OTEL_HELPER_METRICS_PORT"] = "9999"
+        assert _resolved(service_name="s", prometheus_metrics_port=9464).resolved.prometheus_metrics_port == 9464
+        assert _resolved(service_name="s").resolved.prometheus_metrics_port == 9999
+
+    def test_empty_disabled_metrics_beats_env(self):
+        os.environ["OTEL_HELPER_DISABLED_METRICS"] = "http.*"
+        assert _resolved(service_name="s", disabled_metrics=[]).resolved.disabled_metrics == []
+        assert _resolved(service_name="s").resolved.disabled_metrics == ["http.*"]
+
+    def test_empty_disabled_signals_beats_env(self):
+        os.environ["OTEL_HELPER_DISABLED_SIGNALS"] = "traces"
+        opts = _resolved(service_name="s", disabled_signals=[])
+        assert opts.resolved.disabled_signals == [] and opts.is_signal_enabled("traces")
+        assert not _resolved(service_name="s").is_signal_enabled("traces")
+
+    def test_debug_level_false_beats_env(self):
+        os.environ["OTEL_HELPER_DEBUG_LEVEL"] = "true"
+        assert _resolved(service_name="s", debug_level=False).resolved.debug_level is False
+        assert _resolved(service_name="s").resolved.debug_level is True
+
+    def test_extra_instrumentation_sql_beats_env(self):
+        os.environ["OTEL_HELPER_EXTRA_INSTRUMENTATION"] = "REDIS"
+        opts = _resolved(service_name="s", extra_instrumentation="SQL")
+        assert opts.resolved.extra_instrumentation == "SQL" and opts.has_instrumentation("SQL")
+        assert not opts.has_instrumentation("REDIS")
+        assert _resolved(service_name="s").resolved.extra_instrumentation == "REDIS"
+
+    def test_has_instrumentation_before_resolution_uses_default(self):
+        assert TelemetryOptions().has_instrumentation("sql")
+
+    def test_minimum_log_level_notset_is_kept(self):
+        from otel_helper.logging_setup import build_logging_level
+
+        opts = _resolved(service_name="s", environment=DeploymentEnvironment.PRD, minimum_log_level=logging.NOTSET)
+        assert build_logging_level(opts) == logging.NOTSET
+        assert build_logging_level(_resolved(service_name="s", environment=DeploymentEnvironment.PRD)) \
+            == logging.WARNING
+
+    @pytest.mark.parametrize("kwargs,option", [
+        ({"debug_level": "yes"}, "debug_level"),
+        ({"extra_instrumentation": 1}, "extra_instrumentation"),
+        ({"disabled_metrics": "http.*"}, "disabled_metrics"),
+        ({"disabled_metrics": [1]}, "disabled_metrics"),
+    ])
+    def test_wrong_types_fail_fast(self, kwargs, option):
+        with pytest.raises(ValueError, match=option):
+            _resolved(service_name="s", **kwargs)
+
+
+class TestProvenanceSurvivesCopiesAndResetup:
+    """A13 review H1/M1/M3: public fields only ever hold code values; ``resolved`` holds the effective ones."""
+
+    def test_ratio_assigned_after_construction_is_code(self):
+        from otel_helper.tracing import build_sampler
+
+        os.environ["OTEL_TRACES_SAMPLER"] = "always_on"
+        opts = TelemetryOptions(service_name="s")
+        opts.sample_ratio = 0.1
+        opts.resolve_from_env()
+        assert opts.resolved.sample_ratio == 0.1 and opts.resolved.sample_ratio_set
+        assert "root:TraceIdRatioBased{0.1}" in build_sampler(opts).get_description()
+
+    def test_replace_of_resolved_options_rereads_env(self):
+        import dataclasses
+
+        from otel_helper.tracing import build_sampler
+
+        resolved = _resolved(service_name="s")
+        assert resolved.sample_ratio is None and resolved.prometheus_metrics_port is None
+        os.environ["OTEL_TRACES_SAMPLER"] = "always_off"
+        os.environ["OTEL_HELPER_METRICS_PORT"] = "9999"
+        copy = dataclasses.replace(resolved, health_paths=["/ping"])
+        copy.resolve_from_env()
+        assert build_sampler(copy).get_description() == "AlwaysOffSampler"
+        assert copy.resolved.prometheus_metrics_port == 9999
+        explicit = dataclasses.replace(resolved, sample_ratio=0.2)
+        explicit.resolve_from_env()
+        assert "root:TraceIdRatioBased{0.2}" in build_sampler(explicit).get_description()
+
+    def test_second_resolution_rereads_env(self):
+        os.environ["OTEL_HELPER_SAMPLE_RATIO"] = "0.25"
+        os.environ["OTEL_HELPER_METRICS_PORT"] = "9999"
+        os.environ["OTEL_HELPER_DISABLED_METRICS"] = "http.*"
+        opts = _resolved(service_name="s", export_timeout_ms=500)
+        assert opts.resolved.sample_ratio == 0.25 and opts.resolved.sample_ratio_set
+        for var in ("OTEL_HELPER_SAMPLE_RATIO", "OTEL_HELPER_METRICS_PORT", "OTEL_HELPER_DISABLED_METRICS"):
+            del os.environ[var]
+        os.environ["OTEL_METRIC_EXPORT_INTERVAL"] = "1000"
+        opts.resolve_from_env()
+        assert opts.resolved.sample_ratio == 1.0 and not opts.resolved.sample_ratio_set  # alias not sticky
+        assert opts.resolved.prometheus_metrics_port == 9464
+        assert opts.resolved.disabled_metrics == []
+        assert opts.resolved.export_interval_ms == 1000
+        assert opts.export_timeout_ms == 500  # code value kept
+
+    def test_resolved_before_resolution_uses_code_then_default(self):
+        opts = TelemetryOptions(prometheus_metrics_port=0, disabled_metrics=("a.*",))
+        assert opts.resolved.prometheus_metrics_port == 0
+        assert opts.resolved.disabled_metrics == ["a.*"]
+        assert opts.resolved.sample_ratio == 1.0 and not opts.resolved.sample_ratio_set
+        assert opts.resolved.metric_exporters is None
+
+    def test_tuples_and_int_debug_accepted(self):
+        opts = _resolved(service_name="s", disabled_metrics=("http.*",), disabled_signals=("Logs",), debug_level=1)
+        assert opts.disabled_metrics == ["http.*"] and opts.resolved.disabled_metrics == ["http.*"]
+        assert opts.disabled_signals == ["logs"] and not opts.is_signal_enabled("logs")
+        assert opts.debug_level is True and opts.resolved.debug_level is True
+        assert _resolved(service_name="s", debug_level=0).resolved.debug_level is False
+
+    def test_metric_exporters_tuple_accepted(self):
+        opts = _resolved(service_name="s", metric_exporters=("prometheus",))
+        assert opts.metric_exporters == ["prometheus"]
+        assert opts.resolved_metric_exporters() == ["prometheus"]
+
+    def test_metric_exporters_wrong_type_fails(self):
+        with pytest.raises(ValueError, match="metric_exporters"):
+            _resolved(service_name="s", metric_exporters="prometheus")

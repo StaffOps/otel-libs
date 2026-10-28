@@ -168,10 +168,11 @@ func (o *Options) resolveFromEnv() {
 	// OTEL_TRACES_SAMPLER is set (non-blank), buildSampler parses it and
 	// OTEL_HELPER_SAMPLE_RATIO is ignored. Same plain-decimal grammar as
 	// OTEL_TRACES_SAMPLER_ARG (design D3).
-	if o.SampleRatio == 1.0 && trimWS(os.Getenv(EnvTracesSampler)) == "" {
+	if !o.sampleRatioSet && trimWS(os.Getenv(EnvTracesSampler)) == "" {
 		if v := trimWS(os.Getenv(EnvSampleRatio)); v != "" {
 			if f, ok := parseRatio(v); ok {
 				o.SampleRatio = f
+				o.sampleRatioFromEnv = true
 			} else {
 				warnEnv("sample ratio is not a number in [0, 1]", EnvSampleRatio, v, "1.0")
 			}
@@ -211,11 +212,11 @@ func (o *Options) resolveFromEnv() {
 			}
 		}
 	}
-	if len(o.DisabledMetrics) == 0 {
+	if !o.disabledMetricsSet {
 		o.DisabledMetrics = splitList(os.Getenv(EnvDisabledMetrics), false)
 	}
 
-	if o.PrometheusMetricsPort == 9464 {
+	if !o.metricsPortSet {
 		if v := trimWS(os.Getenv(EnvMetricsPort)); v != "" {
 			// 0 is valid: disables the standalone listener (mounted-handler mode).
 			if p, err := strconv.Atoi(v); err == nil && p >= 0 && p <= 65535 {

@@ -41,6 +41,10 @@ traces before tail sampling.
 ### Neutral
 - Ratio sampling below 1.0 still compounds with tail sampling — documented as
   discouraged.
+- A ratio set in code is used as given, 1.0 included: it builds
+  `ParentBased(TraceIDRatioBased(1))`, equivalent to `parentbased_always_on`,
+  and wins over `OTEL_TRACES_SAMPLER` (design D1 edge-case rulings, A13 row;
+  parity `config.code_sample_ratio_one_*`).
 
 ## When this decision would be wrong
 

@@ -29,38 +29,38 @@ class TestSampleRatio:
     def test_default_is_always_on(self):
         opts = TelemetryOptions(service_name="test", otel_endpoint="http://localhost:4317")
         opts.resolve_from_env()
-        assert opts.sample_ratio == 1.0
+        assert opts.resolved.sample_ratio == 1.0
 
     def test_env_var_sets_ratio(self):
         os.environ["OTEL_HELPER_SAMPLE_RATIO"] = "0.5"
         opts = TelemetryOptions(service_name="test", otel_endpoint="http://localhost:4317")
         opts.resolve_from_env()
-        assert opts.sample_ratio == 0.5
+        assert opts.resolved.sample_ratio == 0.5
 
     def test_env_var_clamped_to_0_1(self):
         os.environ["OTEL_HELPER_SAMPLE_RATIO"] = "2.5"
         opts = TelemetryOptions(service_name="test", otel_endpoint="http://localhost:4317")
         opts.resolve_from_env()
-        assert opts.sample_ratio == 1.0
+        assert opts.resolved.sample_ratio == 1.0
 
     def test_env_var_negative_rejected(self):
         # Plain-decimal grammar (design D3): a sign is not accepted -> warn, 1.0.
         os.environ["OTEL_HELPER_SAMPLE_RATIO"] = "-0.5"
         opts = TelemetryOptions(service_name="test", otel_endpoint="http://localhost:4317")
         opts.resolve_from_env()
-        assert opts.sample_ratio == 1.0
+        assert opts.resolved.sample_ratio == 1.0
 
     def test_invalid_env_var_ignored(self):
         os.environ["OTEL_HELPER_SAMPLE_RATIO"] = "not_a_number"
         opts = TelemetryOptions(service_name="test", otel_endpoint="http://localhost:4317")
         opts.resolve_from_env()
-        assert opts.sample_ratio == 1.0
+        assert opts.resolved.sample_ratio == 1.0
 
     def test_explicit_value_overrides_env(self):
         os.environ["OTEL_HELPER_SAMPLE_RATIO"] = "0.1"
         opts = TelemetryOptions(service_name="test", otel_endpoint="http://localhost:4317", sample_ratio=0.75)
         opts.resolve_from_env()
-        assert opts.sample_ratio == 0.75
+        assert opts.resolved.sample_ratio == 0.75
 
     def test_ratio_below_1_uses_trace_id_sampler(self):
         from opentelemetry.sdk.resources import Resource
@@ -71,14 +71,15 @@ class TestSampleRatio:
         assert isinstance(sampler, ParentBased)
         assert "root:TraceIdRatioBased{0.5}" in sampler.get_description()
 
-    def test_ratio_1_uses_always_on(self):
+    def test_code_ratio_1_is_parentbased_ratio(self):
+        # D1 A13 ruling: a code ratio is used as given, 1.0 included (never compared to the default).
         from opentelemetry.sdk.resources import Resource
         opts = TelemetryOptions(service_name="test", otel_endpoint="http://localhost:4317", sample_ratio=1.0)
         resource = Resource.create({"service.name": "test"})
         provider = configure_tracing(resource, opts)
         sampler = provider.sampler.inner
         assert isinstance(sampler, ParentBased)
-        assert "root:AlwaysOnSampler" in sampler.get_description()
+        assert "root:TraceIdRatioBased{1.0}" in sampler.get_description()
 
 
 class TestDebugProcessor:
@@ -248,8 +249,8 @@ class TestDisabledSignals:
         os.environ["OTEL_HELPER_DISABLED_SIGNALS"] = "metrics,logs"
         opts = TelemetryOptions(service_name="test", otel_endpoint="http://localhost:4317")
         opts.resolve_from_env()
-        assert "metrics" in opts.disabled_signals
-        assert "logs" in opts.disabled_signals
+        assert "metrics" in opts.resolved.disabled_signals
+        assert "logs" in opts.resolved.disabled_signals
         assert opts.is_signal_enabled("metrics") is False
         assert opts.is_signal_enabled("logs") is False
         assert opts.is_signal_enabled("traces") is True
@@ -258,13 +259,13 @@ class TestDisabledSignals:
         os.environ["OTEL_HELPER_DISABLED_METRICS"] = "http.server.*,rpc.client.*"
         opts = TelemetryOptions(service_name="test", otel_endpoint="http://localhost:4317")
         opts.resolve_from_env()
-        assert "http.server.*" in opts.disabled_metrics
-        assert "rpc.client.*" in opts.disabled_metrics
+        assert "http.server.*" in opts.resolved.disabled_metrics
+        assert "rpc.client.*" in opts.resolved.disabled_metrics
 
     def test_disabled_metrics_empty_when_env_not_set(self):
         opts = TelemetryOptions(service_name="test", otel_endpoint="http://localhost:4317")
         opts.resolve_from_env()
-        assert opts.disabled_metrics == []
+        assert opts.resolved.disabled_metrics == []
 
     def test_setup_with_disabled_signals_does_not_raise(self):
         opts = TelemetryOptions(

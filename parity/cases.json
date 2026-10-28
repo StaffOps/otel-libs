@@ -5199,6 +5199,81 @@
         "dotnet": "xfail:phase-c",
         "nodejs": "skip:phase-b"
       }
+    },
+    {
+      "id": "config.code_sample_ratio_one_beats_standard_sampler",
+      "kind": "sampler",
+      "requirement": "R6/D1 edge-case rulings",
+      "note": "A13: a code value equal to the helper default still wins over the env ('was it set' is tracked, never compared to the default).",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_TRACES_SAMPLER": "always_off"
+      },
+      "code": {
+        "sample_ratio": 1.0
+      },
+      "input": {
+        "scenario": "root"
+      },
+      "expect": {
+        "sampled": true
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "config.code_sample_ratio_one_beats_alias",
+      "kind": "sampler",
+      "requirement": "R6/D1 edge-case rulings",
+      "note": "A13: code sample_ratio=1.0 wins over the deprecated OTEL_HELPER_SAMPLE_RATIO.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_HELPER_SAMPLE_RATIO": "0"
+      },
+      "code": {
+        "sample_ratio": 1.0
+      },
+      "input": {
+        "scenario": "root"
+      },
+      "expect": {
+        "sampled": true
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
+    },
+    {
+      "id": "config.code_sample_ratio_one_is_parentbased",
+      "kind": "sampler",
+      "requirement": "R6/D1 edge-case rulings",
+      "note": "A13 review L5: a code ratio of 1.0 builds ParentBased(TraceIdRatioBased(1)) — an unsampled remote parent stays unsampled. Fails on a regression to bare AlwaysOn, and on OTEL_TRACES_SAMPLER=always_on winning over the code value.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_TRACES_SAMPLER": "always_on"
+      },
+      "code": {
+        "sample_ratio": 1.0
+      },
+      "input": {
+        "scenario": "remote_unsampled"
+      },
+      "expect": {
+        "sampled": false
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:phase-b"
+      }
     }
   ]
 }

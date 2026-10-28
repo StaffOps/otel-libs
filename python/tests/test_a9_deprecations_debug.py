@@ -86,8 +86,8 @@ class TestDeprecatedVariables:
         os.environ.update(SAMPLE_VALUES)
         opts = _resolve()
         assert opts.service_name == "secret-looking-svc"
-        assert opts.sample_ratio == 0.25
-        assert opts.disabled_signals == ["logs"]
+        assert opts.resolved.sample_ratio == 0.25
+        assert opts.resolved.disabled_signals == ["logs"]
         assert opts.has_instrumentation("REDIS")
 
     @pytest.mark.parametrize("var", ["SERVICE_NAME", "ENVIRONMENT", "OTEL_HELPER_SAMPLE_RATIO",

@@ -78,16 +78,16 @@ func configureTracing(ctx context.Context, res *resource.Resource, opts *Options
 // buildSampler is the helper's sampler (R6, design D3, ADR-002) — the single
 // place it is built, so the health wrapper (D5) can wrap it.
 //
-// Precedence: a ratio below 1.0 from code, or from the deprecated
-// OTEL_HELPER_SAMPLE_RATIO alias (resolved only while OTEL_TRACES_SAMPLER is
-// unset) → ParentBased(TraceIDRatioBased(ratio)); else OTEL_TRACES_SAMPLER /
+// Precedence: a ratio set in code (any value, 1.0 included — D1 A13 ruling),
+// or from the deprecated OTEL_HELPER_SAMPLE_RATIO alias (resolved only while
+// OTEL_TRACES_SAMPLER is unset) → ParentBased(TraceIDRatioBased(ratio)); else OTEL_TRACES_SAMPLER /
 // _ARG; else the spec default parentbased_always_on.
 //
 // The helper parses the env itself (ADR-001 owned inputs): the SDK reports an
 // unknown name through otel.Handle without naming the variable, and the
 // sampler must be an object the helper holds.
 func buildSampler(opts *Options) sdktrace.Sampler {
-	if opts.SampleRatio < 1.0 {
+	if opts.sampleRatioSet || opts.sampleRatioFromEnv {
 		return sdktrace.ParentBased(sdktrace.TraceIDRatioBased(opts.SampleRatio))
 	}
 	raw := trimWS(os.Getenv(EnvTracesSampler))

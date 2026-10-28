@@ -1,6 +1,7 @@
 """Opt-in AWS SDK (botocore/boto3) instrumentation extension."""
 
 from otel_helper._semconv import ensure_semconv_default
+from otel_helper._support import missing_dependency_hint as _missing_hint
 from otel_helper._support import warn_if_unsupported
 
 
@@ -14,9 +15,9 @@ def instrument_aws() -> bool:
     try:
         from opentelemetry.instrumentation.botocore import BotocoreInstrumentor
     except ImportError as e:
-        raise ImportError(
-            "AWS instrumentation not installed. Run: pip install otel-helper[aws]"
-        ) from e
+        hint = _missing_hint(e, "aws", "AWS", library="botocore",
+                            module="opentelemetry.instrumentation.botocore")
+        raise ImportError(hint) from e
 
     instrumentor = BotocoreInstrumentor()
     instrumentor.instrument()

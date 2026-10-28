@@ -50,7 +50,7 @@ Precedence: **explicit code > standard `OTEL_*` env > legacy / `OTEL_HELPER_*` e
 | Protocol | code > `_<SIGNAL>_PROTOCOL` > `OTEL_EXPORTER_OTLP_PROTOCOL` > port-4318 inference (INFO once; uses the endpoint that signal actually resolves to — per-signal if set, else generic) > `grpc` | helper picks exporter package |
 | TLS | scheme decides; `INSECURE` only for schemeless (spec). On conflict the helper normalizes — scheme wins — and warns (D1.c) | SDK / helper on conflict |
 | Certificates, headers | `OTEL_EXPORTER_OTLP_*` incl. per-signal | **SDK** — passed only when set in code |
-| Timeout | code > `OTEL_EXPORTER_OTLP_<SIGNAL>_TIMEOUT` > `OTEL_EXPORTER_OTLP_TIMEOUT` (**milliseconds**, spec) > SDK default 10 s | Go: SDK. Python: helper shim (D1.e) |
+| Timeout | code > `OTEL_EXPORTER_OTLP_<SIGNAL>_TIMEOUT` > `OTEL_EXPORTER_OTLP_TIMEOUT` (**milliseconds**, spec) > SDK default 10 s | Helper-parsed in both (Go passes the resolved value to the exporter and batch processors; Python shim D1.e). *Corrected 2026-10-28 (A13): earlier text said "Go: SDK", superseded by the edge-case rulings below* |
 | Compression | code > env > helper default `gzip` (D1.d) | helper default |
 | Sampler | code > `OTEL_TRACES_SAMPLER`/`_ARG` > `OTEL_HELPER_SAMPLE_RATIO` → `parentbased_traceidratio` (deprecated) > SDK default `parentbased_always_on`; health drop wrapper (D5) on top | SDK + helper ([ADR-002](../decisions/ADR-002-parentbased-sampler.md)) |
 | Signal on/off | `OTEL_SDK_DISABLED`, `OTEL_{TRACES,METRICS,LOGS}_EXPORTER=none` > `OTEL_HELPER_DISABLED_SIGNALS` (deprecated) | helper |
@@ -94,6 +94,7 @@ didn't pin down, where Go and Python diverged. One rule each, both languages:
 | SDK's own log output of env values (Go `global.Error` for headers/URLs) | Out of the helper's control in Go (G7 forbids masking env); documented limitation in HOW-TO and CHANGELOG. Python masks the affected vars during exporter construction | Go/Python code-review round 2 |
 | Whitespace-only `OTEL_SERVICE_NAME` / `SERVICE_NAME` | Trimmed; whitespace-only = unset | Python used `"  "` as the name (dev L8) |
 | Pre-fork setup on Python 1.42–1.44 (`--preload`) | `register_at_fork` child hook only **sets a flag** (never logs inside the hook — the OTel log pipeline may hold the parent's locks); the warning is emitted on the child's next helper call | Shared helper UUID would go unnoticed (observability M3) |
+| Code option equal to the helper default (A13 validation, 2026-10-28): `WithSampleRatio(1.0)` / `sample_ratio=1.0`, `WithPrometheusMetricsPort(9464)` / `prometheus_metrics_port=9464`, `WithDisabledMetrics([])` / `disabled_metrics=[]`, `disabled_signals=[]`, `debug_level=False`, `extra_instrumentation="SQL"`, `minimum_log_level=0` (Python) | **Set in code wins, whatever the value.** "Was it set" is tracked explicitly — Go: an option flag set by the `With*` option (`WithoutMetricsListener` counts as setting the port; a **nil** slice passed to `WithDisabledMetrics`/`WithDisabledSignals` means "not set", like Python's `None`); Python: the field defaults to `None` and **only ever holds the code value** — resolution stores the effective value privately (`TelemetryOptions.resolved`), so a value assigned after construction counts as code, `dataclasses.replace()` of a resolved object and a second `setup_telemetry()` with the same object re-read the environment for every field code left unset, except `service_name` and `environment`, which are still written back in place (pre-existing; moving them to `resolved` is a follow-up API change) (A13 review H1/M1) — never by comparing the value to the default. Python code types (A13 review M3): `disabled_signals`/`disabled_metrics` accept a list or tuple of strings (normalized to a list), `debug_level` a bool or int (truthiness, as in 0.2); any other type fails fast naming the option. A code sample ratio (any value, 1.0 included) selects `ParentBased(TraceIDRatioBased(ratio))` and beats `OTEL_TRACES_SAMPLER` and `OTEL_HELPER_SAMPLE_RATIO`. An explicit empty list (`disabled_metrics`, `disabled_signals`) means "none" and beats the env list. Empty strings stay "not set" for string options (endpoints, protocol, compression): an empty endpoint is not a usable value, as already documented on each option. Go has no code-side "debug off" (`WithDebug()` only enables), so the `debug_level=False` row is Python-only API, not a parity gap | D1 "explicit code > env"; a value-equals-default check silently handed the decision back to the env (`go/config.go`, `go/tracing.go` buildSampler `< 1.0`, `python/otel_helper/config.py` resolve_from_env) |
 
 ### Decision D1.a: keep the port-4318 → `http/protobuf` inference
 
@@ -510,6 +511,9 @@ A5 validation rulings (2026-10-28):
 - Go trace↔log correlation needs the `*Context` slog calls (`InfoContext`…);
   Python correlates implicitly. Documented in both HOW-TOs.
 
+A13 validation ruling (2026-10-28):
+- **Go `NewSlogHandler` level-filters both paths.** The handler applies the level of the environment the last successful `Setup` resolved (`DefaultLogLevel`; Info before the first `Setup`) to records going through the OTel bridge too, not only to the stdout fallback — the LoggerProvider enables every level, so a `nil` minimum exported DEBUG/INFO in PRD. The level is read per record (a `slog.LevelVar` updated by `Setup`), so a handler created before `Setup` picks up the level `Setup` resolves. This is the Python behavior (`HelperLogHandler(level, …)`) and R4 ("helper-created log handlers SHALL use the environment level"). `NewLogger(env, debug)` keeps its explicit level. Parity fixture: not expressible yet — the `logging` kind is console-only and emits one WARN through `NewLogger`, and the `export` kind emits its log record on the global LoggerProvider, bypassing the handler; covered by Go unit tests until a wire-capturing logging kind with a record-level input exists.
+
 Coupling note: `OTEL_HELPER_DEBUG_LEVEL=true` turns on both DEBUG logs and the
 `debug=true` span marker — documented as coupled (ADR-006).
 
@@ -595,8 +599,13 @@ paths in every language with no removal date.
 
 ## D12 — Python defaults HTTP semconv to stable
 
+> **Corrected 2026-10-28 (A13).** The default became `http,database/dup` in
+> A9/A10 (DB semconv parity with Go's `ext/otelsql`, requirements.md R-DB
+> bullet); this section still said `"http"`. The HTTP reasoning below is
+> unchanged; `database/dup` emits both `db.system` and `db.system.name`.
+
 **Choice**: `_ensure_semconv_default()` does
-`os.environ.setdefault("OTEL_SEMCONV_STABILITY_OPT_IN", "http")`; called first
+`os.environ.setdefault("OTEL_SEMCONV_STABILITY_OPT_IN", "http,database/dup")`; called first
 in `setup_telemetry` and at the top of each `ext.*` entry point; detects late
 initialization via the private
 `_OpenTelemetrySemanticConventionStability._initialized` (guarded by
@@ -717,6 +726,11 @@ change BREAKING (0.2.0 served the global registry, incl. `process_*`/`python_*`)
 - Debug marker limit (ADR-006): under the default ParentBased sampler an entry
   span with an unsampled remote parent is dropped before the marker runs, so
   debug mode cannot force retention of traces an upstream caller didn't sample.
+
+Python ext import failures (A13 validation, 2026-10-28): `otel_helper.ext.{aws,redis,sql}` raise an `ImportError` whose message claims a cause only when it is certain:
+- `ModuleNotFoundError` for the extra's instrumentor module (`opentelemetry.instrumentation.<lib>`, passed in by the entry point) or one of its parent packages → "instrumentation not installed. Run: pip install otel-helper[<extra>]".
+- `ModuleNotFoundError` whose missing top-level module is the instrumented library of that extra (`botocore` / `redis` / `sqlalchemy`, passed in by the entry point) → "library '<lib>' is not installed" (the extra does not pull it in).
+- Anything else — another `opentelemetry.*` module (`opentelemetry.semconv._incubating.attributes`: version skew inside the OTel namespace), a submodule of the instrumentor, no module name (A13 review M2), a plain `ImportError` (version skew: `cannot import name 'X' from 'sqlalchemy'`), a missing transitive dependency (`wrapt`) — → "failed to import the <label> instrumentation: <error>", without guessing a cause. Before this ruling both cases were reported as "library not installed".
 
 ---
 

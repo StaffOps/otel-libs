@@ -1,7 +1,7 @@
 package otelhelper
 
 // Sampler contract (R6, design D3, ADR-002), mirroring
-// python/tests/test_sampler_precedence.py. Precedence: code ratio < 1.0 >
+// python/tests/test_sampler_precedence.py. Precedence: code ratio (any value) >
 // OTEL_TRACES_SAMPLER/_ARG > OTEL_HELPER_SAMPLE_RATIO (deprecated alias,
 // parentbased_traceidratio) > parentbased_always_on. Asserted on sampling
 // decisions, not only on sampler types.
@@ -342,6 +342,30 @@ func TestSampler_AliasGrammar(t *testing.T) {
 			warned := strings.Contains(buf.String(), "sample ratio is not a number")
 			if warned != c.warn {
 				t.Errorf("warned = %v, want %v (log %q)", warned, c.warn, buf.String())
+			}
+		})
+	}
+}
+
+// D1 A13 ruling: a code ratio wins whatever its value — 1.0 (the helper
+// default) included — over OTEL_TRACES_SAMPLER and the deprecated alias.
+func TestSampler_CodeRatioOneBeatsEnv(t *testing.T) {
+	for name, env := range map[string][2]string{
+		"standard var": {EnvTracesSampler, "always_off"},
+		"alias":        {EnvSampleRatio, "0"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			clearSamplerEnv(t)
+			t.Setenv(env[0], env[1])
+			tp, o := samplerProvider(t, WithSampleRatio(1.0))
+			if o.SampleRatio != 1.0 || o.sampleRatioFromEnv {
+				t.Errorf("SampleRatio = %v (fromEnv=%v), want the code 1.0", o.SampleRatio, o.sampleRatioFromEnv)
+			}
+			if d := buildSampler(o).Description(); !strings.Contains(d, "root:TraceIDRatioBased{1}") {
+				t.Errorf("sampler = %s, want ParentBased(TraceIDRatioBased{1})", d)
+			}
+			if !isSampled(tp, nil) {
+				t.Error("root span not sampled with the code ratio 1.0")
 			}
 		})
 	}

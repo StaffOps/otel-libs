@@ -1156,3 +1156,37 @@ func TestOpaqueSchemeAndTrimSet(t *testing.T) {
 		t.Errorf("literal+control: literal=%v skipped=%v, want only skipped", literal, skipped)
 	}
 }
+
+// D1 A13 ruling: a code value equal to the helper default still wins over the
+// environment ("was it set" is tracked by a flag, never by value).
+func TestCodeDefaultValuesBeatEnv(t *testing.T) {
+	t.Setenv(EnvMetricsPort, "9999")
+	t.Setenv(EnvDisabledMetrics, "http.*")
+	o := newOptions(WithServiceName("svc"), WithPrometheusMetricsPort(9464), WithDisabledMetrics([]string{}))
+	if o.PrometheusMetricsPort != 9464 {
+		t.Errorf("PrometheusMetricsPort = %d, want the code 9464 over %s", o.PrometheusMetricsPort, EnvMetricsPort)
+	}
+	if len(o.DisabledMetrics) != 0 {
+		t.Errorf("DisabledMetrics = %v, want the code empty list over %s", o.DisabledMetrics, EnvDisabledMetrics)
+	}
+	// nil = "not set" (env), like Python's None; only a non-nil empty slice overrides.
+	if o = newOptions(WithServiceName("svc"), WithDisabledMetrics(nil)); len(o.DisabledMetrics) != 1 {
+		t.Errorf("WithDisabledMetrics(nil) = %v, want %s applied", o.DisabledMetrics, EnvDisabledMetrics)
+	}
+	t.Setenv(EnvDisabledSignals, "traces")
+	if o = newOptions(WithServiceName("svc"), WithDisabledSignals([]string{})); !o.IsSignalEnabled("traces") {
+		t.Errorf("WithDisabledSignals([]string{}) did not override %s", EnvDisabledSignals)
+	}
+	if o = newOptions(WithServiceName("svc"), WithDisabledSignals(nil)); o.IsSignalEnabled("traces") {
+		t.Errorf("WithDisabledSignals(nil) = %v, want %s applied", o.DisabledSignals, EnvDisabledSignals)
+	}
+	t.Setenv(EnvDisabledSignals, "")
+	if o = newOptions(WithServiceName("svc"), WithoutMetricsListener()); o.PrometheusMetricsPort != 0 {
+		t.Errorf("WithoutMetricsListener: port = %d, want 0 over %s", o.PrometheusMetricsPort, EnvMetricsPort)
+	}
+	// Without code the env still applies.
+	o = newOptions(WithServiceName("svc"))
+	if o.PrometheusMetricsPort != 9999 || len(o.DisabledMetrics) != 1 || o.DisabledMetrics[0] != "http.*" {
+		t.Errorf("env not applied without code: port=%d disabled=%v", o.PrometheusMetricsPort, o.DisabledMetrics)
+	}
+}

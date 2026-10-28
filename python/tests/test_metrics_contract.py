@@ -128,20 +128,20 @@ class TestExportInterval:
     """US-2: OTEL_METRIC_EXPORT_INTERVAL precedence."""
 
     def test_default_is_30s(self):
-        assert _resolved().export_interval_ms == 30_000
+        assert _resolved().resolved.export_interval_ms == 30_000
 
     def test_env_var_honored(self):
         os.environ["OTEL_METRIC_EXPORT_INTERVAL"] = "5000"
-        assert _resolved().export_interval_ms == 5000
+        assert _resolved().resolved.export_interval_ms == 5000
 
     def test_explicit_beats_env(self):
         os.environ["OTEL_METRIC_EXPORT_INTERVAL"] = "5000"
-        assert _resolved(export_interval_ms=1234).export_interval_ms == 1234
+        assert _resolved(export_interval_ms=1234).resolved.export_interval_ms == 1234
 
     def test_invalid_env_falls_back_to_default(self, caplog):
         os.environ["OTEL_METRIC_EXPORT_INTERVAL"] = "not-a-number"
         with caplog.at_level(logging.WARNING, logger="otel_helper"):
-            assert _resolved().export_interval_ms == 30_000
+            assert _resolved().resolved.export_interval_ms == 30_000
         assert "OTEL_METRIC_EXPORT_INTERVAL" in caplog.text
 
     @pytest.mark.parametrize("raw", ["0", "-5"])
@@ -150,7 +150,7 @@ class TestExportInterval:
         with caplog.at_level(logging.WARNING, logger="otel_helper"):
             opts = _resolved()
             opts.validate()
-        assert opts.export_interval_ms == 30_000
+        assert opts.resolved.export_interval_ms == 30_000
         assert "OTEL_METRIC_EXPORT_INTERVAL" in caplog.text
 
     def test_non_positive_fails_validation(self):
@@ -294,6 +294,51 @@ class TestMountableHandler:
             status, body = _asgi_get(metrics_app())
             assert status == 200
             assert b"mounted_requests" in body
+        finally:
+            provider.shutdown()
+
+    def test_lifespan_and_other_scopes(self):
+        """Review L4: lifespan completes; non-http scopes get no response."""
+        import asyncio
+
+        app = metrics_app()
+        incoming = [{"type": "lifespan.startup"}, {"type": "lifespan.shutdown"}]
+        sent: list = []
+
+        async def receive():
+            return incoming.pop(0)
+
+        async def send(message):
+            sent.append(message)
+
+        asyncio.run(app({"type": "lifespan"}, receive, send))
+        assert [m["type"] for m in sent] == ["lifespan.startup.complete", "lifespan.shutdown.complete"]
+        sent.clear()
+        asyncio.run(app({"type": "websocket"}, receive, send))
+        assert sent == []
+
+    def test_exact_path_route_serves_200_without_redirect(self):
+        """A13: Route/add_route serve GET /metrics itself (mount answers 307 → /metrics/)."""
+        from starlette.applications import Starlette
+        from starlette.routing import Mount, Route
+        from starlette.testclient import TestClient
+
+        opts = _resolved(service_name="route-svc", metric_exporters=["prometheus"], prometheus_metrics_port=0)
+        provider = configure_metrics(Resource.create({}), opts)
+        try:
+            provider.get_meter("route-test").create_counter("routed_requests").add(2)
+            app = Starlette(routes=[Route("/metrics", metrics_app())])
+            added = Starlette()
+            added.add_route("/metrics", metrics_app())
+            for target in (app, added):
+                resp = TestClient(target).get("/metrics", follow_redirects=False)
+                assert resp.status_code == 200
+                assert resp.headers["content-type"].startswith("text/plain")
+                assert "# TYPE routed_requests_total counter" in resp.text
+                assert "routed_requests_total" in resp.text
+            mounted = TestClient(Starlette(routes=[Mount("/metrics", metrics_app())]))
+            assert mounted.get("/metrics", follow_redirects=False).status_code == 307
+            assert mounted.get("/metrics/").status_code == 200
         finally:
             provider.shutdown()
 

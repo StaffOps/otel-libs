@@ -158,8 +158,8 @@ def kind_resolve(case: dict) -> dict:
     if opts is not None:
         snap["resource"] = _resource_snapshot()
         snap["metric_exporters"] = list(opts.resolved_metric_exporters())
-        snap["metric_export_interval_ms"] = opts.export_interval_ms
-        level = logging.getLevelName(get_default_log_level(opts.environment, opts.debug_level))
+        snap["metric_export_interval_ms"] = opts.resolved.export_interval_ms
+        level = logging.getLevelName(get_default_log_level(opts.environment, opts.resolved.debug_level))
         snap["log_level"] = "WARN" if level == "WARNING" else level
     _flush_and_shutdown()
     return snap

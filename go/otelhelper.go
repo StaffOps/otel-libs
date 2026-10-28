@@ -257,8 +257,9 @@ func commit(p *pipeline, options *Options, bridge *logBridge) {
 	options.metricIntervalMs = effectiveIntervalMs(options)
 	current = p
 	shutdownFn = p.shutdown
-	activeLogBridge.Store(bridge)
+	// Level first: a record that sees the new bridge must also see its level.
 	installedLogLevel.Set(DefaultLogLevel(options.Environment, options.DebugLevel))
+	activeLogBridge.Store(bridge)
 	paths := healthPathSet(options.healthPaths())
 	installedHealthPaths.Store(&paths)
 	setupDone, installed = true, options

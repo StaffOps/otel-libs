@@ -203,7 +203,8 @@ class TestSampleRatioBelowOneUsesTraceIdSampler:
         assert isinstance(provider.sampler.inner, ParentBased)
         assert "root:TraceIdRatioBased{0.01}" in provider.sampler.get_description()
 
-    def test_ratio_1_uses_always_on(self):
+    def test_code_ratio_1_is_parentbased_ratio(self):
+        # D1 A13 ruling: a code ratio is used as given, 1.0 included (never compared to the default).
         resource = Resource.create({SERVICE_NAME: "sampler-test"})
         opts = TelemetryOptions(
             service_name="sampler-test",
@@ -212,7 +213,7 @@ class TestSampleRatioBelowOneUsesTraceIdSampler:
         )
         provider = configure_tracing(resource, opts)
         assert isinstance(provider.sampler.inner, ParentBased)
-        assert "root:AlwaysOnSampler" in provider.sampler.get_description()
+        assert "root:TraceIdRatioBased{1.0}" in provider.sampler.get_description()
 
 
 class TestStartRootSpanCreatesIndependentTrace:

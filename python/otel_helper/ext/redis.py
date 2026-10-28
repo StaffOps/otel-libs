@@ -1,6 +1,7 @@
 """Opt-in Redis instrumentation extension."""
 
 from otel_helper._semconv import ensure_semconv_default
+from otel_helper._support import missing_dependency_hint as _missing_hint
 from otel_helper._support import warn_if_unsupported
 
 
@@ -14,9 +15,9 @@ def instrument_redis() -> bool:
     try:
         from opentelemetry.instrumentation.redis import RedisInstrumentor
     except ImportError as e:
-        raise ImportError(
-            "Redis instrumentation not installed. Run: pip install otel-helper[redis]"
-        ) from e
+        hint = _missing_hint(e, "redis", "Redis", library="redis",
+                            module="opentelemetry.instrumentation.redis")
+        raise ImportError(hint) from e
 
     instrumentor = RedisInstrumentor()
     instrumentor.instrument()

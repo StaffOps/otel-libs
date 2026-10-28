@@ -74,3 +74,35 @@ def warn_if_unsupported(instrumentor) -> bool:
         name, _CONTRIB_DIST, _installed(_CONTRIB_DIST) or "unknown", installed, requirement,
     )
     return True
+
+
+def missing_dependency_hint(err: ImportError, extra: str, label: str, library: str, module: str) -> str:
+    """Message for an ``ext.*`` entry point whose import of ``module`` failed.
+
+    A cause is named only when it is certain (design D14, A13 ruling):
+
+    - ``ModuleNotFoundError`` for ``module`` (the contrib instrumentor, e.g.
+      ``opentelemetry.instrumentation.sqlalchemy``) or one of its parent
+      packages: the extra is not installed.
+    - ``ModuleNotFoundError`` for ``library`` (the instrumented library, e.g.
+      ``sqlalchemy``) or one of its submodules: the extra installs only the
+      instrumentor, so the user must install the library itself.
+    - anything else — a plain ``ImportError`` (version skew), a missing
+      transitive dependency (``wrapt``), another ``opentelemetry.*`` module
+      (``opentelemetry.semconv._incubating…``), no module name: the import
+      error, verbatim.
+    """
+    if isinstance(err, ModuleNotFoundError) and err.name:
+        parts = module.split(".")
+        if err.name in {".".join(parts[:i]) for i in range(1, len(parts) + 1)}:
+            return (
+                f"{label} instrumentation not installed. "
+                f"Run: pip install otel-helper[{extra}]"
+            )
+        if err.name.split(".")[0] == library:
+            return (
+                f"{label} instrumentation is installed but the instrumented library "
+                f"'{library}' is not. Install it (e.g. pip install {library}); "
+                f"otel-helper[{extra}] does not pull it in."
+            )
+    return f"failed to import the {label} instrumentation: {err}"

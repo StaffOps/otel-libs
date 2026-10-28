@@ -394,6 +394,57 @@ func TestNewSlogHandler_StdoutUsesEnvironmentLevel(t *testing.T) {
 	}
 }
 
+// R4 / design D6 A13 ruling: NewSlogHandler also filters records going
+// through the OTel bridge (the LoggerProvider enables every level), with the
+// level the Setup that installed the bridge resolved — also for a handler
+// created before Setup, and for Handle called without Enabled.
+func TestNewSlogHandler_BridgeUsesEnvironmentLevel(t *testing.T) {
+	exporter := logsTest(t)
+	l := slog.New(NewSlogHandler()) // before Setup: Info
+	h := NewSlogHandler()
+	shutdown := setupLogs(t, WithEndpoint("http://127.0.0.1:1"), WithEnvironment(PRD))
+	ctx := context.Background()
+	if h.Enabled(ctx, slog.LevelInfo) || !h.Enabled(ctx, slog.LevelWarn) {
+		t.Error("Enabled: want Info disabled and Warn enabled at PRD on the bridge")
+	}
+	l.Debug("prd-debug-bridge")
+	l.Info("prd-info-bridge")
+	l.Warn("prd-warn-bridge")
+	_ = h.Handle(ctx, slog.NewRecord(time.Now(), slog.LevelInfo, "prd-info-direct", 0))
+	_ = h.Handle(ctx, slog.NewRecord(time.Now(), slog.LevelError, "prd-error-direct", 0))
+	_ = shutdown(ctx)
+	exp := exporter()
+	for _, hidden := range []string{"prd-debug-bridge", "prd-info-bridge", "prd-info-direct"} {
+		if exp.has(hidden) {
+			t.Errorf("%s exported at PRD level (got %v)", hidden, exp.bodies)
+		}
+	}
+	for _, shown := range []string{"prd-warn-bridge", "prd-error-direct"} {
+		if !exp.has(shown) {
+			t.Errorf("%s not exported (got %v)", shown, exp.bodies)
+		}
+	}
+}
+
+// The level is dynamic: one handler follows each Setup's environment (PRD →
+// LOCAL after a re-setup), on the bridge.
+func TestNewSlogHandler_BridgeLevelFollowsResetup(t *testing.T) {
+	exporter := logsTest(t)
+	l := slog.New(NewSlogHandler())
+	shutdown := setupLogs(t, WithEndpoint("http://127.0.0.1:1"), WithEnvironment(PRD))
+	l.Info("first-info")
+	_ = shutdown(context.Background())
+	if exporter().has("first-info") {
+		t.Error("Info exported under PRD")
+	}
+	shutdown = setupLogs(t, WithEndpoint("http://127.0.0.1:1"), WithEnvironment(LOCAL))
+	l.Debug("second-debug")
+	_ = shutdown(context.Background())
+	if !exporter().has("second-debug") {
+		t.Errorf("Debug not exported under LOCAL after re-setup (got %v)", exporter().bodies)
+	}
+}
+
 // Handle enforces NewLogger's level on the bridge even without Enabled, and
 // a handler drops its cached bridge once the pipeline is gone.
 func TestSwitchHandler_HandleLevelAndCacheRelease(t *testing.T) {

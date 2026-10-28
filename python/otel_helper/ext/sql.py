@@ -1,6 +1,7 @@
 """Opt-in SQLAlchemy instrumentation extension."""
 
 from otel_helper._semconv import ensure_semconv_default
+from otel_helper._support import missing_dependency_hint as _missing_hint
 from otel_helper._support import warn_if_unsupported
 
 
@@ -19,9 +20,9 @@ def instrument_sql(engine=None) -> bool:
     try:
         from opentelemetry.instrumentation.sqlalchemy import SQLAlchemyInstrumentor
     except ImportError as e:
-        raise ImportError(
-            "SQL instrumentation not installed. Run: pip install otel-helper[sql]"
-        ) from e
+        hint = _missing_hint(e, "sql", "SQL", library="sqlalchemy",
+                            module="opentelemetry.instrumentation.sqlalchemy")
+        raise ImportError(hint) from e
 
     instrumentor = SQLAlchemyInstrumentor()
     if engine:

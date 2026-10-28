@@ -79,26 +79,32 @@ def _build_drop_views(patterns: list[str]) -> list[View]:
     return views
 
 
-def metrics_app():
-    """ASGI app serving the Prometheus scrape endpoint.
+class _MetricsASGIApp:
+    """The ASGI app returned by metrics_app().
 
-    Mount it on the application's own server — the correct mode under
-    multi-worker servers (gunicorn/uvicorn workers), where the standalone
-    listener cannot bind the same port in every process:
-
-        app.mount("/metrics", metrics_app())
-
-    Combine with OTEL_HELPER_METRICS_PORT=0 to suppress the standalone listener.
-    Without an active Prometheus reader it answers 503 (before setup, after a
-    failed setup, after shutdown_telemetry()) or, when setup deliberately left
-    Prometheus off, 200 with an empty body.
+    A class instance, not a function: Starlette's ``Route``/``add_route`` treat a
+    plain function as a request endpoint (``TypeError`` on call) and an object
+    with ``__call__`` as an ASGI app, so the exact-path form works.
     """
-    from prometheus_client import make_asgi_app
 
-    inner = make_asgi_app(registry=_REGISTRY)
+    def __init__(self) -> None:
+        from prometheus_client import make_asgi_app
 
-    async def app(scope, receive, send):
-        if scope.get("type") == "http" and not _active_readers:
+        self._inner = make_asgi_app(registry=_REGISTRY)
+
+    async def __call__(self, scope, receive, send) -> None:
+        kind = scope.get("type")
+        if kind == "lifespan":  # served standalone (uvicorn otel_helper...): nothing to start or stop
+            while True:
+                message = await receive()
+                if message["type"] == "lifespan.startup":
+                    await send({"type": "lifespan.startup.complete"})
+                elif message["type"] == "lifespan.shutdown":
+                    await send({"type": "lifespan.shutdown.complete"})
+                    return
+        if kind != "http":
+            return  # websocket and unknown scopes: not served
+        if not _active_readers:
             if _deliberately_inactive:
                 status, body = 200, b""
             else:
@@ -108,9 +114,29 @@ def metrics_app():
                                     (b"content-length", str(len(body)).encode())]})
             await send({"type": "http.response.body", "body": body})
             return
-        await inner(scope, receive, send)
+        await self._inner(scope, receive, send)
 
-    return app
+
+def metrics_app() -> _MetricsASGIApp:
+    """ASGI app serving the Prometheus scrape endpoint.
+
+    Serve it on the application's own server — the correct mode under
+    multi-worker servers (gunicorn/uvicorn workers), where the standalone
+    listener cannot bind the same port in every process. Register it on the
+    exact path:
+
+        app.add_route("/metrics", metrics_app())          # FastAPI / Starlette
+        # or: Route("/metrics", metrics_app()) in a Starlette routes list
+
+    ``app.mount("/metrics", metrics_app())`` also works, but Starlette then
+    answers ``GET /metrics`` with a 307 redirect to ``/metrics/``.
+
+    Combine with OTEL_HELPER_METRICS_PORT=0 to suppress the standalone listener.
+    Without an active Prometheus reader it answers 503 (before setup, after a
+    failed setup, after shutdown_telemetry()) or, when setup deliberately left
+    Prometheus off, 200 with an empty body.
+    """
+    return _MetricsASGIApp()
 
 
 def stop_listener(listener) -> None:
@@ -140,32 +166,32 @@ def build_metrics(resource: Resource, options: TelemetryOptions):
         plan = options.otlp_export("metrics")
         if "otlp" in exporters and plan is not None:
             readers.append(PeriodicExportingMetricReader(
-                build_otlp_exporter(plan), export_interval_millis=options.export_interval_ms,
+                build_otlp_exporter(plan), export_interval_millis=options.resolved.export_interval_ms,
             ))
 
         if "console" in exporters:
             from opentelemetry.sdk.metrics.export import ConsoleMetricExporter
 
             readers.append(PeriodicExportingMetricReader(
-                ConsoleMetricExporter(), export_interval_millis=options.export_interval_ms,
+                ConsoleMetricExporter(), export_interval_millis=options.resolved.export_interval_ms,
             ))
 
         if "prometheus" in exporters:
-            if options.prometheus_metrics_port > 0:
+            if options.resolved.prometheus_metrics_port > 0:
                 from prometheus_client import start_http_server
 
                 try:
-                    listener = start_http_server(port=options.prometheus_metrics_port, registry=_REGISTRY)
+                    listener = start_http_server(port=options.resolved.prometheus_metrics_port, registry=_REGISTRY)
                 except OSError as e:
                     raise RuntimeError(
                         f"[OtelHelper] Could not bind the /metrics listener on port "
-                        f"{options.prometheus_metrics_port}: {e}. If another process (or worker) owns "
+                        f"{options.resolved.prometheus_metrics_port}: {e}. If another process (or worker) owns "
                         "the port, mount otel_helper.metrics_app() on your app and set "
                         "OTEL_HELPER_METRICS_PORT=0 to disable the standalone listener."
                     ) from e
                 _logger.info(
                     "OTel Prometheus exporter: metrics available at http://0.0.0.0:%d/metrics",
-                    options.prometheus_metrics_port,
+                    options.resolved.prometheus_metrics_port,
                 )
             else:
                 _logger.info(
@@ -177,7 +203,8 @@ def build_metrics(resource: Resource, options: TelemetryOptions):
             prometheus_reader = _HelperPrometheusReader()
             readers.append(prometheus_reader)
 
-        views = _build_drop_views(options.disabled_metrics) if options.disabled_metrics else []
+        disabled = options.resolved.disabled_metrics
+        views = _build_drop_views(disabled) if disabled else []
 
         kwargs = dict(
             resource=resource,

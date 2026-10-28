@@ -1,6 +1,6 @@
 """Sampler contract (R6, design D3, ADR-002).
 
-Precedence: code ratio < 1.0 > OTEL_TRACES_SAMPLER/_ARG > OTEL_HELPER_SAMPLE_RATIO
+Precedence: code ratio (any value) > OTEL_TRACES_SAMPLER/_ARG > OTEL_HELPER_SAMPLE_RATIO
 (deprecated alias, parentbased_traceidratio) > parentbased_always_on. Behavior is
 asserted on sampling decisions, not only on sampler types.
 """
@@ -59,7 +59,7 @@ class TestPrecedence:
     def test_helper_var_only_applies_parentbased_ratio(self):
         os.environ["OTEL_HELPER_SAMPLE_RATIO"] = "0.25"
         provider, opts = _provider(service_name="svc")
-        assert opts.sample_ratio == 0.25
+        assert opts.resolved.sample_ratio == 0.25
         assert isinstance(provider.sampler.inner, ParentBased)
         assert "root:TraceIdRatioBased{0.25}" in provider.sampler.get_description()
 
@@ -72,7 +72,7 @@ class TestPrecedence:
         os.environ["OTEL_TRACES_SAMPLER"] = "parentbased_always_on"
         os.environ["OTEL_HELPER_SAMPLE_RATIO"] = "0.25"
         provider, opts = _provider(service_name="svc")
-        assert opts.sample_ratio == 1.0
+        assert opts.resolved.sample_ratio == 1.0
         assert isinstance(provider.sampler.inner, ParentBased)
         assert "root:AlwaysOnSampler" in provider.sampler.get_description()
 
@@ -80,12 +80,12 @@ class TestPrecedence:
         os.environ["OTEL_TRACES_SAMPLER"] = "  "
         os.environ["OTEL_HELPER_SAMPLE_RATIO"] = "0.25"
         _, opts = _provider(service_name="svc")
-        assert opts.sample_ratio == 0.25
+        assert opts.resolved.sample_ratio == 0.25
 
     def test_explicit_ratio_beats_standard_var(self):
         os.environ["OTEL_TRACES_SAMPLER"] = "always_off"
         provider, opts = _provider(service_name="svc", sample_ratio=0.5)
-        assert opts.sample_ratio == 0.5
+        assert opts.resolved.sample_ratio == 0.5
         assert isinstance(provider.sampler.inner, ParentBased)
         assert "root:TraceIdRatioBased{0.5}" in provider.sampler.get_description()
 
@@ -198,7 +198,7 @@ class TestStandardEnvVar:
         os.environ["OTEL_TRACES_SAMPLER"] = "bogus"
         os.environ["OTEL_HELPER_SAMPLE_RATIO"] = "0"
         provider, opts = _provider(service_name="svc")
-        assert opts.sample_ratio == 1.0
+        assert opts.resolved.sample_ratio == 1.0
         assert _sampled(provider, None) is True
 
 
@@ -210,14 +210,14 @@ class TestNumericGrammarAndUnsupported:
         os.environ["OTEL_HELPER_SAMPLE_RATIO"] = raw
         with caplog.at_level(logging.WARNING, logger="otel_helper"):
             _, opts = _provider(service_name="svc")
-        assert opts.sample_ratio == 1.0
+        assert opts.resolved.sample_ratio == 1.0
         assert "OTEL_HELPER_SAMPLE_RATIO" in caplog.text
 
     @pytest.mark.parametrize("raw", ["0", "0.25", "1", "1.0"])
     def test_alias_accepts_plain_decimal(self, raw):
         os.environ["OTEL_HELPER_SAMPLE_RATIO"] = raw
         _, opts = _provider(service_name="svc")
-        assert opts.sample_ratio == float(raw)
+        assert opts.resolved.sample_ratio == float(raw)
 
     @pytest.mark.parametrize("name", ["jaeger_remote", "parentbased_jaeger_remote", "XRAY"])
     def test_unsupported_spec_names_warn(self, name, caplog):
@@ -226,3 +226,27 @@ class TestNumericGrammarAndUnsupported:
         warnings = _helper_warnings(caplog)
         assert len(warnings) == 1 and "unsupported by this helper" in warnings[0]
         assert _sampled(provider, _remote(False)) is False  # default parentbased_always_on
+
+
+class TestCodeRatioEqualToDefault:
+    """D1 A13 ruling: a code ratio wins whatever its value, 1.0 (the default) included."""
+
+    @pytest.mark.parametrize("var,value", [("OTEL_TRACES_SAMPLER", "always_off"),
+                                           ("OTEL_HELPER_SAMPLE_RATIO", "0")])
+    def test_code_ratio_one_beats_env(self, var, value):
+        os.environ[var] = value
+        provider, opts = _provider(service_name="s", sample_ratio=1.0)
+        assert opts.resolved.sample_ratio == 1.0
+        assert "root:TraceIdRatioBased{1.0}" in build_sampler(opts).get_description()
+        assert _sampled(provider, None)
+
+    def test_unset_code_ratio_still_reads_alias(self):
+        os.environ["OTEL_HELPER_SAMPLE_RATIO"] = "0"
+        provider, opts = _provider(service_name="s")
+        assert opts.resolved.sample_ratio == 0.0
+        assert not _sampled(provider, None)
+
+    def test_default_without_code_or_env_is_parentbased_always_on(self):
+        _, opts = _provider(service_name="s")
+        assert opts.resolved.sample_ratio == 1.0
+        assert "root:AlwaysOnSampler" in build_sampler(opts).get_description()

@@ -70,6 +70,8 @@ SIGNALS = ("traces", "metrics", "logs")
 _DEFAULT_OTLP_PORT = 4317
 _DEFAULT_OTLP_HTTP_PORT = 4318
 _DEFAULT_EXPORT_INTERVAL_MS = 30_000
+_DEFAULT_METRICS_PORT = 9464
+_DEFAULT_EXTRA_INSTRUMENTATION = "SQL"
 _DEFAULT_TIMEOUT_MS = 10_000.0
 _SECONDS_LIKE_TIMEOUT_MS = 100
 _VALID_METRIC_EXPORTERS = ("otlp", "prometheus", "console", "none")
@@ -246,11 +248,55 @@ class SignalExport:
     masked_env: tuple[str, ...] = ()
 
 
+@dataclass(frozen=True)
+class ResolvedOptions:
+    """Effective values of the options code may leave unset (``TelemetryOptions.resolved``).
+
+    Code value if set (whatever it is), else the environment, else the helper
+    default (design D1, A13 ruling). Read-only: change the ``TelemetryOptions``
+    field instead.
+    """
+
+    debug_level: bool
+    extra_instrumentation: str
+    sample_ratio: float
+    # True when sample_ratio came from code or OTEL_HELPER_SAMPLE_RATIO: the
+    # sampler is then ParentBased(TraceIdRatioBased(sample_ratio)).
+    sample_ratio_set: bool
+    disabled_signals: list[str]
+    disabled_metrics: list[str]
+    prometheus_metrics_port: int
+    export_interval_ms: int
+    # None = not set anywhere: inferred (otlp with a metrics endpoint, else prometheus).
+    metric_exporters: list[str] | None
+
+
+# Fields whose public value is only ever the code value; resolution stores the
+# effective value in TelemetryOptions._effective (never back into the field), so
+# dataclasses.replace() and a second setup_telemetry() with the same object
+# re-read the environment for everything code left unset (A13 review H1/M1).
+_CODE_ONLY_DEFAULTS: dict[str, object] = {
+    "debug_level": False,
+    "extra_instrumentation": _DEFAULT_EXTRA_INSTRUMENTATION,
+    "sample_ratio": 1.0,
+    "disabled_signals": [],
+    "disabled_metrics": [],
+    "prometheus_metrics_port": _DEFAULT_METRICS_PORT,
+    "export_interval_ms": _DEFAULT_EXPORT_INTERVAL_MS,
+    "metric_exporters": None,
+}
+
+
 @dataclass
 class TelemetryOptions:
     """Configuration options for OtelHelper. Env vars fill defaults; explicit values take priority.
 
-    ``None`` / empty means "not set in code". Endpoints set here are taken as
+    ``None`` / empty means "not set in code"; any other value set here wins over
+    the environment, also when it equals the helper default (``sample_ratio=1.0``,
+    ``prometheus_metrics_port=9464``, ``disabled_metrics=[]``, ``debug_level=False``
+    — design D1 edge-case rulings). Resolution never writes these fields back:
+    read the effective values from ``resolved`` (code, else env, else default).
+    Endpoints set here are taken as
     given: a generic ``otel_endpoint`` gets ``/v1/<signal>`` appended for
     ``http/protobuf``; ``traces_endpoint``/``metrics_endpoint``/``logs_endpoint``
     are used verbatim. After ``setup_telemetry()``, ``service_name`` and
@@ -264,22 +310,31 @@ class TelemetryOptions:
     traces_endpoint: str = ""
     metrics_endpoint: str = ""
     logs_endpoint: str = ""
-    debug_level: bool = False
-    extra_instrumentation: str = "SQL"
+    # Debug mode. None = OTEL_HELPER_DEBUG_LEVEL, else False.
+    debug_level: bool | None = None
+    # Deprecated. None = OTEL_HELPER_EXTRA_INSTRUMENTATION, else "SQL".
+    extra_instrumentation: str | None = None
     # Export timeout (ms). None = OTEL_EXPORTER_OTLP[_<SIGNAL>]_TIMEOUT (ms), else the SDK default (10 s).
     export_timeout_ms: int | None = None
     # OTLP compression: "gzip" or "none". None = env, else "gzip" (design D1.d).
     compression: str | None = None
-    sample_ratio: float = 1.0
-    disabled_signals: list[str] = field(default_factory=list)
-    disabled_metrics: list[str] = field(default_factory=list)
+    # Head-sampling ratio for root spans: ParentBased(TraceIdRatioBased(ratio)), winning over
+    # OTEL_TRACES_SAMPLER whatever the value (1.0 included). None = env (the deprecated
+    # OTEL_HELPER_SAMPLE_RATIO only while OTEL_TRACES_SAMPLER is unset); the effective value
+    # is resolved.sample_ratio (this field keeps the code value).
+    sample_ratio: float | None = None
+    # Signals to disable. None = OTEL_HELPER_DISABLED_SIGNALS (deprecated); [] = none, over the env.
+    disabled_signals: list[str] | None = None
+    # Instrument-name patterns to drop. None = OTEL_HELPER_DISABLED_METRICS; [] = none, over the env.
+    disabled_metrics: list[str] | None = None
     # Metric exporters: "otlp", "prometheus", "console", "none". None = resolve from
     # OTEL_METRICS_EXPORTER, falling back to legacy inference (otlp when a metrics
     # endpoint is configured, prometheus otherwise). Explicit value wins over env.
     metric_exporters: list[str] | None = None
     # Metric export interval (ms). None = OTEL_METRIC_EXPORT_INTERVAL, else 30000.
     export_interval_ms: int | None = None
-    prometheus_metrics_port: int = 9464
+    # Standalone /metrics port (0 = no listener). None = OTEL_HELPER_METRICS_PORT, else 9464.
+    prometheus_metrics_port: int | None = None
     minimum_log_level: int | None = None
     resource_attributes: dict[str, object] = field(default_factory=dict)
     # Plaintext for a schemeless endpoint set in code. Contradicting a code URL's scheme raises.
@@ -303,13 +358,35 @@ class TelemetryOptions:
     _sdk_disabled: bool = field(default=False, init=False, repr=False)
     _whitespace_service_name: bool = field(default=False, init=False, repr=False)
     _setup_disabled: set[str] = field(default_factory=set, init=False, repr=False)
+    # Effective values of the _CODE_ONLY_DEFAULTS fields (+ "sample_ratio_set"), rebuilt
+    # by every resolve_from_env(); empty before the first one.
+    _effective: dict[str, object] = field(default_factory=dict, init=False, repr=False)
 
     # ── public queries ────────────────────────────────────────────────────
 
+    def _value(self, name: str):
+        """Effective value: resolved, else (before resolution) code value, else default."""
+        if name in self._effective:
+            return self._effective[name]
+        code = getattr(self, name)
+        return _CODE_ONLY_DEFAULTS[name] if code is None else code
+
+    @property
+    def resolved(self) -> ResolvedOptions:
+        """The effective option values (code > env > default) — see ``ResolvedOptions``."""
+        values = {name: self._value(name) for name in _CODE_ONLY_DEFAULTS}
+        values["debug_level"] = bool(values["debug_level"])
+        for name in ("disabled_signals", "disabled_metrics", "metric_exporters"):
+            if values[name] is not None:
+                values[name] = list(values[name])
+        sample_set = self._effective.get("sample_ratio_set", self.sample_ratio is not None)
+        return ResolvedOptions(sample_ratio_set=bool(sample_set), **values)
+
     def has_instrumentation(self, name: str) -> bool:
-        if self.debug_level:
+        if self._value("debug_level"):
             return True
-        return name.upper() in [x.strip(TRIM_CHARS).upper() for x in self.extra_instrumentation.split(",") if x.strip(TRIM_CHARS)]
+        extra = self._value("extra_instrumentation")
+        return name.upper() in [x.strip(TRIM_CHARS).upper() for x in extra.split(",") if x.strip(TRIM_CHARS)]
 
     def is_signal_enabled(self, signal: str) -> bool:
         """Check if a signal (traces, metrics, logs) is enabled.
@@ -318,7 +395,7 @@ class TelemetryOptions:
         metrics after setup → shutdown → setup in one process).
         """
         signal = signal.lower()
-        return signal not in self._setup_disabled and signal not in [s.lower() for s in self.disabled_signals]
+        return signal not in self._setup_disabled and signal not in [s.lower() for s in self._value("disabled_signals")]
 
     @property
     def sdk_disabled(self) -> bool:
@@ -342,11 +419,12 @@ class TelemetryOptions:
 
     def resolved_metric_exporters(self) -> list[str]:
         """Active metric exporters after resolution. "none" resolves to an empty list."""
-        if self.metric_exporters is None:
+        exporters = self._value("metric_exporters")
+        if exporters is None:
             return ["otlp"] if self.is_otlp_configured("metrics") else ["prometheus"]
-        if self.metric_exporters == ["none"]:
+        if exporters == ["none"]:
             return []
-        return list(self.metric_exporters)
+        return list(exporters)
 
     def resolved_otlp_protocol(self, signal: str = "traces") -> str:
         """OTLP wire protocol for a signal: code > per-signal env > generic env > port 4318 > grpc."""
@@ -418,19 +496,32 @@ class TelemetryOptions:
                 fail(option, f"must be an integer (milliseconds), got {type(value).__name__}")
             if value <= 0:
                 fail(option, "must be greater than 0")
+        if self.debug_level is not None:
+            # bool or int (truthiness, as before 0.3); a string such as "false" would read as true.
+            if not isinstance(self.debug_level, int):
+                fail("debug_level", f"must be a bool, got {type(self.debug_level).__name__}")
+            self.debug_level = bool(self.debug_level)
+        check_str("extra_instrumentation", self.extra_instrumentation)
         ratio = self.sample_ratio
-        if isinstance(ratio, bool) or not isinstance(ratio, (int, float)) or math.isnan(ratio) \
-                or not 0.0 <= ratio <= 1.0:
+        if ratio is not None and (isinstance(ratio, bool) or not isinstance(ratio, (int, float))
+                                  or math.isnan(ratio) or not 0.0 <= ratio <= 1.0):
             fail("sample_ratio", f"must be a number in [0, 1], got {ratio!r}")
         port = self.prometheus_metrics_port
-        if isinstance(port, bool) or not isinstance(port, int) or not 0 <= port <= 65535:
+        if port is not None and (isinstance(port, bool) or not isinstance(port, int) or not 0 <= port <= 65535):
             fail("prometheus_metrics_port", f"must be an integer in [0, 65535], got {port!r}")
-        if not isinstance(self.disabled_signals, list) or not all(isinstance(s, str) for s in self.disabled_signals):
-            fail("disabled_signals", "must be a list of strings")
-        unknown = [s for s in self.disabled_signals if s.strip(TRIM_CHARS).lower() not in SIGNALS]
-        if unknown:
-            fail("disabled_signals", f"has unknown signal(s) {unknown} (valid: {', '.join(SIGNALS)})")
-        self.disabled_signals = [s.strip(TRIM_CHARS).lower() for s in self.disabled_signals]
+        if self.disabled_signals is not None:
+            if not isinstance(self.disabled_signals, (list, tuple)) or not all(
+                    isinstance(s, str) for s in self.disabled_signals):
+                fail("disabled_signals", "must be a list of strings")
+            unknown = [s for s in self.disabled_signals if s.strip(TRIM_CHARS).lower() not in SIGNALS]
+            if unknown:
+                fail("disabled_signals", f"has unknown signal(s) {unknown} (valid: {', '.join(SIGNALS)})")
+            self.disabled_signals = [s.strip(TRIM_CHARS).lower() for s in self.disabled_signals]
+        if self.disabled_metrics is not None:
+            if not isinstance(self.disabled_metrics, (list, tuple)) or not all(
+                    isinstance(m, str) for m in self.disabled_metrics):
+                fail("disabled_metrics", "must be a list of strings")
+            self.disabled_metrics = list(self.disabled_metrics)
         if self.health_paths is not None:
             if not isinstance(self.health_paths, (list, tuple)) or not all(
                     isinstance(p, str) for p in self.health_paths):
@@ -439,10 +530,11 @@ class TelemetryOptions:
                 if not path.startswith("/") or any(c in path for c in "?#,") or not path.isascii():
                     fail("health_paths", f'path {path!r} must be ASCII, start with "/" and have no query, '
                          "fragment or comma")
-        if self.metric_exporters is not None and (
-                not isinstance(self.metric_exporters, list)
-                or not all(isinstance(e, str) for e in self.metric_exporters)):
-            fail("metric_exporters", "must be a list of strings")
+        if self.metric_exporters is not None:
+            if not isinstance(self.metric_exporters, (list, tuple)) or not all(
+                    isinstance(e, str) for e in self.metric_exporters):
+                fail("metric_exporters", "must be a list or tuple of strings")
+            self.metric_exporters = list(self.metric_exporters)
 
     # ── resolution ────────────────────────────────────────────────────────
 
@@ -454,6 +546,12 @@ class TelemetryOptions:
         from opentelemetry.sdk.resources import OTELResourceDetector
 
         self._validate_code()
+        # Every resolution starts from the code values only (A13 review M1): a second
+        # setup_telemetry() with the same object re-reads the environment.
+        self._effective = {}
+        self._otlp = {}
+        self._span_log_exporters = {}
+        self._resource_overrides = {}
         _warn_deprecated_env()
         whitespace_name = ENV_OTEL_SERVICE_NAME in os.environ and _env(ENV_OTEL_SERVICE_NAME) is None
         saved = os.environ.pop(ENV_OTEL_SERVICE_NAME) if whitespace_name else None
@@ -466,18 +564,24 @@ class TelemetryOptions:
         self._resolve_service_name()
         self._resolve_environment()
 
-        if not self.debug_level:
-            self.debug_level = bool(self._env_bool(ENV_DEBUG_LEVEL))
+        # A value set in code wins whatever it is (D1 A13 ruling): only None reads the env.
+        eff = self._effective
+        eff["debug_level"] = self.debug_level if self.debug_level is not None \
+            else bool(self._env_bool(ENV_DEBUG_LEVEL))
 
-        if self.extra_instrumentation == "SQL":
+        if self.extra_instrumentation is not None:
+            eff["extra_instrumentation"] = self.extra_instrumentation
+        else:
             env_extra = os.getenv(ENV_EXTRA_INSTRUMENTATION)
-            if env_extra is not None:
-                self.extra_instrumentation = env_extra
+            eff["extra_instrumentation"] = _DEFAULT_EXTRA_INSTRUMENTATION if env_extra is None else env_extra
 
         # Standard OTel var wins over the deprecated proprietary one: when
         # OTEL_TRACES_SAMPLER is set, it configures the sampler (tracing.build_sampler)
         # and OTEL_HELPER_SAMPLE_RATIO is ignored.
-        if self.sample_ratio == 1.0 and _env(ENV_TRACES_SAMPLER) is None:
+        eff["sample_ratio"], eff["sample_ratio_set"] = 1.0, False
+        if self.sample_ratio is not None:
+            eff["sample_ratio"], eff["sample_ratio_set"] = float(self.sample_ratio), True
+        elif _env(ENV_TRACES_SAMPLER) is None:
             self._resolve_sample_ratio()
 
         self._sdk_disabled = bool(self._env_bool(ENV_SDK_DISABLED))
@@ -495,19 +599,23 @@ class TelemetryOptions:
         self._resolve_metric_exporters()
         self._resolve_export_interval()
 
-        if not self.disabled_metrics:
-            env_metrics = os.getenv(ENV_DISABLED_METRICS)
-            if env_metrics:
-                self.disabled_metrics = [s.strip(TRIM_CHARS) for s in env_metrics.split(",") if s.strip(TRIM_CHARS)]
+        if self.disabled_metrics is not None:
+            eff["disabled_metrics"] = list(self.disabled_metrics)
+        else:
+            env_metrics = os.getenv(ENV_DISABLED_METRICS) or ""
+            eff["disabled_metrics"] = [s.strip(TRIM_CHARS) for s in env_metrics.split(",") if s.strip(TRIM_CHARS)]
 
-        if self.prometheus_metrics_port == 9464:
+        if self.prometheus_metrics_port is not None:
+            eff["prometheus_metrics_port"] = self.prometheus_metrics_port
+        else:
+            eff["prometheus_metrics_port"] = _DEFAULT_METRICS_PORT
             env_port = _env(ENV_METRICS_PORT)
             if env_port is not None:
                 try:
                     port = int(env_port)
                     if not 0 <= port <= 65535:
                         raise ValueError
-                    self.prometheus_metrics_port = port
+                    eff["prometheus_metrics_port"] = port
                 except ValueError:
                     self._warn_once(ENV_METRICS_PORT, "[OtelHelper] %s=%r is not a port (0-65535); using 9464.",
                                     ENV_METRICS_PORT, env_port)
@@ -526,7 +634,7 @@ class TelemetryOptions:
         if clamped != ratio:
             self._warn_once(f"{ENV_SAMPLE_RATIO}:range", "[OtelHelper] %s=%r is outside [0, 1]; using %s.",
                             ENV_SAMPLE_RATIO, raw, clamped)
-        self.sample_ratio = clamped
+        self._effective["sample_ratio"], self._effective["sample_ratio_set"] = clamped, True
 
     def _resolve_service_name(self) -> None:
         """code > OTEL_SERVICE_NAME > OTEL_RESOURCE_ATTRIBUTES > SERVICE_NAME > SDK default (D1)."""
@@ -619,11 +727,14 @@ class TelemetryOptions:
                 parsed = self._parse_exporter_list(var, raw, _VALID_SPAN_LOG_EXPORTERS)
                 if parsed is not None:
                     self._span_log_exporters[signal] = parsed
-        if not self.disabled_signals:
+        if self.disabled_signals is not None:
+            self._effective["disabled_signals"] = list(self.disabled_signals)
+        else:
+            self._effective["disabled_signals"] = []
             env_disabled = os.getenv(ENV_DISABLED_SIGNALS)
             if env_disabled:
                 standard = {s for s in SIGNALS if _env(f"OTEL_{s.upper()}_EXPORTER") is not None}
-                self.disabled_signals = [
+                self._effective["disabled_signals"] = [
                     s.strip(TRIM_CHARS).lower() for s in env_disabled.split(",")
                     if s.strip(TRIM_CHARS) and s.strip(TRIM_CHARS).lower() not in standard
                 ]
@@ -631,7 +742,9 @@ class TelemetryOptions:
     def _resolve_metric_exporters(self) -> None:
         if self.metric_exporters is not None:
             self.metric_exporters = [e.strip(TRIM_CHARS).lower() for e in self.metric_exporters if e.strip(TRIM_CHARS)]
+            self._effective["metric_exporters"] = list(self.metric_exporters)
             return
+        self._effective["metric_exporters"] = None
         raw = _env(ENV_METRICS_EXPORTER)
         if raw is None:
             return
@@ -643,24 +756,24 @@ class TelemetryOptions:
                 "ignoring 'otlp'.", ENV_METRICS_EXPORTER, ENV_COLLECTOR_ENDPOINT, _signal_var("ENDPOINT", "metrics"),
             )
             parsed = [e for e in parsed if e != "otlp"] or None
-        self.metric_exporters = parsed
+        self._effective["metric_exporters"] = parsed
 
     def _resolve_export_interval(self) -> None:
         if self.export_interval_ms is not None:
+            self._effective["export_interval_ms"] = self.export_interval_ms
             return
+        self._effective["export_interval_ms"] = _DEFAULT_EXPORT_INTERVAL_MS
         raw = _env(ENV_METRIC_EXPORT_INTERVAL)
         if raw is not None:
             try:
                 value = int(raw)
                 if value <= 0:
                     raise ValueError
-                self.export_interval_ms = value
+                self._effective["export_interval_ms"] = value
             except ValueError:
                 self._warn_once(ENV_METRIC_EXPORT_INTERVAL, "[OtelHelper] %s=%r is not a positive integer "
                                 "(milliseconds); using %d.", ENV_METRIC_EXPORT_INTERVAL, raw,
                                 _DEFAULT_EXPORT_INTERVAL_MS)
-        if self.export_interval_ms is None:
-            self.export_interval_ms = _DEFAULT_EXPORT_INTERVAL_MS
 
     # ── OTLP per-signal resolution ────────────────────────────────────────
 

@@ -80,7 +80,14 @@ helper forces an either/or choice.
 
 **Acceptance Criteria:**
 - Python: `otel_helper.metrics_app()` returns an ASGI app —
-  `app.mount("/metrics", metrics_app())` on FastAPI/Starlette.
+  `app.add_route("/metrics", metrics_app())` (or `Route("/metrics", metrics_app())`)
+  on FastAPI/Starlette, serving the exact path. `app.mount("/metrics", …)` keeps
+  working but answers `GET /metrics` with a 307 redirect to `/metrics/`.
+  *Corrected 2026-10-28 (A13 validation): this criterion originally named the
+  `mount` form; a Prometheus scrape of `/metrics` then hit the redirect.
+  `metrics_app()` now returns an ASGI callable-class instance (Starlette treats a
+  plain function passed to `Route`/`add_route` as a request endpoint and raised
+  `TypeError`), so the exact-path form works.*
 - Go: `otelhelper.MetricsHandler() http.Handler` — mountable on the app's mux.
 - .NET: document the ASP.NET Core path (`AddPrometheusExporter()` +
   `app.MapPrometheusScrapingEndpoint()`); `HttpListener` stays for non-ASP.NET
