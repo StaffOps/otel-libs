@@ -20,27 +20,27 @@
 //
 // Available extensions:
 //
-//	github.com/staffops/staffops-otel-libs/go/ext/otelaws   — AWS SDK v2 tracing
-//	github.com/staffops/staffops-otel-libs/go/ext/otelredis — go-redis v9 tracing
-//	github.com/staffops/staffops-otel-libs/go/ext/otelsql   — database/sql tracing + metrics
+//	github.com/staffops/otel-libs/go/ext/otelaws   — AWS SDK v2 tracing
+//	github.com/staffops/otel-libs/go/ext/otelredis — go-redis v9 tracing
+//	github.com/staffops/otel-libs/go/ext/otelsql   — database/sql tracing + metrics
 //
 // Example (AWS):
 //
-//	import "github.com/staffops/staffops-otel-libs/go/ext/otelaws"
+//	import "github.com/staffops/otel-libs/go/ext/otelaws"
 //
 //	cfg, _ := config.LoadDefaultConfig(ctx)
 //	otelaws.Instrument(&cfg)
 //
 // Example (Redis):
 //
-//	import "github.com/staffops/staffops-otel-libs/go/ext/otelredis"
+//	import "github.com/staffops/otel-libs/go/ext/otelredis"
 //
 //	rdb := redis.NewClient(&redis.Options{Addr: "localhost:6379"})
 //	if err := otelredis.Instrument(rdb); err != nil { ... }
 //
 // Example (SQL):
 //
-//	import "github.com/staffops/staffops-otel-libs/go/ext/otelsql"
+//	import "github.com/staffops/otel-libs/go/ext/otelsql"
 //
 //	db, closeDB, err := otelsql.Open("postgres", dsn)
 //	if err != nil { ... }

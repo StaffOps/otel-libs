@@ -1,8 +1,8 @@
-module github.com/staffops/staffops-otel-libs/testing/e2e/go-smoke
+module github.com/staffops/otel-libs/testing/e2e/go-smoke
 
 go 1.26.0
 
-require github.com/staffops/staffops-otel-libs/go v0.0.0
+require github.com/staffops/otel-libs/go v0.0.0
 
 require (
 	github.com/beorn7/perks v1.0.1 // indirect
@@ -52,4 +52,4 @@ require (
 	google.golang.org/protobuf v1.36.12 // indirect
 )
 
-replace github.com/staffops/staffops-otel-libs/go => ../../../go
+replace github.com/staffops/otel-libs/go => ../../../go

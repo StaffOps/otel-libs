@@ -52,3 +52,6 @@ packages/
 
 # MkDocs build output (repo-root only — docs/site/ is the mkdocs source dir, not this)
 /site/
+
+# Built e2e smoke binary
+testing/e2e/go-smoke/go-smoke

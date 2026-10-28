@@ -1,4 +1,4 @@
-# AGENTS.md — staffops-otel-libs
+# AGENTS.md — otel-libs
 
 Canonical guide for agents and humans working in this repo. Tool-specific
 files are one-line pointers here — `CLAUDE.md` (imports this file via
@@ -14,7 +14,7 @@ those.
 ## Repository
 
 Monorepo of OpenTelemetry helper libraries that must stay **functionally
-equivalent**: `go/` (module `github.com/staffops/staffops-otel-libs/go` +
+equivalent**: `go/` (module `github.com/staffops/otel-libs/go` +
 `ext/*` submodules), `python/` (`otel-helper`, extras `aws`/`redis`/`sql`),
 `dotnet/` (`OtelHelper` + `.AWS`/`.Redis`/`.Sql`/`.Profiling`). Planned:
 `nodejs/`. Shared Grafana dashboards in `dashboards/`, MkDocs site in

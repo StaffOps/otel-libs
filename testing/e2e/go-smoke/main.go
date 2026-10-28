@@ -9,7 +9,7 @@ import (
 	"log"
 	"time"
 
-	otelhelper "github.com/staffops/staffops-otel-libs/go"
+	otelhelper "github.com/staffops/otel-libs/go"
 )
 
 func main() {

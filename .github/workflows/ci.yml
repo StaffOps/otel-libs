@@ -275,7 +275,7 @@ jobs:
               -c Release \
               -o nupkgs \
               /p:Version="0.1.0-dev-${SHORT_SHA}" \
-              /p:RepositoryUrl="https://github.com/StaffOps/staffops-otel-libs"
+              /p:RepositoryUrl="https://github.com/StaffOps/otel-libs"
           done
       - name: Push to GitHub Packages
         run: |
@@ -312,7 +312,7 @@ jobs:
               -c Release \
               -o nupkgs \
               /p:Version="${{ steps.version.outputs.VERSION }}" \
-              /p:RepositoryUrl="https://github.com/StaffOps/staffops-otel-libs"
+              /p:RepositoryUrl="https://github.com/StaffOps/otel-libs"
           done
       - name: Push to GitHub Packages
         run: |

@@ -51,7 +51,7 @@ OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
 ## Installation
 
 ```bash
-go get github.com/staffops/staffops-otel-libs/go
+go get github.com/staffops/otel-libs/go
 ```
 
 Requires Go **1.26** or newer (`go.mod`: `go 1.26`); CI runs 1.26.x and 1.27.x.
@@ -338,9 +338,9 @@ remain visible — exclude them in SLI queries
 Separate Go modules, so core stays free of AWS/Redis/SQL dependencies:
 
 ```bash
-go get github.com/staffops/staffops-otel-libs/go/ext/otelaws
-go get github.com/staffops/staffops-otel-libs/go/ext/otelredis
-go get github.com/staffops/staffops-otel-libs/go/ext/otelsql
+go get github.com/staffops/otel-libs/go/ext/otelaws
+go get github.com/staffops/otel-libs/go/ext/otelredis
+go get github.com/staffops/otel-libs/go/ext/otelsql
 ```
 
 ```go

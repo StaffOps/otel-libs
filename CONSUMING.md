@@ -1,4 +1,4 @@
-# Consuming staffops-otel-libs Packages
+# Consuming otel-libs Packages
 
 How to install and use the OTel helper packages from this private repository.
 
@@ -74,7 +74,7 @@ Package name on import: `otel_helper`. pip/distribution name: `otel-helper`.
 ### Install using gh CLI (simplest)
 
 ```bash
-gh release download v0.2.0 --repo StaffOps/staffops-otel-libs --pattern "*.whl"
+gh release download v0.2.0 --repo StaffOps/otel-libs --pattern "*.whl"
 pip install otel_helper-0.2.0-py3-none-any.whl
 ```
 
@@ -85,7 +85,7 @@ In CI: set `GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}` in the env.
 ```bash
 # Resolve the asset API URL, then download with auth
 ASSET_URL=$(curl -s -H "Authorization: Bearer $GH_PAT" \
-  "https://api.github.com/repos/StaffOps/staffops-otel-libs/releases/tags/v0.2.0" \
+  "https://api.github.com/repos/StaffOps/otel-libs/releases/tags/v0.2.0" \
   | jq -r '.assets[] | select(.name | endswith(".whl")) | .url')
 curl -sL -H "Authorization: Bearer $GH_PAT" -H "Accept: application/octet-stream" \
   "$ASSET_URL" -o otel_helper-0.2.0-py3-none-any.whl
@@ -116,7 +116,7 @@ call `shutdown_telemetry()` on SIGTERM — see `python/HOW-TO.md`.
 
 Consumed via `go get` from the private repo (no registry). Requires `GOPRIVATE` and git auth.
 
-Module path: `github.com/staffops/staffops-otel-libs/go`
+Module path: `github.com/staffops/otel-libs/go`
 
 ### Configure auth
 
@@ -134,18 +134,18 @@ export GOPRIVATE=github.com/staffops/*
 
 ```bash
 # Core module (repo tags are go/vX.Y.Z; `go get` takes the bare vX.Y.Z)
-go get github.com/staffops/staffops-otel-libs/go@latest
+go get github.com/staffops/otel-libs/go@latest
 
 # Opt-in ext modules (separate Go modules)
-go get github.com/staffops/staffops-otel-libs/go/ext/otelaws@latest
-go get github.com/staffops/staffops-otel-libs/go/ext/otelredis@latest
-go get github.com/staffops/staffops-otel-libs/go/ext/otelsql@latest
+go get github.com/staffops/otel-libs/go/ext/otelaws@latest
+go get github.com/staffops/otel-libs/go/ext/otelredis@latest
+go get github.com/staffops/otel-libs/go/ext/otelsql@latest
 ```
 
 ### Usage
 
 ```go
-import otelhelper "github.com/staffops/staffops-otel-libs/go"
+import otelhelper "github.com/staffops/otel-libs/go"
 
 shutdown, err := otelhelper.Setup(ctx, otelhelper.WithServiceName("orders-api"))
 if err != nil {
@@ -164,7 +164,7 @@ All methods require a GitHub token with package read access.
 
 1. Go to https://github.com/settings/tokens?type=beta
 2. Resource owner: **StaffOps**
-3. Repository access: **staffops-otel-libs**
+3. Repository access: **otel-libs**
 4. Organization permissions → Packages: **Read-only**
 
 ### Classic token

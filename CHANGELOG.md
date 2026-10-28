@@ -21,6 +21,14 @@ the detailed record of every change.
 
 ### Migration guide 0.2 → 0.3 — Go
 
+**First: the module path changed** ([ADR-010](https://github.com/StaffOps/otel-libs/blob/main/specs/decisions/ADR-010-go-module-path-matches-repo.md)).
+`github.com/staffops/staffops-otel-libs/go` → `github.com/staffops/otel-libs/go`
+(and `…/go/ext/{otelaws,otelredis,otelsql}`), matching the repository name.
+Rewrite imports, e.g.
+`grep -rl staffops-otel-libs --include='*.go' --include=go.mod . | xargs sed -i 's#staffops/staffops-otel-libs#staffops/otel-libs#g'`,
+then `go get github.com/staffops/otel-libs/go@v0.3.0-rc.1 && go mod tidy`.
+Pinned `go/v0.2.x` releases keep the old path.
+
 Build and API (compile errors):
 
 1. **Toolchain ≥ Go 1.26** — older toolchains fail with

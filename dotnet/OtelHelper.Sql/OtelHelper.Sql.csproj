@@ -10,7 +10,7 @@
     <Version>0.2.0</Version>
     <Authors>DevOps Team</Authors>
     <Description>SQL Client instrumentation opt-in subpackage for OtelHelper</Description>
-    <RepositoryUrl>https://github.com/StaffOps/staffops-otel-libs</RepositoryUrl>
+    <RepositoryUrl>https://github.com/StaffOps/otel-libs</RepositoryUrl>
   </PropertyGroup>
 
   <ItemGroup>

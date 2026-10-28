@@ -1,6 +1,6 @@
 # Specs
 
-Planning artefacts for `staffops-otel-libs`. Conventions and principles live in
+Planning artefacts for `otel-libs`. Conventions and principles live in
 [`../AGENTS.md`](../AGENTS.md); what shipped lives in
 [`../CHANGELOG.md`](../CHANGELOG.md).
 
@@ -29,6 +29,7 @@ Planning artefacts for `staffops-otel-libs`. Conventions and principles live in
 | [007](decisions/ADR-007-keep-prometheus-in-core.md) | Keep Prometheus `/metrics` in core | Accepted |
 | [008](decisions/ADR-008-shared-parity-fixture.md) | Enforce parity with a shared JSON fixture | Accepted |
 | [009](decisions/ADR-009-dotnet-retarget-net10-only.md) | Retarget .NET to `net10.0` only before .NET 8 EOL | Accepted |
+| [010](decisions/ADR-010-go-module-path-matches-repo.md) | Go module path matches the repository name | Accepted |
 
 ## Format
 

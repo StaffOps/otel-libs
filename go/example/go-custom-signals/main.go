@@ -24,7 +24,7 @@ import (
 	"syscall"
 	"time"
 
-	otelhelper "github.com/staffops/staffops-otel-libs/go"
+	otelhelper "github.com/staffops/otel-libs/go"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/metric"

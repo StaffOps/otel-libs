@@ -1,4 +1,4 @@
-module github.com/staffops/staffops-otel-libs/go
+module github.com/staffops/otel-libs/go
 
 go 1.26.0
 

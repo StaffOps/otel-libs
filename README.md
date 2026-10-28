@@ -12,7 +12,7 @@ engineers who run the Collector it exports to.
 
 | Language | Directory | Package | Version | Contract |
 |----------|-----------|---------|---------|----------|
-| Go | [`go/`](go/) | `github.com/staffops/staffops-otel-libs/go` + `ext/*` modules | `0.3.0` (unreleased, this branch); latest release `go/v0.2.1` | 0.3 |
+| Go | [`go/`](go/) | `github.com/staffops/otel-libs/go` + `ext/*` modules | `0.3.0` (unreleased, this branch); latest release `go/v0.2.1` | 0.3 |
 | Python | [`python/`](python/) | `otel-helper` (extras `aws`, `redis`, `sql`) | `0.3.0` (unreleased, this branch); latest release `0.2.0` | 0.3 |
 | .NET | [`dotnet/`](dotnet/) | `OtelHelper` + `.AWS` / `.Redis` / `.Sql` / `.Profiling` (NuGet) | `0.2.0` | 0.2.x — the 0.3 contract lands in Phase C |
 | Node.js | `nodejs/` (planned) | — | — | 0.3 from day one (Phase B) |
@@ -76,7 +76,7 @@ logs as JSON on stdout, traces not exported.
 ### Go
 
 ```go
-import otelhelper "github.com/staffops/staffops-otel-libs/go"
+import otelhelper "github.com/staffops/otel-libs/go"
 
 ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, os.Interrupt)
 defer stop()
