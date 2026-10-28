@@ -1,7 +1,7 @@
 site_name: StaffOps — OTel Libs
-site_description: Standardized OpenTelemetry instrumentation libraries for .NET, Python, and Go
+site_description: Standardized OpenTelemetry instrumentation libraries for Go, Python and .NET
 site_url: https://staffops.github.io/otel-libs/
-repo_url: https://github.com/StaffOps/staffops-otel-libs
+repo_url: https://github.com/StaffOps/otel-libs
 repo_name: StaffOps/otel-libs
 edit_uri: edit/main/docs/site/
 
@@ -56,9 +56,11 @@ nav:
   - Go:
       - Overview: go/README.md
       - HOW-TO Guide: go/HOW-TO.md
+      - Tests: go/TESTS.md
       - Example Apps: go/example/README.md
   - Consuming Packages: CONSUMING.md
-  - Changelog: CHANGELOG.md
+  - Changelog & Migration: CHANGELOG.md
+  - Specs & Decisions: https://github.com/StaffOps/otel-libs/blob/main/specs/README.md
 
 plugins:
   - search:

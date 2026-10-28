@@ -7,5 +7,6 @@ bin/
 example/go-api/go-api
 example/go-backend/go-backend
 example/go-process/go-process
+example/go-custom-signals/go-custom-signals
 **/*.md
 **/.git

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"log/slog"
 	"math/rand"
 	"net/http"
 	"os"
@@ -49,9 +50,10 @@ func run() error {
 	}()
 
 	tracer := otelhelper.GetTracer("go-process")
-	// OTel-bridged slog logger (stdout JSON without a logs exporter): records
-	// emitted inside a span carry its trace_id/span_id.
-	logger := otelhelper.NewLogger(otelhelper.DeploymentEnvironment(os.Getenv("ENVIRONMENT")), false)
+	// OTel-bridged slog logger (stdout JSON without a logs exporter), at the
+	// level Setup resolved from deployment.environment.name: records emitted
+	// with a span context (InfoContext, ...) carry its trace_id/span_id.
+	logger := slog.New(otelhelper.NewSlogHandler())
 
 	var workers sync.WaitGroup
 	start := func(name string, interval time.Duration, fn func(context.Context)) {
@@ -126,7 +128,8 @@ func run() error {
 
 	// Drain in-flight requests (bounded), then let the deferred Shutdown flush
 	// telemetry: in that order, spans of drained requests are exported too.
-	drainCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	// Drain 4 s + flush 5 s stays inside docker stop's default 10 s grace period.
+	drainCtx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
 	defer cancel()
 	if err := srv.Shutdown(drainCtx); err != nil {
 		log.Printf("http drain: %v", err)

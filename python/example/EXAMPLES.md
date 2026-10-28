@@ -1,586 +1,289 @@
-# Python Notification Service — Telemetry Examples
+# Python examples — telemetry reference
 
-This document details the telemetry produced by each endpoint, gRPC method, and background worker in the Notification Service example. For each, you'll find the objective, internal span/metric flow, and ready-to-use Grafana queries (Tempo TraceQL + VictoriaMetrics PromQL).
+What each example emits, span by span and metric by metric, with ready-to-use
+queries (Tempo TraceQL, PromQL). Audience: developers building dashboards or
+checking that their own instrumentation looks like the examples. How to run
+the examples: [README.md](README.md).
 
----
+Query conventions:
 
-## Architecture Overview
-
-```
-┌─────────────────────┐       gRPC :50051       ┌─────────────────────┐
-│   python-api        │ ───────────────────────► │   python-backend    │
-│   FastAPI :8000     │                          │   gRPC server       │
-└─────────────────────┘                          └─────────────────────┘
-                                                          ▲
-                                                          │
-                                                 ┌────────┴────────────┐
-                                                 │   python-process    │
-                                                 │   Background workers│
-                                                 └─────────────────────┘
-```
-
-All three services export via OTLP gRPC to the OpenTelemetry Collector on `:4317`.
+- Metric names assume the usual OTLP → Prometheus translation: dots become
+  underscores, the unit is appended (`_seconds`), counters get `_total`
+  (never twice: `notifications.sent_total` stays `notifications_sent_total`).
+- `service_name` is the resource attribute `service.name` promoted to a label
+  (VictoriaMetrics OTLP ingestion does this; with `target_info`-based backends
+  join on it instead). On the Prometheus fallback (`:9464/metrics`) there is
+  no `service_name` label: use the scrape job's labels.
+- HTTP metrics use the stable semantic conventions (helper default
+  `OTEL_SEMCONV_STABILITY_OPT_IN=http,database/dup`).
 
 ---
 
-## Metrics Reference
+## Custom signals (`python-custom-signals`)
 
-| Metric | Type | Labels | Source |
-|--------|------|--------|--------|
-| `notifications.sent_total` | Counter | `channel` | backend |
-| `notifications.failed_total` | Counter | `channel` | backend |
-| `templates.rendered_total` | Counter | — | backend |
-| `notifications.active_requests` | UpDownCounter | — | api |
-| `notification.delivery_duration_seconds` | Histogram | — | backend |
-| `notification.delivery_attempts_total` | Counter | — | backend |
-| `process.queue_depth` | UpDownCounter | — | process |
-| `process.items_processed_total` | Counter | — | process |
+Same names as the Go twin (`go-custom-signals`).
+
+| Signal | Name | Kind | Attributes |
+|---|---|---|---|
+| span | `orders.process-batch` | root, Internal | `batch.size`; status ERROR `1 of 3 orders failed` when an order fails |
+| span | `order.process` | child, one per order | `order.id`, `order.type`; event `order.validated` (`order.amount`); on failure event `exception` (`__main__.PaymentDeclinedError`) + status ERROR `payment declined` |
+| metric | `order.processed` (`{order}`) | Counter | `order.type`; `error.type` on failure only |
+| metric | `order.duration` (`s`) | Histogram, buckets 5 ms – 1 s | `order.type`; `error.type` on failure only |
+| metric | `order.active` (`{order}`) | UpDownCounter | `order.type` |
+| metric | `order.queue.depth` (`{order}`) | Observable gauge | `queue.name` |
+| log | `order processed` (INFO) | correlated with its `order.process` | `order.id`, `order.amount` |
+| log | `order failed` (ERROR) | correlated with the failed `order.process` | `order.id`, `exception.type`, `exception.message`, `exception.stacktrace` |
+| log | `batch finished` (INFO) | correlated with `orders.process-batch` | `batch.size`, `orders.failed` |
+
+```traceql
+{ resource.service.name = "python-custom-signals" && name = "order.process" && status = error }
+```
+
+```traceql
+{ resource.service.name = "python-custom-signals" && name = "orders.process-batch" } >> { event:name = "exception" }
+```
+
+The PromQL names below are the helper's `/metrics` names; over OTLP they
+depend on the backend's naming settings.
+
+```promql
+sum by (error_type) (rate(order_processed_total{service_name="python-custom-signals"}[5m]))
+histogram_quantile(0.95, sum by (le) (rate(order_duration_seconds_bucket{service_name="python-custom-signals"}[5m])))
+order_queue_depth{service_name="python-custom-signals", queue_name="orders"}
+```
+
+```logql
+{service_name="python-custom-signals"} | trace_id = "<trace_id printed by the job>"
+```
+
+(The LogQL form depends on how the backend stores trace ids; in Loki's OTLP
+ingestion they are structured metadata named `trace_id` / `span_id`.)
+
+---
+
+## Notification service — metrics
+
+| Metric (instrument name) | Type | Attributes | Emitted by |
+|---|---|---|---|
+| `notifications.sent_total` | Counter | `channel` | python-api, per successful `POST /notify` |
+| `notifications.failed_total` | Counter | `channel` | python-api, per `POST /notify` the backend reported failed |
+| `templates.rendered_total` | Counter | — | python-api, per `POST /templates` |
+| `notifications.active_requests` | UpDownCounter | — | python-api, in-flight `POST /notify` |
+| `notification.delivery_duration_seconds` | Histogram (seconds, buckets 10 ms – 2.5 s) | `channel` | python-backend, per delivery |
+| `notification.delivery_attempts_total` | Counter | `channel`, `success` | python-backend |
+| `notifications.queue_depth` | UpDownCounter | — | python-process |
+| `notifications.retries_total` | Counter | — | python-process |
+| `notifications.cleaned_total` | Counter | — | python-process |
+| `http.server.request.duration` | Histogram (s) | `http.request.method`, `http.route`, `http.response.status_code`, `url.scheme` | python-api (automatic, health probes included) |
+| `http.client.request.duration` | Histogram (s) | `http.request.method`, `server.address`, `http.response.status_code` | python-process (automatic, httpx) |
+| `system.*`, `process.*` | various | — | every app (automatic) |
+
+The Python gRPC instrumentation emits **no RPC metrics**: backend latency comes
+from `notification.delivery_duration_seconds`, from traces, or from the
+caller's HTTP server metrics.
 
 ---
 
 ## 1. python-api (FastAPI :8000)
 
+Every request gets an automatic server span named `<METHOD> <route>`
+(`POST /notify`) plus ASGI `http receive` / `http send` internal spans, and is
+counted in `http.server.request.duration`.
+
 ### 1.1 POST /notify
 
-**Objective:** Accept a notification request, validate it, and forward to the backend for delivery.
+Sends a notification through the backend.
 
-**Internal Flow:**
-
-```
-HTTP POST /notify
-  └─ api.send-notification
-       ├─ validates payload
-       ├─ increments notifications.active_requests (+1)
-       ├─ calls backend.SendNotification (gRPC)
-       └─ decrements notifications.active_requests (-1)
+```text
+POST /notify                              (server span)
+└── api.send-notification
+    ├── notifications.active_requests +1 / -1
+    ├── gRPC client SendNotification → python-backend
+    └── notifications.sent_total{channel} or notifications.failed_total{channel}
 ```
 
-**Span:** `api.send-notification`
+| Span | Attributes |
+|---|---|
+| `api.send-notification` | `notification.channel`, `notification.recipient`, `notification.template`; status ERROR `Backend reported failure` on failure |
 
-| Attribute | Example |
-|-----------|---------|
-| `notification.channel` | `email`, `sms`, `push` |
-| `notification.recipient` | `user@example.com` |
-| `notification.template` | `welcome_email` |
+Log record `Notification sent` (`notification_id`, `status`) is correlated with
+`api.send-notification`.
 
-**Grafana — Tempo (TraceQL):**
-
-```traceql
-{ resource.service.name = "python-api" && name = "api.send-notification" }
-```
-
-Filter by channel:
 ```traceql
 { resource.service.name = "python-api" && name = "api.send-notification" && span.notification.channel = "email" }
 ```
 
-**Grafana — VictoriaMetrics (PromQL):**
-
 ```promql
-# Active requests right now
 notifications_active_requests{service_name="python-api"}
-
-# Request rate by channel (derived from traces)
-rate(notifications_sent_total{service_name="python-backend"}[5m])
+sum by (channel) (rate(notifications_sent_total{service_name="python-api"}[5m]))
+histogram_quantile(0.95, sum by (le) (rate(http_server_request_duration_seconds_bucket{service_name="python-api", http_route="/notify", http_request_method="POST"}[5m])))
 ```
 
----
+### 1.2 GET /notify/{notification_id}
 
-### 1.2 GET /notify/{id}
+Returns the status from the API's store, or asks the backend (`GetStatus`).
 
-**Objective:** Retrieve the current status of a previously submitted notification.
-
-**Internal Flow:**
-
-```
-HTTP GET /notify/{id}
-  └─ api.get-status
-       └─ calls backend.GetStatus (gRPC)
-```
-
-**Span:** `api.get-status`
-
-| Attribute | Example |
-|-----------|---------|
-| `notification.id` | `notif-abc-123` |
-
-**Grafana — Tempo (TraceQL):**
+| Span | Attributes |
+|---|---|
+| `api.get-status` | `notification.id` |
 
 ```traceql
-{ resource.service.name = "python-api" && name = "api.get-status" }
+{ resource.service.name = "python-api" && name = "api.get-status" && span.notification.id = "866bbcb5" }
 ```
-
-Find a specific notification:
-```traceql
-{ resource.service.name = "python-api" && name = "api.get-status" && span.notification.id = "notif-abc-123" }
-```
-
-**Grafana — VictoriaMetrics (PromQL):**
 
 ```promql
-# Latency p95 for status lookups (from HTTP server metrics)
-histogram_quantile(0.95, rate(http_server_request_duration_seconds_bucket{service_name="python-api", http_route="/notify/{id}", http_request_method="GET"}[5m]))
+histogram_quantile(0.95, sum by (le) (rate(http_server_request_duration_seconds_bucket{service_name="python-api", http_route="/notify/{notification_id}", http_request_method="GET"}[5m])))
 ```
 
----
+### 1.3 GET /templates and GET /metrics/summary
 
-### 1.3 GET /templates
-
-**Objective:** List all available notification templates.
-
-**Internal Flow:**
-
-```
-HTTP GET /templates
-  └─ (auto-instrumented HTTP span)
-       └─ reads template store
-```
-
-No custom span — relies on FastAPI auto-instrumentation.
-
-**Grafana — Tempo (TraceQL):**
+No custom span: the automatic server span only.
 
 ```traceql
 { resource.service.name = "python-api" && span.http.route = "/templates" && span.http.request.method = "GET" }
 ```
 
-**Grafana — VictoriaMetrics (PromQL):**
-
 ```promql
-rate(http_server_request_duration_seconds_count{service_name="python-api", http_route="/templates", http_request_method="GET"}[5m])
+sum(rate(http_server_request_duration_seconds_count{service_name="python-api", http_route="/templates"}[5m]))
 ```
-
----
 
 ### 1.4 POST /templates
 
-**Objective:** Create a new notification template.
+| Span | Attributes |
+|---|---|
+| `api.create-template` | `template.name` |
 
-**Internal Flow:**
-
-```
-HTTP POST /templates
-  └─ api.create-template
-       └─ persists template to store
-```
-
-**Span:** `api.create-template`
-
-| Attribute | Example |
-|-----------|---------|
-| `template.name` | `password_reset` |
-
-**Grafana — Tempo (TraceQL):**
-
-```traceql
-{ resource.service.name = "python-api" && name = "api.create-template" }
-```
-
-Filter by template name:
-```traceql
-{ resource.service.name = "python-api" && name = "api.create-template" && span.template.name = "password_reset" }
-```
-
-**Grafana — VictoriaMetrics (PromQL):**
+Increments `templates.rendered_total`.
 
 ```promql
-rate(http_server_request_duration_seconds_count{service_name="python-api", http_route="/templates", http_request_method="POST"}[5m])
+rate(templates_rendered_total{service_name="python-api"}[5m])
 ```
 
----
+### 1.5 GET /health
 
-### 1.5 GET /metrics/summary
-
-**Objective:** Return an aggregated summary of notification metrics (sent, failed, pending).
-
-**Internal Flow:**
-
-```
-HTTP GET /metrics/summary
-  └─ (auto-instrumented HTTP span)
-       └─ reads internal counters
-```
-
-No custom span — relies on FastAPI auto-instrumentation.
-
-**Grafana — Tempo (TraceQL):**
-
-```traceql
-{ resource.service.name = "python-api" && span.http.route = "/metrics/summary" }
-```
-
-**Grafana — VictoriaMetrics (PromQL):**
+**No span** (health sampler), but **counted** in the HTTP server metrics, so
+failing probes are visible:
 
 ```promql
-# Total sent across all channels
-sum(notifications_sent_total{service_name="python-backend"})
-
-# Total failed across all channels
-sum(notifications_failed_total{service_name="python-backend"})
+sum(rate(http_server_request_duration_seconds_count{service_name="python-api", http_route="/health", http_response_status_code=~"5.."}[5m]))
 ```
 
----
-
-### 1.6 GET /health
-
-**Objective:** Health check endpoint for liveness/readiness probes.
-
-**Internal Flow:**
-
-```
-HTTP GET /health
-  └─ (auto-instrumented HTTP span)
-       └─ returns {"status": "healthy"}
-```
-
-No custom span — relies on FastAPI auto-instrumentation.
-
-**Grafana — Tempo (TraceQL):**
-
-```traceql
-{ resource.service.name = "python-api" && span.http.route = "/health" }
-```
-
-**Grafana — VictoriaMetrics (PromQL):**
+Exclude probes from SLIs:
 
 ```promql
-# Health endpoint error rate
-rate(http_server_request_duration_seconds_count{service_name="python-api", http_route="/health", http_response_status_code=~"5.."}[5m])
+sum(rate(http_server_request_duration_seconds_count{service_name="python-api", http_route!~"/health|/healthz|/ready.*|/live.*|/ping|/metrics"}[5m]))
 ```
 
 ---
 
 ## 2. python-backend (gRPC :50051)
 
+Every RPC gets an automatic server span named
+`/notification.NotificationService/<Method>` (attributes `rpc.system`,
+`rpc.service`, `rpc.method`, `rpc.grpc.status_code`), child of the caller's
+client span. `grpc.health.v1.Health/*` calls are not traced.
+
 ### 2.1 SendNotification
 
-**Objective:** Receive a notification request, render the template, and deliver via the appropriate channel (email/sms/push).
-
-**Internal Flow:**
-
-```
-gRPC SendNotification
-  └─ backend.send-notification
-       ├─ backend.render-template
-       │    └─ increments templates.rendered_total
-       ├─ backend.deliver
-       │    ├─ records notification.delivery_duration_seconds
-       │    └─ increments notification.delivery_attempts_total
-       ├─ increments notifications.sent_total{channel=...}  (on success)
-       └─ increments notifications.failed_total{channel=...} (on failure)
+```text
+/notification.NotificationService/SendNotification   (server span)
+└── backend.send-notification
+    ├── backend.render-template
+    └── backend.deliver
+        ├── notification.delivery_duration_seconds{channel}
+        └── notification.delivery_attempts_total{channel, success}
 ```
 
-**Span:** `backend.send-notification`
+| Span | Attributes |
+|---|---|
+| `backend.send-notification` | `notification.id`, `notification.channel`, `notification.recipient` |
+| `backend.render-template` | — |
+| `backend.deliver` | `notification.provider`; status ERROR `Provider timeout` on the simulated 10% failures |
 
-| Attribute | Example |
-|-----------|---------|
-| `notification.id` | `notif-abc-123` |
-| `notification.channel` | `email` |
-| `notification.recipient` | `user@example.com` |
-
-**Child Span:** `backend.render-template`
-
-| Attribute | Example |
-|-----------|---------|
-| `template.id` | `tmpl-welcome-001` |
-
-**Child Span:** `backend.deliver`
-
-| Attribute | Example |
-|-----------|---------|
-| `delivery.channel` | `email` |
-| `delivery.duration_ms` | `245` |
-
-**Grafana — Tempo (TraceQL):**
+Log record `Notification processed` (`notification_id`, `status`, `channel`).
 
 ```traceql
-{ resource.service.name = "python-backend" && name = "backend.send-notification" }
+{ resource.service.name = "python-backend" && name = "backend.deliver" && status = error }
 ```
 
-Find slow deliveries (> 500ms):
 ```traceql
-{ resource.service.name = "python-backend" && name = "backend.deliver" && span.delivery.duration_ms > 500 }
+{ resource.service.name = "python-backend" && name = "backend.deliver" && duration > 100ms }
 ```
-
-Find failed notifications:
-```traceql
-{ resource.service.name = "python-backend" && name = "backend.send-notification" && status = error }
-```
-
-**Grafana — VictoriaMetrics (PromQL):**
 
 ```promql
-# Sent rate by channel
-rate(notifications_sent_total{service_name="python-backend"}[5m])
-
-# Failed rate by channel
-rate(notifications_failed_total{service_name="python-backend"}[5m])
-
-# Delivery duration p99
-histogram_quantile(0.99, rate(notification_delivery_duration_seconds_bucket{service_name="python-backend"}[5m]))
-
-# Delivery duration p50
-histogram_quantile(0.50, rate(notification_delivery_duration_seconds_bucket{service_name="python-backend"}[5m]))
-
-# Delivery attempts rate
-rate(notification_delivery_attempts_total{service_name="python-backend"}[5m])
-
-# Templates rendered rate
-rate(templates_rendered_total{service_name="python-backend"}[5m])
+histogram_quantile(0.99, sum by (le, channel) (rate(notification_delivery_duration_seconds_bucket{service_name="python-backend"}[5m])))
+sum by (channel) (rate(notification_delivery_attempts_total{service_name="python-backend", success="False"}[5m]))
 ```
-
----
 
 ### 2.2 GetStatus
 
-**Objective:** Look up the delivery status of a notification by ID.
-
-**Internal Flow:**
-
-```
-gRPC GetStatus
-  └─ (auto-instrumented gRPC span)
-       └─ reads notification store
-```
-
-No custom span — relies on gRPC auto-instrumentation.
-
-**Grafana — Tempo (TraceQL):**
+| Span | Attributes |
+|---|---|
+| `backend.get-status` | `notification.id` |
 
 ```traceql
-{ resource.service.name = "python-backend" && span.rpc.method = "GetStatus" }
+{ resource.service.name = "python-backend" && name = "backend.get-status" }
 ```
-
-**Grafana — VictoriaMetrics (PromQL):**
-
-```promql
-rate(rpc_server_duration_seconds_count{service_name="python-backend", rpc_method="GetStatus"}[5m])
-```
-
----
 
 ### 2.3 RenderTemplate
 
-**Objective:** Render a notification template with provided variables (called internally or directly via gRPC).
-
-**Internal Flow:**
-
-```
-gRPC RenderTemplate
-  └─ backend.render-template
-       └─ increments templates.rendered_total
-```
-
-**Span:** `backend.render-template`
-
-| Attribute | Example |
-|-----------|---------|
-| `template.id` | `tmpl-welcome-001` |
-
-**Grafana — Tempo (TraceQL):**
+| Span | Attributes |
+|---|---|
+| `backend.render-template` | `template.id` |
 
 ```traceql
-{ resource.service.name = "python-backend" && name = "backend.render-template" }
-```
-
-**Grafana — VictoriaMetrics (PromQL):**
-
-```promql
-rate(templates_rendered_total{service_name="python-backend"}[5m])
+{ resource.service.name = "python-backend" && name = "backend.render-template" && span.template.id = "welcome" }
 ```
 
 ---
 
-## 3. python-process (Background Workers)
+## 3. python-process (background workers)
 
-### 3.1 QueueConsumer (every 30s)
+Each worker cycle is a new trace (`start_root_span`). Outbound httpx calls carry
+`traceparent`; calls to `/health` are not traced and not counted (client-side
+health exclusion).
 
-**Objective:** Poll the notification queue and dispatch pending items to the backend for delivery.
+| Worker | Interval | Root span | Children / attributes | Metrics |
+|---|---|---|---|---|
+| queue consumer | 30 s | `process.queue-consume` (`queue.batch_size`) | `process.dispatch-notification` (`notification.recipient`, `notification.channel`; ERROR on HTTP ≠ 200 or exception) → httpx client span → `POST /notify` | `notifications.queue_depth` |
+| retry worker | 60 s | `process.retry-cycle` (`retry.failed_count`) | `process.retry-attempt` (`retry.attempt`) | `notifications.retries_total` |
+| cleanup worker | 3 min | `process.cleanup` (`cleanup.removed`) | — | `notifications.cleaned_total` |
+| health checker | 60 s | `process.health-check` (`health.status_code`; ERROR when ≠ 200) | none (the `/health` call is excluded) | — |
 
-**Internal Flow:**
-
-```
-Timer tick (30s)
-  └─ process.queue-consume
-       ├─ reads pending items from queue
-       ├─ updates process.queue_depth
-       ├─ for each item: calls backend.SendNotification (gRPC)
-       └─ increments process.items_processed_total
-```
-
-**Span:** `process.queue-consume`
-
-| Attribute | Example |
-|-----------|---------|
-| `queue.batch_size` | `12` |
-
-**Grafana — Tempo (TraceQL):**
+Log records: `Starting notification workers`, `Retry cycle complete`
+(`retried`), `Cleaned expired notifications` (`count`), `Failed to dispatch`
+/ `Health check failed` (`error`).
 
 ```traceql
-{ resource.service.name = "python-process" && name = "process.queue-consume" }
+{ resource.service.name = "python-process" && name = "process.queue-consume" && span.queue.batch_size > 3 }
 ```
 
-Find large batches:
 ```traceql
-{ resource.service.name = "python-process" && name = "process.queue-consume" && span.queue.batch_size > 50 }
+{ resource.service.name = "python-process" && name = "process.health-check" && status = error }
 ```
-
-**Grafana — VictoriaMetrics (PromQL):**
 
 ```promql
-# Current queue depth
-process_queue_depth{service_name="python-process"}
-
-# Items processed rate
-rate(process_items_processed_total{service_name="python-process"}[5m])
-
-# Average batch size (from traces — requires Tempo metrics generator)
-avg_over_time(traces_spanmetrics_latency_count{service_name="python-process", span_name="process.queue-consume"}[5m])
+notifications_queue_depth{service_name="python-process"}
+rate(notifications_retries_total{service_name="python-process"}[5m])
+increase(notifications_cleaned_total{service_name="python-process"}[1h])
 ```
 
 ---
 
-### 3.2 RetryWorker (every 60s)
+## Cross-service trace
 
-**Objective:** Pick up failed notifications and retry delivery up to the configured maximum attempts.
-
-**Internal Flow:**
-
-```
-Timer tick (60s)
-  └─ process.retry-failed
-       ├─ queries failed notifications
-       ├─ for each: calls backend.SendNotification (gRPC)
-       └─ increments process.items_processed_total
-```
-
-**Span:** `process.retry-failed`
-
-| Attribute | Example |
-|-----------|---------|
-| `retry.count` | `5` |
-
-**Grafana — Tempo (TraceQL):**
-
-```traceql
-{ resource.service.name = "python-process" && name = "process.retry-failed" }
-```
-
-Find high-retry batches:
-```traceql
-{ resource.service.name = "python-process" && name = "process.retry-failed" && span.retry.count > 10 }
-```
-
-**Grafana — VictoriaMetrics (PromQL):**
-
-```promql
-# Retry rate
-rate(process_items_processed_total{service_name="python-process"}[5m])
-
-# Correlate with failure rate
-rate(notifications_failed_total{service_name="python-backend"}[5m])
-```
-
----
-
-### 3.3 CleanupWorker (every 3m)
-
-**Objective:** Remove expired or completed notifications from the store to free resources.
-
-**Internal Flow:**
-
-```
-Timer tick (3m)
-  └─ process.cleanup-expired
-       └─ deletes expired records
-```
-
-**Span:** `process.cleanup-expired`
-
-| Attribute | Example |
-|-----------|---------|
-| `cleanup.removed_count` | `42` |
-
-**Grafana — Tempo (TraceQL):**
-
-```traceql
-{ resource.service.name = "python-process" && name = "process.cleanup-expired" }
-```
-
-Find large cleanups:
-```traceql
-{ resource.service.name = "python-process" && name = "process.cleanup-expired" && span.cleanup.removed_count > 100 }
-```
-
-**Grafana — VictoriaMetrics (PromQL):**
-
-```promql
-# Queue depth should decrease after cleanup
-process_queue_depth{service_name="python-process"}
-```
-
----
-
-### 3.4 HealthChecker (every 1m)
-
-**Objective:** Periodically verify that the API and backend services are reachable and healthy.
-
-**Internal Flow:**
-
-```
-Timer tick (1m)
-  └─ process.health-check
-       ├─ calls GET /health on python-api
-       └─ records status
-```
-
-**Span:** `process.health-check`
-
-| Attribute | Example |
-|-----------|---------|
-| `health.api_status` | `healthy`, `unhealthy` |
-
-**Grafana — Tempo (TraceQL):**
-
-```traceql
-{ resource.service.name = "python-process" && name = "process.health-check" }
-```
-
-Find unhealthy checks:
-```traceql
-{ resource.service.name = "python-process" && name = "process.health-check" && span.health.api_status = "unhealthy" }
-```
-
-**Grafana — VictoriaMetrics (PromQL):**
-
-```promql
-# Health check span error rate (from Tempo metrics generator)
-rate(traces_spanmetrics_calls_total{service_name="python-process", span_name="process.health-check", status_code="STATUS_CODE_ERROR"}[5m])
-```
-
----
-
-## Cross-Service Trace Example
-
-A full notification flow produces a distributed trace spanning all three services:
-
-```
-[python-api] api.send-notification (POST /notify)
-  └─ [python-backend] backend.send-notification (gRPC)
-       ├─ [python-backend] backend.render-template
-       └─ [python-backend] backend.deliver
-```
-
-When triggered via the queue:
-
-```
+```text
 [python-process] process.queue-consume
-  └─ [python-backend] backend.send-notification (gRPC)
-       ├─ [python-backend] backend.render-template
-       └─ [python-backend] backend.deliver
+└── [python-process] process.dispatch-notification
+    └── [python-process] POST (httpx client)
+        └── [python-api] POST /notify
+            └── [python-api] api.send-notification
+                └── [python-api] /notification.NotificationService/SendNotification (client)
+                    └── [python-backend] /notification.NotificationService/SendNotification (server)
+                        └── [python-backend] backend.send-notification
+                            ├── backend.render-template
+                            └── backend.deliver
 ```
-
-**Grafana — Tempo (TraceQL) — Full trace:**
 
 ```traceql
 { resource.service.name = "python-api" && name = "api.send-notification" } >> { resource.service.name = "python-backend" && name = "backend.deliver" }
@@ -588,36 +291,23 @@ When triggered via the queue:
 
 ---
 
-## Useful Dashboard Panels
-
-### Notification Throughput (all channels)
+## Dashboard panels
 
 ```promql
-sum by (channel) (rate(notifications_sent_total{service_name="python-backend"}[5m]))
-```
+# Throughput by channel
+sum by (channel) (rate(notifications_sent_total{service_name="python-api"}[5m]))
 
-### Error Ratio
-
-```promql
-sum(rate(notifications_failed_total{service_name="python-backend"}[5m]))
+# Error ratio
+sum(rate(notifications_failed_total{service_name="python-api"}[5m]))
 /
-(sum(rate(notifications_sent_total{service_name="python-backend"}[5m])) + sum(rate(notifications_failed_total{service_name="python-backend"}[5m])))
-```
+(sum(rate(notifications_sent_total{service_name="python-api"}[5m])) + sum(rate(notifications_failed_total{service_name="python-api"}[5m])))
 
-### Delivery Latency Heatmap
+# Delivery latency heatmap
+sum by (le) (rate(notification_delivery_duration_seconds_bucket{service_name="python-backend"}[5m]))
 
-```promql
-rate(notification_delivery_duration_seconds_bucket{service_name="python-backend"}[5m])
-```
+# Queue saturation
+notifications_queue_depth{service_name="python-process"}
 
-### Queue Saturation
-
-```promql
-process_queue_depth{service_name="python-process"}
-```
-
-### Active In-Flight Requests
-
-```promql
+# In-flight requests
 notifications_active_requests{service_name="python-api"}
 ```

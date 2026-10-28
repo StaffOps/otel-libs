@@ -1,15 +1,15 @@
 # AGENTS.md — staffops-otel-libs
 
 Canonical guide for agents and humans working in this repo. Tool-specific
-files are one-line pointers here — `AGENTS.md` (imports this file via
+files are one-line pointers here — `CLAUDE.md` (imports this file via
 `@AGENTS.md`), `.kiro/steering/project-conventions.md` — edit this file, not
 those.
 
-> Behavior described here reflects the shipped `0.2.0` code. Where the
-> `0.3.0` contract changes it, the target is in
-> [`specs/config-contract-v0.3/`](specs/config-contract-v0.3/). If this file
-> conflicts with the code, treat it as a bug in one of the two and flag it —
-> do not silently follow either side.
+> Go and Python on this branch implement the `0.3.0` contract
+> ([`specs/config-contract-v0.3/`](specs/config-contract-v0.3/), Phase A done);
+> .NET still ships the `0.2.x` behavior until Phase C. If this file conflicts
+> with the code, treat it as a bug in one of the two and flag it — do not
+> silently follow either side.
 
 ## Repository
 
@@ -39,45 +39,54 @@ equivalent**: `go/` (module `github.com/staffops/staffops-otel-libs/go` +
    `deployment.environment`). `k8sattributes` enriches the rest. From 0.3
    (Go/Python) a per-process `service.instance.id` is added when the env does
    not provide one (`specs/config-contract-v0.3/design.md` D4).
-5. **TLS by default** — `https://` or schemeless endpoints use TLS (system CA);
-   plaintext needs `http://` or `OTEL_EXPORTER_OTLP_INSECURE=true`. *0.3 target
-   (Go/Python): the scheme decides; `_INSECURE` applies only to schemeless gRPC
-   endpoints, per spec; conflicts are warned (design D1.c).*
+5. **TLS by default** — `https://` or schemeless endpoints use TLS (system CA).
+   The scheme decides; `OTEL_EXPORTER_OTLP_INSECURE=true` only makes a
+   schemeless endpoint plaintext, and a contradiction with an explicit scheme
+   is warned and the scheme wins (Go/Python, design D1.c). .NET 0.2.x also
+   applies `_INSECURE` to schemeless endpoints only.
 6. **Standard OTel env vars win over `OTEL_HELPER_*` vars.** Order: explicit
    code > standard OTel env var > `OTEL_HELPER_*`/legacy env > library
    default. Never invent a custom var when the OTel spec defines one.
 7. **Don't re-implement what the SDK already does.** If an OTel SDK honors an
    env var per spec (endpoints, TLS, headers, timeout, compression), the
    helper must not override it ([ADR-001](specs/decisions/ADR-001-defer-otlp-env-to-sdk.md)).
-8. **Failures must be loud** — never silently drop telemetry. *0.3 target
-   (Go/Python): env-var parse errors warn and fall back; invalid values passed
-   in code fail fast. Implemented on the branch for Go and Python (A3); .NET
-   still raises on some env values (Phase C).*
+8. **Failures must be loud** — never silently drop telemetry. Go/Python:
+   env-var parse errors warn and fall back; invalid values passed in code fail
+   fast (R8). .NET 0.2.x still fails startup on some env values (Phase C).
 
-## Environment variables (shipped 0.2.0 contract)
+## Environment variables
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `SERVICE_NAME` | `my-service` | Service name (`OTEL_SERVICE_NAME` also honored). 0.3: deprecated, `OTEL_SERVICE_NAME` wins, unset → SDK `unknown_service:*` |
-| `ENVIRONMENT` | `LOCAL` | LOCAL, DEV, HML, PRD. 0.3: deprecated alias, unset → attribute absent, unknown → verbatim ([ADR-003](specs/decisions/ADR-003-environment-unset-not-local.md)) |
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | _(empty)_ | Collector endpoint; empty triggers the Prometheus metrics fallback. 0.3: per-signal `OTEL_EXPORTER_OTLP_<SIGNAL>_ENDPOINT` honored and counts as configured for that signal |
-| `OTEL_EXPORTER_OTLP_PROTOCOL` | _(unset)_ | `grpc` or `http/protobuf`; unset → port 4318 infers http, else grpc. 0.3: per-signal `_<SIGNAL>_PROTOCOL` honored |
-| `OTEL_EXPORTER_OTLP_INSECURE` | _(unset)_ | `true` = plaintext, `false` = TLS; unset = derived from scheme |
-| `OTEL_METRICS_EXPORTER` | _(unset)_ | `otlp`, `prometheus`, `otlp,prometheus`, `none` (see `specs/metrics-exporter-contract/`) |
-| `OTEL_METRIC_EXPORT_INTERVAL` | `30000` | Metric export interval in ms (helper default 30s, SDK default 60s) |
-| `OTEL_TRACES_SAMPLER` / `_ARG` | _(unset)_ | Standard sampler; wins over `OTEL_HELPER_SAMPLE_RATIO` |
-| `OTEL_HELPER_DEBUG_LEVEL` | `false` | Debug mode |
-| `OTEL_HELPER_EXTRA_INSTRUMENTATION` | `SQL` | Effective in Python only (dead in Go/.NET). 0.3: removed in Go, deprecated in Python, .NET unchanged until Phase C |
-| `OTEL_HELPER_SAMPLE_RATIO` | `1.0` | Head sampling ratio; deprecated in 0.3 |
-| `OTEL_HELPER_DISABLED_SIGNALS` | _(empty)_ | traces, metrics, logs; deprecated in 0.3 for `OTEL_*_EXPORTER=none` |
-| `OTEL_HELPER_DISABLED_METRICS` | _(empty)_ | Wildcard patterns of metrics to drop (all exporters) |
-| `OTEL_HELPER_METRICS_PORT` | `9464` | Prometheus `/metrics` listener port |
+Full table with defaults: root [`README.md`](README.md#environment-variables-03-contract--go-and-python);
+resolution rules: design D1. Summary of what differs between the two contracts:
+
+| Variable | 0.3 — Go / Python (this branch) | .NET 0.2.x |
+|----------|----------------------------------|------------|
+| `OTEL_SERVICE_NAME` / `SERVICE_NAME` | `OTEL_SERVICE_NAME` > `OTEL_RESOURCE_ATTRIBUTES` > `SERVICE_NAME` (deprecated) > SDK `unknown_service:*` + warning | `SERVICE_NAME` > `OTEL_SERVICE_NAME` > `my-service` |
+| `ENVIRONMENT` | Deprecated alias; `OTEL_RESOURCE_ATTRIBUTES` wins; unset → attribute absent + warning, INFO; unknown → verbatim ([ADR-003](specs/decisions/ADR-003-environment-unset-not-local.md)) | Default `LOCAL`; unknown → `LOCAL` |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | Unset → Prometheus `/metrics` + stdout logs. Spec URL handling (path kept, HTTP 443/80); schemeless → `https://` + default port | Unset → same fallback; URLs normalized to `scheme://host:port` (path dropped, default 4317) |
+| `OTEL_EXPORTER_OTLP_<SIGNAL>_*` | Honored; a per-signal endpoint configures that signal | Not used |
+| `OTEL_EXPORTER_OTLP[_<SIGNAL>]_PROTOCOL` | `grpc` / `http/protobuf`, port-4318 inference; `http/json` env → warned, ignored | Same values; `http/json` fails validation |
+| `OTEL_EXPORTER_OTLP[_<SIGNAL>]_INSECURE` | Schemeless only; conflict → scheme wins, warned | Schemeless only |
+| `_HEADERS` / `_TIMEOUT` / `_COMPRESSION` | Helper-parsed (ms, clamped; gzip default) | Headers via SDK; timeout fixed by `ExportTimeoutMs` (10 s); compression not set by the helper |
+| `OTEL_{TRACES,METRICS,LOGS}_EXPORTER` | `otlp`, `console`, `none` (+ `prometheus` for metrics) | `OTEL_METRICS_EXPORTER` only (`otlp`, `prometheus`, `none`) |
+| `OTEL_TRACES_SAMPLER` / `_ARG` | Helper-parsed; default `parentbased_always_on` | SDK, only when no code sampler; default bare AlwaysOn |
+| `OTEL_PROPAGATORS` | `tracecontext`, `baggage`, `none`; others warned | Not read (W3C fixed) |
+| `OTEL_SDK_DISABLED` | No-op providers, propagators kept | SDK |
+| `OTEL_METRIC_EXPORT_INTERVAL` | `30000` | `30000` |
+| `OTEL_HELPER_DEBUG_LEVEL` | `debug=true` on entry spans (no or remote parent) | `debug=true` attribute on entry spans (no in-process parent, so also spans continuing a remote trace) + `debug=true` prepended to the propagated tracestate |
+| `OTEL_HELPER_SAMPLE_RATIO`, `OTEL_HELPER_DISABLED_SIGNALS` | Deprecated, warned once → standard vars | Supported |
+| `OTEL_HELPER_EXTRA_INSTRUMENTATION` | Go: removed (warns). Python: deprecated, default `SQL` | Read but no effect |
+| `OTEL_HELPER_DISABLED_METRICS`, `OTEL_HELPER_METRICS_PORT` | Supported (`9464`, `0` = no listener) | Supported |
 
 ## Cross-language parity
 
 - Same env vars, same precedence, same defaults, same emitted attributes,
   same propagators (W3C TraceContext + Baggage), same export interval, same
-  health-path filtering (the last is a 0.3 target — today it diverges, F7).
+  health-path filtering (Go and Python share one list and semantics since A7 —
+  design D5; .NET keeps its 0.2.x filter until Phase C). Emitted attributes
+  are the target, not yet the fact: current gaps (Python gRPC legacy `rpc.*`
+  attributes and no RPC metrics; .NET on 0.2.x) are listed under "Known
+  emitted-telemetry gaps" in [`README.md`](README.md#known-emitted-telemetry-gaps).
 - Parity is enforced by the shared fixture `parity/cases.json` (from `0.3.0`),
   run by every language's test suite. A language that lags marks its cases
   `xfail:<reason>` — never delete a case to make CI green.

@@ -2,6 +2,15 @@
 
 Observability library for .NET 8+ applications. Abstracts OpenTelemetry SDK configuration to provide standardized instrumentation.
 
+> **Version note.** This page documents the shipped **0.2.x** .NET behavior.
+> The `0.3.0` config contract (standard `OTEL_*` variables winning, no
+> `LOCAL`/`my-service` defaults, ParentBased sampler, per-signal OTLP
+> variables, the shared health-path list) ships in **Go and Python first**;
+> .NET adopts it later, in Phase C of
+> [`specs/config-contract-v0.3/`](https://github.com/StaffOps/otel-libs/blob/main/specs/config-contract-v0.3/tasks.md)
+> (ADR-004). Until then the differences below are expected and tracked as
+> `xfail` cases in the shared parity fixture.
+
 📖 **[HOW-TO.md](HOW-TO.md)** — Developer guide (logs, traces, metrics, examples)
 🧪 **[TESTS.md](TESTS.md)** — Full list of unit tests
 🚀 **[example/README.md](example/README.md)** — Sample apps with test endpoints and Grafana queries
@@ -35,9 +44,9 @@ After registration, available via DI:
 
 | Variable | Source | Description | Default |
 |---|---|---|---|
-| `SERVICE_NAME` | CI/CD Pipeline | Service name | `my-service` |
-| `ENVIRONMENT` | Helm Chart (`values.yaml`) | Environment: `LOCAL`, `DEV`, `HML`, `PRD`. Unrecognized value → `LOCAL`. | `LOCAL` |
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | Helm Chart | Collector base host | `http://localhost` |
+| `SERVICE_NAME` | CI/CD Pipeline | Service name. Wins over `OTEL_SERVICE_NAME` in 0.2.x | `my-service` |
+| `ENVIRONMENT` | Helm Chart (`values.yaml`) | Environment: `LOCAL`, `DEV`, `HML`, `PRD`. Unrecognized value → `LOCAL`. Emitted as `deployment.environment.name` | `LOCAL` |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | Helm Chart | Collector endpoint. Unset → no OTLP export, Prometheus `/metrics` fallback | _(unset)_ |
 
 > These variables are injected automatically. Application teams **do not need to configure them manually**.
 
@@ -52,10 +61,10 @@ After registration, available via DI:
 
 | Variable | Description | Default |
 |---|---|---|
-| `OTEL_HELPER_EXTRA_INSTRUMENTATION` | Extra instrumentations: `SQL`, `AWS`. **Deprecated** — use opt-in subpackages instead. | `SQL` |
-| `OTEL_HELPER_SAMPLE_RATIO` | Head sampling ratio (0.0-1.0). 1.0 = AlwaysOn. | `1.0` |
+| `OTEL_HELPER_EXTRA_INSTRUMENTATION` | **No effect.** Read into `TelemetryOptions.ExtraInstrumentation` but nothing in core uses it since SQL/AWS moved to opt-in subpackages. Use the subpackages below. | `SQL` |
+| `OTEL_HELPER_SAMPLE_RATIO` | Head sampling ratio, clamped to 0.0–1.0. Below 1.0 → a bare `TraceIdRatioBasedSampler` (not parent-based). Ignored when `OTEL_TRACES_SAMPLER` is set. | `1.0` |
 
-> Debug mode (`OTEL_HELPER_DEBUG_LEVEL=true`) enables all extra instrumentations automatically.
+> Debug mode (`OTEL_HELPER_DEBUG_LEVEL=true`) does **not** enable extra instrumentations; it sets the Debug log level and marks entry spans — spans with no in-process parent, which includes spans that continue a remote trace — with a `debug=true` attribute, and prepends `debug=true` to the tracestate they propagate (see HOW-TO §13). Combine the Collector's `debug=true` policy with an environment allow-list and a rate limit (design D11).
 
 > ⚠️ **`OTEL_HELPER_DEBUG_LEVEL=true` in production causes cost explosion and backend saturation.** Use only for targeted troubleshooting.
 
@@ -63,7 +72,7 @@ After registration, available via DI:
 
 | Signal | Port | Resulting Endpoint |
 |---|---|---|
-| OTLP (traces/metrics/logs) | `:4317` | `{OTEL_EXPORTER_OTLP_ENDPOINT}:4317` |
+| OTLP (traces/metrics/logs) | `:4317` when the endpoint has no port (also for `https://host`) | `http://collector` → `http://collector:4317` |
 
 ### TLS / Transport Security
 
@@ -75,7 +84,7 @@ Transport is determined by the endpoint scheme:
 | `http://host:4317` | Plaintext (insecure) |
 | `host:4317` (no scheme) | TLS (secure by default) |
 
-Override with `OTEL_EXPORTER_OTLP_INSECURE`: `true` forces plaintext, `false` forces TLS. Code config (`TelemetryOptions.OtelCollectorEndpoint` scheme) always wins over env var.
+`OTEL_EXPORTER_OTLP_INSECURE` applies **only to schemeless endpoints**: `true` → `http://`, anything else → `https://`. An explicit `http://` or `https://` scheme always wins (env or code). The variable is read by this helper, not by the .NET SDK.
 
 For a local plaintext collector, use `http://` in the endpoint or set `OTEL_EXPORTER_OTLP_INSECURE=true`.
 
@@ -96,29 +105,30 @@ This enables the standard Kubernetes pattern: deploy without a collector, and le
 
 ### Standard OpenTelemetry SDK Variables
 
-Recognized natively by the SDK. The lib does not override them — if defined, the SDK respects them.
+How the 0.2.x helper treats the standard variables. Some are read by the .NET SDK, some by the helper, and some are **not honored** in 0.2.x (they are in Go/Python 0.3).
 
 #### Sampling
 
 | Variable | Description | Default |
 |---|---|---|
-| `OTEL_TRACES_SAMPLER` | SDK sampler. | `parentbased_always_on` |
-| `OTEL_TRACES_SAMPLER_ARG` | Sampler argument. | empty |
+| `OTEL_TRACES_SAMPLER` | Read by the SDK — only when `TelemetryOptions.Sampler` is left at its default. Unset → the helper's `AlwaysOnSampler` (not parent-based). | _(unset)_ |
+| `OTEL_TRACES_SAMPLER_ARG` | Sampler argument (SDK). | empty |
 
 #### Context Propagation
 
 | Variable | Description | Default |
 |---|---|---|
-| `OTEL_PROPAGATORS` | W3C propagators. | `tracecontext,baggage` |
+| `OTEL_PROPAGATORS` | **Not read** by the .NET SDK or this helper; W3C TraceContext + Baggage are always used. | `tracecontext,baggage` (fixed) |
 
 #### OTLP Exporter
 
 | Variable | Description | Default |
 |---|---|---|
-| `OTEL_EXPORTER_OTLP_PROTOCOL` | OTLP protocol. | `grpc` |
-| `OTEL_EXPORTER_OTLP_INSECURE` | TLS override: `true` = plaintext, `false` = TLS. Unset = derived from endpoint scheme (secure by default). | _(unset)_ |
-| `OTEL_EXPORTER_OTLP_HEADERS` | Additional headers (e.g., auth). | empty |
-| `OTEL_EXPORTER_OTLP_TIMEOUT` | Timeout in ms. | `10000` |
+| `OTEL_EXPORTER_OTLP_PROTOCOL` | Read by the helper: `grpc` or `http/protobuf`. Unset → `http/protobuf` when the endpoint port is `4318`, else `grpc`. | port inference |
+| `OTEL_EXPORTER_OTLP_INSECURE` | Read by the helper, schemeless endpoints only (see TLS above). | _(unset)_ |
+| `OTEL_EXPORTER_OTLP_HEADERS` | Additional headers (e.g., auth); read by the SDK. | empty |
+| `OTEL_EXPORTER_OTLP_TIMEOUT` | **Not honored** in 0.2.x: the helper always passes `TelemetryOptions.ExportTimeoutMs` (default 10000 ms), which overrides it. | `10000` |
+| `OTEL_EXPORTER_OTLP_<SIGNAL>_*` | Per-signal variables are not used by the helper's exporter wiring in 0.2.x. | — |
 
 ---
 
@@ -144,13 +154,13 @@ Recognized natively by the SDK. The lib does not override them — if defined, t
 | ASP.NET Core | Incoming HTTP requests (server spans) |
 | HttpClient | Outgoing HTTP requests (client spans) |
 | gRPC Client | Outgoing gRPC calls |
-| SqlClient | SQL queries — requires `SQL` in `OTEL_HELPER_EXTRA_INSTRUMENTATION` (enabled by default) |
-| AWS SDK | S3, SQS, DynamoDB calls, etc. — requires `AWS` in `OTEL_HELPER_EXTRA_INSTRUMENTATION` |
+| SqlClient | SQL queries — only with the `OtelHelper.Sql` subpackage (`AddOtelHelperSql()`) |
+| AWS SDK | S3, SQS, DynamoDB calls, etc. — only with the `OtelHelper.AWS` subpackage (`AddOtelHelperAws()`) |
 | Custom Sources | Spans created via `ActivitySource(serviceName)` |
 
-Sampler: AlwaysOnSampler in all environments (configurable via `opts.Sampler`). Tail-based sampling is done in the Collector.
+Sampler: `AlwaysOnSampler` in all environments (configurable via `opts.Sampler`). It ignores the parent's sampled flag; Go/Python 0.3 use `parentbased_always_on` (ADR-002), .NET follows in Phase C. Tail-based sampling is done in the Collector.
 
-> Paths `/ping`, `/health`, `/healthz`, `/ready` are filtered automatically — they do not generate trace spans.
+> Paths `/ping`, `/health`, `/healthz`, `/ready` (exact match, case-insensitive) are filtered automatically on ASP.NET Core server spans and HttpClient client spans — they do not generate trace spans. Go/Python 0.3 use a longer list (`/readyz`, `/live`, `/livez`, `/metrics` too) and keep these requests in the HTTP metrics; .NET adopts that in Phase C.
 
 ### Metrics
 
@@ -184,10 +194,10 @@ Exemplars enabled (`ExemplarFilterType.TraceBased`) — metric → trace correla
 |---|---|---|---|
 | `ServiceName` | string | `SERVICE_NAME` / `OTEL_SERVICE_NAME` | `my-service` |
 | `Environment` | DeploymentEnvironment | `ENVIRONMENT` | `LOCAL` |
-| `OtelCollectorEndpoint` | string | `OTEL_EXPORTER_OTLP_ENDPOINT` | `http://localhost:4317` |
+| `OtelCollectorEndpoint` | string | `OTEL_EXPORTER_OTLP_ENDPOINT` | `""` (no OTLP export) |
 | `DebugLevel` | bool | `OTEL_HELPER_DEBUG_LEVEL` | `false` |
 | `ExportTimeoutMs` | int | — | `10000` (10s) |
-| `ExtraInstrumentation` | string | `OTEL_HELPER_EXTRA_INSTRUMENTATION` | `SQL` |
+| `ExtraInstrumentation` | string | `OTEL_HELPER_EXTRA_INSTRUMENTATION` | `SQL` (no effect — use subpackages) |
 | `Sampler` | Sampler | — | `AlwaysOnSampler` |
 | `MinimumLogLevel` | LogLevel? | — | `null` (auto per environment) |
 | `ResourceAttributes` | Dictionary<string, object> | — | empty |
@@ -248,7 +258,7 @@ env:
     value: "/opt/pyroscope/Pyroscope.Linux.ApiWrapper.x64.so"
 ```
 
-> **Note**: `OTEL_HELPER_EXTRA_INSTRUMENTATION` env var still works for backward compatibility but subpackages are the recommended approach.
+> **Note**: `OTEL_HELPER_EXTRA_INSTRUMENTATION` no longer turns anything on in core — only the subpackages above add SQL/AWS/Redis instrumentation.
 
 ---
 

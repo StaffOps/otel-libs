@@ -16,6 +16,7 @@ import (
 
 	otelhelper "github.com/staffops/staffops-otel-libs/go"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/metric"
 )
 
@@ -53,6 +54,7 @@ func run() error {
 		}
 	}()
 
+	startedAt := time.Now()
 	tracer := otelhelper.GetTracer("go-api")
 	meter := otelhelper.GetMeter("go-api")
 
@@ -76,6 +78,7 @@ func run() error {
 		resp, err := httpClient.Do(req)
 		if err != nil {
 			span.RecordError(err)
+			span.SetStatus(codes.Error, "backend call failed")
 			http.Error(w, "backend error", http.StatusBadGateway)
 			return
 		}
@@ -90,16 +93,18 @@ func run() error {
 
 	mux.Handle("GET /status/{id}", otelhelper.NewHTTPHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id := r.PathValue("id")
-		_, span := tracer.Start(r.Context(), "detect.status")
+		ctx, span := tracer.Start(r.Context(), "detect.status")
 		defer span.End()
 		span.SetAttributes(attribute.String("detection.id", id))
 
-		requestCount.Add(r.Context(), 1, metric.WithAttributes(attribute.String("endpoint", "status")))
+		requestCount.Add(ctx, 1, metric.WithAttributes(attribute.String("endpoint", "status")))
 
-		// Call backend
-		req, _ := http.NewRequestWithContext(r.Context(), http.MethodGet, backendURL+"/status/"+id, nil)
+		// Call backend with the span's ctx, so the client span is its child.
+		req, _ := http.NewRequestWithContext(ctx, http.MethodGet, backendURL+"/status/"+id, nil)
 		resp, err := httpClient.Do(req)
 		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, "backend call failed")
 			http.Error(w, "backend error", http.StatusBadGateway)
 			return
 		}
@@ -113,7 +118,7 @@ func run() error {
 	mux.Handle("GET /metrics/summary", otelhelper.NewHTTPHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]any{
 			"total_detections": detectionCounter.Load(),
-			"uptime_seconds":   time.Since(time.Now()).Seconds(),
+			"uptime_seconds":   time.Since(startedAt).Seconds(),
 		})
 	}), "GET /metrics/summary"))
 
@@ -138,7 +143,8 @@ func run() error {
 
 	// Drain in-flight requests (bounded), then let the deferred Shutdown flush
 	// telemetry: in that order, spans of drained requests are exported too.
-	drainCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	// Drain 4 s + flush 5 s stays inside docker stop's default 10 s grace period.
+	drainCtx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
 	defer cancel()
 	if err := srv.Shutdown(drainCtx); err != nil {
 		log.Printf("http drain: %v", err)

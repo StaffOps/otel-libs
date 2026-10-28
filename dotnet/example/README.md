@@ -110,8 +110,8 @@ counter.Add(1, new KeyValuePair<string, object?>("source", "http-get"));
 
 | Variable | Description | Default |
 |---|---|---|
-| `OTEL_HELPER_DEBUG_LEVEL` | Debug mode: Debug log + 100% sampling + tracestate debug=true | `false` |
-| `OTEL_HELPER_EXTRA_INSTRUMENTATION` | Legacy extra instrumentations (`SQL`, `AWS`). Prefer the `OtelHelper.AWS` / `OtelHelper.Sql` subpackages. | `SQL` |
+| `OTEL_HELPER_DEBUG_LEVEL` | Debug mode: Debug log + `debug=true` attribute on entry spans (no in-process parent, including spans continuing a remote trace) and prepended to the propagated tracestate | `false` |
+| `OTEL_HELPER_EXTRA_INSTRUMENTATION` | No effect in core 0.2.x — use the `OtelHelper.AWS` / `OtelHelper.Sql` subpackages. | `SQL` |
 
 ---
 

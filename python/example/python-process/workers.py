@@ -1,9 +1,13 @@
 """Notification Process — Background workers for queue consumption, retries, and cleanup."""
 
+# otel_helper first: it must run before any opentelemetry import so unsupported
+# OTEL_PROPAGATORS values are skipped instead of raising (isort would move it).
+import otel_helper  # isort: skip  # noqa: F401
+
 import os
 import asyncio
+import contextlib
 import signal
-import sys
 import time
 import random
 import logging
@@ -146,25 +150,39 @@ async def main():
     retries_total = meter.create_counter("notifications.retries_total")
     cleanup_total = meter.create_counter("notifications.cleaned_total")
 
+    # Python's default SIGTERM handler kills the process without running finally
+    # blocks or atexit, so `docker stop` / a Kubernetes rollout would drop the
+    # spans, logs and metrics still buffered. Turn SIGTERM/SIGINT into an event
+    # that cancels the workers; the shutdown in __main__ then flushes.
+    stop = asyncio.Event()
+    loop = asyncio.get_running_loop()
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        loop.add_signal_handler(sig, stop.set)
+
     logger.info("Starting notification workers")
     await start_health_server()
-    await asyncio.gather(
+    workers = asyncio.gather(
         queue_consumer(tracer, queue_depth),
         retry_worker(tracer, retries_total),
         cleanup_worker(tracer, cleanup_total),
         health_checker(tracer),
     )
+    stopper = asyncio.ensure_future(stop.wait())
+    await asyncio.wait({workers, stopper}, return_when=asyncio.FIRST_COMPLETED)
+    stopper.cancel()
+    workers.cancel()
+    # Re-raises a worker's exception; a cancellation is the normal stop path.
+    with contextlib.suppress(asyncio.CancelledError):
+        await workers
+    logger.info("Notification workers stopped")
 
 
 if __name__ == "__main__":
-    # Python's default SIGTERM handler kills the process without running atexit or
-    # finally blocks, so `docker stop` / a Kubernetes rollout would drop the spans,
-    # logs and metrics still buffered. Turn SIGTERM into a normal exit instead.
-    signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
     try:
         asyncio.run(main())
     finally:
         try:
-            shutdown_telemetry(timeout_ms=10_000)  # flush before the grace period ends
+            # 5 s flush: well inside docker stop's default 10 s grace period.
+            shutdown_telemetry(timeout_ms=5_000)
         except RuntimeError as e:
             logger.warning("telemetry shutdown incomplete: %s", e)

@@ -4,6 +4,19 @@ How to install and use the OTel helper packages from this private repository.
 
 All packages require authentication — see [Creating a read:packages token](#creating-a-readpackages-token) below.
 
+## Versions
+
+| Language | Latest release | Next | Requirements |
+|----------|----------------|------|--------------|
+| .NET | `0.2.0` | 0.3 contract in Phase C | .NET 8 (runs on .NET 10 via roll-forward) |
+| Python | `0.2.0` | `0.3.0` (unreleased; `0.3.0-rc.1` first) | Python ≥ 3.10; OpenTelemetry `>=1.42,<1.46`, contrib `>=0.63b0,<0.67b0` from 0.3 |
+| Go | `go/v0.2.1` | `go/v0.3.0` (unreleased; rc first) | Go ≥ 1.22 for 0.2.x, **Go ≥ 1.26 from 0.3** |
+
+The commands below install the latest release. When a 0.3 release candidate is
+published, replace the version (Python release `v0.3.0-rc.1`; Go `@v0.3.0-rc.1`, which resolves the `go/v0.3.0-rc.1` tag) and read the
+[migration guide](CHANGELOG.md#unreleased) before upgrading — 0.3 changes
+defaults, metric names and APIs.
+
 ---
 
 ## .NET (GitHub Packages NuGet)
@@ -91,8 +104,11 @@ pip install "otel-helper[aws,redis,sql] @ file://$(pwd)/otel_helper-0.2.0-py3-no
 
 ```python
 from otel_helper import setup_telemetry, TelemetryOptions
-setup_telemetry(TelemetryOptions(service_name="my-service"))
+setup_telemetry(TelemetryOptions(service_name="orders-api"))
 ```
+
+Prefer `OTEL_SERVICE_NAME` in the environment over a name in code. From 0.3,
+call `shutdown_telemetry()` on SIGTERM — see `python/HOW-TO.md`.
 
 ---
 
@@ -117,7 +133,7 @@ export GOPRIVATE=github.com/staffops/*
 ### Install modules
 
 ```bash
-# Core module
+# Core module (repo tags are go/vX.Y.Z; `go get` takes the bare vX.Y.Z)
 go get github.com/staffops/staffops-otel-libs/go@latest
 
 # Opt-in ext modules (separate Go modules)
@@ -131,8 +147,11 @@ go get github.com/staffops/staffops-otel-libs/go/ext/otelsql@latest
 ```go
 import otelhelper "github.com/staffops/staffops-otel-libs/go"
 
-shutdown, err := otelhelper.Setup(ctx, otelhelper.WithServiceName("my-service"))
-defer shutdown(ctx)
+shutdown, err := otelhelper.Setup(ctx, otelhelper.WithServiceName("orders-api"))
+if err != nil {
+    return err
+}
+defer shutdown(context.Background()) // from 0.3: use a fresh deadline on SIGTERM, see go/HOW-TO.md
 ```
 
 ---

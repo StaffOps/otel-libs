@@ -1,6 +1,11 @@
 """Notification Backend — gRPC server that processes notification delivery."""
 
+# otel_helper first: it must run before any opentelemetry import so unsupported
+# OTEL_PROPAGATORS values are skipped instead of raising (isort would move it).
+import otel_helper  # isort: skip  # noqa: F401
+
 import asyncio
+import signal
 import uuid
 import random
 import time
@@ -9,7 +14,7 @@ import logging
 import grpc
 from opentelemetry import trace
 
-from otel_helper import setup_telemetry, get_tracer, get_meter, TelemetryOptions
+from otel_helper import setup_telemetry, shutdown_telemetry, get_tracer, get_meter, TelemetryOptions
 
 import notification_pb2
 import notification_pb2_grpc
@@ -22,7 +27,11 @@ setup_telemetry(TelemetryOptions(
 tracer = get_tracer("python-backend")
 meter = get_meter("python-backend")
 
-delivery_duration = meter.create_histogram("notification.delivery_duration_seconds")
+# Recorded in seconds: the SDK's default buckets (0..10000) are meant for milliseconds.
+delivery_duration = meter.create_histogram(
+    "notification.delivery_duration_seconds",
+    explicit_bucket_boundaries_advisory=[0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5],
+)
 delivery_attempts = meter.create_counter("notification.delivery_attempts_total")
 
 logger = logging.getLogger(__name__)
@@ -145,10 +154,28 @@ async def serve():
     health_servicer.set("", HealthCheckResponse.SERVING)
     health_pb2_grpc.add_HealthServicer_to_server(health_servicer, server)
     server.add_insecure_port("[::]:50051")
+
+    # Python's default SIGTERM handler kills the process without running finally
+    # blocks or atexit: stop the server gracefully instead, so the shutdown below
+    # flushes buffered spans/logs and the last metric interval on `docker stop`.
+    # Registered before start(), so a signal that arrives during startup is not lost.
+    stop = asyncio.Event()
+    loop = asyncio.get_running_loop()
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        loop.add_signal_handler(sig, stop.set)
+
     logger.info("Backend gRPC server starting on :50051")
     await server.start()
-    await server.wait_for_termination()
+    await stop.wait()
+    # Grace 4 s + flush 5 s stays inside docker stop's default 10 s grace period.
+    await server.stop(grace=4)
 
 
 if __name__ == "__main__":
-    asyncio.run(serve())
+    try:
+        asyncio.run(serve())
+    finally:
+        try:
+            shutdown_telemetry(timeout_ms=5_000)
+        except RuntimeError as e:
+            logger.warning("telemetry shutdown incomplete: %s", e)

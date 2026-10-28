@@ -1,8 +1,11 @@
 """Notification API — FastAPI service that receives notification requests."""
 
+# otel_helper first: it must run before any opentelemetry import so unsupported
+# OTEL_PROPAGATORS values are skipped instead of raising (isort would move it).
+import otel_helper  # isort: skip  # noqa: F401
+
 import os
 import time
-import random
 import logging
 from contextlib import asynccontextmanager
 
@@ -11,7 +14,9 @@ from fastapi import FastAPI
 from pydantic import BaseModel
 from opentelemetry import trace
 
-from otel_helper import setup_telemetry, get_tracer, get_meter, TelemetryOptions
+from otel_helper import (
+    setup_telemetry, shutdown_telemetry, instrument_fastapi, get_tracer, get_meter, TelemetryOptions,
+)
 
 # --- Telemetry ---
 setup_telemetry(TelemetryOptions(
@@ -55,11 +60,22 @@ templates_db: dict[str, dict] = {
 notifications_db: dict[str, dict] = {}
 
 # --- App ---
-app = FastAPI(title="Notification API")
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    yield
+    # uvicorn turns SIGTERM into a lifespan shutdown: flush buffered telemetry here.
+    try:
+        shutdown_telemetry(timeout_ms=5_000)  # inside docker stop's 10 s grace period
+    except RuntimeError as e:
+        logger.warning("telemetry shutdown incomplete: %s", e)
 
-# Instrument the app for automatic context extraction from incoming requests
-from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
-FastAPIInstrumentor.instrument_app(app, excluded_urls="/health,/healthz,/ready,/ping")
+
+app = FastAPI(title="Notification API", lifespan=lifespan)
+
+# `FastAPI` was imported before setup_telemetry() patched the class, so instrument
+# this app explicitly. /health gets no server span but still counts in
+# http.server.request.duration (the helper's health sampler, not excluded_urls).
+instrument_fastapi(app)
 
 
 @app.get("/health")
