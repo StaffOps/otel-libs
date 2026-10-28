@@ -387,6 +387,13 @@ instrumentation emits no metrics at all (grep for any meter/histogram in
 there is nothing to keep. The parent's tracestate is kept on DROP. Defaults:
 `/health /healthz /ready /readyz /live /livez /ping /metrics`; list overridable
 in code. Instrumentation middleware keeps running, so metrics still count.
+Clarified 2026-10-28 (A7-go): the overridable list (`WithHealthPaths` /
+`health_paths`) covers **HTTP paths only**; the standard
+`grpc.health.v1.Health` service is always dropped (it has one well-known name).
+Children of a dropped health span are dropped only under a parent-based
+sampler (the default and both ratio aliases); with an explicit `always_on` or
+`traceidratio` they are sampled again — documented, since a sampler cannot
+mark the context.
 
 **Justification, strongest first**:
 1. Both instrumentation-level filters drop metrics too: Python
@@ -448,8 +455,7 @@ knob (spec already has one).
 
 Python level rule: the helper sets the root level only when, at setup, root
 has no handlers and `logging.root.level == WARNING` (stdlib default); helper
-handlers use the environment level (R4); a `StreamHandler` is added only when
-root has no handler. Go: one handler deciding **per record** (atomic flag),
+handlers use the environment level (R4); the no-exporter stdout fallback is `logging.lastResort` (see A5 rulings below). Go: one handler deciding **per record** (atomic flag),
 used by `NewLogger` and `NewSlogHandler`, reset on `Shutdown`.
 
 Helper-diagnostics channel (decided 2026-10-28, A2 review L1): **Go** — one
@@ -466,6 +472,43 @@ it catches every realistic accidental pattern; deliberately obfuscated writes
 (paths in constants, function values of `os.WriteFile`, `vars(sys)`…) are out
 of scope and code review covers them (decided 2026-10-28 — further hardening
 has diminishing returns).
+
+A5 validation rulings (2026-10-28):
+- **Helper diagnostics always reach stderr** in both languages, INFO and above
+  (Go: the stderr diag logger; Python: while a logs exporter is active, a
+  root-level filter handler sends `otel_helper.*` and `opentelemetry.*` records
+  at INFO+ (`otel_helper.*`; Python sets that logger to INFO when it is NOTSET,
+  restored on detach) / WARN+ (`opentelemetry.*`, kept at WARN as noise) to the
+  original stderr `lastResort`, removed when the app configures root; loggers
+  of both hierarchies are re-enabled after an app `dictConfig`/`fileConfig`
+  with `disable_existing_loggers=True`). `opentelemetry.*` SDK/exporter records are **never** exported via OTLP
+  (avoids the export-failure feedback loop; Go equivalent: `otel.Handle`);
+  `otel_helper.*` records go to stderr and, additionally, to OTLP.
+- **Stdout fallback shape is identical**: single-line JSON with `time`
+  (RFC 3339, millisecond precision, `Z` for UTC — both languages),
+  `level` (`DEBUG/INFO/WARN/ERROR`), `msg`, the logger name (`logger`, Python) and
+  extra attributes, plus `exception` for tracebacks (one line); both languages
+  apply the environment level to it (R4).
+- Python installs the no-exporter fallback as `logging.lastResort` (not a root
+  `StreamHandler`) so a later `logging.basicConfig()` still works (P10).
+- **Client-side health exclusion**: exact path match only (same normalization
+  as D5), in both languages; Python passes anchored patterns via
+  `instrument(excluded_urls=…)` for requests; httpx only reads env, so its
+  variable is set **only during setup** and restored (does not cover
+  `instrument_client()`/transports the user builds later — documented); health
+  paths may not contain commas (they would split the upstream list). Client exclusion drops
+  the client span and metric (upstream behavior) — documented.
+- gRPC health matching is the whole service in both languages: method name
+  (leading `/` stripped) starts with `grpc.health.v1.Health/` (covers Check,
+  Watch and List).
+- Go's stdout fallback renders error values like `slog` does (typed-nil error →
+  `<nil>`, a panicking `Error()` → `!PANIC: …`), never crashing the caller.
+- **gRPC client** health calls (`grpc.health.v1.Health/*`) are excluded on the
+  client side too, in both languages — same rule as HTTP clients: the client
+  span **and** the client metric are dropped (the only upstream client-side
+  mechanism is a filter); server-side RED metrics still count health calls.
+- Go trace↔log correlation needs the `*Context` slog calls (`InfoContext`…);
+  Python correlates implicitly. Documented in both HOW-TOs.
 
 Coupling note: `OTEL_HELPER_DEBUG_LEVEL=true` turns on both DEBUG logs and the
 `debug=true` span marker — documented as coupled (ADR-006).
