@@ -55,7 +55,9 @@ func isSampled(tp *sdktrace.TracerProvider, parent context.Context) bool {
 func samplerWarnings(buf *syncBuffer) []string {
 	var out []string
 	for _, line := range strings.Split(buf.String(), "\n") {
-		if strings.Contains(line, "level=WARN") && strings.Contains(line, "OTEL_TRACES_SAMPLER") {
+		// The OTEL_HELPER_SAMPLE_RATIO deprecation names OTEL_TRACES_SAMPLER as
+		// its replacement; it is asserted in deprecation_test.go, not here.
+		if strings.Contains(line, "level=WARN") && strings.Contains(line, "OTEL_TRACES_SAMPLER") && !strings.Contains(line, "is deprecated") {
 			out = append(out, line)
 		}
 	}
@@ -336,7 +338,8 @@ func TestSampler_AliasGrammar(t *testing.T) {
 			if o.SampleRatio != c.want {
 				t.Errorf("SampleRatio = %v, want %v", o.SampleRatio, c.want)
 			}
-			warned := strings.Contains(buf.String(), "variable="+EnvSampleRatio)
+			// Only the invalid-value warning; the deprecation always fires.
+			warned := strings.Contains(buf.String(), "sample ratio is not a number")
 			if warned != c.warn {
 				t.Errorf("warned = %v, want %v (log %q)", warned, c.warn, buf.String())
 			}

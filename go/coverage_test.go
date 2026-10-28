@@ -22,7 +22,6 @@ func TestWithOptions(t *testing.T) {
 		{"WithDebug", WithDebug(), func(o *Options) bool { return o.DebugLevel }},
 		{"WithSampleRatio", WithSampleRatio(0.3), func(o *Options) bool { return o.SampleRatio == 0.3 }},
 		{"WithExportTimeout", WithExportTimeout(5000), func(o *Options) bool { return o.ExportTimeoutMs == 5000 }},
-		{"WithExtraInstrumentation", WithExtraInstrumentation("SQL,AWS"), func(o *Options) bool { return o.ExtraInstrumentation == "SQL,AWS" }},
 		{"WithResourceAttributes", WithResourceAttributes(attrs), func(o *Options) bool {
 			return o.ResourceAttributes["team"] == "platform" && o.ResourceAttributes["version"] == "1.0"
 		}},

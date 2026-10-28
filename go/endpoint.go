@@ -108,8 +108,7 @@ func resolveEndpoint(in endpointInput) (endpointResult, error) {
 		u = parsed
 		if in.protocol == ProtocolHTTP {
 			res.warnings = append(res.warnings, endpointWarning{
-				"schemeless endpoint is deprecated for http/protobuf; use a URL (http:// or https://)",
-				in.variable, redactURL(in.raw), redactURL(parsed.String())})
+				msgSchemelessHTTPDeprecated, in.variable, redactURL(in.raw), redactURL(parsed.String())})
 		}
 	} else {
 		parsed, err := url.Parse(in.raw)
@@ -172,10 +171,19 @@ func (o *Options) codeSignalEndpoint(signal string) (value, option string) {
 	}
 }
 
+// msgSchemelessHTTPDeprecated is the deprecation warning for a schemeless
+// http/protobuf endpoint (design D8); unlike other endpoint warnings it is
+// emitted once per process, not once per resolution.
+const msgSchemelessHTTPDeprecated = "schemeless endpoint is deprecated for http/protobuf and will be removed in 1.0; use a URL (http:// or https://)"
+
 // warnOnce logs a configuration warning once per resolution (the same
 // generic setting would otherwise warn for each of the three signals).
 func (o *Options) warnOnce(w endpointWarning) {
 	key := w.msg + "\x00" + w.variable + "\x00" + w.value
+	if w.msg == msgSchemelessHTTPDeprecated {
+		warnEnvOncePerProcess(key, w.msg, w.variable, w.value, w.using)
+		return
+	}
 	if o.warned == nil {
 		o.warned = map[string]bool{}
 	}

@@ -31,8 +31,7 @@ type Options struct {
 	DebugLevel      bool
 	// Insecure selects plaintext for schemeless endpoints (WithInsecure). With
 	// a URL the scheme decides.
-	Insecure             bool
-	ExtraInstrumentation string
+	Insecure bool
 	// ExportTimeoutMs is the OTLP export timeout set in code. 0 = not set:
 	// OTEL_EXPORTER_OTLP[_<SIGNAL>]_TIMEOUT, else the SDK default (10 s).
 	ExportTimeoutMs    int
@@ -117,8 +116,9 @@ func WithEnvironment(env DeploymentEnvironment) Option {
 	return func(o *Options) { o.Environment = env; o.environmentSet = true }
 }
 
-// WithDebug enables debug mode (DEBUG log level, debug=true marker on root
-// spans), overriding OTEL_HELPER_DEBUG_LEVEL.
+// WithDebug enables debug mode (DEBUG log level, debug=true marker on entry
+// spans — no parent or a remote parent, ADR-006), overriding
+// OTEL_HELPER_DEBUG_LEVEL.
 func WithDebug() Option { return func(o *Options) { o.DebugLevel = true } }
 
 // WithEndpoint sets the generic OTLP endpoint (URL or schemeless host:port).
@@ -164,12 +164,6 @@ func WithExportTimeout(ms int) Option {
 // CompressionNone) for every signal, overriding the environment.
 func WithCompression(compression string) Option {
 	return func(o *Options) { o.Compression = compression }
-}
-
-// WithExtraInstrumentation sets the comma-separated list read by
-// HasInstrumentation (has no effect on what the helper instruments in Go).
-func WithExtraInstrumentation(instr string) Option {
-	return func(o *Options) { o.ExtraInstrumentation = instr }
 }
 
 // WithResourceAttributes adds resource attributes set in code; each key wins
@@ -287,22 +281,8 @@ func (o *Options) signalExporters(signal string) []string {
 	return list
 }
 
-// HasInstrumentation checks if a named instrumentation is enabled.
-func (o *Options) HasInstrumentation(name string) bool {
-	if o.DebugLevel {
-		return true
-	}
-	for _, part := range strings.Split(o.ExtraInstrumentation, ",") {
-		if strings.EqualFold(trimWS(part), name) {
-			return true
-		}
-	}
-	return false
-}
-
 func newOptions(opts ...Option) *Options {
 	o := &Options{
-		ExtraInstrumentation:  "SQL",
 		SampleRatio:           1.0,
 		ResourceAttributes:    make(map[string]string),
 		PrometheusMetricsPort: 9464,

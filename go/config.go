@@ -162,11 +162,7 @@ func (o *Options) resolveFromEnv() {
 		o.DebugLevel, _ = envBool(EnvDebugLevel)
 	}
 
-	if o.ExtraInstrumentation == "SQL" {
-		if v := os.Getenv(EnvExtraInstrumentation); v != "" {
-			o.ExtraInstrumentation = v
-		}
-	}
+	o.warnDeprecatedEnv()
 
 	// Standard OTel var wins over the deprecated helper one: while
 	// OTEL_TRACES_SAMPLER is set (non-blank), buildSampler parses it and
@@ -231,6 +227,25 @@ func (o *Options) resolveFromEnv() {
 	}
 
 	o.propagator = parsePropagators(os.Getenv(EnvPropagators))
+}
+
+// warnDeprecatedEnv warns, once per process, about every deprecated or dead
+// variable that is set (design D8, G9). It warns even when a standard variable
+// wins, so the legacy one can be removed before 1.0.
+func (o *Options) warnDeprecatedEnv() {
+	for _, d := range []struct{ variable, replacement string }{
+		{EnvServiceName, EnvOtelServiceName},
+		{EnvEnvironment, EnvResourceAttributes + " (deployment.environment.name=<value>)"},
+		{EnvSampleRatio, EnvTracesSampler + "=parentbased_traceidratio with " + EnvTracesSamplerArg},
+		{EnvDisabledSignals, EnvTracesExporter + "/" + EnvMetricsExporter + "/" + EnvLogsExporter + "=none"},
+	} {
+		if trimWS(os.Getenv(d.variable)) != "" {
+			warnDeprecated(d.variable, d.replacement)
+		}
+	}
+	if trimWS(os.Getenv(EnvExtraInstrumentation)) != "" {
+		warnUnused(EnvExtraInstrumentation, "import the ext/otelsql, ext/otelredis or ext/otelaws module instead")
+	}
 }
 
 func splitList(v string, lower bool) []string {

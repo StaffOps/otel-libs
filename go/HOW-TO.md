@@ -325,8 +325,7 @@ POST /detect (go-api)                    ← NewHTTPHandler
 ## 6. Debug Mode
 
 When `OTEL_HELPER_DEBUG_LEVEL=true`:
-- All extra instrumentations are enabled (SQL, REDIS, AWS)
-- Root spans get attribute `debug=true` → Collector keeps 100% of these traces
+- Entry spans (no parent, or a remote parent) get attribute `debug=true` → Collector keeps 100% of these traces; spans with a local parent are not marked, and inbound tracestate/baggage never sets it
 - The `debugProcessor` injects the attribute via span processor
 
 ```bash
@@ -473,11 +472,11 @@ visible.
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `OTEL_SERVICE_NAME` | Service name (beats `service.name` in `OTEL_RESOURCE_ATTRIBUTES`, which beats `SERVICE_NAME`) | SDK `unknown_service:<exe>` + warning |
-| `SERVICE_NAME` | Deprecated service-name alias | _(unset)_ |
+| `SERVICE_NAME` | Deprecated service-name alias (warns once when set) | _(unset)_ |
 | `ENVIRONMENT` | Deprecated alias for `deployment.environment.name`; `OTEL_RESOURCE_ATTRIBUTES` wins; non-standard values verbatim | _(unset → attribute absent + warning)_ |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | Collector endpoint | `http://localhost` |
 | `OTEL_HELPER_DEBUG_LEVEL` | Debug mode | `false` |
-| `OTEL_HELPER_EXTRA_INSTRUMENTATION` | Extra instrumentations | `SQL` |
+| `OTEL_HELPER_EXTRA_INSTRUMENTATION` | No effect in Go (removed in 0.3.0); warns when set | _(unset)_ |
 | `OTEL_HELPER_SAMPLE_RATIO` | Sampling ratio (0.0-1.0). Ignored if the standard `OTEL_TRACES_SAMPLER` is set | `1.0` (AlwaysOn) |
 | `OTEL_HELPER_METRICS_PORT` | Standalone Prometheus `/metrics` listener port (`0` disables it) | `9464` |
 | `OTEL_METRICS_EXPORTER` | Metric exporter(s): `otlp`, `prometheus`, `otlp,prometheus`, `none` | legacy inference |
@@ -562,17 +561,19 @@ otelaws.Instrument(&cfg)
 // Redis client instrumentation — pass your go-redis client
 otelredis.Instrument(client)
 
-// SQL with tracing — wraps database/sql Open
-db, err := otelsql.Open(driver, dsn)
+// SQL with tracing and pool metrics (wraps database/sql)
+db, closeDB, err := otelsql.Open(driver, dsn)
+if err != nil { ... }
+defer closeDB() // instead of db.Close(): also unregisters the pool metrics
 ```
 
 | Module | Function | What it instruments |
 |--------|----------|---------------------|
 | `ext/otelaws` | `otelaws.Instrument(&cfg)` | AWS SDK calls (S3, SQS, DynamoDB, etc.) |
-| `ext/otelredis` | `otelredis.Instrument(client)` | go-redis commands |
-| `ext/otelsql` | `otelsql.Open(driver, dsn)` | database/sql queries |
+| `ext/otelredis` | `otelredis.Instrument(client)` (once per client) | go-redis commands (spans with `db.system.name=redis`, no command values, no connection string) and `db.client.connections.*` pool metrics; on a metrics error, tracing is already installed |
+| `ext/otelsql` | `db, closeDB, err := otelsql.Open(driver, dsn)` | database/sql queries and `db.sql.*` pool metrics; call `closeDB()` instead of `db.Close()` (it also unregisters the pool metrics); `db.system.name` mapped from the driver (`pgx`/`postgres` → `postgresql`, `sqlite`/`sqlite3` → `sqlite`, `mysql`, `sqlserver`/`mssql` → `microsoft.sql_server`, else `other_sql`) plus legacy `db.system` until 1.0 (only the new key when `OTEL_SEMCONV_STABILITY_OPT_IN` contains `database` without `database/dup`); a pool-metrics registration failure is returned by `Open` |
 
-> **Note**: The `OTEL_HELPER_EXTRA_INSTRUMENTATION` env var still works for backward compatibility, but explicit ext modules are the recommended approach.
+> **Note**: instrumentation is opt-in by importing the ext module. `WithExtraInstrumentation` / `HasInstrumentation` were removed in 0.3.0; `OTEL_HELPER_EXTRA_INSTRUMENTATION` has no effect in Go and logs a warning when set.
 
 ---
 

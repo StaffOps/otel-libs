@@ -38,6 +38,7 @@ import (
 // captureDiag redirects the helper diagnostics channel for one test.
 func captureDiag(t *testing.T) *syncBuffer {
 	t.Helper()
+	resetDeprecationsForTest(t) // once-per-process warnings must fire in this test
 	buf := &syncBuffer{}
 	prev := diagLogger
 	diagLogger = slog.New(slog.NewTextHandler(buf, &slog.HandlerOptions{Level: slog.LevelDebug}))

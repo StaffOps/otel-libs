@@ -7,17 +7,19 @@ import (
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 )
 
-// debugProcessor sets debug=true attribute on root spans for Collector tail-sampling.
+// debugProcessor marks the service's entry spans with debug=true so the
+// Collector's tail sampler (string_attribute policy on "debug") keeps the
+// trace (ADR-006). An entry span is one with no parent or a remote parent;
+// spans with a local parent are left alone.
 //
-// Cross-language note: The .NET library also sets tracestate "debug=true" for Collector
-// trace_state tail-sampling policy. The Go SDK ReadWriteSpan interface does NOT expose
-// SetTraceState(), so we cannot set tracestate from a SpanProcessor. Python has the same
-// limitation. The Collector MUST use string_attribute policy on "debug" key for
-// cross-language debug trace force-sampling.
+// It is installed only when debug mode is on in local config
+// (OTEL_HELPER_DEBUG_LEVEL=true or WithDebug): the marker is never derived
+// from inbound tracestate or baggage — a caller must not be able to force
+// retention — and the processor never writes tracestate.
 type debugProcessor struct{}
 
 func (d *debugProcessor) OnStart(_ context.Context, s sdktrace.ReadWriteSpan) {
-	if !s.Parent().IsValid() {
+	if p := s.Parent(); !p.IsValid() || p.IsRemote() {
 		s.SetAttributes(attribute.String("debug", "true"))
 	}
 }

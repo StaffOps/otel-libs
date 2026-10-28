@@ -34,26 +34,6 @@ func TestOptionsEnvDebugLevel(t *testing.T) {
 	}
 }
 
-func TestHasInstrumentation(t *testing.T) {
-	o := &Options{ExtraInstrumentation: "SQL,REDIS"}
-	if !o.HasInstrumentation("sql") {
-		t.Error("Should match SQL case-insensitive")
-	}
-	if !o.HasInstrumentation("REDIS") {
-		t.Error("Should match REDIS")
-	}
-	if o.HasInstrumentation("AWS") {
-		t.Error("Should not match AWS")
-	}
-}
-
-func TestHasInstrumentationDebugEnablesAll(t *testing.T) {
-	o := &Options{ExtraInstrumentation: "SQL", DebugLevel: true}
-	if !o.HasInstrumentation("AWS") {
-		t.Error("Debug mode should enable all instrumentations")
-	}
-}
-
 func TestIsSignalEnabledTrueWhenEmpty(t *testing.T) {
 	opts := &Options{DisabledSignals: nil}
 	if !opts.IsSignalEnabled("traces") {

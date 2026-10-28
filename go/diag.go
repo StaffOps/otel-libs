@@ -5,6 +5,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"sync"
 )
 
 // diagLogger is the single channel for the helper's own diagnostics
@@ -51,4 +52,37 @@ func redactURL(raw string) string {
 	u.Fragment = ""
 	u.RawFragment = ""
 	return u.String()
+}
+
+// deprecationsWarned records which deprecation warnings this process already
+// emitted: each is logged once per process (design D8), however many times
+// Setup runs. Tests reset it with resetDeprecationsForTest.
+var deprecationsWarned sync.Map
+
+// warnDeprecated logs, once per process, that variable is deprecated and names
+// its replacement. Only the variable name is printed, never its value.
+func warnDeprecated(variable, replacement string) {
+	if _, seen := deprecationsWarned.LoadOrStore("deprecated:"+variable, true); seen {
+		return
+	}
+	diagLogger.Warn("otelhelper: "+variable+" is deprecated and will be removed in 1.0; use "+replacement,
+		"variable", variable, "replacement", replacement)
+}
+
+// warnEnvOncePerProcess is warnEnv deduplicated per process by key (used for
+// deprecations that also carry a value, such as a schemeless endpoint).
+func warnEnvOncePerProcess(key, msg, variable, value, using string) {
+	if _, seen := deprecationsWarned.LoadOrStore("env:"+key, true); seen {
+		return
+	}
+	warnEnv(msg, variable, value, using)
+}
+
+// warnUnused logs, once per process, that variable is set but has no effect.
+func warnUnused(variable, why string) {
+	if _, seen := deprecationsWarned.LoadOrStore("unused:"+variable, true); seen {
+		return
+	}
+	diagLogger.Warn("otelhelper: "+variable+" has no effect in Go and is ignored; "+why,
+		"variable", variable)
 }

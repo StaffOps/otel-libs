@@ -2,9 +2,9 @@ package otelhelper
 
 // Console exporters for OTEL_{TRACES,METRICS,LOGS}_EXPORTER=console (R8).
 //
-// The stdout exporter dependencies are pending owner approval: this file is
-// the only place that imports them, so rejecting them is this file plus three
-// go.mod lines (and "console" leaving the allowed exporter lists).
+// The official stdout exporters (stdouttrace, stdoutmetric, stdoutlog) are
+// regular dependencies of the core module for the "console" value; this file
+// is the only place that imports them.
 
 import (
 	"go.opentelemetry.io/otel/exporters/stdout/stdoutlog"
