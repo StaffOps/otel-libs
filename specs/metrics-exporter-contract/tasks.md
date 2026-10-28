@@ -81,7 +81,7 @@ untracked files both times, nothing staged.
   a Collector" dual-mode section .NET has (§14/§13 respectively — mount
   example, multi-worker guidance, scrape-side filtering note); root
   `README.md` env var table + precedence rule; root `CHANGELOG.md` entry
-  under Unreleased. Steering (`.kiro/steering/project-conventions.md`) was
+  under Unreleased. Steering (`.kiro/steering/project-conventions.md`, since moved to `AGENTS.md`) was
   re-checked and remains accurate against the shipped code — no changes
   needed.
 
@@ -216,7 +216,7 @@ gate.
 - [x] CHANGELOG entry under Unreleased (root `CHANGELOG.md` — added as a second entry alongside PR 1's)
 
 ### Task 5.3: Steering check ✅
-- [x] Confirmed `.kiro/steering/project-conventions.md` matches shipped behavior — read the full file this session, cross-checked every claim (env var precedence, `OTEL_METRICS_EXPORTER` values, sampler precedence, packaging convention) against the actual implementation. Accurate as-is, no changes needed. Committed alongside this work (it predates this session but was still uncommitted).
+- [x] Confirmed `.kiro/steering/project-conventions.md` (since moved to `AGENTS.md`) matches shipped behavior — read the full file this session, cross-checked every claim (env var precedence, `OTEL_METRICS_EXPORTER` values, sampler precedence, packaging convention) against the actual implementation. Accurate as-is, no changes needed. Committed alongside this work (it predates this session but was still uncommitted).
 
 ### Follow-up needed after this spec (not part of it)
 
