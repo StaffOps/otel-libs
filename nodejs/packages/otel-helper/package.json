@@ -1,0 +1,130 @@
+{
+  "name": "@staffops/otel-helper",
+  "version": "0.3.0-dev.0",
+  "description": "OpenTelemetry helper for Node.js: OTLP via the Collector, one env-var contract shared with the Go and Python helpers.",
+  "license": "Apache-2.0",
+  "author": "StaffOps",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/StaffOps/otel-libs.git",
+    "directory": "nodejs/packages/otel-helper"
+  },
+  "keywords": [
+    "opentelemetry",
+    "otel",
+    "otlp",
+    "tracing",
+    "metrics",
+    "logging"
+  ],
+  "type": "commonjs",
+  "engines": {
+    "node": ">=22.15.0"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./esm/index.d.mts",
+        "default": "./esm/index.mjs"
+      },
+      "require": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "default": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      }
+    },
+    "./hooks": {
+      "import": {
+        "types": "./esm/hooks.d.mts",
+        "default": "./esm/hooks.mjs"
+      },
+      "require": {
+        "types": "./dist/hooks.d.ts",
+        "default": "./dist/hooks.js"
+      },
+      "default": {
+        "types": "./dist/hooks.d.ts",
+        "default": "./dist/hooks.js"
+      }
+    },
+    "./register": {
+      "import": {
+        "types": "./esm/register.d.mts",
+        "default": "./esm/register.mjs"
+      },
+      "require": {
+        "types": "./dist/register.d.ts",
+        "default": "./dist/register.js"
+      },
+      "default": {
+        "types": "./dist/register.d.ts",
+        "default": "./dist/register.js"
+      }
+    },
+    "./testing": {
+      "import": {
+        "types": "./esm/testing.d.mts",
+        "default": "./esm/testing.mjs"
+      },
+      "require": {
+        "types": "./dist/testing.d.ts",
+        "default": "./dist/testing.js"
+      },
+      "default": {
+        "types": "./dist/testing.d.ts",
+        "default": "./dist/testing.js"
+      }
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "esm"
+  ],
+  "sideEffects": [
+    "./dist/hooks.js",
+    "./dist/register.js",
+    "./esm/hooks.mjs",
+    "./esm/register.mjs"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "check": "publint --strict . && attw --pack . --profile node16",
+    "test": "c8 --config ../../.c8rc.json node --test \"test/*.test.cjs\" \"test/*.test.mjs\""
+  },
+  "peerDependencies": {
+    "@opentelemetry/api": ">=1.10.0 <1.11.0"
+  },
+  "dependencies": {
+    "@opentelemetry/context-async-hooks": "~3.0.0",
+    "@opentelemetry/core": "~3.0.0",
+    "@opentelemetry/exporter-logs-otlp-grpc": "~0.300.0",
+    "@opentelemetry/exporter-logs-otlp-proto": "~0.300.0",
+    "@opentelemetry/exporter-metrics-otlp-grpc": "~0.300.0",
+    "@opentelemetry/exporter-metrics-otlp-proto": "~0.300.0",
+    "@opentelemetry/exporter-prometheus": "~0.300.0",
+    "@opentelemetry/exporter-trace-otlp-grpc": "~0.300.0",
+    "@opentelemetry/exporter-trace-otlp-proto": "~0.300.0",
+    "@opentelemetry/instrumentation": "~0.300.0",
+    "@opentelemetry/instrumentation-express": "~0.72.0",
+    "@opentelemetry/instrumentation-grpc": "~0.300.0",
+    "@opentelemetry/instrumentation-http": "~0.300.0",
+    "@opentelemetry/instrumentation-undici": "~0.34.0",
+    "@opentelemetry/otlp-grpc-exporter-base": "~0.300.0",
+    "@opentelemetry/resources": "~3.0.0",
+    "@opentelemetry/sdk-logs": "~3.0.0",
+    "@opentelemetry/sdk-metrics": "~3.0.0",
+    "@opentelemetry/sdk-trace": "~3.0.0",
+    "@opentelemetry/semantic-conventions": "^1.44.0",
+    "import-in-the-middle": "^3.5.3"
+  },
+  "devDependencies": {
+    "@opentelemetry/api": ">=1.10.0 <1.11.0"
+  }
+}

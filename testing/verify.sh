@@ -7,14 +7,15 @@
 #   testing/verify.sh --only <step>   # one step (repeatable)
 #   testing/verify.sh --list          # step names
 #
-# Steps: go, go-ext, py-3.10-lower, py-3.13-lower, py-3.13-latest, e2e,
-# mkdocs, spec-lint, trace, index, tools-tests.
+# Steps: go, go-ext, py-3.10-lower, py-3.13-lower, py-3.13-latest, node, e2e,
+# mkdocs, spec-lint, trace, index, tools-tests. `node` runs the Node.js
+# workspace on node:${NODE_VERSION:-24}-slim (CI covers 22.15.0/22/24/26).
 #
 # Disk safety: this script never prunes, never runs `compose down -v` and never
 # removes volumes or images. At exit it stops only the compose services it
-# started itself (fakeotlp-go, fakeotlp-py, collector: the ones not running
-# when it began). The e2e step is testing/e2e/smoke.sh, which applies the same
-# rule to the Collector.
+# started itself (fakeotlp-go, fakeotlp-py, fakeotlp-node, collector: the ones
+# not running when it began). The e2e step is testing/e2e/smoke.sh, which
+# applies the same rule to the Collector.
 set -uo pipefail
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
@@ -23,10 +24,10 @@ compose=(docker compose -f "$root/testing/docker-compose.yml")
 MKDOCS_IMAGE="squidfunk/mkdocs-material:9.5.39"
 TOOLS_IMAGE="python:3.12-slim"
 
-ALL_STEPS=(go go-ext py-3.10-lower py-3.13-lower py-3.13-latest e2e mkdocs spec-lint trace index tools-tests)
+ALL_STEPS=(go go-ext py-3.10-lower py-3.13-lower py-3.13-latest node e2e mkdocs spec-lint trace index tools-tests)
 QUICK_SKIP=" e2e py-3.10-lower py-3.13-lower "
 
-usage() { sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//'; }
 
 quick=0
 only=()
@@ -51,7 +52,7 @@ done
 # The collector is under the e2e profile; `ps` lists it only with --profile.
 running_services() {
   "${compose[@]}" --profile e2e ps --status running --services 2>/dev/null \
-    | grep -E '^(fakeotlp-go|fakeotlp-py|collector)$' || true
+    | grep -E '^(fakeotlp-go|fakeotlp-py|fakeotlp-node|collector)$' || true
 }
 preexisting=" $(running_services | tr '\n' ' ') "
 cleanup() {
@@ -83,6 +84,11 @@ step_go_ext() {
 
 step_python() { PY_VERSION="$1" PY_DEPS="$2" "${compose[@]}" run --rm python-tests; }
 
+step_node() {
+  [ -n "${NODE_TESTS_OFFLINE:-}" ] && echo "WARNING: NODE_TESTS_OFFLINE is set: the api-range install test is skipped (CI always runs it)" >&2
+  "${compose[@]}" run --rm node-tests
+}
+
 step_e2e() { "$root/testing/e2e/smoke.sh"; }
 
 step_mkdocs() {
@@ -112,6 +118,7 @@ run_step() {
     py-3.10-lower) step_python 3.10 lower ;;
     py-3.13-lower) step_python 3.13 lower ;;
     py-3.13-latest) step_python 3.13 latest ;;
+    node) step_node ;;
     e2e) step_e2e ;;
     mkdocs) step_mkdocs ;;
     spec-lint) tools_run python tools/spec_lint.py ;;

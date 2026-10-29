@@ -1004,6 +1004,27 @@ Unsupported instrumentation versions, task A10 (P18):
 
 ### Internal
 
+- **Node.js workspace scaffolding (Phase B, tasks B1a–B1c; not released).**
+  `nodejs/` is an npm workspace (private root, committed `package-lock.json`,
+  `npm ci --ignore-scripts`, engines `>=22.15.0`) with placeholder packages
+  `@staffops/otel-helper` (subpaths `/hooks`, `/register`, `/testing`) and
+  `@staffops/otel-helper-{aws,redis,sql,pino,winston}` (factories throw
+  "not implemented yet (task B10x)"). TypeScript 6.0 compiles once to CJS; a
+  hand-written ESM wrapper re-exports it, so `require` and `import` share one
+  state on `Symbol.for('staffops.otel-helper.state.v1')` (a test asserts it).
+  `/hooks` installs import-in-the-middle (`^3.5.3`) sync hooks where
+  supported, else `module.register`; it skips Node's internal hooks thread,
+  and under `--eval`/`--print` (iitm sync hooks crash there) it uses the async
+  loader, or on Node >= 26 no ESM hook plus one diagnostic line. The shared
+  state never throws: an unreadable, foreign or other-version slot makes the
+  copy inactive with one diagnostic line. Dependencies: OTel JS `~3.0.0` /
+  `~0.300.0`, `@opentelemetry/api` peer `>=1.10.0 <1.11.0` (what the SDK
+  declares); the install test asserts one copy of api, core, instrumentation,
+  otlp-grpc-exporter-base, grpc-js and import-in-the-middle. Checks: eslint + typescript-eslint, `tsc --noEmit`,
+  publint, `@arethetypeswrong/cli`, `node:test` + c8 (≥ 90% lines per
+  package). Compose `fakeotlp-node` / `node-tests`, `testing/verify.sh` step
+  `node`, CI jobs `node-test` (22.15.0, 22, 24, 26) and `node-api-range`. The
+  B1c go/no-go spike and its findings: `specs/nodejs-otel-helper/spike-B1c.md`.
 - **License: Apache-2.0** (`LICENSE`, the official text; same as
   OpenTelemetry). Declared in `python/pyproject.toml` (`license`) and the
   NuGet packages (`PackageLicenseExpression`). Before this the repository had

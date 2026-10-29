@@ -3,10 +3,11 @@
 #   docker compose -f testing/docker-compose.yml run --rm go-tests
 #   docker compose -f testing/docker-compose.yml run --rm python-tests
 #   PY_VERSION=3.10 PY_DEPS=lower docker compose -f testing/docker-compose.yml run --rm python-tests
+#   NODE_VERSION=22.15.0 docker compose -f testing/docker-compose.yml run --rm node-tests
 #   testing/e2e/smoke.sh
 #
-# Each suite has its own receiver (fakeotlp-go / fakeotlp-py) and shares its
-# network namespace, so Go and Python can run concurrently without seeing each
+# Each suite has its own receiver (fakeotlp-go / fakeotlp-py / fakeotlp-node)
+# and shares its network namespace, so the suites can run concurrently without seeing each
 # other's requests. Two runs of the SAME suite at once need separate projects
 # (`docker compose -p <name> ...`). The receiver binds only the case addresses
 # (127.0.0.2, 127.0.0.3, [::1]:24318): other unit tests exporting to
@@ -40,6 +41,10 @@ services:
   fakeotlp-py:
     <<: *fakeotlp
     volumes: [fakeotlp-py-out:/out]
+
+  fakeotlp-node:
+    <<: *fakeotlp
+    volumes: [fakeotlp-node-out:/out]
 
   go-tests:
     # Debian-based image: `-race` needs cgo + gcc. Version follows go.mod (go 1.26).
@@ -95,6 +100,46 @@ services:
         pip list 2>/dev/null | grep -E '^opentelemetry-(sdk|instrumentation) '
         python -m pytest tests/ -p no:cacheprovider -q --cov=staffops_otel_helper --cov=otel_helper --cov-report=term --cov-fail-under=90
 
+  node-tests:
+    # NODE_VERSION: CI matrix 22.15.0 (engines floor), 22, 24, 26 (spec JS1).
+    image: node:${NODE_VERSION:-24}-slim
+    network_mode: "service:fakeotlp-node"
+    depends_on:
+      fakeotlp-node:
+        condition: service_healthy
+    environment:
+      <<: *fakeotlp-env
+      NPM_CONFIG_UPDATE_NOTIFIER: "false"
+      NPM_CONFIG_FUND: "false"
+      NPM_CONFIG_AUDIT: "false"
+      # 1 = skip the registry-dependent api-range install test (offline runs).
+      NODE_TESTS_OFFLINE: ${NODE_TESTS_OFFLINE:-}
+    volumes:
+      - ..:/src:ro
+      - fakeotlp-node-out:/fakeotlp:ro
+      - npm-cache:/root/.npm
+    # Copy out of the read-only mount without host node_modules/dist (they may
+    # hold another platform's files), so nothing is written into the repo.
+    # Lifecycle scripts never run (`--ignore-scripts`, also set in nodejs/.npmrc).
+    command:
+      - sh
+      - -ec
+      - |
+        mkdir -p /work
+        tar -C /src/nodejs --exclude=node_modules --exclude=dist --exclude=coverage --exclude='*.tgz' -cf - . | tar -C /work -xf -
+        cd /work
+        node --version
+        for p in packages/*; do cmp /src/LICENSE "$$p/LICENSE"; done
+        npm ci --ignore-scripts
+        npm ls --all >/dev/null && echo 'npm ls: installed tree is valid'
+        npm run lint
+        npm run build
+        npm run typecheck
+        npm run check
+        node ci/check-pack.mjs
+        npm test
+        sh ci/api-range-install.sh
+
   # ── e2e smoke (testing/e2e/smoke.sh) ──────────────────────────────────
   e2e-certs:
     # CA + server certificate for the Collector's TLS receiver (fakeotlp's cert mode).
@@ -145,7 +190,9 @@ services:
 volumes:
   fakeotlp-go-out:
   fakeotlp-py-out:
+  fakeotlp-node-out:
   go-mod-cache:
   go-build-cache:
   pip-cache:
+  npm-cache:
   e2e-certs:

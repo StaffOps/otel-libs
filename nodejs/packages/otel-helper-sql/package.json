@@ -1,0 +1,53 @@
+{
+  "name": "@staffops/otel-helper-sql",
+  "version": "0.3.0-dev.0",
+  "description": "SQL (pg, mysql2) instrumentation for @staffops/otel-helper (opt-in).",
+  "license": "Apache-2.0",
+  "author": "StaffOps",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/StaffOps/otel-libs.git",
+    "directory": "nodejs/packages/otel-helper-sql"
+  },
+  "keywords": [
+    "opentelemetry",
+    "otel"
+  ],
+  "type": "commonjs",
+  "engines": {
+    "node": ">=22.15.0"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./esm/index.d.mts",
+        "default": "./esm/index.mjs"
+      },
+      "require": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "default": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      }
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "esm"
+  ],
+  "sideEffects": false,
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "check": "publint --strict . && attw --pack . --profile node16",
+    "test": "c8 --config ../../.c8rc.json node --test \"test/*.test.cjs\" \"test/*.test.mjs\""
+  },
+  "peerDependencies": {
+    "@staffops/otel-helper": "0.3.0-dev.0"
+  }
+}

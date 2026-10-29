@@ -1,0 +1,8 @@
+{
+  "all": true,
+  "include": ["dist/**/*.js", "esm/**/*.mjs"],
+  "exclude": ["test/**", "**/*.d.ts", "**/*.d.mts"],
+  "check-coverage": true,
+  "lines": 90,
+  "reporter": ["text", "lcov"]
+}

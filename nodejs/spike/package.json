@@ -1,0 +1,25 @@
+{
+  "name": "@staffops/otel-helper-spike",
+  "version": "0.0.0",
+  "private": true,
+  "description": "B1c go/no-go spike (specs/nodejs-otel-helper/spike-B1c.md). Not a workspace member: own lockfile; run-in-docker.sh installs the packed core with --no-save. Not published.",
+  "license": "Apache-2.0",
+  "engines": {
+    "node": ">=22.15.0"
+  },
+  "scripts": {
+    "spike": "node run-spike.cjs"
+  },
+  "dependencies": {
+    "@grpc/grpc-js": "^1.14.7",
+    "@opentelemetry/api": ">=1.10.0 <1.11.0",
+    "@opentelemetry/context-async-hooks": "~3.0.0",
+    "@opentelemetry/core": "~3.0.0",
+    "@opentelemetry/exporter-trace-otlp-grpc": "~0.300.0",
+    "@opentelemetry/instrumentation": "~0.300.0",
+    "@opentelemetry/instrumentation-grpc": "~0.300.0",
+    "@opentelemetry/instrumentation-http": "~0.300.0",
+    "@opentelemetry/otlp-grpc-exporter-base": "~0.300.0",
+    "@opentelemetry/sdk-trace": "~3.0.0"
+  }
+}

@@ -1,0 +1,36 @@
+{
+  "name": "staffops-otel-helper-workspace",
+  "private": true,
+  "description": "npm workspace root for the Node.js OpenTelemetry helper packages (not published).",
+  "license": "Apache-2.0",
+  "engines": {
+    "node": ">=22.15.0"
+  },
+  "workspaces": [
+    "packages/otel-helper",
+    "packages/otel-helper-aws",
+    "packages/otel-helper-redis",
+    "packages/otel-helper-sql",
+    "packages/otel-helper-pino",
+    "packages/otel-helper-winston"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "lint": "eslint .",
+    "check": "npm run check --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "verify": "npm run lint && npm run typecheck && npm run build && npm run check && npm test"
+  },
+  "devDependencies": {
+    "@arethetypeswrong/cli": "~0.18.5",
+    "@eslint/js": "~10.0.1",
+    "@types/node": "~22.20.5",
+    "c8": "~12.0.0",
+    "eslint": "~10.13.0",
+    "globals": "^17.13.0",
+    "publint": "~0.3.25",
+    "typescript": "~6.0.3",
+    "typescript-eslint": "~8.72.1"
+  }
+}

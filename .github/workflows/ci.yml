@@ -157,6 +157,73 @@ jobs:
           name: python-coverage-${{ matrix.python }}-${{ matrix.deps }}
           path: python/coverage.xml
 
+  node-test:
+    name: Node.js ${{ matrix.node }} (lint + build + test + coverage)
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # engines floor (spec JS1), latest 22, 24, 26 (upstream OTel JS CI set).
+        node: ['22.15.0', '22', '24', '26']
+    defaults:
+      run:
+        working-directory: nodejs
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      # For the parity export cases (task B2); started now so the job shape is final.
+      - uses: ./.github/actions/fakeotlp
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+          cache-dependency-path: nodejs/package-lock.json
+      - name: Packages ship the root LICENSE
+        run: for p in packages/*; do cmp ../LICENSE "$p/LICENSE"; done
+      # Dependency lifecycle scripts never run (also set in nodejs/.npmrc).
+      - run: npm ci --ignore-scripts
+      - name: Installed tree is valid (peers, no extraneous)
+        run: npm ls --all > /dev/null
+      - run: npm run lint
+      - run: npm run build
+      - run: npm run typecheck
+      - name: Package checks (publint, @arethetypeswrong/cli)
+        run: npm run check
+      - name: Pack contents (every exports target, LICENSE; no src/ or test/)
+        run: node ci/check-pack.mjs
+      - name: Test + coverage gate (c8 >= 90% lines, per package)
+        run: npm test
+      - name: Fake receiver logs
+        if: failure()
+        run: docker logs fakeotlp || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: node-coverage-${{ matrix.node }}
+          path: nodejs/packages/*/coverage/lcov.info
+
+  node-api-range:
+    # D-JS2: the core peer-depends on the api range the SDK 3.0 packages declare;
+    # this installs the packed core next to the newest api that range admits.
+    name: Node.js install test (newest @opentelemetry/api in the peer range)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: nodejs
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: nodejs/package-lock.json
+      - run: npm ci --ignore-scripts
+      - run: npm run build
+      - run: sh ci/api-range-install.sh
+
   e2e-smoke:
     name: e2e smoke (Collector, Go + Python, grpc/http-prefix/per-signal/tls)
     runs-on: ubuntu-latest

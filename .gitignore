@@ -46,12 +46,19 @@ dotnet/OtelHelper.Tests/coverage/
 
 # CI build output (consumed by Dockerfile.demo)
 packages/
+# ...but the Node.js workspace keeps its sources in nodejs/packages/.
+!nodejs/packages/
 
 # Claude Code — personal overrides, not for the team
 .claude/settings.local.json
 
 # MkDocs build output (repo-root only — docs/site/ is the mkdocs source dir, not this)
 /site/
+
+# Node.js (nodejs/; dist/ is covered by the Python entry above)
+node_modules/
+coverage/
+*.tgz
 
 # Built e2e smoke binary
 testing/e2e/go-smoke/go-smoke

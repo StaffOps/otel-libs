@@ -38,9 +38,11 @@ Each decision: choice; justification; trade-offs; when wrong; reversal; alternat
 exporters, `registerInstrumentations`, `AsyncLocalStorageContextManager`
 (enabled) and the composite propagator. **Construction order**: hooks and
 `registerInstrumentations` first, then credentials, exporters and providers —
-the exporter-base credential helpers `require('@grpc/grpc-js')`, which must
-load only after the gRPC instrumentation can patch it (B1c/B6 assert the
-app's grpc-js is patched when only gRPC OTLP export is configured).
+the exporter-base credential helpers `require('@grpc/grpc-js')`; loading it
+after the gRPC instrumentation is registered is **defensive** — spike B1c F6
+found grpc-js still patched when the exporter loads it first (B6 keeps the
+assertion that the app's grpc-js is patched when only gRPC OTLP export is
+configured).
 **Justification**: ADR-012; 3.0
 registers no context manager (without it no in-process parent link).
 **Trade-offs**: more code than `NodeSDK`. **When wrong / reversal / alternatives**: ADR-012.
@@ -77,7 +79,7 @@ document the env fallbacks (rejected: R8 leak, rejected headers on the wire).
 | generic/per-signal endpoints, `/v1/<signal>`, per-signal → generic → default fallback | H | |
 | schemeless → `https://` + default port; portless gRPC → `:4317` + warning | H | |
 | gRPC `http://h:80` → target `h:80` + insecure credentials | H | `URL.host` drops :80 → grpc-js 443 |
-| gRPC channel credentials | H | always passed explicitly — `createInsecureCredentials` / `createSslCredentials` of `@opentelemetry/otlp-grpc-exporter-base` (pinned exactly: same grpc-js copy as the exporter), cert/key files read by the helper — so TLS never depends on `process.env` after construction (spike check in B1c). Invalid input never throws from `setup()` (R8), mirroring the SDK's lazy path: unreadable file → warn naming the variable, continue without it; only one of client key / cert → warn, server-auth only; `createSsl` throws (bad PEM, key/cert mismatch) → warn, fall back to system roots. Fixture cases in B4b |
+| gRPC channel credentials | H | always passed explicitly — `createInsecureCredentials` / `createSslCredentials` of `@opentelemetry/otlp-grpc-exporter-base` (bounded `~0.300.x` like the other experimental packages — *corrected 2026-10-29 (spike B1c F4): an exact pin would duplicate the copy the exporters already pin exactly on a patch release; one copy, asserted by `nodejs/ci/api-range-install.sh` (path count per package)*), cert/key files read by the helper — so TLS never depends on `process.env` after construction (spike check in B1c). Invalid input never throws from `setup()` (R8), mirroring the SDK's lazy path: unreadable file → warn naming the variable, continue without it; only one of client key / cert → warn, server-auth only; `createSsl` throws (bad PEM, key/cert mismatch) → warn, fall back to system roots. Fixture cases in B4b |
 | userinfo/query strip; unsupported/opaque schemes → signal not configured; control chars → `<unparseable URL>` | H | |
 | IPv6 brackets kept; zone ids → warn `<unparseable URL>`, fall back | H | Node-only limitation (WHATWG URL rejects zone ids; Go accepts) — D-JS14 |
 | protocol (default grpc, 4318 inference INFO once, `http/json` warn+ignore) | H | |
@@ -205,6 +207,18 @@ not needed). **When wrong**: ESM-only consumers need tree-shaking.
 **Alternatives**: separate ESM/CJS builds (rejected: hazard).
 
 ### D-JS11 — Loading, packaging, registry
+**Spike B1c (2026-10-29, `spike-B1c.md`)**: all gates pass on 22.15.0
+(async hooks), 22.23.4, 24.22.2, 26.13.0 (sync hooks); `installHooks()` is a
+no-op on Node's internal hooks thread (preloads also run there); iitm 3.5.3
+sync hooks from a `--require` preload crash `node -e` on 24.22.2 (file entry
+points fine; upstream bug, documented).
+> **Amended 2026-10-29 (B1 review).** F1 reproduces on every sync-hooks
+> version (22.23.4, 24.22.2, 26.13.0), including `NODE_OPTIONS=--require=…/register`
+> + `node -e` (container HEALTHCHECKs). `installHooks()` therefore never installs
+> sync hooks under `--eval`/`--print`: the async `module.register` loader before
+> Node 26, no ESM hook (`cjs-only`) plus one diagnostic line on Node >= 26
+> (DEP0205). iitm range `^3.5.3` (a caret subset of instrumentation's `^3.0.0`,
+> so one copy), checked by the install test.
 **Choice**: the `/hooks` entry installs import-in-the-middle sync hooks when
 `supportsSyncHooks()` else `module.register` (iitm minor pinned); `/register`
 imports `/hooks` then calls `setup()`; `setup()` warns when it runs in an ESM
@@ -260,3 +274,5 @@ cluster/pm2 are Node's prefork model (not `skip:no-prefork-model`).
 | IPv6 zone ids in endpoints rejected (WHATWG URL) | recorded; warning + fallback |
 | `cluster` workers share the metrics port (round-robin scrapes) | warning; docs recommend per-worker port or OTLP |
 | BSP/BLRP export-timeout env precedence differs between Go and Python | contract follow-up; Node: explicit env wins, else OTLP timeout |
+| gRPC over TLS to an **IP-literal** endpoint fails on Node 26 (Node refuses an IP as TLS ServerName; grpc-js sets it from the target host; DEP0123 warning on 22/24) — spike B1c F5 | **proposed** (decided in B2/B4b): helper warns for IP-literal gRPC TLS endpoints; fixture TLS receivers resolved by DNS name (fakeotlp cert SAN, shared with Go/Python) or `skip:node26-ip-servername` on the 26 leg |
+| `module.register` runtime-deprecated on Node 26 (DEP0205) — spike B1c F3 | `/hooks` uses sync hooks there; the `module.register` fallback runs only on versions where it is not deprecated |
