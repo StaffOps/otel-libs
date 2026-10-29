@@ -12,10 +12,12 @@ Planning artefacts for `otel-libs`. Conventions and principles live in
    [design](config-contract-v0.3/design.md) · [tasks](config-contract-v0.3/tasks.md)
 2. [`soak-simulation/`](soak-simulation/) — **active**. Local DEV/HML/PRD soak
    of the rc (Docker Compose; Kubernetes deferred as Phase K).
-3. [`repo-tooling/`](repo-tooling/) — **active**. Hooks, spec lint,
+3. [`nodejs-otel-helper/`](nodejs-otel-helper/) — **active**. Phase B: Node.js
+   helper at parity on the 0.3 contract.
+4. [`repo-tooling/`](repo-tooling/) — **active**. Hooks, spec lint,
    traceability, local verify, skills.
-4. [`decisions/`](decisions/) — decision records (index below).
-5. Shipped (historical, older user-story format; superseded wherever
+5. [`decisions/`](decisions/) — decision records (index below).
+6. Shipped (historical, older user-story format; superseded wherever
    `config-contract-v0.3` differs — e.g. health paths D5, gRPC API ADR-005):
    [`metrics-exporter-contract/`](metrics-exporter-contract/) (0.1.0),
    [`go-otel-helper/`](go-otel-helper/) (0.1.0).
@@ -34,6 +36,8 @@ Planning artefacts for `otel-libs`. Conventions and principles live in
 | [008](decisions/ADR-008-shared-parity-fixture.md) | Enforce parity with a shared JSON fixture | Accepted |
 | [009](decisions/ADR-009-dotnet-retarget-net10-only.md) | Retarget .NET to `net10.0` only before .NET 8 EOL | Accepted |
 | [010](decisions/ADR-010-go-module-path-matches-repo.md) | Go module path matches the repository name | Accepted |
+| [011](decisions/ADR-011-owner-prefixed-package-names.md) | Owner-prefixed package names in every language | Accepted |
+| [012](decisions/ADR-012-node-helper-owns-env-resolution.md) | Node.js helper composes the SDK and owns env resolution (amends ADR-001) | Accepted |
 
 ## Format
 

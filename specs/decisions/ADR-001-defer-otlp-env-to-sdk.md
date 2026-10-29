@@ -1,5 +1,9 @@
 # ADR-001: Defer OTLP exporter env handling to the OTel SDK
 
+> **Amended 2026-10-29 for Node.js** by [ADR-012](ADR-012-node-helper-owns-env-resolution.md):
+> the JS SDK 3.0 no longer reads env in its stable packages, so the Node helper
+> owns every D1 row except certificate/mTLS variables.
+
 **Status**: Accepted | **Date**: 2026-10-27 | **Deciders**: repo owner, validated by `observability` + `dev` agents
 
 > **Corrected 2026-10-27 by adversarial review.** The first version deferred

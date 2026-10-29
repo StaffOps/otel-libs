@@ -89,5 +89,8 @@ Contract catch-up R1–R9 in .NET, plus:
 | N10 | `OtelCollectorEndpoint="collector:4317"` passes validation | `TelemetryOptionsValidator.cs:17-19` | LOW |
 | N11 | Profiling `Start()` at registration; prerequisites miss `CORECLR_PROFILER(_PATH)`/`LD_PRELOAD` | `OtelHelper.Profiling/*` | LOW |
 | N12 | No SourceLink/`Directory.Build.props`; CS1591 blocks warnings-as-errors | csproj | LOW |
+| N13 | Rename packages and namespace to `StaffOps.OtelHelper*` and reserve the `StaffOps.` ID prefix on nuget.org (ADR-011) | csproj, all `using OtelHelper` | MEDIUM |
+
+**Contract follow-up (2026-10-29, Node B0 review)**: Go always passes the resolved OTLP timeout to the batch span/log processors (overriding `OTEL_BSP_EXPORT_TIMEOUT` / `OTEL_BLRP_EXPORT_TIMEOUT`); Python lets the SDK read those variables. Pick one rule (Node uses: explicit BSP/BLRP env wins, else the OTLP timeout), add parity cases, align Go/Python.
 
 Refuted (do not act): .NET ignoring `OTEL_SDK_DISABLED` — SDK ≥ 1.15 honors it.
