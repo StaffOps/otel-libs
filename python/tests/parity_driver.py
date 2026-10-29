@@ -30,7 +30,7 @@ if os.environ.get("PARITY_COVERAGE_DATA"):
     import coverage
 
     _COV = coverage.Coverage(data_file=os.environ["PARITY_COVERAGE_DATA"], data_suffix=True,
-                             source=["otel_helper"], config_file=False)
+                             source=["staffops_otel_helper"], config_file=False)
     _COV.start()
 
 # ── diagnostics capture ───────────────────────────────────────────────────
@@ -38,7 +38,7 @@ if os.environ.get("PARITY_COVERAGE_DATA"):
 # handler to the root logger: the helper's handler decisions depend on what
 # root has at setup time (P10), so the capture must not change them.
 # Helper diagnostics (helper_log) are records from the helper's own loggers
-# (`otel_helper` and children) at any level; SDK/library output is excluded.
+# (`staffops_otel_helper` and children) at any level; SDK/library output is excluded.
 _captured: list[str] = []
 _helper: list[str] = []
 _orig_call_handlers = logging.Logger.callHandlers
@@ -50,7 +50,7 @@ def _call_handlers(self: logging.Logger, record: logging.LogRecord) -> None:
     except Exception:  # noqa: BLE001 - malformed record args
         msg = str(record.msg)
     line = f"{record.name} {record.levelname} {msg}"
-    if record.name == "otel_helper" or record.name.startswith("otel_helper."):
+    if record.name == "staffops_otel_helper" or record.name.startswith("staffops_otel_helper."):
         _helper.append(line)
     if record.levelno >= logging.WARNING:
         _captured.append(line)
@@ -80,7 +80,7 @@ class UnsupportedCodeKey(Exception):
 
 
 def _options(code: dict):
-    from otel_helper import DeploymentEnvironment, TelemetryOptions
+    from staffops_otel_helper import DeploymentEnvironment, TelemetryOptions
 
     direct = {"service_name", "otel_endpoint", "otlp_protocol", "metric_exporters",
               "sample_ratio", "export_interval_ms", "resource_attributes",
@@ -104,7 +104,7 @@ def _options(code: dict):
 
 
 def _setup(case: dict) -> tuple[object | None, dict]:
-    from otel_helper import setup_telemetry
+    from staffops_otel_helper import setup_telemetry
 
     snap: dict = {}
     options = _options(case.get("code") or {})
@@ -152,7 +152,7 @@ def _resource_snapshot() -> dict:
 
 
 def kind_resolve(case: dict) -> dict:
-    from otel_helper import get_default_log_level
+    from staffops_otel_helper import get_default_log_level
 
     opts, snap = _setup(case)
     if opts is not None:
@@ -301,7 +301,7 @@ def _server_spans(exporter) -> int:
 def _scrape_response():
     from starlette.testclient import TestClient
 
-    from otel_helper import metrics_app
+    from staffops_otel_helper import metrics_app
 
     return TestClient(metrics_app()).get("/")
 
@@ -434,7 +434,7 @@ def kind_fork(case: dict) -> dict:
     """Pre-fork server model (gunicorn post_fork): fork twice, set up in each child."""
     import tempfile
 
-    import otel_helper  # noqa: F401 - imported before fork, as in a preloaded app
+    import staffops_otel_helper  # noqa: F401 - imported before fork, as in a preloaded app
 
     workers = []
     tmp = tempfile.mkdtemp()

@@ -22,7 +22,7 @@ this skill is the procedure. If they disagree, AGENTS.md wins — fix this file.
 - Tests: `docker compose -f testing/docker-compose.yml run --rm go-tests` /
   `python-tests` (+ `PY_VERSION=… PY_DEPS=lower|latest`), e2e
   `testing/e2e/smoke.sh`. Before a tag or PR: `testing/verify.sh`.
-- Diagnostics: Go package stderr logger; Python `otel_helper.*` loggers;
+- Diagnostics: Go package stderr logger; Python `staffops_otel_helper.*` loggers;
   never print secrets.
 
 ## 3. Adversarial validation

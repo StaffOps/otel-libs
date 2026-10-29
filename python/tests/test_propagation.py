@@ -8,7 +8,7 @@ import pytest
 from opentelemetry import baggage, metrics, trace
 from opentelemetry.propagate import extract, inject
 
-from otel_helper import TelemetryOptions, setup_telemetry
+from staffops_otel_helper import TelemetryOptions, setup_telemetry
 
 
 @pytest.fixture(autouse=True)

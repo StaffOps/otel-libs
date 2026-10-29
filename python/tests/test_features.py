@@ -8,10 +8,10 @@ from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.sampling import ParentBased
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
-from otel_helper.config import TelemetryOptions, DeploymentEnvironment
-from otel_helper.tracing import configure_tracing
-from otel_helper.processors import DebugProcessor
-from otel_helper.setup import reset_telemetry
+from staffops_otel_helper.config import TelemetryOptions, DeploymentEnvironment
+from staffops_otel_helper.tracing import configure_tracing
+from staffops_otel_helper.processors import DebugProcessor
+from staffops_otel_helper.setup import reset_telemetry
 
 
 @pytest.fixture(autouse=True)
@@ -153,31 +153,31 @@ class TestGrpcAutoInstrumentation:
 
 class TestHelpers:
     def test_get_tracer(self):
-        from otel_helper import get_tracer, setup_telemetry
+        from staffops_otel_helper import get_tracer, setup_telemetry
         setup_telemetry(TelemetryOptions(service_name="test", otel_endpoint="http://localhost:4317"))
         tracer = get_tracer("my-svc")
         assert tracer is not None
 
     def test_get_meter(self):
-        from otel_helper import get_meter, setup_telemetry
+        from staffops_otel_helper import get_meter, setup_telemetry
         setup_telemetry(TelemetryOptions(service_name="test", otel_endpoint="http://localhost:4317"))
         meter = get_meter("my-svc")
         assert meter is not None
 
     def test_get_tracer_default_name(self):
-        from otel_helper import get_tracer
+        from staffops_otel_helper import get_tracer
         tracer = get_tracer()
         assert tracer is not None
 
     def test_get_meter_default_name(self):
-        from otel_helper import get_meter
+        from staffops_otel_helper import get_meter
         meter = get_meter()
         assert meter is not None
 
 
 class TestStartRootSpan:
     def test_creates_independent_trace(self):
-        from otel_helper.tracing import start_root_span
+        from staffops_otel_helper.tracing import start_root_span
         from opentelemetry.sdk.trace import TracerProvider
         from opentelemetry.sdk.trace.export import SimpleSpanProcessor
         from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
@@ -196,7 +196,7 @@ class TestStartRootSpan:
         assert root_child.parent is None
 
     def test_yields_span(self):
-        from otel_helper.tracing import start_root_span
+        from staffops_otel_helper.tracing import start_root_span
         from opentelemetry.sdk.trace import TracerProvider
 
         provider = TracerProvider()
@@ -209,12 +209,12 @@ class TestStartRootSpan:
 
 class TestDebugProcessorLifecycle:
     def test_shutdown(self):
-        from otel_helper.processors import DebugProcessor
+        from staffops_otel_helper.processors import DebugProcessor
         p = DebugProcessor()
         p.shutdown()
 
     def test_force_flush(self):
-        from otel_helper.processors import DebugProcessor
+        from staffops_otel_helper.processors import DebugProcessor
         p = DebugProcessor()
         assert p.force_flush() is True
 
@@ -272,7 +272,7 @@ class TestDisabledSignals:
             service_name="test", otel_endpoint="http://localhost:4317",
             disabled_signals=["metrics"]
         )
-        from otel_helper.setup import setup_telemetry, reset_telemetry
+        from staffops_otel_helper.setup import setup_telemetry, reset_telemetry
         reset_telemetry()
         setup_telemetry(opts)
         reset_telemetry()
@@ -282,7 +282,7 @@ class TestDisabledSignals:
             service_name="test", otel_endpoint="http://localhost:4317",
             disabled_metrics=["http.*"]
         )
-        from otel_helper.setup import setup_telemetry, reset_telemetry
+        from staffops_otel_helper.setup import setup_telemetry, reset_telemetry
         reset_telemetry()
         setup_telemetry(opts)
         reset_telemetry()

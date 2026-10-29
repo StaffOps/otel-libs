@@ -23,9 +23,9 @@ from opentelemetry.sdk.metrics import MeterProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
-import otel_helper.setup as setup_mod
-from otel_helper import metrics_app, setup_telemetry, shutdown_telemetry
-from otel_helper.config import TelemetryOptions
+import staffops_otel_helper.setup as setup_mod
+from staffops_otel_helper import metrics_app, setup_telemetry, shutdown_telemetry
+from staffops_otel_helper.config import TelemetryOptions
 
 
 def _opts(**kwargs) -> TelemetryOptions:
@@ -250,7 +250,7 @@ class TestShutdown:
     def test_at_exit_hook_logs_instead_of_raising(self, caplog):
         setup_telemetry(_opts())
         _spy_shutdowns(setup_mod._pipeline, {"meter_provider": ValueError("exit boom")})
-        with caplog.at_level(logging.WARNING, logger="otel_helper"):
+        with caplog.at_level(logging.WARNING, logger="staffops_otel_helper"):
             setup_mod._shutdown_at_exit()
         assert "exit boom" in caplog.text
 
@@ -260,7 +260,7 @@ class TestSetupAfterShutdown:
         first = setup_telemetry(_opts(service_name="first"))
         old_handler = _helper_handlers()[0]
         shutdown_telemetry()
-        with caplog.at_level(logging.WARNING, logger="otel_helper"):
+        with caplog.at_level(logging.WARNING, logger="staffops_otel_helper"):
             second = setup_telemetry(_opts(service_name="second"))
         assert second is not first and second.service_name == "second"
         handlers = _helper_handlers()
@@ -391,7 +391,7 @@ class TestDowngradeReportsSignalsOff:
 
 class TestRollbackDetails:
     def test_partial_build_inside_build_metrics(self, monkeypatch):
-        import otel_helper.metrics as metrics_mod
+        import staffops_otel_helper.metrics as metrics_mod
 
         with socket.socket() as s:
             s.bind(("127.0.0.1", 0))
@@ -413,7 +413,7 @@ class TestRollbackDetails:
                        for t in threading.enumerate())
 
     def test_busy_port_does_not_register_the_reader(self, monkeypatch, caplog):
-        import otel_helper.metrics as metrics_mod
+        import staffops_otel_helper.metrics as metrics_mod
 
         created = []
         monkeypatch.setattr(metrics_mod, "_HelperPrometheusReader",
@@ -491,7 +491,7 @@ class TestFinalLowItems:
         foreign = SdkMeterProvider()
         metrics.set_meter_provider(foreign)
         try:
-            with caplog.at_level(logging.WARNING, logger="otel_helper"):
+            with caplog.at_level(logging.WARNING, logger="staffops_otel_helper"):
                 opts = setup_telemetry(_opts())
             assert "already installed by other code" in caplog.text
             assert opts.is_signal_enabled("metrics") is False
@@ -505,7 +505,7 @@ class TestFinalLowItems:
 
         monkeypatch.setattr(setup_mod, "configure_instrumentations", boom)
         monkeypatch.setattr(setup_mod._Pipeline, "close", lambda self, timeout_ms: ["traces: close boom"])
-        with caplog.at_level(logging.WARNING, logger="otel_helper"):
+        with caplog.at_level(logging.WARNING, logger="staffops_otel_helper"):
             with pytest.raises(RuntimeError, match="injected late failure"):
                 setup_telemetry(_opts())
         assert "setup rollback: traces: close boom" in caplog.text
@@ -521,12 +521,12 @@ class TestFinalLowItems:
                 shutdown_telemetry()
             depths.append(len(traceback.extract_tb(info.value.__traceback__)))
         assert depths[1] == depths[2]
-        with caplog.at_level(logging.WARNING, logger="otel_helper"):
+        with caplog.at_level(logging.WARNING, logger="staffops_otel_helper"):
             setup_mod._shutdown_at_exit()
         assert "trace boom" not in caplog.text
 
     def test_fork_child_gets_a_fresh_metrics_lock(self, monkeypatch):
-        import otel_helper.metrics as metrics_mod
+        import staffops_otel_helper.metrics as metrics_mod
 
         monkeypatch.setattr(setup_mod, "_forked_after_import", False)
         monkeypatch.setattr(setup_mod, "_lock", setup_mod._lock)

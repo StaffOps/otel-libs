@@ -16,13 +16,13 @@ import textwrap
 
 import pytest
 
-from otel_helper import _semconv
+from staffops_otel_helper import _semconv
 
 _SCRIPT = textwrap.dedent("""
     import os, sys, json
     if sys.argv[1] != "-":
         os.environ["OTEL_SEMCONV_STABILITY_OPT_IN"] = sys.argv[1]
-    from otel_helper._semconv import ensure_semconv_default
+    from staffops_otel_helper._semconv import ensure_semconv_default
     ensure_semconv_default()
     from opentelemetry import trace
     from opentelemetry.sdk.trace import TracerProvider
@@ -30,7 +30,7 @@ _SCRIPT = textwrap.dedent("""
     from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
     ex = InMemorySpanExporter(); tp = TracerProvider(); tp.add_span_processor(SimpleSpanProcessor(ex))
     trace.set_tracer_provider(tp)
-    from otel_helper.ext.sql import instrument_sql
+    from staffops_otel_helper.ext.sql import instrument_sql
     import sqlalchemy
     assert instrument_sql()
     with sqlalchemy.create_engine("sqlite://").connect() as c:

@@ -16,8 +16,8 @@ from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace.sampling import ParentBased, StaticSampler, TraceIdRatioBased
 from opentelemetry.trace import NonRecordingSpan, SpanContext, TraceFlags
 
-from otel_helper.config import TelemetryOptions
-from otel_helper.tracing import build_sampler, configure_tracing
+from staffops_otel_helper.config import TelemetryOptions
+from staffops_otel_helper.tracing import build_sampler, configure_tracing
 
 _TRACE_ID = 0x0AF7651916CD43DD8448EB211C80319C
 _SPAN_ID = 0xB7AD6B7169203331
@@ -50,9 +50,9 @@ def _sampled(provider, parent: Context | None) -> bool:
 
 
 def _helper_warnings(caplog) -> list[str]:
-    """Sampler diagnostics only (otel_helper.tracing); config warns about unrelated unset vars."""
+    """Sampler diagnostics only (staffops_otel_helper.tracing); config warns about unrelated unset vars."""
     return [r.getMessage() for r in caplog.records
-            if r.name == "otel_helper.tracing" and r.levelno >= logging.WARNING]
+            if r.name == "staffops_otel_helper.tracing" and r.levelno >= logging.WARNING]
 
 
 class TestPrecedence:
@@ -208,7 +208,7 @@ class TestNumericGrammarAndUnsupported:
     @pytest.mark.parametrize("raw", ["2.5e-1", "0.2_5", "+0.5", "nan", "\uff10.5", ".5"])
     def test_alias_rejects_non_plain_decimal(self, raw, caplog):
         os.environ["OTEL_HELPER_SAMPLE_RATIO"] = raw
-        with caplog.at_level(logging.WARNING, logger="otel_helper"):
+        with caplog.at_level(logging.WARNING, logger="staffops_otel_helper"):
             _, opts = _provider(service_name="svc")
         assert opts.resolved.sample_ratio == 1.0
         assert "OTEL_HELPER_SAMPLE_RATIO" in caplog.text

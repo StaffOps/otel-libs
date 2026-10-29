@@ -5,7 +5,7 @@ With a logs exporter active, an OpenTelemetry handler from
 deprecated) goes on the root logger and on uvicorn's non-propagating loggers.
 Without one, no OTel handler is attached at all: application records reach
 stdout through a console fallback installed as ``logging.lastResort`` (see
-``otel_helper._console``), so ``logging.basicConfig()`` called later still works.
+``staffops_otel_helper._console``), so ``logging.basicConfig()`` called later still works.
 """
 
 from __future__ import annotations
@@ -22,15 +22,15 @@ from opentelemetry.sdk._logs import LoggingHandler as _SDKLoggingHandler
 from opentelemetry.sdk._logs.export import BatchLogRecordProcessor
 from opentelemetry.sdk.resources import Resource
 
-from otel_helper import _console
-from otel_helper._exporters import build_otlp_exporter
-from otel_helper.config import TelemetryOptions, _env, get_default_log_level
+from staffops_otel_helper import _console
+from staffops_otel_helper._exporters import build_otlp_exporter
+from staffops_otel_helper.config import TelemetryOptions, _env, get_default_log_level
 
 # Upstream variable (opentelemetry-instrumentation-logging): code.file.path,
 # code.function.name and code.line.number on every record. Default false, as upstream.
 ENV_LOG_CODE_ATTRIBUTES = "OTEL_PYTHON_LOG_CODE_ATTRIBUTES"
 
-_log = logging.getLogger("otel_helper.logging")
+_log = logging.getLogger("staffops_otel_helper.logging")
 
 # Framework loggers quieted outside DEBUG — only when the application left them NOTSET.
 # httpx/hpack log every request at INFO/DEBUG.
@@ -44,7 +44,7 @@ _EXTRA_LOGGERS = ("uvicorn", "uvicorn.error", "uvicorn.access")
 # Name of the SDK BatchLogRecordProcessor worker thread (sdk 1.42-1.45): records it
 # emits come from exporting logs and would feed the next batch.
 _LOG_EXPORT_THREAD = "OtelBatchLogRecordProcessor"
-_HELPER_LOGGER = "otel_helper"
+_HELPER_LOGGER = "staffops_otel_helper"
 
 # Serializes the guarded stdlib config functions (they mutate root's handler list).
 _config_lock = threading.RLock()
@@ -159,7 +159,7 @@ class SetupPrep:
 def begin_setup_logging() -> SetupPrep:
     """Before options are resolved: helper INFO diagnostics must not be lost.
 
-    The ``otel_helper`` logger goes to INFO when the application left it NOTSET
+    The ``staffops_otel_helper`` logger goes to INFO when the application left it NOTSET
     (otherwise PRD's WARNING root level would drop INFO diagnostics), and, while
     setup runs, the stdlib lastResort also prints INFO+ helper diagnostics.
     """

@@ -49,7 +49,7 @@ Common fields, every kind: `error` (present only when setup failed),
 logger, `slog`/`log` default; Python — every WARNING+ record and
 `warnings.warn`), `helper_log` (the **helper's own** diagnostics only — Go:
 `log`/`slog` records whose call site is a non-test file of the helper package;
-Python: records from the `otel_helper` logger hierarchy; helper diagnostics must
+Python: records from the `staffops_otel_helper` logger hierarchy; helper diagnostics must
 use those channels), `console` (process stdout + stderr) and `log`
 (diagnostics + console). Redaction is asserted on `helper_log`: the SDKs echo
 raw values in their own messages (Go `parse headers input`, Python's invalid
@@ -141,7 +141,7 @@ Exceptions, and why:
 
 **Diagnostics channel contract (for A3/A9):** helper configuration
 diagnostics MUST go through `log`/`slog` from the helper package (Go) or the
-`otel_helper*` loggers (Python) — not `otel.Handle`, `fmt.Fprint*(os.Std…)` or
+`staffops_otel_helper*` loggers (Python) — not `otel.Handle`, `fmt.Fprint*(os.Std…)` or
 `warnings.warn` — or `helper_log` won't see them. Go enforces it with
 `go/diag_channel_test.go` (AST check of non-test files; `otel.Handle` only
 for the runtime errors on its allow-list). Go helper diagnostics go to the

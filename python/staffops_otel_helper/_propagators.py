@@ -18,9 +18,9 @@ import logging
 import os
 import sys
 
-from otel_helper.config import TRIM_CHARS
+from staffops_otel_helper.config import TRIM_CHARS
 
-_log = logging.getLogger("otel_helper.propagators")
+_log = logging.getLogger("staffops_otel_helper.propagators")
 _DEFAULT = ["tracecontext", "baggage"]
 
 ENV_PROPAGATORS = "OTEL_PROPAGATORS"

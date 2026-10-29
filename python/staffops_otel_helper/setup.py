@@ -14,13 +14,13 @@ from opentelemetry import _logs, metrics, trace
 from opentelemetry.propagate import set_global_textmap
 from opentelemetry.sdk.resources import Resource
 
-from otel_helper._propagators import build_propagator
-from otel_helper._semconv import ensure_semconv_default
-from otel_helper.config import ATTR_INSTANCE_ID, TelemetryOptions
-from otel_helper.tracing import build_tracer_provider
-from otel_helper import metrics as _metrics_state
-from otel_helper.metrics import build_metrics, stop_listener
-from otel_helper.logging_setup import (
+from staffops_otel_helper._propagators import build_propagator
+from staffops_otel_helper._semconv import ensure_semconv_default
+from staffops_otel_helper.config import ATTR_INSTANCE_ID, TelemetryOptions
+from staffops_otel_helper.tracing import build_tracer_provider
+from staffops_otel_helper import metrics as _metrics_state
+from staffops_otel_helper.metrics import build_metrics, stop_listener
+from staffops_otel_helper.logging_setup import (
     attach_logging,
     begin_setup_logging,
     build_logging,
@@ -29,9 +29,9 @@ from otel_helper.logging_setup import (
     end_setup_logging,
     remove_foreign_otel_handlers,
 )
-from otel_helper.instrumentation import configure_instrumentations, uninstrument
+from staffops_otel_helper.instrumentation import configure_instrumentations, uninstrument
 
-_log = logging.getLogger("otel_helper.setup")
+_log = logging.getLogger("staffops_otel_helper.setup")
 _initialized = False
 # Serializes setup/shutdown; reentrant so a failing setup can roll back under it.
 _lock = threading.RLock()
@@ -219,7 +219,7 @@ def setup_telemetry(options: TelemetryOptions | None = None) -> TelemetryOptions
 
     Raises:
         ValueError: an option set in code is invalid. Invalid environment values
-            only log a warning (``otel_helper`` logger) and fall back to the default.
+            only log a warning (``staffops_otel_helper`` logger) and fall back to the default.
         RuntimeError: a pipeline could not be built (e.g. the /metrics port is busy).
     """
     emit_fork_warning()

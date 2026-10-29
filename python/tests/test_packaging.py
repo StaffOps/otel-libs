@@ -4,14 +4,16 @@ import ast
 from importlib import resources
 from pathlib import Path
 
-import otel_helper
+import staffops_otel_helper
 
-_PKG_DIR = Path(otel_helper.__file__).parent
+_PKG_DIR = Path(staffops_otel_helper.__file__).parent
 
 
 def test_ships_py_typed_marker():
-    """P17: the package ships py.typed."""
-    assert resources.files("otel_helper").joinpath("py.typed").is_file()
+    """P17: the package (and the otel_helper compatibility module) ships py.typed."""
+    assert resources.files("staffops_otel_helper").joinpath("py.typed").is_file()
+    # ADR-011 compatibility module (removed in 1.0), shipped next to it in the wheel.
+    assert (_PKG_DIR.parent / "otel_helper" / "py.typed").is_file()
 
 
 def test_no_opentelemetry_internal_imports():

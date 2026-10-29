@@ -3,8 +3,8 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "otel-helper"
-version = "0.3.0rc2"
+name = "staffops-otel-helper"
+version = "0.3.0rc3"
 description = "OpenTelemetry instrumentation helper for Python"
 requires-python = ">=3.10"
 license = "Apache-2.0"
@@ -33,7 +33,7 @@ dependencies = [
 aws = ["opentelemetry-instrumentation-botocore>=0.63b0,<0.67b0"]
 redis = ["opentelemetry-instrumentation-redis>=0.63b0,<0.67b0"]
 sql = ["opentelemetry-instrumentation-sqlalchemy>=0.63b0,<0.67b0"]
-all = ["otel-helper[aws,redis,sql]"]
+all = ["staffops-otel-helper[aws,redis,sql]"]
 dev = [
     "pytest>=7.0",
     "pytest-cov>=4.0",
@@ -48,7 +48,22 @@ dev = [
 ]
 
 [tool.hatch.build.targets.wheel]
-packages = ["otel_helper"]
+# otel_helper: deprecated compatibility module + .pyi stubs (ADR-011), removed in 1.0.
+packages = ["staffops_otel_helper", "otel_helper"]
+
+[tool.hatch.build.targets.sdist]
+# Local test/build leftovers never ship (they are gitignored, but a build from a
+# copy without .git does not see the root .gitignore).
+exclude = [
+    ".coverage*",
+    "coverage.xml",
+    "htmlcov",
+    ".pytest_cache",
+    "__pycache__",
+    "*.pyc",
+    "dist",
+    "packages",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

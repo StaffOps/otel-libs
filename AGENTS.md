@@ -15,7 +15,9 @@ those.
 
 Monorepo of OpenTelemetry helper libraries that must stay **functionally
 equivalent**: `go/` (module `github.com/staffops/otel-libs/go` +
-`ext/*` submodules), `python/` (`otel-helper`, extras `aws`/`redis`/`sql`),
+`ext/*` submodules), `python/` (`staffops-otel-helper`, import `staffops_otel_helper`, extras
+`aws`/`redis`/`sql`; `otel_helper` is a deprecated re-export until 1.0 —
+[ADR-011](specs/decisions/ADR-011-owner-prefixed-package-names.md)),
 `dotnet/` (`OtelHelper` + `.AWS`/`.Redis`/`.Sql`/`.Profiling`). Planned:
 `nodejs/`. Shared Grafana dashboards in `dashboards/`, MkDocs site in
 `docs/site/`, specs in [`specs/`](specs/README.md).
@@ -101,7 +103,7 @@ resolution rules: design D1. Summary of what differs between the two contracts:
 ## Packaging
 
 - **Core stays lightweight.** AWS/Redis/SQL instrumentations are opt-in:
-  `ext/otel{aws,redis,sql}` (Go), `otel-helper[aws,redis,sql]` (Python — core
+  `ext/otel{aws,redis,sql}` (Go), `staffops-otel-helper[aws,redis,sql]` (Python — core
   must NOT depend on them), `OtelHelper.{AWS,Redis,Sql}` (NuGet).
 - **Libraries use version ranges, not exact pins.** Exact pins only in
   example/demo lockfiles. Python contrib betas move in lockstep with the SDK —
@@ -142,7 +144,7 @@ resolution rules: design D1. Summary of what differs between the two contracts:
   commit reminder, and a session-start summary of open spec tasks.
 - Helper diagnostics (config warnings, deprecations): Go → the package's stderr
   `*slog.Logger` (never `slog.Default()`, `fmt.Fprint*`, or `otel.Handle`, which
-  is for SDK pipeline errors); Python → `logging.getLogger("otel_helper…")`.
+  is for SDK pipeline errors); Python → `logging.getLogger("staffops_otel_helper…")`.
   Never print secrets (`*_HEADERS`, `*_CLIENT_KEY`, URL userinfo/query).
 - Commit messages: Conventional Commits with a language scope, e.g.
   `fix(go): ...`, `feat(all): ...`.

@@ -10,11 +10,11 @@ packages; see [Creating a read:packages token](#creating-a-readpackages-token).
 | Language | Latest release | Next | Requirements |
 |----------|----------------|------|--------------|
 | .NET | `0.2.0` | 0.3 contract in Phase C (from now on .NET releases are tagged `dotnet/vX.Y.Z`) | .NET 8 (runs on .NET 10 via roll-forward) |
-| Python | `0.2.0` | `0.3.0-rc.2` (release candidate, tag `v0.3.0-rc.2`; wheel version `0.3.0rc2`) | Python ≥ 3.10; OpenTelemetry `>=1.42,<1.46`, contrib `>=0.63b0,<0.67b0` from 0.3 |
+| Python | `0.2.0` (`otel-helper`) | `0.3.0-rc.2` published as `otel-helper` (tag `v0.3.0-rc.2`, wheel `otel_helper-0.3.0rc2-py3-none-any.whl`); next `0.3.0-rc.3` (tag `v0.3.0-rc.3`, wheel `staffops_otel_helper-0.3.0rc3-py3-none-any.whl`) — the first under the new name (ADR-011) | Python ≥ 3.10; OpenTelemetry `>=1.42,<1.46`, contrib `>=0.63b0,<0.67b0` from 0.3 |
 | Go | `go/v0.2.1` | `v0.3.0-rc.2` (tags `go/v0.3.0-rc.2`, `go/ext/<module>/v0.3.0-rc.2`; new module path, see ADR-010) | Go ≥ 1.22 for 0.2.x, **Go ≥ 1.26 from 0.3** |
 
 The commands below install the latest release. When a 0.3 release candidate is
-published, replace the version (Python release `v0.3.0-rc.2`; Go `@v0.3.0-rc.2`, which resolves the `go/v0.3.0-rc.2` tag) and read the
+published, replace the version (Python release `v0.3.0-rc.2`, still named `otel-helper`, or `v0.3.0-rc.3`+ named `staffops-otel-helper`; Go `@v0.3.0-rc.2`, which resolves the `go/v0.3.0-rc.2` tag) and read the
 [migration guide](CHANGELOG.md#unreleased) before upgrading — 0.3 changes
 defaults, metric names and APIs.
 
@@ -115,13 +115,26 @@ services.AddOtelHelper();
 
 Distribution: wheel + sdist attached to GitHub Releases (NOT PyPI, NOT GitHub Packages).
 
-Package name on import: `otel_helper`. pip/distribution name: `otel-helper`.
+Distribution (pip) name: `staffops-otel-helper`. Import name:
+`staffops_otel_helper`. Wheel file: `staffops_otel_helper-<version>-py3-none-any.whl`
+(ADR-011, from `0.3.0rc3`). `0.2.x` and `0.3.0rc2` shipped as `otel-helper` /
+`otel_helper-<version>-py3-none-any.whl` with `import otel_helper`; rc.3 and
+later use `staffops-otel-helper` / `staffops_otel_helper-<version>-py3-none-any.whl`.
+From rc.3, `import otel_helper` still works during 0.3.x (a `DeprecationWarning`,
+removed in 1.0) — see the migration guide in `CHANGELOG.md`. Never keep both
+distributions installed: `pip uninstall -y otel-helper` before installing
+`staffops-otel-helper`.
+
+In the commands below `<tag>` is the release tag (`v0.3.0-rc.3` or later) and
+`<version>` the package version in the wheel name (`0.3.0rc3` or later). For
+`v0.2.0` / `v0.3.0-rc.2`, use the old names instead: wheel
+`otel_helper-<version>-py3-none-any.whl`, requirement name `otel-helper`.
 
 ### Install using gh CLI (simplest)
 
 ```bash
-gh release download v0.2.0 --repo StaffOps/otel-libs --pattern "*.whl"
-pip install otel_helper-0.2.0-py3-none-any.whl
+gh release download <tag> --repo StaffOps/otel-libs --pattern "*.whl"
+pip install staffops_otel_helper-<version>-py3-none-any.whl
 ```
 
 (`gh` needs a login; for anonymous downloads use the URL below.)
@@ -129,23 +142,24 @@ pip install otel_helper-0.2.0-py3-none-any.whl
 ### Install without gh (anonymous)
 
 ```bash
-curl -fsSLO https://github.com/StaffOps/otel-libs/releases/download/v0.2.0/otel_helper-0.2.0-py3-none-any.whl
-pip install otel_helper-0.2.0-py3-none-any.whl
+curl -fsSLO https://github.com/StaffOps/otel-libs/releases/download/<tag>/staffops_otel_helper-<version>-py3-none-any.whl
+pip install staffops_otel_helper-<version>-py3-none-any.whl
 ```
 
 Verify the download against the SHA-256 shown on the release page
 (`shasum -a 256 <file>`).
 
-> **Never `pip install otel-helper` by name.** The package is not on PyPI and
-> the name is not registered there: installing it by name — or listing a bare
-> `otel-helper` in `requirements.txt` — could fetch an unrelated package
+> **Never `pip install staffops-otel-helper` by name.** The package is not on
+> PyPI and this project does not publish there: installing it by name — or
+> listing a bare `staffops-otel-helper` in `requirements.txt` — makes pip look
+> it up on the public index, where anything under that name is not ours
 > (dependency confusion). Install the wheel file, or pin it by URL **with its
 > hash** (next section).
 
 ### Pin by URL in `requirements.txt`
 
 ```text
-otel-helper @ https://github.com/StaffOps/otel-libs/releases/download/<tag>/otel_helper-<version>-py3-none-any.whl#sha256=<digest>
+staffops-otel-helper @ https://github.com/StaffOps/otel-libs/releases/download/<tag>/staffops_otel_helper-<version>-py3-none-any.whl#sha256=<digest>
 ```
 
 `<digest>` is the SHA-256 shown on the release page (or `shasum -a 256` of the
@@ -155,20 +169,21 @@ For the whole dependency tree, use hash-checking mode: `pip install
 --require-hashes -r requirements.txt`, which needs every requirement —
 transitive ones included — pinned with `==` and a `--hash=sha256:…` (generate
 the file with `pip-compile --generate-hashes`); the wheel line then becomes
-`otel-helper @ <url> --hash=sha256:<digest>`.
+`staffops-otel-helper @ <url> --hash=sha256:<digest>`.
 
-> **Important gotcha**: The downloaded file MUST keep the canonical wheel filename (`otel_helper-0.2.0-py3-none-any.whl`). pip rejects a renamed wheel with `ERROR: not a valid wheel filename`.
+> **Important gotcha**: The downloaded file MUST keep the canonical wheel filename (`staffops_otel_helper-<version>-py3-none-any.whl`). pip rejects a renamed wheel with `ERROR: not a valid wheel filename`.
 
 ### Optional extras (standard OTel packages from PyPI)
 
 ```bash
-pip install "otel-helper[aws,redis,sql] @ file://$(pwd)/otel_helper-0.2.0-py3-none-any.whl"
+pip install "staffops-otel-helper[aws,redis,sql] @ file://$(pwd)/staffops_otel_helper-<version>-py3-none-any.whl"
 ```
 
 ### Usage
 
 ```python
-from otel_helper import setup_telemetry, TelemetryOptions
+import staffops_otel_helper  # isort: skip  (before any opentelemetry.* import)
+from staffops_otel_helper import setup_telemetry, TelemetryOptions
 setup_telemetry(TelemetryOptions(service_name="orders-api"))
 ```
 

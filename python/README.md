@@ -23,22 +23,32 @@ install it by name). Install the release wheel, or pin its URL with a hash —
 see [CONSUMING.md](../CONSUMING.md#python-github-release-assets):
 
 ```bash
-pip install ./otel_helper-<version>-py3-none-any.whl
+pip install ./staffops_otel_helper-<version>-py3-none-any.whl
 # requirements.txt, hash-pinned:
-# otel-helper @ https://github.com/StaffOps/otel-libs/releases/download/<tag>/otel_helper-<version>-py3-none-any.whl#sha256=<digest>
+# staffops-otel-helper @ https://github.com/StaffOps/otel-libs/releases/download/<tag>/staffops_otel_helper-<version>-py3-none-any.whl#sha256=<digest>
 ```
+
+> **Renamed in 0.3.0rc3 (ADR-011; `0.2.x` and `0.3.0rc2` are `otel-helper`).**
+> Distribution `otel-helper` → `staffops-otel-helper`, import `otel_helper` →
+> `staffops_otel_helper`, helper loggers `otel_helper.*` → `staffops_otel_helper.*`.
+> `import otel_helper` keeps working during 0.3.x with one `DeprecationWarning`
+> and one log line on `staffops_otel_helper.compat` (same objects, same
+> submodules such as `otel_helper.ext.sql`, `.pyi` stubs for type checkers);
+> it is removed in 1.0. Log filters on the old logger names must move: they
+> are not aliased. Never keep both distributions installed — uninstall
+> `otel-helper` first.
 
 FastAPI, HTTPX, requests, gRPC (sync and `grpc.aio`), system metrics and the
 `logging` bridge are part of the core install. SQLAlchemy, Redis and botocore
 live in extras: `[sql]`, `[redis]`, `[aws]` or `[all]`, requested on the wheel
-(`pip install "otel-helper[sql] @ file://$(pwd)/otel_helper-<version>-py3-none-any.whl"`).
+(`pip install "staffops-otel-helper[sql] @ file://$(pwd)/staffops_otel_helper-<version>-py3-none-any.whl"`).
 
 ## Quick start
 
 ```python
-import otel_helper  # isort: skip  (see "Import order" below)
+import staffops_otel_helper  # isort: skip  (see "Import order" below)
 
-from otel_helper import setup_telemetry, shutdown_telemetry
+from staffops_otel_helper import setup_telemetry, shutdown_telemetry
 
 setup_telemetry()
 try:
@@ -58,7 +68,7 @@ export OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
 Or in code (code values win over the environment):
 
 ```python
-from otel_helper import setup_telemetry, TelemetryOptions
+from staffops_otel_helper import setup_telemetry, TelemetryOptions
 
 setup_telemetry(TelemetryOptions(
     service_name="checkout-api",
@@ -68,17 +78,17 @@ setup_telemetry(TelemetryOptions(
 
 ### Import order
 
-`import otel_helper` must run before any `opentelemetry.*` import. The helper
+`import staffops_otel_helper` must run before any `opentelemetry.*` import. The helper
 makes unsupported `OTEL_PROPAGATORS` values (`b3`, `jaeger`, `xray`) warn and
 be skipped; imported later, the OpenTelemetry API has already read the variable
 and raises `ValueError` for them. isort sorts `opentelemetry` before
-`otel_helper`, so keep the line first with `# isort: skip`.
+`staffops_otel_helper`, so keep the line first with `# isort: skip`.
 
 ## Environment variables
 
 Precedence everywhere: **code (`TelemetryOptions`) > standard `OTEL_*`
 variable > deprecated / `OTEL_HELPER_*` variable > helper default**. An
-invalid environment value logs a warning on the `otel_helper` logger and falls
+invalid environment value logs a warning on the `staffops_otel_helper` logger and falls
 back to the next level; an invalid value passed in code raises `ValueError`
 naming the field. Warnings never print header values, client keys or URL
 credentials.
@@ -137,7 +147,7 @@ metrics use the Prometheus fallback and logs stay local.
 | `OTEL_HELPER_DISABLED_METRICS` | _(unset)_ | Comma list of wildcard instrument names dropped from every exporter |
 | `OTEL_HELPER_SAMPLE_RATIO` | `1.0` | **Deprecated** → `OTEL_TRACES_SAMPLER=parentbased_traceidratio` + `OTEL_TRACES_SAMPLER_ARG`. Used only while `OTEL_TRACES_SAMPLER` is unset |
 | `OTEL_HELPER_DISABLED_SIGNALS` | _(unset)_ | **Deprecated** → `OTEL_{TRACES,METRICS,LOGS}_EXPORTER=none` (which win per signal) |
-| `OTEL_HELPER_EXTRA_INSTRUMENTATION` | `SQL` | **Deprecated** → call `otel_helper.ext.*` before setup. Still effective; warns whenever set (also when empty, which turns the `SQL` default off) |
+| `OTEL_HELPER_EXTRA_INSTRUMENTATION` | `SQL` | **Deprecated** → call `staffops_otel_helper.ext.*` before setup. Still effective; warns whenever set (also when empty, which turns the `SQL` default off) |
 
 Deprecated variables warn once per process, naming the replacement (never the
 value), also when a standard variable or code wins. Behavior is unchanged
@@ -177,12 +187,12 @@ in-process only (propagation still works), logs as JSON on stdout.
 | `setup_telemetry(options=None)` | Configure everything; later calls return the first resolved options |
 | `shutdown_telemetry(timeout_ms=30000)` | Flush and shut down; raises `RuntimeError` on failure or timeout |
 | `TelemetryOptions` | Code configuration (fields in HOW-TO §12) |
-| `get_tracer(name=None)` / `get_meter(name=None)` | Tracer / Meter from the global providers (default name `otel-helper`) |
+| `get_tracer(name=None)` / `get_meter(name=None)` | Tracer / Meter from the global providers (default scope name `otel-helper`, shared with Go) |
 | `start_root_span(tracer, name, **kwargs)` | Context manager starting a new trace |
 | `instrument_fastapi(app)` | Instrument an app whose `FastAPI` class was imported before setup |
 | `metrics_app()` | ASGI app serving `/metrics` from the app's own server |
 | `DEFAULT_HEALTH_PATHS` | `/health /healthz /ready /readyz /live /livez /ping /metrics` |
-| `otel_helper.ext.{sql,redis,aws}` | `instrument_sql(engine=None)`, `instrument_redis()`, `instrument_aws()` → `bool` |
+| `staffops_otel_helper.ext.{sql,redis,aws}` | `instrument_sql(engine=None)`, `instrument_redis()`, `instrument_aws()` → `bool` |
 
 ## Upgrading from 0.2
 

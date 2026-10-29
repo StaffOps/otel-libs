@@ -1,10 +1,10 @@
-# HOW-TO: Using otel-helper (Python)
+# HOW-TO: Using staffops-otel-helper (Python)
 
 Practical guide for Python developers instrumenting a service with
-`otel-helper` 0.3. The variable reference is in [README.md](README.md#environment-variables);
+`staffops-otel-helper` 0.3. The variable reference is in [README.md](README.md#environment-variables);
 runnable examples are in [example/](example/README.md).
 
-Prerequisites: Python 3.10+, the `otel-helper` wheel installed (not on PyPI —
+Prerequisites: Python 3.10+, the `staffops-otel-helper` wheel installed (not on PyPI —
 see [CONSUMING.md](../CONSUMING.md#python-github-release-assets)), and an OpenTelemetry
 Collector reachable over OTLP (or none, for the Prometheus fallback).
 
@@ -16,7 +16,7 @@ Collector reachable over OTLP (or none, for the Prometheus fallback).
 - [6. Custom signals: spans, metrics, logs](#6-custom-signals-spans-metrics-logs)
 - [7. Sampling](#7-sampling)
 - [8. Debug mode](#8-debug-mode)
-- [9. Extension modules (`otel_helper.ext`)](#9-extension-modules-otel_helperext)
+- [9. Extension modules (`staffops_otel_helper.ext`)](#9-extension-modules-staffops_otel_helperext)
 - [10. Metrics without a Collector (Prometheus `/metrics`)](#10-metrics-without-a-collector-prometheus-metrics)
 - [11. OTLP endpoint, protocol, TLS and exporter options](#11-otlp-endpoint-protocol-tls-and-exporter-options)
 - [12. `TelemetryOptions` reference](#12-telemetryoptions-reference)
@@ -32,9 +32,9 @@ Collector reachable over OTLP (or none, for the Prometheus fallback).
 
 ```python
 # Keep this import first: it must run before any opentelemetry.* import.
-import otel_helper  # isort: skip
+import staffops_otel_helper  # isort: skip
 
-from otel_helper import setup_telemetry
+from staffops_otel_helper import setup_telemetry
 
 setup_telemetry()
 ```
@@ -45,12 +45,12 @@ export OTEL_RESOURCE_ATTRIBUTES=deployment.environment.name=DEV
 export OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
 ```
 
-> **Warning — import order**: `otel_helper` must be imported before any other
+> **Warning — import order**: `staffops_otel_helper` must be imported before any other
 > OpenTelemetry module. Unsupported `OTEL_PROPAGATORS` values (`b3`, `jaeger`,
 > `xray`, `ottrace`) are then warned and skipped; if `opentelemetry.propagate`
 > was imported first, the API has already parsed the variable and raises
-> `ValueError` at import. isort sorts `opentelemetry` before `otel_helper`:
-> mark the line `# isort: skip` (or configure `force_to_top = ["otel_helper"]`).
+> `ValueError` at import. isort sorts `opentelemetry` before `staffops_otel_helper`:
+> mark the line `# isort: skip` (or configure `force_to_top = ["staffops_otel_helper"]`).
 
 Call `setup_telemetry()` once, at startup, before creating the web app, gRPC
 servers/channels or HTTP clients. Under a pre-fork server, call it in each
@@ -61,9 +61,9 @@ worker ([§13](#pre-fork-servers)).
 ## 2. FastAPI
 
 ```python
-import otel_helper  # isort: skip
+import staffops_otel_helper  # isort: skip
 
-from otel_helper import setup_telemetry
+from staffops_otel_helper import setup_telemetry
 
 setup_telemetry()
 
@@ -84,7 +84,7 @@ usual import order), the app is built from the unpatched class: call
 
 ```python
 from fastapi import FastAPI
-from otel_helper import setup_telemetry, instrument_fastapi
+from staffops_otel_helper import setup_telemetry, instrument_fastapi
 
 setup_telemetry()
 app = FastAPI()
@@ -130,7 +130,7 @@ span with no parent even when a span is current:
 ```python
 import time
 
-from otel_helper import setup_telemetry, get_tracer, start_root_span
+from staffops_otel_helper import setup_telemetry, get_tracer, start_root_span
 
 setup_telemetry()
 tracer = get_tracer("billing-worker")
@@ -156,7 +156,7 @@ The helper instruments `grpc.aio` and the sync `grpc.server()`,
 
 ```python
 import grpc
-from otel_helper import setup_telemetry
+from staffops_otel_helper import setup_telemetry
 
 setup_telemetry()  # before creating servers or channels
 
@@ -222,11 +222,11 @@ def process_order(order_id: str):
   (`DEBUG/INFO/WARN/ERROR`), `msg`, `logger`, your `extra=` fields and
   `exception` (traceback). It carries no trace ids — correlation needs a logs
   exporter. Same shape as the Go helper, plus `logger`.
-- **Diagnostics.** `otel_helper.*` (INFO and above; the helper sets that logger
+- **Diagnostics.** `staffops_otel_helper.*` (INFO and above; the helper sets that logger
   to INFO when you left it unset) and `opentelemetry.*` (WARNING and above)
   always reach stderr until the app configures a root handler, including with
   a logs exporter active. `opentelemetry.*` records are never exported through
-  OTLP (an export failure cannot feed itself); `otel_helper.*` records are.
+  OTLP (an export failure cannot feed itself); `staffops_otel_helper.*` records are.
 - **OTel Logs API.** The helper calls `set_logger_provider()`, so code using
   `opentelemetry._logs` exports too.
 - **Code attributes** (`code.file.path`, `code.function.name`,
@@ -267,7 +267,7 @@ compared side by side.
 
 ```python
 from opentelemetry.trace import Status, StatusCode
-from otel_helper import get_tracer, start_root_span
+from staffops_otel_helper import get_tracer, start_root_span
 
 tracer = get_tracer("orders")  # instrumentation scope name, not the service name
 
@@ -305,7 +305,7 @@ with start_root_span(tracer, "orders.process-batch", attributes={"batch.size": l
 
 ```python
 from opentelemetry.metrics import CallbackOptions, Observation
-from otel_helper import get_meter
+from staffops_otel_helper import get_meter
 
 meter = get_meter("orders")
 
@@ -436,22 +436,22 @@ debug mode cannot rescue a trace an upstream caller did not sample.
 
 ---
 
-## 9. Extension modules (`otel_helper.ext`)
+## 9. Extension modules (`staffops_otel_helper.ext`)
 
 SQLAlchemy, Redis and botocore instrumentation are extras, not part of core:
 
 ```bash
 # The wheel, not the PyPI name (not registered there; see CONSUMING.md)
-pip install "otel-helper[sql] @ file://$(pwd)/otel_helper-<version>-py3-none-any.whl"   # or [redis], [aws], [all]
+pip install "staffops-otel-helper[sql] @ file://$(pwd)/staffops_otel_helper-<version>-py3-none-any.whl"   # or [redis], [aws], [all]
 ```
 
 Call the `ext` functions **before** `setup_telemetry()`:
 
 ```python
-from otel_helper import setup_telemetry
-from otel_helper.ext.aws import instrument_aws
-from otel_helper.ext.redis import instrument_redis
-from otel_helper.ext.sql import instrument_sql
+from staffops_otel_helper import setup_telemetry
+from staffops_otel_helper.ext.aws import instrument_aws
+from staffops_otel_helper.ext.redis import instrument_redis
+from staffops_otel_helper.ext.sql import instrument_sql
 
 instrument_sql()        # all engines; or instrument_sql(engine=my_engine)
 instrument_redis()
@@ -462,18 +462,18 @@ setup_telemetry()
 
 | Function | Instruments | Returns |
 |---|---|---|
-| `otel_helper.ext.sql.instrument_sql(engine=None)` | SQLAlchemy | `True` active, `False` refused |
-| `otel_helper.ext.redis.instrument_redis()` | redis-py | same |
-| `otel_helper.ext.aws.instrument_aws()` | botocore (S3, SQS, DynamoDB, …) | same |
+| `staffops_otel_helper.ext.sql.instrument_sql(engine=None)` | SQLAlchemy | `True` active, `False` refused |
+| `staffops_otel_helper.ext.redis.instrument_redis()` | redis-py | same |
+| `staffops_otel_helper.ext.aws.instrument_aws()` | botocore (S3, SQS, DynamoDB, …) | same |
 
 - `False` means the installed contrib refused the installed library version.
-  One warning on the `otel_helper` logger names the instrumentor, the contrib
+  One warning on the `staffops_otel_helper` logger names the instrumentor, the contrib
   version, the installed version and the supported range (also when
   `setup_telemetry()` auto-instruments).
 - **SQLAlchemy 2.1 is not supported** by `opentelemetry-instrumentation-sqlalchemy`
   0.63b0–0.66b1 (`< 2.1.0`): pin `sqlalchemy<2.1`. 2.0.x works. Redis 8.x and
   botocore 1.43 work.
-- An `ImportError` from these functions says to install the otel-helper wheel
+- An `ImportError` from these functions says to install the staffops-otel-helper wheel
   with the `[<extra>]` extra;
   if the extra is already installed, the missing package is the library itself
   (`sqlalchemy`, `redis`, `botocore`).
@@ -527,7 +527,7 @@ metrics. Mount the endpoint on the application instead:
 
 ```python
 from fastapi import FastAPI
-from otel_helper import setup_telemetry, metrics_app, TelemetryOptions
+from staffops_otel_helper import setup_telemetry, metrics_app, TelemetryOptions
 
 setup_telemetry(TelemetryOptions(
     metric_exporters=["prometheus"],   # or ["otlp", "prometheus"]
@@ -699,7 +699,7 @@ import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
-from otel_helper import setup_telemetry, shutdown_telemetry, instrument_fastapi
+from staffops_otel_helper import setup_telemetry, shutdown_telemetry, instrument_fastapi
 
 setup_telemetry()
 
@@ -764,7 +764,7 @@ one shared `service.instance.id`), and the second call in a worker is a no-op.
 ```python
 # gunicorn.conf.py
 def post_fork(server, worker):
-    from otel_helper import setup_telemetry
+    from staffops_otel_helper import setup_telemetry
     setup_telemetry()
 ```
 
@@ -781,7 +781,7 @@ belongs in `k8s.pod.uid`, which the Collector adds.
 | Input | On error |
 |---|---|
 | Value in `TelemetryOptions` (wrong type, `sample_ratio` outside [0, 1] or NaN, port outside [0, 65535], unknown signal name, `insecure` vs scheme, `http/json`) | `ValueError` naming the field |
-| Environment variable | warning on an `otel_helper.*` logger naming the variable, fallback to the next level |
+| Environment variable | warning on an `staffops_otel_helper.*` logger naming the variable, fallback to the next level |
 | Deprecated variable | one warning per process naming the replacement |
 
 Messages start with `[OtelHelper]` and never print `*_HEADERS`, `*_CLIENT_KEY`
@@ -807,7 +807,7 @@ visible (application startup, `post_fork`), not lazily inside a request.
 | Header keys | any key | `[A-Za-z0-9._-]+` only (`x+y` skipped), lowercased | rename keys |
 | Sampler | `AlwaysOn` / bare `TraceIdRatioBased` | `ParentBased(...)`: unsampled remote parents are honored | none, or set a non-parent-based sampler explicitly |
 | Health probes | `excluded_urls`: no span, no metric; `/users/ping` also dropped | no span, **counted** in HTTP metrics; exact match | exclude health routes in SLI queries |
-| `HEALTH_PATHS` | `otel_helper.tracing.HEALTH_PATHS` | removed | `otel_helper.DEFAULT_HEALTH_PATHS` |
+| `HEALTH_PATHS` | `staffops_otel_helper.tracing.HEALTH_PATHS` | removed | `staffops_otel_helper.DEFAULT_HEALTH_PATHS` |
 | Logs without exporter | SDK handler with no processor (records lost) | no OTel handler; JSON on stdout while the app configures none | none |
 | `code.*` log attributes | always added | off | `OTEL_PYTHON_LOG_CODE_ATTRIBUTES=true` |
 | Root log level | always set | set only when root is unconfigured | none |
@@ -838,7 +838,7 @@ core dependency `opentelemetry-instrumentation-logging`.
 
 | Symptom | Cause and fix |
 |---|---|
-| `ValueError: ... propagator` at import | `opentelemetry.propagate` imported before `otel_helper` with `OTEL_PROPAGATORS=b3` (or another unsupported value): import `otel_helper` first (`# isort: skip`) |
+| `ValueError: ... propagator` at import | `opentelemetry.propagate` imported before `staffops_otel_helper` with `OTEL_PROPAGATORS=b3` (or another unsupported value): import `staffops_otel_helper` first (`# isort: skip`) |
 | Service shows as `unknown_service` | no `OTEL_SERVICE_NAME`; the warning on stderr says so |
 | Nothing reaches the Collector, no error | gRPC to an `http(s)://` URL without a port uses 4317; `http/protobuf` uses 443/80. Check the startup warnings on stderr; check `OTEL_*_EXPORTER=none` |
 | Traces exported, metrics on `:9464`, logs on stdout | only `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` is set: "configured" is per signal |

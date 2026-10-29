@@ -10,10 +10,10 @@ from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
 from opentelemetry.sdk.metrics.view import View, DropAggregation
 from opentelemetry.sdk.resources import Resource
 
-from otel_helper._exporters import build_otlp_exporter
+from staffops_otel_helper._exporters import build_otlp_exporter
 from prometheus_client import CollectorRegistry
 
-from otel_helper.config import TelemetryOptions
+from staffops_otel_helper.config import TelemetryOptions
 
 _logger = logging.getLogger(__name__)
 
@@ -94,7 +94,7 @@ class _MetricsASGIApp:
 
     async def __call__(self, scope, receive, send) -> None:
         kind = scope.get("type")
-        if kind == "lifespan":  # served standalone (uvicorn otel_helper...): nothing to start or stop
+        if kind == "lifespan":  # served standalone (uvicorn staffops_otel_helper...): nothing to start or stop
             while True:
                 message = await receive()
                 if message["type"] == "lifespan.startup":
@@ -108,7 +108,7 @@ class _MetricsASGIApp:
             if _deliberately_inactive:
                 status, body = 200, b""
             else:
-                status, body = 503, b"otel_helper: prometheus metrics reader not configured\n"
+                status, body = 503, b"staffops_otel_helper: prometheus metrics reader not configured\n"
             await send({"type": "http.response.start", "status": status,
                         "headers": [(b"content-type", b"text/plain; charset=utf-8"),
                                     (b"content-length", str(len(body)).encode())]})
@@ -186,7 +186,7 @@ def build_metrics(resource: Resource, options: TelemetryOptions):
                     raise RuntimeError(
                         f"[OtelHelper] Could not bind the /metrics listener on port "
                         f"{options.resolved.prometheus_metrics_port}: {e}. If another process (or worker) owns "
-                        "the port, mount otel_helper.metrics_app() on your app and set "
+                        "the port, mount staffops_otel_helper.metrics_app() on your app and set "
                         "OTEL_HELPER_METRICS_PORT=0 to disable the standalone listener."
                     ) from e
                 _logger.info(
@@ -196,7 +196,7 @@ def build_metrics(resource: Resource, options: TelemetryOptions):
             else:
                 _logger.info(
                     "OTel Prometheus exporter: standalone listener disabled (port=0); "
-                    "mount otel_helper.metrics_app() to expose /metrics",
+                    "mount staffops_otel_helper.metrics_app() to expose /metrics",
                 )
             # Registered on the registry only once the listener is bound, so a busy
             # port leaves nothing to roll back on it.

@@ -69,6 +69,8 @@ by ID, LogQL, MetricsQL/export) and Collector `:8888`. Export-attempt timing
 comes from `docker compose logs --timestamps` lines: Go helper/SDK errors on
 stderr (`otelhelper`/`otel` error lines), Python `otel_helper`/
 `opentelemetry.exporter` logger lines — exact patterns fixed in S4.
+*(Amended 2026-10-29, ADR-011: the Python helper loggers are
+`staffops_otel_helper.*`; match that hierarchy, not `otel_helper`.)*
 **Justification**: a socket in a container controls every container on a
 shared daemon and can bind-mount host paths (`:ro` does not restrict the
 API); Compose scopes by project label.

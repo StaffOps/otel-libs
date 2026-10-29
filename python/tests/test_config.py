@@ -1,4 +1,4 @@
-"""Tests for otel_helper.config — the 0.3 resolution contract (design D1, R1/R2/R4/R5/R8).
+"""Tests for staffops_otel_helper.config — the 0.3 resolution contract (design D1, R1/R2/R4/R5/R8).
 
 Pure resolution: no exporter is built here. Wire behavior is covered by the
 parity fixture (``tests/test_parity.py``); exporter arguments by
@@ -10,7 +10,7 @@ import os
 
 import pytest
 
-from otel_helper.config import (
+from staffops_otel_helper.config import (
     DeploymentEnvironment,
     TelemetryOptions,
     _parse_environment,
@@ -80,13 +80,13 @@ class TestServiceName:
         assert opts._resource_overrides["service.name"] == "explicit"
 
     def test_code_resource_attribute_counts_as_configured(self, caplog):
-        with caplog.at_level(logging.WARNING, logger="otel_helper"):
+        with caplog.at_level(logging.WARNING, logger="staffops_otel_helper"):
             opts = _resolved(resource_attributes={"service.name": "attr"})
         assert opts.service_name == "attr"
         assert "No service name" not in caplog.text
 
     def test_unset_sets_nothing_and_warns(self, caplog):
-        with caplog.at_level(logging.WARNING, logger="otel_helper"):
+        with caplog.at_level(logging.WARNING, logger="staffops_otel_helper"):
             opts = _resolved()
         assert opts.service_name is None
         assert "service.name" not in opts._resource_overrides
@@ -102,7 +102,7 @@ class TestEnvironment:
     """R4 / ADR-003: code > OTEL_RESOURCE_ATTRIBUTES > ENVIRONMENT > unset."""
 
     def test_unset_is_absent_and_warns_once(self, caplog):
-        with caplog.at_level(logging.WARNING, logger="otel_helper"):
+        with caplog.at_level(logging.WARNING, logger="staffops_otel_helper"):
             opts = _resolved(service_name="s")
         assert opts.environment is None
         assert "deployment.environment.name" not in opts._resource_overrides
@@ -221,7 +221,7 @@ class TestEnvParsingNeverRaises:
     def test_warns_naming_the_variable(self, var, value, caplog):
         os.environ["OTEL_EXPORTER_OTLP_ENDPOINT"] = "http://collector:4317"
         os.environ[var] = value
-        with caplog.at_level(logging.WARNING, logger="otel_helper"):
+        with caplog.at_level(logging.WARNING, logger="staffops_otel_helper"):
             opts = _resolved(service_name="s")
             opts.validate()
         assert var in caplog.text
@@ -237,7 +237,7 @@ class TestEnvParsingNeverRaises:
 
     def test_sdk_disabled_valid_values_do_not_warn(self, caplog):
         os.environ["OTEL_SDK_DISABLED"] = "TRUE"
-        with caplog.at_level(logging.WARNING, logger="otel_helper"):
+        with caplog.at_level(logging.WARNING, logger="staffops_otel_helper"):
             _resolved(service_name="s")
         assert "OTEL_SDK_DISABLED" not in caplog.text
 
@@ -258,14 +258,14 @@ class TestSignalSwitches:
 
     def test_logging_alias(self, caplog):
         os.environ["OTEL_LOGS_EXPORTER"] = "logging"
-        with caplog.at_level(logging.WARNING, logger="otel_helper"):
+        with caplog.at_level(logging.WARNING, logger="staffops_otel_helper"):
             opts = _resolved(service_name="s")
         assert opts.resolved_exporters("logs") == ["console"]
         assert "OTEL_LOGS_EXPORTER" in caplog.text
 
     def test_none_in_list_wins(self, caplog):
         os.environ["OTEL_TRACES_EXPORTER"] = "none,otlp"
-        with caplog.at_level(logging.WARNING, logger="otel_helper"):
+        with caplog.at_level(logging.WARNING, logger="staffops_otel_helper"):
             opts = _resolved(service_name="s")
         assert opts.resolved_exporters("traces") == []
         assert "OTEL_TRACES_EXPORTER" in caplog.text
@@ -352,7 +352,7 @@ class TestProtocol:
 
     def test_unknown_env_warns_and_defaults(self, caplog):
         os.environ["OTEL_EXPORTER_OTLP_PROTOCOL"] = "http/json"
-        with caplog.at_level(logging.WARNING, logger="otel_helper"):
+        with caplog.at_level(logging.WARNING, logger="staffops_otel_helper"):
             opts = _resolved(service_name="s", otel_endpoint="http://c:4317")
             opts.validate()
         assert opts.resolved_otlp_protocol() == "grpc"
@@ -408,7 +408,7 @@ class TestCodeValidation:
     @pytest.mark.parametrize("endpoint", ["http://", "ftp://collector:4317", "http://collector:port"])
     def test_invalid_env_endpoint_warns_and_skips(self, endpoint, caplog):
         os.environ["OTEL_EXPORTER_OTLP_ENDPOINT"] = endpoint
-        with caplog.at_level(logging.WARNING, logger="otel_helper"):
+        with caplog.at_level(logging.WARNING, logger="staffops_otel_helper"):
             opts = _resolved(service_name="s")
         assert not opts.is_otlp_configured("traces")
         assert "OTEL_EXPORTER_OTLP_ENDPOINT" in caplog.text
@@ -443,7 +443,7 @@ class TestValidationRound:
     @pytest.mark.parametrize("raw,expected", [("TRUE", True), ("false", False), ("yes", False), ("1", False)])
     def test_boolean_env_anything_but_true_is_false(self, raw, expected, caplog):
         os.environ["OTEL_HELPER_DEBUG_LEVEL"] = raw
-        with caplog.at_level(logging.WARNING, logger="otel_helper"):
+        with caplog.at_level(logging.WARNING, logger="staffops_otel_helper"):
             assert _resolved(service_name="s").resolved.debug_level is expected
         assert ("OTEL_HELPER_DEBUG_LEVEL" in caplog.text) is (raw.lower() not in ("true", "false"))
 
@@ -453,14 +453,14 @@ class TestValidationRound:
 
     def test_sdk_disabled_garbage_is_false(self, caplog):
         os.environ["OTEL_SDK_DISABLED"] = "maybe"
-        with caplog.at_level(logging.WARNING, logger="otel_helper"):
+        with caplog.at_level(logging.WARNING, logger="staffops_otel_helper"):
             assert _resolved(service_name="s").sdk_disabled is False
         assert "OTEL_SDK_DISABLED" in caplog.text
 
     @pytest.mark.parametrize("var", ["OTEL_SERVICE_NAME", "SERVICE_NAME"])
     def test_whitespace_service_name_is_unset(self, var, caplog):
         os.environ[var] = "   "
-        with caplog.at_level(logging.WARNING, logger="otel_helper"):
+        with caplog.at_level(logging.WARNING, logger="staffops_otel_helper"):
             opts = _resolved()
         assert opts.service_name is None
         assert "OTEL_SERVICE_NAME" in caplog.text
@@ -472,32 +472,32 @@ class TestValidationRound:
 
     def test_env_ratio_clamped_with_warning(self, caplog):
         os.environ["OTEL_HELPER_SAMPLE_RATIO"] = "2"
-        with caplog.at_level(logging.WARNING, logger="otel_helper"):
+        with caplog.at_level(logging.WARNING, logger="staffops_otel_helper"):
             assert _resolved(service_name="s").resolved.sample_ratio == 1.0
         assert "outside [0, 1]" in caplog.text
 
     def test_env_ratio_nan_ignored(self, caplog):
         os.environ["OTEL_HELPER_SAMPLE_RATIO"] = "nan"
-        with caplog.at_level(logging.WARNING, logger="otel_helper"):
+        with caplog.at_level(logging.WARNING, logger="staffops_otel_helper"):
             assert _resolved(service_name="s").resolved.sample_ratio == 1.0
         assert "OTEL_HELPER_SAMPLE_RATIO" in caplog.text
 
     def test_env_port_out_of_range(self, caplog):
         os.environ["OTEL_HELPER_METRICS_PORT"] = "70000"
-        with caplog.at_level(logging.WARNING, logger="otel_helper"):
+        with caplog.at_level(logging.WARNING, logger="staffops_otel_helper"):
             assert _resolved(service_name="s").resolved.prometheus_metrics_port == 9464
 
     @pytest.mark.parametrize("signal", ["traces", "logs"])
     def test_otlp_exporter_without_endpoint_warns(self, signal, caplog):
         os.environ[f"OTEL_{signal.upper()}_EXPORTER"] = "otlp"
-        with caplog.at_level(logging.WARNING, logger="otel_helper"):
+        with caplog.at_level(logging.WARNING, logger="staffops_otel_helper"):
             _resolved(service_name="s")
         assert f"OTEL_{signal.upper()}_EXPORTER" in caplog.text
 
     def test_invalid_per_signal_endpoint_falls_back_to_generic(self, caplog):
         os.environ["OTEL_EXPORTER_OTLP_ENDPOINT"] = "http://good:4317"
         os.environ["OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"] = "http://[::1"
-        with caplog.at_level(logging.WARNING, logger="otel_helper"):
+        with caplog.at_level(logging.WARNING, logger="staffops_otel_helper"):
             opts = _resolved(service_name="s")
         # The helper owns the URL so the SDK doesn't read the invalid per-signal value.
         assert opts.otlp_export("traces").kwargs["endpoint"] == "http://good:4317"
@@ -519,7 +519,7 @@ class TestValidationRound:
 
     def test_code_insecure_with_env_url_conflict_only_warns(self, caplog):
         os.environ["OTEL_EXPORTER_OTLP_ENDPOINT"] = "https://c:4317"
-        with caplog.at_level(logging.WARNING, logger="otel_helper"):
+        with caplog.at_level(logging.WARNING, logger="staffops_otel_helper"):
             _resolved(service_name="s", insecure=True)
         assert "insecure=true" in caplog.text
 
@@ -569,7 +569,7 @@ class TestCodeValueEqualToDefaultBeatsEnv:
         assert TelemetryOptions().has_instrumentation("sql")
 
     def test_minimum_log_level_notset_is_kept(self):
-        from otel_helper.logging_setup import build_logging_level
+        from staffops_otel_helper.logging_setup import build_logging_level
 
         opts = _resolved(service_name="s", environment=DeploymentEnvironment.PRD, minimum_log_level=logging.NOTSET)
         assert build_logging_level(opts) == logging.NOTSET
@@ -591,7 +591,7 @@ class TestProvenanceSurvivesCopiesAndResetup:
     """A13 review H1/M1/M3: public fields only ever hold code values; ``resolved`` holds the effective ones."""
 
     def test_ratio_assigned_after_construction_is_code(self):
-        from otel_helper.tracing import build_sampler
+        from staffops_otel_helper.tracing import build_sampler
 
         os.environ["OTEL_TRACES_SAMPLER"] = "always_on"
         opts = TelemetryOptions(service_name="s")
@@ -603,7 +603,7 @@ class TestProvenanceSurvivesCopiesAndResetup:
     def test_replace_of_resolved_options_rereads_env(self):
         import dataclasses
 
-        from otel_helper.tracing import build_sampler
+        from staffops_otel_helper.tracing import build_sampler
 
         resolved = _resolved(service_name="s")
         assert resolved.sample_ratio is None and resolved.prometheus_metrics_port is None

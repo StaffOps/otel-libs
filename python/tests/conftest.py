@@ -15,8 +15,8 @@ import opentelemetry._logs._internal as _logs_mod
 from opentelemetry.instrumentation.logging.handler import LoggingHandler as _ContribLoggingHandler
 from opentelemetry.sdk._logs import LoggingHandler
 
-from otel_helper import _diag
-from otel_helper.setup import reset_telemetry
+from staffops_otel_helper import _diag
+from staffops_otel_helper.setup import reset_telemetry
 
 ALL_ENV_VARS = [
     "SERVICE_NAME",
@@ -63,7 +63,7 @@ def _reset_otel_globals():
 
 def _shutdown_stray_prometheus_readers():
     """Readers from tests that built a MeterProvider directly and never shut it down."""
-    from otel_helper import metrics as metrics_mod
+    from staffops_otel_helper import metrics as metrics_mod
 
     for reader in list(metrics_mod._active_readers):
         reader.shutdown()
@@ -84,7 +84,7 @@ def _clean_logging_handlers():
         lg.handlers = [h for h in lg.handlers if not isinstance(h, _OTEL_HANDLERS)]
     logging.lastResort = _STDLIB_LAST_RESORT
     logging.basicConfig, logging.config.dictConfig, logging.config.fileConfig = _STDLIB_CONFIG_FNS
-    for name in ("urllib3", "httpcore", "grpc", "httpx", "hpack", "opentelemetry", "otel_helper"):
+    for name in ("urllib3", "httpcore", "grpc", "httpx", "hpack", "opentelemetry", "staffops_otel_helper"):
         logging.getLogger(name).setLevel(logging.NOTSET)
 
 
@@ -92,7 +92,7 @@ def _clean_logging_handlers():
 def isolate_otel_state():
     """Autouse fixture that isolates OTel global state per test.
 
-    Before each test: clears env vars, resets the otel_helper init guard,
+    Before each test: clears env vars, resets the staffops_otel_helper init guard,
     resets SDK global providers, and removes OTel log handlers.
     After each test: same cleanup to prevent leakage into the next test.
     """

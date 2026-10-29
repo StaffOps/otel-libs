@@ -21,9 +21,9 @@ from importlib.metadata import PackageNotFoundError, version
 
 from opentelemetry.instrumentation.dependencies import get_dependency_conflicts
 
-from otel_helper._diag import warn_once_per_process
+from staffops_otel_helper._diag import warn_once_per_process
 
-_log = logging.getLogger("otel_helper.instrumentation")
+_log = logging.getLogger("staffops_otel_helper.instrumentation")
 _CONTRIB_DIST = "opentelemetry-instrumentation"
 
 
@@ -70,7 +70,7 @@ def warn_if_unsupported(instrumentor) -> bool:
         _log, f"unsupported:{name}:{installed}",
         "[OtelHelper] %s (%s %s) does not support the installed %s (supported: %s): it is NOT "
         "instrumented, so that library records no telemetry. Install a supported version, or "
-        "upgrade otel-helper once a contrib release supports it.",
+        "upgrade staffops-otel-helper once a contrib release supports it.",
         name, _CONTRIB_DIST, _installed(_CONTRIB_DIST) or "unknown", installed, requirement,
     )
     return True
@@ -96,13 +96,13 @@ def missing_dependency_hint(err: ImportError, extra: str, label: str, library: s
         parts = module.split(".")
         if err.name in {".".join(parts[:i]) for i in range(1, len(parts) + 1)}:
             return (
-                f"{label} instrumentation not installed. Install the otel-helper "
+                f"{label} instrumentation not installed. Install the staffops-otel-helper "
                 f"wheel with the [{extra}] extra (not on PyPI; see CONSUMING.md)"
             )
         if err.name.split(".")[0] == library:
             return (
                 f"{label} instrumentation is installed but the instrumented library "
                 f"'{library}' is not. Install it (e.g. pip install {library}); "
-                f"otel-helper[{extra}] does not pull it in."
+                f"staffops-otel-helper[{extra}] does not pull it in."
             )
     return f"failed to import the {label} instrumentation: {err}"

@@ -16,10 +16,10 @@ import os
 import re
 from contextlib import contextmanager
 
-from otel_helper._diag import warn_once_per_process
-from otel_helper._support import warn_if_unsupported
-from otel_helper.config import ENV_EXTRA_INSTRUMENTATION, TelemetryOptions
-from otel_helper.tracing import DEFAULT_HEALTH_PATHS, normalize_health_path
+from staffops_otel_helper._diag import warn_once_per_process
+from staffops_otel_helper._support import warn_if_unsupported
+from staffops_otel_helper.config import ENV_EXTRA_INSTRUMENTATION, TelemetryOptions
+from staffops_otel_helper.tracing import DEFAULT_HEALTH_PATHS, normalize_health_path
 
 _GRPC = frozenset(["GrpcInstrumentorServer", "GrpcAioInstrumentorServer",
                    "GrpcInstrumentorClient", "GrpcAioInstrumentorClient"])
@@ -27,11 +27,11 @@ _ENV_GRPC_EXCLUDED_SERVICES = "OTEL_PYTHON_GRPC_EXCLUDED_SERVICES"
 _ENV_EXCLUDED_URLS = "OTEL_PYTHON_EXCLUDED_URLS"
 _ENV_HTTPX_EXCLUDED_URLS = "OTEL_PYTHON_HTTPX_EXCLUDED_URLS"
 _ENV_REQUESTS_EXCLUDED_URLS = "OTEL_PYTHON_REQUESTS_EXCLUDED_URLS"
-_log = logging.getLogger("otel_helper.instrumentation")
+_log = logging.getLogger("staffops_otel_helper.instrumentation")
 # Explicit replacement per OTEL_HELPER_EXTRA_INSTRUMENTATION flag (deprecated, R8/D8).
-_EXT_ENTRY_POINTS = {"SQL": "otel_helper.ext.sql.instrument_sql()",
-                     "REDIS": "otel_helper.ext.redis.instrument_redis()",
-                     "AWS": "otel_helper.ext.aws.instrument_aws()"}
+_EXT_ENTRY_POINTS = {"SQL": "staffops_otel_helper.ext.sql.instrument_sql()",
+                     "REDIS": "staffops_otel_helper.ext.redis.instrument_redis()",
+                     "AWS": "staffops_otel_helper.ext.aws.instrument_aws()"}
 
 # (module, class, helper EXTRA_INSTRUMENTATION flag or None = always on)
 _INSTRUMENTORS = (
@@ -162,7 +162,7 @@ def _warn_implicit_extras(flags: list[str]) -> None:
     That is the ``extra_instrumentation`` default (``SQL``: SQLAlchemy is instrumented
     globally just because it is installed), a code value, or debug mode. When the
     env var is set its own deprecation warning already covers this (config.py).
-    The explicit ``otel_helper.ext`` call, made before ``setup_telemetry()``, is the
+    The explicit ``staffops_otel_helper.ext`` call, made before ``setup_telemetry()``, is the
     one mechanism from 0.3 and leaves nothing for this path to turn on.
     """
     if not flags or os.getenv(ENV_EXTRA_INSTRUMENTATION) is not None:

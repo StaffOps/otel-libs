@@ -1,4 +1,4 @@
-"""Tests for otel_helper.setup — mirrors RegistrationTests.cs + TelemetryPipelineTests.cs."""
+"""Tests for staffops_otel_helper.setup — mirrors RegistrationTests.cs + TelemetryPipelineTests.cs."""
 
 import os
 import pytest
@@ -6,8 +6,8 @@ from unittest.mock import patch
 
 from opentelemetry import trace, metrics
 
-from otel_helper.setup import setup_telemetry, reset_telemetry
-from otel_helper.config import TelemetryOptions, DeploymentEnvironment
+from staffops_otel_helper.setup import setup_telemetry, reset_telemetry
+from staffops_otel_helper.config import TelemetryOptions, DeploymentEnvironment
 
 
 @pytest.fixture(autouse=True)

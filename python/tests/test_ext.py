@@ -1,4 +1,4 @@
-"""Tests for opt-in instrumentation extensions (otel_helper.ext).
+"""Tests for opt-in instrumentation extensions (staffops_otel_helper.ext).
 
 Both paths are simulated through sys.modules (the test env may or may not have
 the libraries — SQLAlchemy is a test dependency since A10): ``None`` makes the
@@ -11,9 +11,9 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from otel_helper.ext.aws import instrument_aws
-from otel_helper.ext.redis import instrument_redis
-from otel_helper.ext.sql import instrument_sql
+from staffops_otel_helper.ext.aws import instrument_aws
+from staffops_otel_helper.ext.redis import instrument_redis
+from staffops_otel_helper.ext.sql import instrument_sql
 
 
 _REDIS_MOD = "opentelemetry.instrumentation.redis"
@@ -31,17 +31,17 @@ def _fake_instrumentor_module(monkeypatch, module_name: str, class_name: str) ->
 class TestExtraNotInstalled:
     def test_aws_raises_actionable_import_error(self, monkeypatch):
         monkeypatch.setitem(sys.modules, "opentelemetry.instrumentation.botocore", None)  # import fails
-        with pytest.raises(ImportError, match=r"otel-helper wheel with the \[aws\] extra \(not on PyPI; see CONSUMING\.md\)"):
+        with pytest.raises(ImportError, match=r"staffops-otel-helper wheel with the \[aws\] extra \(not on PyPI; see CONSUMING\.md\)"):
             instrument_aws()
 
     def test_redis_raises_actionable_import_error(self, monkeypatch):
         monkeypatch.setitem(sys.modules, "opentelemetry.instrumentation.redis", None)  # import fails
-        with pytest.raises(ImportError, match=r"otel-helper wheel with the \[redis\] extra \(not on PyPI; see CONSUMING\.md\)"):
+        with pytest.raises(ImportError, match=r"staffops-otel-helper wheel with the \[redis\] extra \(not on PyPI; see CONSUMING\.md\)"):
             instrument_redis()
 
     def test_sql_raises_actionable_import_error(self, monkeypatch):
         monkeypatch.setitem(sys.modules, "opentelemetry.instrumentation.sqlalchemy", None)  # import fails
-        with pytest.raises(ImportError, match=r"otel-helper wheel with the \[sql\] extra \(not on PyPI; see CONSUMING\.md\)"):
+        with pytest.raises(ImportError, match=r"staffops-otel-helper wheel with the \[sql\] extra \(not on PyPI; see CONSUMING\.md\)"):
             instrument_sql()
 
 
@@ -68,20 +68,20 @@ class TestLibraryNotInstalled:
     @pytest.mark.parametrize("name", ["opentelemetry", "opentelemetry.instrumentation",
                                       "opentelemetry.instrumentation.redis"])
     def test_hint_points_to_extra_when_instrumentor_missing(self, name):
-        from otel_helper._support import missing_dependency_hint
+        from staffops_otel_helper._support import missing_dependency_hint
 
         msg = missing_dependency_hint(ModuleNotFoundError("x", name=name), "redis", "Redis", library="redis",
                                       module=_REDIS_MOD)
-        assert msg == ("Redis instrumentation not installed. Install the otel-helper wheel "
+        assert msg == ("Redis instrumentation not installed. Install the staffops-otel-helper wheel "
                        "with the [redis] extra (not on PyPI; see CONSUMING.md)")
-        assert "pip install otel-helper" not in msg  # the name is not on PyPI (dependency confusion)
+        assert "pip install staffops-otel-helper" not in msg  # the name is not on PyPI (dependency confusion)
 
     def test_hint_uses_top_level_package(self):
-        from otel_helper._support import missing_dependency_hint
+        from staffops_otel_helper._support import missing_dependency_hint
 
         msg = missing_dependency_hint(ModuleNotFoundError("x", name="botocore.session"), "aws", "AWS",
                                       library="botocore", module="opentelemetry.instrumentation.botocore")
-        assert "'botocore' is not" in msg and "otel-helper[aws] does not pull it in" in msg
+        assert "'botocore' is not" in msg and "staffops-otel-helper[aws] does not pull it in" in msg
 
 
 class TestImportFailureNotMisreported:
@@ -110,7 +110,7 @@ class TestImportFailureNotMisreported:
     @pytest.mark.parametrize("extra,label,library", [("sql", "SQL", "sqlalchemy"), ("redis", "Redis", "redis"),
                                                      ("aws", "AWS", "botocore")])
     def test_missing_transitive_dependency_is_generic(self, extra, label, library):
-        from otel_helper._support import missing_dependency_hint
+        from staffops_otel_helper._support import missing_dependency_hint
 
         err = ModuleNotFoundError("No module named 'wrapt'", name="wrapt")
         msg = missing_dependency_hint(err, extra, label, library=library,
@@ -122,21 +122,21 @@ class TestImportFailureNotMisreported:
                                       "opentelemetry.instrumentation.sqlalchemy"])
     def test_other_otel_modules_and_no_name_are_generic(self, name):
         """Version skew inside the OTel namespace is not "extra not installed" (D14, review M2)."""
-        from otel_helper._support import missing_dependency_hint
+        from staffops_otel_helper._support import missing_dependency_hint
 
         err = ModuleNotFoundError("No module named 'x'", name=name)
         msg = missing_dependency_hint(err, "redis", "Redis", library="redis", module=_REDIS_MOD)
         assert msg == "failed to import the Redis instrumentation: No module named 'x'"
 
     def test_plain_import_error_for_instrumentor_is_generic(self):
-        from otel_helper._support import missing_dependency_hint
+        from staffops_otel_helper._support import missing_dependency_hint
 
         err = ImportError("cannot import name 'RedisInstrumentor'", name="opentelemetry.instrumentation.redis")
         msg = missing_dependency_hint(err, "redis", "Redis", library="redis", module=_REDIS_MOD)
         assert msg.startswith("failed to import the Redis instrumentation: ")
 
     def test_other_library_module_not_found_is_generic(self):
-        from otel_helper._support import missing_dependency_hint
+        from staffops_otel_helper._support import missing_dependency_hint
 
         msg = missing_dependency_hint(ModuleNotFoundError("x", name="redis"), "sql", "SQL", library="sqlalchemy",
                                       module="opentelemetry.instrumentation.sqlalchemy")

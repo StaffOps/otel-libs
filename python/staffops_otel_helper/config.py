@@ -11,7 +11,7 @@ portless gRPC URLs, TLS conflicts, URL userinfo/query, headers, timeouts
 
 Parsing rule (R8): unknown or unparseable **env** values log a warning and fall
 back (per-signal → generic → default); invalid **code** values raise
-``ValueError`` naming the option. Diagnostics go through the ``otel_helper.*``
+``ValueError`` naming the option. Diagnostics go through the ``staffops_otel_helper.*``
 loggers and never print ``*_HEADERS``/``*_CLIENT_KEY`` values or URL
 userinfo/query strings.
 """
@@ -27,9 +27,9 @@ from typing import Literal
 import re
 from urllib.parse import SplitResult, unquote, urlsplit, urlunsplit
 
-from otel_helper._diag import warn_once_per_process
+from staffops_otel_helper._diag import warn_once_per_process
 
-_log = logging.getLogger("otel_helper.config")
+_log = logging.getLogger("staffops_otel_helper.config")
 
 # Exactly what both helper languages trim (D1 edge-case rulings): not Unicode
 # whitespace, which str.strip() would also remove.
@@ -114,7 +114,7 @@ _DEPRECATED_ENV = {
     ENV_ENVIRONMENT: "OTEL_RESOURCE_ATTRIBUTES=deployment.environment.name=<value>",
     ENV_SAMPLE_RATIO: "OTEL_TRACES_SAMPLER=parentbased_traceidratio with OTEL_TRACES_SAMPLER_ARG=<ratio>",
     ENV_DISABLED_SIGNALS: "OTEL_TRACES_EXPORTER / OTEL_METRICS_EXPORTER / OTEL_LOGS_EXPORTER=none",
-    ENV_EXTRA_INSTRUMENTATION: ("otel_helper.ext.sql.instrument_sql() / .redis.instrument_redis() / "
+    ENV_EXTRA_INSTRUMENTATION: ("staffops_otel_helper.ext.sql.instrument_sql() / .redis.instrument_redis() / "
                                 ".aws.instrument_aws(), called before setup_telemetry()"),
 }
 

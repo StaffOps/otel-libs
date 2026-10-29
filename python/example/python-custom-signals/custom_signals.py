@@ -1,4 +1,4 @@
-"""Custom signals with otel-helper: spans, metrics and logs correlated with the active trace.
+"""Custom signals with staffops-otel-helper: spans, metrics and logs correlated with the active trace.
 
 A short-lived job that processes one batch of three simulated orders (ord-3
 fails) and exits. It shows the three custom-signal APIs an application uses on
@@ -19,10 +19,10 @@ Run it against a Collector (see ../README.md, "Custom signals"):
     python custom_signals.py
 """
 
-# otel_helper must be imported before any opentelemetry module so that
+# staffops_otel_helper must be imported before any opentelemetry module so that
 # unsupported OTEL_PROPAGATORS values are skipped instead of raising. isort sorts
-# "opentelemetry" before "otel_helper"; the skip marker keeps this line first.
-import otel_helper  # isort: skip  # noqa: F401
+# "opentelemetry" before "staffops_otel_helper"; the skip marker keeps this line first.
+import staffops_otel_helper  # isort: skip  # noqa: F401
 
 import logging
 import signal
@@ -33,7 +33,7 @@ from dataclasses import dataclass
 from opentelemetry.metrics import CallbackOptions, Observation
 from opentelemetry.trace import Status, StatusCode
 
-from otel_helper import (
+from staffops_otel_helper import (
     get_meter,
     get_tracer,
     setup_telemetry,

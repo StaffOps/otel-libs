@@ -93,7 +93,7 @@ services:
         cp -r /src/python /work && cd /work
         pip install -q -c ci/$${PY_DEPS}.txt -e '.[dev,all]'
         pip list 2>/dev/null | grep -E '^opentelemetry-(sdk|instrumentation) '
-        python -m pytest tests/ -p no:cacheprovider -q --cov=otel_helper --cov-report=term --cov-fail-under=90
+        python -m pytest tests/ -p no:cacheprovider -q --cov=staffops_otel_helper --cov=otel_helper --cov-report=term --cov-fail-under=90
 
   # ── e2e smoke (testing/e2e/smoke.sh) ──────────────────────────────────
   e2e-certs:

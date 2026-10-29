@@ -10,9 +10,9 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanE
 from opentelemetry.sdk.trace.sampling import ParentBased
 from opentelemetry.sdk.resources import Resource, SERVICE_NAME
 
-from otel_helper.config import TelemetryOptions
-from otel_helper.tracing import configure_tracing, start_root_span
-from otel_helper.processors import DebugProcessor
+from staffops_otel_helper.config import TelemetryOptions
+from staffops_otel_helper.tracing import configure_tracing, start_root_span
+from staffops_otel_helper.processors import DebugProcessor
 
 
 class TestGetTracerCreatesExportedSpans:

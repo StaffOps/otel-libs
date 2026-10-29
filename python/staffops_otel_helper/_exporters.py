@@ -1,4 +1,4 @@
-"""OTLP exporter construction from a resolved :class:`~otel_helper.config.SignalExport`.
+"""OTLP exporter construction from a resolved :class:`~staffops_otel_helper.config.SignalExport`.
 
 Only the arguments the helper owns are passed (``SignalExport.kwargs``); the SDK
 resolves everything else from the standard env vars (ADR-001).
@@ -10,7 +10,7 @@ import os
 from contextlib import contextmanager
 from collections.abc import Iterator
 
-from otel_helper.config import PROTOCOL_HTTP, SignalExport
+from staffops_otel_helper.config import PROTOCOL_HTTP, SignalExport
 
 _HTTP = {
     "traces": ("opentelemetry.exporter.otlp.proto.http.trace_exporter", "OTLPSpanExporter"),

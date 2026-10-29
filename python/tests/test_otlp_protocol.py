@@ -14,10 +14,10 @@ from unittest.mock import MagicMock, patch
 
 from opentelemetry.sdk.resources import Resource
 
-from otel_helper.config import TelemetryOptions
-from otel_helper.logging_setup import configure_logging
-from otel_helper.metrics import configure_metrics
-from otel_helper.tracing import configure_tracing
+from staffops_otel_helper.config import TelemetryOptions
+from staffops_otel_helper.logging_setup import configure_logging
+from staffops_otel_helper.metrics import configure_metrics
+from staffops_otel_helper.tracing import configure_tracing
 
 
 def _resource():

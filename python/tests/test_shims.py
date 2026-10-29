@@ -12,9 +12,9 @@ from pathlib import Path
 
 import pytest
 
-from otel_helper import _semconv
-from otel_helper._exporters import build_otlp_exporter
-from otel_helper.config import TelemetryOptions
+from staffops_otel_helper import _semconv
+from staffops_otel_helper._exporters import build_otlp_exporter
+from staffops_otel_helper.config import TelemetryOptions
 
 
 def _plan(signal="traces", **kwargs):
@@ -77,13 +77,13 @@ class TestCodeEndpoints:
     def test_control_char_inside_endpoint_falls_back(self, bad, caplog):
         os.environ["OTEL_EXPORTER_OTLP_ENDPOINT"] = "http://good:4317"
         os.environ["OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"] = bad
-        with caplog.at_level(logging.WARNING, logger="otel_helper"):
+        with caplog.at_level(logging.WARNING, logger="staffops_otel_helper"):
             plan = _plan()
         assert plan.kwargs["endpoint"] == "http://good:4317"
         assert "<unparseable URL>" in caplog.text
 
     def test_http_zone_id_warns(self, caplog):
-        with caplog.at_level(logging.WARNING, logger="otel_helper"):
+        with caplog.at_level(logging.WARNING, logger="staffops_otel_helper"):
             _plan(otel_endpoint="http://[fe80::1%25lo]:4318", otlp_protocol="http/protobuf")
         assert "zone" in caplog.text
 
@@ -111,7 +111,7 @@ class TestHeaders:
 
     def test_malformed_items_skipped_without_values(self, caplog):
         os.environ["OTEL_EXPORTER_OTLP_HEADERS"] = "a=secret-1,broken-secret,,=x"
-        with caplog.at_level(logging.WARNING, logger="otel_helper"):
+        with caplog.at_level(logging.WARNING, logger="staffops_otel_helper"):
             plan = _plan(otel_endpoint="http://c:4317")
         assert plan.kwargs["headers"] == {"a": "secret-1"}
         assert "position(s) 2, 3, 4" in caplog.text
@@ -125,21 +125,21 @@ class TestHeaders:
 
     def test_key_charset_not_decoded_and_last_wins(self, caplog):
         os.environ["OTEL_EXPORTER_OTLP_HEADERS"] = "x%2Da=1,bad key=2,X-B=1,x-b=2,ok_k.1=v"
-        with caplog.at_level(logging.WARNING, logger="otel_helper"):
+        with caplog.at_level(logging.WARNING, logger="staffops_otel_helper"):
             headers = _plan(otel_endpoint="http://c:4317").kwargs["headers"]
         assert headers == {"x-b": "2", "ok_k.1": "v"}
         assert "position(s) 1, 2" in caplog.text
 
     def test_invalid_escape_keeps_whole_value_literal(self, caplog):
         os.environ["OTEL_EXPORTER_OTLP_HEADERS"] = "a=50%,b=%zz-secret,c=a%20b%zz,d=%FF,e=ok%20v"
-        with caplog.at_level(logging.WARNING, logger="otel_helper"):
+        with caplog.at_level(logging.WARNING, logger="staffops_otel_helper"):
             headers = _plan(otel_endpoint="http://c:4317").kwargs["headers"]
         assert headers == {"a": "50%", "b": "%zz-secret", "c": "a%20b%zz", "d": "%FF", "e": "ok v"}
         assert "position(s) 1, 2, 3, 4" in caplog.text and "secret" not in caplog.text
 
     def test_decoded_control_char_skipped(self, caplog):
         os.environ["OTEL_EXPORTER_OTLP_HEADERS"] = "a=x%0D%0Ay,b=1,c=t%7F"
-        with caplog.at_level(logging.WARNING, logger="otel_helper"):
+        with caplog.at_level(logging.WARNING, logger="staffops_otel_helper"):
             headers = _plan(otel_endpoint="http://c:4317").kwargs["headers"]
         assert headers == {"b": "1"}
         assert "position(s) 1, 3" in caplog.text
@@ -175,7 +175,7 @@ class TestSchemeless:
 
     def test_grpc_tls_by_default_no_warning(self, caplog):
         os.environ["OTEL_EXPORTER_OTLP_ENDPOINT"] = "collector:14317"
-        with caplog.at_level(logging.WARNING, logger="otel_helper"):
+        with caplog.at_level(logging.WARNING, logger="staffops_otel_helper"):
             plan = _plan()
         assert plan.kwargs["endpoint"] == "https://collector:14317"
         assert plan.kwargs["insecure"] is False
@@ -194,7 +194,7 @@ class TestSchemeless:
     def test_http_default_port_and_deprecation(self, caplog):
         os.environ["OTEL_EXPORTER_OTLP_ENDPOINT"] = "collector"
         os.environ["OTEL_EXPORTER_OTLP_PROTOCOL"] = "http/protobuf"
-        with caplog.at_level(logging.WARNING, logger="otel_helper"):
+        with caplog.at_level(logging.WARNING, logger="staffops_otel_helper"):
             plan = _plan("metrics")
         assert plan.kwargs["endpoint"] == "https://collector:4318/v1/metrics"
         assert "deprecated" in caplog.text and "OTEL_EXPORTER_OTLP_ENDPOINT" in caplog.text
@@ -210,7 +210,7 @@ class TestPortlessGrpc:
 
     def test_gets_4317_and_warns_once(self, caplog):
         os.environ["OTEL_EXPORTER_OTLP_ENDPOINT"] = "https://collector"
-        with caplog.at_level(logging.WARNING, logger="otel_helper"):
+        with caplog.at_level(logging.WARNING, logger="staffops_otel_helper"):
             opts = TelemetryOptions(service_name="s")
             opts.resolve_from_env()
         assert opts.otlp_export("traces").kwargs["endpoint"] == "https://collector:4317"
@@ -228,7 +228,7 @@ class TestTlsConflict:
     def test_https_with_insecure_true(self, caplog):
         os.environ["OTEL_EXPORTER_OTLP_ENDPOINT"] = "https://c:4317"
         os.environ["OTEL_EXPORTER_OTLP_INSECURE"] = "true"
-        with caplog.at_level(logging.WARNING, logger="otel_helper"):
+        with caplog.at_level(logging.WARNING, logger="staffops_otel_helper"):
             plan = _plan()
         assert plan.kwargs["insecure"] is False
         assert "OTEL_EXPORTER_OTLP_INSECURE" in caplog.text
@@ -253,7 +253,7 @@ class TestTlsConflict:
         os.environ["OTEL_EXPORTER_OTLP_ENDPOINT"] = "http://c:4317"
         os.environ["OTEL_EXPORTER_OTLP_CERTIFICATE"] = "/x/ca.pem"
         os.environ["OTEL_EXPORTER_OTLP_CLIENT_KEY"] = "/x/secret-key.pem"
-        with caplog.at_level(logging.WARNING, logger="otel_helper"):
+        with caplog.at_level(logging.WARNING, logger="staffops_otel_helper"):
             _plan()
         assert "OTEL_EXPORTER_OTLP_CERTIFICATE" in caplog.text
         assert "OTEL_EXPORTER_OTLP_CLIENT_KEY" in caplog.text
@@ -267,7 +267,7 @@ class TestTlsConflict:
     def test_generic_conflict_warns_once_for_all_signals(self, caplog):
         os.environ["OTEL_EXPORTER_OTLP_ENDPOINT"] = "https://c:4317"
         os.environ["OTEL_EXPORTER_OTLP_INSECURE"] = "true"
-        with caplog.at_level(logging.WARNING, logger="otel_helper"):
+        with caplog.at_level(logging.WARNING, logger="staffops_otel_helper"):
             opts = TelemetryOptions(service_name="s")
             opts.resolve_from_env()
         assert caplog.text.count("contradicts") == 1
@@ -275,7 +275,7 @@ class TestTlsConflict:
     def test_invalid_insecure_is_false(self, caplog):
         os.environ["OTEL_EXPORTER_OTLP_ENDPOINT"] = "http://c:4317"
         os.environ["OTEL_EXPORTER_OTLP_INSECURE"] = "yes"
-        with caplog.at_level(logging.WARNING, logger="otel_helper"):
+        with caplog.at_level(logging.WARNING, logger="staffops_otel_helper"):
             plan = _plan()
         # "yes" -> false contradicts http://: the scheme wins, plaintext.
         assert plan.kwargs["insecure"] is True
@@ -285,7 +285,7 @@ class TestTlsConflict:
 class TestUserinfo:
     def test_grpc_strips_userinfo_and_query_and_redacts(self, caplog):
         os.environ["OTEL_EXPORTER_OTLP_ENDPOINT"] = "http://u:pw-secret@c:4317?token=q-secret"
-        with caplog.at_level(logging.DEBUG, logger="otel_helper"):
+        with caplog.at_level(logging.DEBUG, logger="staffops_otel_helper"):
             plan = _plan()
         assert plan.kwargs["endpoint"] == "http://c:4317"
         assert "pw-secret" not in caplog.text and "q-secret" not in caplog.text
@@ -293,7 +293,7 @@ class TestUserinfo:
     def test_http_userinfo_stripped(self, caplog):
         os.environ["OTEL_EXPORTER_OTLP_ENDPOINT"] = "https://u:pw-secret@c:4318/otlp"
         os.environ["OTEL_EXPORTER_OTLP_PROTOCOL"] = "http/protobuf"
-        with caplog.at_level(logging.WARNING, logger="otel_helper"):
+        with caplog.at_level(logging.WARNING, logger="staffops_otel_helper"):
             assert _plan().kwargs["endpoint"] == "https://c:4318/otlp/v1/traces"
         assert "pw-secret" not in caplog.text and "userinfo" in caplog.text
 
@@ -328,7 +328,7 @@ class TestTimeout:
 
     def test_seconds_like_value_warns(self, caplog):
         os.environ["OTEL_EXPORTER_OTLP_TIMEOUT"] = "10"
-        with caplog.at_level(logging.WARNING, logger="otel_helper"):
+        with caplog.at_level(logging.WARNING, logger="staffops_otel_helper"):
             plan = _plan(otel_endpoint="http://c:4317")
         assert plan.kwargs["timeout"] == 0.01
         assert "looks like seconds" in caplog.text
@@ -336,7 +336,7 @@ class TestTimeout:
     @pytest.mark.parametrize("raw", ["soon", "0", "-1", "inf"])
     def test_invalid_warns_uses_default_and_masks(self, raw, caplog):
         os.environ["OTEL_EXPORTER_OTLP_TRACES_TIMEOUT"] = raw
-        with caplog.at_level(logging.WARNING, logger="otel_helper"):
+        with caplog.at_level(logging.WARNING, logger="staffops_otel_helper"):
             plan = _plan(otel_endpoint="http://c:4317")
         assert plan.kwargs["timeout"] == 10.0
         assert plan.masked_env == ("OTEL_EXPORTER_OTLP_TRACES_TIMEOUT",)
@@ -361,7 +361,7 @@ class TestTimeout:
     def test_invalid_per_signal_falls_back_to_generic(self, caplog):
         os.environ["OTEL_EXPORTER_OTLP_TIMEOUT"] = "2500"
         os.environ["OTEL_EXPORTER_OTLP_TRACES_TIMEOUT"] = "soon"
-        with caplog.at_level(logging.WARNING, logger="otel_helper"):
+        with caplog.at_level(logging.WARNING, logger="staffops_otel_helper"):
             plan = _plan(otel_endpoint="http://c:4317")
         assert plan.kwargs["timeout"] == 2.5
         assert plan.masked_env == ("OTEL_EXPORTER_OTLP_TRACES_TIMEOUT",)
@@ -369,7 +369,7 @@ class TestTimeout:
     @pytest.mark.parametrize("raw,seconds", [("0.5", 0.001), ("100000000", 86400.0), (" 250 ", 0.25)])
     def test_clamped_to_range_with_warning(self, raw, seconds, caplog):
         os.environ["OTEL_EXPORTER_OTLP_TIMEOUT"] = raw
-        with caplog.at_level(logging.WARNING, logger="otel_helper"):
+        with caplog.at_level(logging.WARNING, logger="staffops_otel_helper"):
             assert _plan(otel_endpoint="http://c:4317").kwargs["timeout"] == seconds
         if raw.strip() != "250":
             assert "[1 ms, 24 h]" in caplog.text
@@ -377,13 +377,13 @@ class TestTimeout:
     @pytest.mark.parametrize("raw", ["0x1p10", "1_000", "nan", "1e3", ".5", "+5", "5.", "1e-9", "inf"])
     def test_non_decimal_rejected(self, raw, caplog):
         os.environ["OTEL_EXPORTER_OTLP_TIMEOUT"] = raw
-        with caplog.at_level(logging.WARNING, logger="otel_helper"):
+        with caplog.at_level(logging.WARNING, logger="staffops_otel_helper"):
             assert _plan(otel_endpoint="http://c:4317").kwargs["timeout"] == 10.0
         assert "OTEL_EXPORTER_OTLP_TIMEOUT" in caplog.text
 
     def test_code_timeout_with_invalid_per_signal_env_masks_it(self, caplog):
         os.environ["OTEL_EXPORTER_OTLP_TRACES_TIMEOUT"] = "soon"
-        with caplog.at_level(logging.WARNING, logger="otel_helper"):
+        with caplog.at_level(logging.WARNING, logger="staffops_otel_helper"):
             plan = _plan(otel_endpoint="http://c:4317", export_timeout_ms=750)
         assert plan.kwargs["timeout"] == 0.75
         assert plan.masked_env == ("OTEL_EXPORTER_OTLP_TRACES_TIMEOUT",)
@@ -418,7 +418,7 @@ class TestCompression:
 
     def test_invalid_env_warns_and_uses_gzip(self, caplog):
         os.environ["OTEL_EXPORTER_OTLP_COMPRESSION"] = "zstd"
-        with caplog.at_level(logging.WARNING, logger="otel_helper"):
+        with caplog.at_level(logging.WARNING, logger="staffops_otel_helper"):
             assert _plan(otel_endpoint="http://c:4317").kwargs["compression"] == "gzip"
         assert "OTEL_EXPORTER_OTLP_COMPRESSION" in caplog.text
 
@@ -446,7 +446,7 @@ class TestSemconvDefault:
     def test_user_value_with_http_wins_silently(self, value, monkeypatch, caplog):
         monkeypatch.setattr(_semconv, "_late_initialized_old_http", lambda: False)
         os.environ["OTEL_SEMCONV_STABILITY_OPT_IN"] = value
-        with caplog.at_level(logging.WARNING, logger="otel_helper"):
+        with caplog.at_level(logging.WARNING, logger="staffops_otel_helper"):
             _semconv.ensure_semconv_default()
         assert os.environ["OTEL_SEMCONV_STABILITY_OPT_IN"] == value
         assert caplog.text == ""
@@ -454,7 +454,7 @@ class TestSemconvDefault:
     def test_user_value_without_http_warns_once(self, monkeypatch, caplog):
         monkeypatch.setattr(_semconv, "_late_initialized_old_http", lambda: False)
         os.environ["OTEL_SEMCONV_STABILITY_OPT_IN"] = "database"
-        with caplog.at_level(logging.WARNING, logger="otel_helper"):
+        with caplog.at_level(logging.WARNING, logger="staffops_otel_helper"):
             _semconv.ensure_semconv_default()
             _semconv.ensure_semconv_default()
         assert os.environ["OTEL_SEMCONV_STABILITY_OPT_IN"] == "database"
@@ -462,9 +462,9 @@ class TestSemconvDefault:
 
     def test_late_initialization_warns(self, monkeypatch, caplog):
         monkeypatch.setattr(_semconv, "_late_initialized_old_http", lambda: True)
-        with caplog.at_level(logging.WARNING, logger="otel_helper"):
+        with caplog.at_level(logging.WARNING, logger="staffops_otel_helper"):
             _semconv.ensure_semconv_default()
-        assert "initialized before otel_helper" in caplog.text
+        assert "initialized before staffops_otel_helper" in caplog.text
 
     def test_late_detection_reads_contrib_state(self, monkeypatch):
         from opentelemetry.instrumentation import _semconv as contrib
@@ -493,7 +493,7 @@ class TestSemconvDefault:
         import sys
 
         calls = []
-        module = importlib.import_module(f"otel_helper.ext.{entry}")
+        module = importlib.import_module(f"staffops_otel_helper.ext.{entry}")
         monkeypatch.setattr(module, "ensure_semconv_default", lambda: calls.append(entry))
         # Make the instrumentor import fail: the default must already be set by then.
         monkeypatch.setitem(sys.modules, {"aws": "opentelemetry.instrumentation.botocore",
@@ -506,13 +506,13 @@ class TestSemconvDefault:
 
 class TestSetupContract:
     def test_setup_sets_semconv_default(self):
-        from otel_helper import setup_telemetry
+        from staffops_otel_helper import setup_telemetry
 
         setup_telemetry(TelemetryOptions(service_name="s", metric_exporters=["none"]))
         assert os.environ["OTEL_SEMCONV_STABILITY_OPT_IN"] == "http,database/dup"
 
     def test_setup_installs_helper_propagator(self, monkeypatch):
-        import otel_helper.setup as setup_mod
+        import staffops_otel_helper.setup as setup_mod
 
         calls = []
         monkeypatch.setattr(setup_mod, "set_global_textmap", lambda p: calls.append(p))
@@ -523,7 +523,7 @@ class TestSetupContract:
 
 class TestSdkDisabled:
     def test_short_circuits(self, monkeypatch):
-        import otel_helper.setup as setup_mod
+        import staffops_otel_helper.setup as setup_mod
 
         called = []
         for fn in ("build_tracer_provider", "build_metrics", "build_logging", "configure_instrumentations"):
@@ -540,7 +540,7 @@ class TestPropagators:
     """D1 propagators row: tracecontext, baggage, none; anything else warned and skipped."""
 
     def _names(self):
-        from otel_helper._propagators import build_propagator
+        from staffops_otel_helper._propagators import build_propagator
 
         return [type(p).__name__ for p in build_propagator()._propagators]
 
@@ -557,7 +557,7 @@ class TestPropagators:
 
     def test_unsupported_warned_and_skipped(self, caplog):
         os.environ["OTEL_PROPAGATORS"] = "b3,tracecontext,xray"
-        with caplog.at_level(logging.WARNING, logger="otel_helper"):
+        with caplog.at_level(logging.WARNING, logger="staffops_otel_helper"):
             assert self._names() == ["TraceContextTextMapPropagator"]
         assert "OTEL_PROPAGATORS" in caplog.text and "'b3'" in caplog.text and "'xray'" in caplog.text
 
@@ -566,7 +566,7 @@ class TestPropagators:
         assert self._names() == ["TraceContextTextMapPropagator", "W3CBaggagePropagator"]
 
     def test_import_safe_noop_when_already_imported(self):
-        from otel_helper._propagators import import_propagate_safely
+        from staffops_otel_helper._propagators import import_propagate_safely
 
         os.environ["OTEL_PROPAGATORS"] = "b3"
         import_propagate_safely()  # opentelemetry.propagate is already loaded: must not touch it
@@ -586,7 +586,7 @@ class TestPropagators:
         import subprocess
         import sys
 
-        code = ("import os, otel_helper\n"
+        code = ("import os, staffops_otel_helper\n"
                 "from opentelemetry.propagate import get_global_textmap\n"
                 "print(os.environ['OTEL_PROPAGATORS'], [type(p).__name__ for p in get_global_textmap()._propagators])")
         env = {k: v for k, v in os.environ.items() if not k.startswith("OTEL_")}
@@ -599,7 +599,7 @@ class TestInstanceId:
     """D4: code > env > SDK detector (>= 1.45) > helper UUID; env/code id in a forked worker warns."""
 
     def _resource(self, **kwargs):
-        from otel_helper.setup import _build_resource
+        from staffops_otel_helper.setup import _build_resource
 
         opts = TelemetryOptions(service_name="s", **kwargs)
         opts.resolve_from_env()
@@ -621,7 +621,7 @@ class TestInstanceId:
         os.environ["OTEL_RESOURCE_ATTRIBUTES"] = "deployment.environment.name=HML,service.name=ra"
         os.environ["ENVIRONMENT"] = "DEV"
         os.environ["SERVICE_NAME"] = "legacy"
-        from otel_helper.setup import _build_resource
+        from staffops_otel_helper.setup import _build_resource
 
         opts = TelemetryOptions()  # no service name in code
         opts.resolve_from_env()
@@ -630,33 +630,33 @@ class TestInstanceId:
         assert attrs["service.name"] == "ra"
 
     def test_forked_worker_with_explicit_id_warns(self, monkeypatch, caplog):
-        import otel_helper.setup as setup_mod
+        import staffops_otel_helper.setup as setup_mod
 
         monkeypatch.setattr(setup_mod, "_forked_after_import", True)
         os.environ["OTEL_RESOURCE_ATTRIBUTES"] = "service.instance.id=inst-1"
-        with caplog.at_level(logging.WARNING, logger="otel_helper"):
+        with caplog.at_level(logging.WARNING, logger="staffops_otel_helper"):
             attrs = self._resource().attributes
         assert attrs["service.instance.id"] == "inst-1"
         assert "service.instance.id" in caplog.text
 
     def test_forked_worker_without_explicit_id_silent(self, monkeypatch, caplog):
-        import otel_helper.setup as setup_mod
+        import staffops_otel_helper.setup as setup_mod
 
         monkeypatch.setattr(setup_mod, "_forked_after_import", True)
-        with caplog.at_level(logging.WARNING, logger="otel_helper"):
+        with caplog.at_level(logging.WARNING, logger="staffops_otel_helper"):
             self._resource()
         assert "service.instance.id" not in caplog.text
 
     def test_fork_after_setup_with_helper_id_warns(self, monkeypatch, caplog):
-        import otel_helper.setup as setup_mod
+        import staffops_otel_helper.setup as setup_mod
 
         monkeypatch.setattr(setup_mod, "_initialized", True)
         monkeypatch.setattr(setup_mod, "_helper_instance_id", True)
         monkeypatch.setattr(setup_mod, "_fork_warning_pending", False)
-        with caplog.at_level(logging.WARNING, logger="otel_helper"):
+        with caplog.at_level(logging.WARNING, logger="staffops_otel_helper"):
             setup_mod._mark_forked()
             assert caplog.text == ""  # the hook never logs (deadlock risk)
-            from otel_helper import get_tracer
+            from staffops_otel_helper import get_tracer
 
             get_tracer("x")
             get_tracer("x")
@@ -664,18 +664,18 @@ class TestInstanceId:
         assert "only in each worker" in caplog.text
 
     def test_fork_after_setup_with_sdk_id_silent(self, monkeypatch, caplog):
-        import otel_helper.setup as setup_mod
+        import staffops_otel_helper.setup as setup_mod
 
         monkeypatch.setattr(setup_mod, "_initialized", True)
         monkeypatch.setattr(setup_mod, "_helper_instance_id", False)
         monkeypatch.setattr(setup_mod, "_fork_warning_pending", False)
-        with caplog.at_level(logging.WARNING, logger="otel_helper"):
+        with caplog.at_level(logging.WARNING, logger="staffops_otel_helper"):
             setup_mod._mark_forked()
             setup_mod.emit_fork_warning()
         assert caplog.text == ""
 
     def test_fork_hook_marks_child(self, monkeypatch):
-        import otel_helper.setup as setup_mod
+        import staffops_otel_helper.setup as setup_mod
 
         monkeypatch.setattr(setup_mod, "_forked_after_import", False)
         setup_mod._mark_forked()
@@ -683,9 +683,9 @@ class TestInstanceId:
 
 
 class TestDiagnosticsChannel:
-    """CLAUDE.md "Helper diagnostics": only the otel_helper* loggers, never warnings/print/std streams."""
+    """CLAUDE.md "Helper diagnostics": only the staffops_otel_helper* loggers, never warnings/print/std streams."""
 
-    _PKG = Path(__file__).resolve().parents[1] / "otel_helper"
+    _PKG = Path(__file__).resolve().parents[1] / "staffops_otel_helper"
     _LEVELS = {"debug", "info", "warning", "warn", "error", "exception", "critical", "log"}
     _FORBIDDEN_FROM = {("warnings", "warn"), ("sys", "stderr"), ("sys", "stdout"),
                        ("sys", "__stderr__"), ("sys", "__stdout__"), ("os", "write"), ("builtins", "print"),
@@ -810,7 +810,7 @@ class TestDiagnosticsChannel:
         "from sys import stderr",
         "import sys\nsys.__stderr__.write('x')",
         "import os\nos.write(2, b'x')",
-        "import logging\nlogging.getLogger('otel_helper').parent.warning('x')",
+        "import logging\nlogging.getLogger('staffops_otel_helper').parent.warning('x')",
         "print('x')",
         "from os import write",
         "import traceback\ntraceback.print_exc()",
@@ -841,7 +841,7 @@ class TestDiagnosticsChannel:
             if not (isinstance(node, ast.Call) and self._dotted(node.func).endswith("getLogger")):
                 continue
             arg = node.args[0] if node.args else next((k.value for k in node.keywords if k.arg == "name"), None)
-            if isinstance(arg, ast.Constant) and isinstance(arg.value, str) and arg.value.startswith("otel_helper"):
+            if isinstance(arg, ast.Constant) and isinstance(arg.value, str) and arg.value.startswith("staffops_otel_helper"):
                 continue
             if isinstance(arg, ast.Name) and arg.id == "__name__":
                 continue
@@ -855,7 +855,7 @@ class TestDiagnosticsChannel:
         return bad
 
     def test_loggers_are_in_the_otel_helper_hierarchy(self):
-        """Named loggers are otel_helper.*; root/third-party loggers only tuned (setLevel/addHandler) in logging_setup."""
+        """Named loggers are staffops_otel_helper.*; root/third-party loggers only tuned (setLevel/addHandler) in logging_setup."""
         bad = [b for rel, tree in self._trees() for b in self._logger_offenders(rel, tree)]
         assert bad == []
 
@@ -868,10 +868,10 @@ class TestDiagnosticsChannel:
         assert self._logger_offenders(rel, ast.parse(snippet))
 
     def test_package_name_is_otel_helper(self):
-        # getLogger(__name__) only lands in the otel_helper hierarchy for this package name.
-        import otel_helper.metrics as m
+        # getLogger(__name__) only lands in the staffops_otel_helper hierarchy for this package name.
+        import staffops_otel_helper.metrics as m
 
-        assert m._logger.name.startswith("otel_helper")
+        assert m._logger.name.startswith("staffops_otel_helper")
 
 
 class TestFinalRound:
@@ -880,7 +880,7 @@ class TestFinalRound:
     @pytest.mark.parametrize("raw", ["unix:/tmp/x", "ftp:/x", "collector:/v1/traces"])
     def test_opaque_scheme_env_not_configured(self, raw, caplog):
         os.environ["OTEL_EXPORTER_OTLP_ENDPOINT"] = raw
-        with caplog.at_level(logging.WARNING, logger="otel_helper"):
+        with caplog.at_level(logging.WARNING, logger="staffops_otel_helper"):
             opts = TelemetryOptions(service_name="s")
             opts.resolve_from_env()
         assert not opts.is_otlp_configured("traces")
@@ -901,7 +901,7 @@ class TestFinalRound:
         assert _plan(otel_endpoint="collector:4317").kwargs["endpoint"] == "https://collector:4317"
 
     def test_trim_set_is_ascii_only(self):
-        from otel_helper.config import TRIM_CHARS, _env
+        from staffops_otel_helper.config import TRIM_CHARS, _env
 
         assert TRIM_CHARS == " \t\n\r\v\f"
         os.environ["OTEL_HELPER_METRICS_PORT"] = "\v 9000 \f"
@@ -928,7 +928,7 @@ class TestFinalRound:
             pytest.skip("sdk < 1.45 has no fork-aware instance id detector")
         code = (
             "import os, json\n"
-            "from otel_helper import setup_telemetry\n"
+            "from staffops_otel_helper import setup_telemetry\n"
             "from opentelemetry import trace\n"
             "setup_telemetry()\n"
             "def iid():\n"

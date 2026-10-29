@@ -1,15 +1,15 @@
 """Opt-in AWS SDK (botocore/boto3) instrumentation extension."""
 
-from otel_helper._semconv import ensure_semconv_default
-from otel_helper._support import missing_dependency_hint as _missing_hint
-from otel_helper._support import warn_if_unsupported
+from staffops_otel_helper._semconv import ensure_semconv_default
+from staffops_otel_helper._support import missing_dependency_hint as _missing_hint
+from staffops_otel_helper._support import warn_if_unsupported
 
 
 def instrument_aws() -> bool:
     """Enable AWS SDK (botocore/boto3) tracing instrumentation.
 
     Returns True when the instrumentor is active. False (with a warning on the
-    ``otel_helper`` logger) when it refuses the installed library version (P18).
+    ``staffops_otel_helper`` logger) when it refuses the installed library version (P18).
     """
     ensure_semconv_default()  # before the instrumentor reads it (design D12)
     try:

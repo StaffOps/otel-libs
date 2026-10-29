@@ -15,9 +15,9 @@ from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
 from opentelemetry.exporter.prometheus import PrometheusMetricReader
 from opentelemetry.sdk.resources import Resource
 
-from otel_helper import metrics_app, setup_telemetry
-from otel_helper.config import TelemetryOptions
-from otel_helper.metrics import configure_metrics
+from staffops_otel_helper import metrics_app, setup_telemetry
+from staffops_otel_helper.config import TelemetryOptions
+from staffops_otel_helper.metrics import configure_metrics
 
 
 def _resolved(**kwargs) -> TelemetryOptions:
@@ -70,7 +70,7 @@ class TestExporterResolution:
 
     def test_unknown_env_value_warns_and_uses_inference(self, caplog):
         os.environ["OTEL_METRICS_EXPORTER"] = "statsd"
-        with caplog.at_level(logging.WARNING, logger="otel_helper"):
+        with caplog.at_level(logging.WARNING, logger="staffops_otel_helper"):
             opts = _resolved(service_name="svc")
             opts.validate()
         assert opts.resolved_metric_exporters() == ["prometheus"]
@@ -83,7 +83,7 @@ class TestExporterResolution:
 
     def test_otlp_env_without_endpoint_warns_and_falls_back(self, caplog):
         os.environ["OTEL_METRICS_EXPORTER"] = "otlp"
-        with caplog.at_level(logging.WARNING, logger="otel_helper"):
+        with caplog.at_level(logging.WARNING, logger="staffops_otel_helper"):
             opts = _resolved(service_name="svc")
             opts.validate()
         assert opts.resolved_metric_exporters() == ["prometheus"]
@@ -106,7 +106,7 @@ class TestExporterResolution:
 
     def test_none_combined_env_warns_and_is_none(self, caplog):
         os.environ["OTEL_METRICS_EXPORTER"] = "none,prometheus"
-        with caplog.at_level(logging.WARNING, logger="otel_helper"):
+        with caplog.at_level(logging.WARNING, logger="staffops_otel_helper"):
             opts = _resolved(service_name="svc")
         assert opts.resolved_metric_exporters() == []
         assert "'none'" in caplog.text
@@ -118,7 +118,7 @@ class TestExporterResolution:
 
     def test_logging_alias_is_console(self, caplog):
         os.environ["OTEL_METRICS_EXPORTER"] = "logging"
-        with caplog.at_level(logging.WARNING, logger="otel_helper"):
+        with caplog.at_level(logging.WARNING, logger="staffops_otel_helper"):
             opts = _resolved(service_name="svc")
         assert opts.resolved_metric_exporters() == ["console"]
         assert "deprecated" in caplog.text
@@ -140,14 +140,14 @@ class TestExportInterval:
 
     def test_invalid_env_falls_back_to_default(self, caplog):
         os.environ["OTEL_METRIC_EXPORT_INTERVAL"] = "not-a-number"
-        with caplog.at_level(logging.WARNING, logger="otel_helper"):
+        with caplog.at_level(logging.WARNING, logger="staffops_otel_helper"):
             assert _resolved().resolved.export_interval_ms == 30_000
         assert "OTEL_METRIC_EXPORT_INTERVAL" in caplog.text
 
     @pytest.mark.parametrize("raw", ["0", "-5"])
     def test_non_positive_env_warns_and_falls_back(self, raw, caplog):
         os.environ["OTEL_METRIC_EXPORT_INTERVAL"] = raw
-        with caplog.at_level(logging.WARNING, logger="otel_helper"):
+        with caplog.at_level(logging.WARNING, logger="staffops_otel_helper"):
             opts = _resolved()
             opts.validate()
         assert opts.resolved.export_interval_ms == 30_000
@@ -167,7 +167,7 @@ def helper_calls(monkeypatch):
     (MeterProvider._metric_readers, reader._export_interval_millis), which
     are not a stable API across the supported SDK range.
     """
-    import otel_helper.metrics as helper_metrics
+    import staffops_otel_helper.metrics as helper_metrics
 
     calls = {"readers": None, "intervals": []}
 
@@ -436,7 +436,7 @@ class TestDedicatedRegistry:
         assert b"gone_after_shutdown" not in body
 
     def test_busy_port_unregisters_reader(self):
-        from otel_helper.metrics import _REGISTRY
+        from staffops_otel_helper.metrics import _REGISTRY
 
         before = len(list(_REGISTRY.collect()))
         blocker = socket.socket(socket.AF_INET, socket.SOCK_STREAM)

@@ -1,7 +1,7 @@
 """A9 (Python): deprecation warnings (R8/D8) and the debug entry-span marker (R9, ADR-006).
 
 Deprecations: one WARNING per deprecated variable per process, on the
-``otel_helper`` logger, naming the variable and its replacement and never its
+``staffops_otel_helper`` logger, naming the variable and its replacement and never its
 value. Debug: ``debug=true`` on spans with no parent or a remote parent, only
 from local config; inbound tracestate/baggage never set it and tracestate is
 never written.
@@ -17,9 +17,9 @@ from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 from opentelemetry.trace import NonRecordingSpan, SpanContext, TraceFlags, TraceState
 
-from otel_helper.config import TelemetryOptions
-from otel_helper.processors import DebugProcessor
-from otel_helper.tracing import build_tracer_provider
+from staffops_otel_helper.config import TelemetryOptions
+from staffops_otel_helper.processors import DebugProcessor
+from staffops_otel_helper.tracing import build_tracer_provider
 from opentelemetry.sdk.resources import Resource
 
 DEPRECATED = {
@@ -27,7 +27,7 @@ DEPRECATED = {
     "ENVIRONMENT": "OTEL_RESOURCE_ATTRIBUTES=deployment.environment.name",
     "OTEL_HELPER_SAMPLE_RATIO": "OTEL_TRACES_SAMPLER=parentbased_traceidratio",
     "OTEL_HELPER_DISABLED_SIGNALS": "OTEL_LOGS_EXPORTER=none",
-    "OTEL_HELPER_EXTRA_INSTRUMENTATION": "otel_helper.ext.sql.instrument_sql()",
+    "OTEL_HELPER_EXTRA_INSTRUMENTATION": "staffops_otel_helper.ext.sql.instrument_sql()",
 }
 SAMPLE_VALUES = {
     "SERVICE_NAME": "secret-looking-svc",
@@ -40,7 +40,7 @@ SAMPLE_VALUES = {
 
 def _deprecations(caplog, var: str) -> list[logging.LogRecord]:
     return [r for r in caplog.records
-            if r.name.startswith("otel_helper") and r.levelno == logging.WARNING
+            if r.name.startswith("staffops_otel_helper") and r.levelno == logging.WARNING
             and "deprecated" in r.getMessage() and r.getMessage().split(" ")[1] == var]
 
 
@@ -55,7 +55,7 @@ class TestDeprecatedVariables:
     def test_warns_naming_variable_and_replacement(self, caplog, var):
         os.environ["OTEL_SERVICE_NAME"] = "svc"
         os.environ[var] = SAMPLE_VALUES[var]
-        with caplog.at_level(logging.WARNING, logger="otel_helper"):
+        with caplog.at_level(logging.WARNING, logger="staffops_otel_helper"):
             _resolve()
         records = _deprecations(caplog, var)
         assert len(records) == 1
@@ -66,7 +66,7 @@ class TestDeprecatedVariables:
     @pytest.mark.parametrize("var", sorted(DEPRECATED))
     def test_once_per_process_across_resolutions(self, caplog, var):
         os.environ[var] = SAMPLE_VALUES[var]
-        with caplog.at_level(logging.WARNING, logger="otel_helper"):
+        with caplog.at_level(logging.WARNING, logger="staffops_otel_helper"):
             _resolve()
             _resolve()
             TelemetryOptions(service_name="code").resolve_from_env()
@@ -76,7 +76,7 @@ class TestDeprecatedVariables:
         """Set but ignored (standard var / code value wins) is still a deprecated usage."""
         os.environ.update({"SERVICE_NAME": "legacy", "OTEL_SERVICE_NAME": "std",
                            "OTEL_HELPER_SAMPLE_RATIO": "0.5", "OTEL_TRACES_SAMPLER": "always_on"})
-        with caplog.at_level(logging.WARNING, logger="otel_helper"):
+        with caplog.at_level(logging.WARNING, logger="staffops_otel_helper"):
             opts = _resolve()
         assert opts.service_name == "std"  # behavior unchanged: the standard var still wins
         assert len(_deprecations(caplog, "SERVICE_NAME")) == 1
@@ -94,21 +94,21 @@ class TestDeprecatedVariables:
                                      "OTEL_HELPER_DISABLED_SIGNALS"])
     def test_whitespace_only_is_unset(self, caplog, var):
         os.environ[var] = "  "
-        with caplog.at_level(logging.WARNING, logger="otel_helper"):
+        with caplog.at_level(logging.WARNING, logger="staffops_otel_helper"):
             _resolve(service_name="svc")
         assert _deprecations(caplog, var) == []
 
     def test_empty_extra_instrumentation_warns(self, caplog):
         """An empty value still has an effect (turns the SQL default off), so it is a usage."""
         os.environ["OTEL_HELPER_EXTRA_INSTRUMENTATION"] = ""
-        with caplog.at_level(logging.WARNING, logger="otel_helper"):
+        with caplog.at_level(logging.WARNING, logger="staffops_otel_helper"):
             opts = _resolve(service_name="svc")
         assert opts.has_instrumentation("SQL") is False
         assert len(_deprecations(caplog, "OTEL_HELPER_EXTRA_INSTRUMENTATION")) == 1
 
     def test_nothing_deprecated_set_no_warning(self, caplog):
         os.environ["OTEL_SERVICE_NAME"] = "svc"
-        with caplog.at_level(logging.WARNING, logger="otel_helper"):
+        with caplog.at_level(logging.WARNING, logger="staffops_otel_helper"):
             _resolve()
         assert not [r for r in caplog.records if "deprecated" in r.getMessage()]
 
@@ -184,7 +184,7 @@ class TestSchemelessHTTPDeprecation:
         """Mirrors Go TestSchemelessHTTPDeprecationOncePerProcess: three signals x two resolutions → 1."""
         os.environ.update({"OTEL_SERVICE_NAME": "svc", "OTEL_EXPORTER_OTLP_ENDPOINT": "collector:4318",
                            "OTEL_EXPORTER_OTLP_PROTOCOL": "http/protobuf"})
-        with caplog.at_level(logging.WARNING, logger="otel_helper"):
+        with caplog.at_level(logging.WARNING, logger="staffops_otel_helper"):
             _resolve()
             _resolve()
         msgs = [r.getMessage() for r in caplog.records if "schemeless endpoint is deprecated" in r.getMessage()]
@@ -193,6 +193,6 @@ class TestSchemelessHTTPDeprecation:
 
     def test_grpc_schemeless_not_deprecated(self, caplog):
         os.environ.update({"OTEL_SERVICE_NAME": "svc", "OTEL_EXPORTER_OTLP_ENDPOINT": "collector:4317"})
-        with caplog.at_level(logging.WARNING, logger="otel_helper"):
+        with caplog.at_level(logging.WARNING, logger="staffops_otel_helper"):
             _resolve()
         assert "schemeless" not in caplog.text

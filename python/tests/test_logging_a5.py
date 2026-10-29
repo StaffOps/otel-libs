@@ -18,10 +18,10 @@ import pytest
 
 from opentelemetry import _logs
 
-import otel_helper.setup as setup_mod
-from otel_helper import _console, setup_telemetry, shutdown_telemetry
-from otel_helper.config import TelemetryOptions
-from otel_helper.logging_setup import HelperLogHandler, build_logging
+import staffops_otel_helper.setup as setup_mod
+from staffops_otel_helper import _console, setup_telemetry, shutdown_telemetry
+from staffops_otel_helper.config import TelemetryOptions
+from staffops_otel_helper.logging_setup import HelperLogHandler, build_logging
 from opentelemetry.sdk._logs import LoggerProvider
 from opentelemetry.sdk.resources import Resource
 
@@ -30,7 +30,7 @@ import os
 if os.environ.get("PARITY_COVERAGE_DATA"):
     import coverage
     _cov = coverage.Coverage(data_file=os.environ["PARITY_COVERAGE_DATA"], data_suffix=True,
-                             source=["otel_helper"], config_file=False)
+                             source=["staffops_otel_helper"], config_file=False)
     _cov.start()
     import atexit
     atexit.register(lambda: (_cov.stop(), _cov.save()))
@@ -57,7 +57,7 @@ class TestNoLogsExporter:
 
     def test_no_otel_handler_and_records_on_stdout(self):
         proc = _run("""
-            from otel_helper import setup_telemetry
+            from staffops_otel_helper import setup_telemetry
             setup_telemetry()
             print("HANDLERS", logging.getLogger().handlers, flush=True)
             logging.getLogger("app").info("HELLO-INFO")
@@ -69,7 +69,7 @@ class TestNoLogsExporter:
 
     def test_logs_exporter_none_with_endpoint(self):
         proc = _run("""
-            from otel_helper import setup_telemetry
+            from staffops_otel_helper import setup_telemetry
             setup_telemetry()
             print("HANDLERS", logging.getLogger().handlers, flush=True)
             logging.getLogger("app").warning("HELLO-WARN")
@@ -79,7 +79,7 @@ class TestNoLogsExporter:
 
     def test_helper_diagnostics_stay_on_stderr(self):
         proc = _run("""
-            from otel_helper import setup_telemetry
+            from staffops_otel_helper import setup_telemetry
             setup_telemetry()  # no environment -> the helper warns
             logging.getLogger("opentelemetry.sdk").warning("SDK-DIAG")
         """)
@@ -89,7 +89,7 @@ class TestNoLogsExporter:
 
     def test_basic_config_after_setup_works(self):
         proc = _run("""
-            from otel_helper import setup_telemetry
+            from staffops_otel_helper import setup_telemetry
             setup_telemetry()
             logging.basicConfig(format="BC %(message)s", stream=sys.stdout, level=logging.INFO)
             print("COUNT", len(logging.getLogger().handlers), flush=True)
@@ -103,7 +103,7 @@ class TestNoLogsExporter:
             h = logging.StreamHandler(sys.stdout)
             h.setFormatter(logging.Formatter("MINE %(message)s"))
             logging.getLogger().addHandler(h)
-            from otel_helper import setup_telemetry
+            from staffops_otel_helper import setup_telemetry
             setup_telemetry()
             print("LEVEL", logging.getLogger().level, "N", len(logging.getLogger().handlers), flush=True)
             logging.getLogger("app").warning("W")
@@ -120,7 +120,7 @@ class TestNoLogsExporter:
     ])
     def test_root_level_by_environment(self, env, expected):
         proc = _run("""
-            from otel_helper import setup_telemetry
+            from staffops_otel_helper import setup_telemetry
             setup_telemetry()
             print("LEVEL", logging.getLogger().level, flush=True)
         """, **env)
@@ -129,7 +129,7 @@ class TestNoLogsExporter:
     def test_custom_root_level_is_left_alone(self):
         proc = _run("""
             logging.getLogger().setLevel(logging.ERROR)
-            from otel_helper import setup_telemetry
+            from staffops_otel_helper import setup_telemetry
             setup_telemetry()
             print("LEVEL", logging.getLogger().level, flush=True)
         """, ENVIRONMENT="LOCAL")
@@ -138,7 +138,7 @@ class TestNoLogsExporter:
     def test_shutdown_restores_stdlib_state(self):
         proc = _run("""
             stdlib = (logging.lastResort, logging.basicConfig, logging.config.dictConfig)
-            from otel_helper import setup_telemetry, shutdown_telemetry
+            from staffops_otel_helper import setup_telemetry, shutdown_telemetry
             setup_telemetry()
             changed = logging.lastResort is not stdlib[0]
             shutdown_telemetry()
@@ -151,7 +151,7 @@ class TestNoLogsExporter:
 
     def test_stdout_fallback_is_single_line_json(self):
         proc = _run("""
-            from otel_helper import setup_telemetry
+            from staffops_otel_helper import setup_telemetry
             setup_telemetry()
             log = logging.getLogger("app.orders")
             log.warning("W %s", 1, extra={"order_id": "o-1"})
@@ -174,7 +174,7 @@ class TestNoLogsExporter:
 
     def test_info_helper_diagnostic_reaches_stderr_in_prd(self):
         proc = _run("""
-            from otel_helper import setup_telemetry
+            from staffops_otel_helper import setup_telemetry
             setup_telemetry()
         """, ENVIRONMENT="PRD", OTEL_EXPORTER_OTLP_ENDPOINT="http://127.0.0.1:4318", OTEL_LOGS_EXPORTER="none")
         assert "inferred as http/protobuf" in proc.stderr
@@ -193,7 +193,7 @@ class TestNoLogsExporter:
             _logs.set_logger_provider(lp)
             trace.set_tracer_provider(TracerProvider())
             LoggingInstrumentor().instrument()
-            from otel_helper import setup_telemetry
+            from staffops_otel_helper import setup_telemetry
             setup_telemetry()
         """, OTEL_LOGS_EXPORTER="console", OTEL_TRACES_EXPORTER="console", ENVIRONMENT="DEV")
         assert "Overriding of current TracerProvider" in proc.stderr
@@ -203,7 +203,7 @@ class TestNoLogsExporter:
         proc = _run("""
             from opentelemetry.instrumentation.logging import LoggingInstrumentor
             LoggingInstrumentor().instrument()  # what opentelemetry-instrument does by default
-            from otel_helper import setup_telemetry, shutdown_telemetry
+            from staffops_otel_helper import setup_telemetry, shutdown_telemetry
             setup_telemetry()
             print("HANDLERS", logging.getLogger().handlers, flush=True)
             logging.getLogger("app").warning("STILL-HERE")
@@ -218,8 +218,8 @@ class TestNoLogsExporter:
 class TestLogsExporterActive:
     def test_handler_on_root_and_kept_across_config_functions(self):
         proc = _run("""
-            from otel_helper import setup_telemetry
-            from otel_helper.logging_setup import HelperLogHandler
+            from staffops_otel_helper import setup_telemetry
+            from staffops_otel_helper.logging_setup import HelperLogHandler
             setup_telemetry()
             otel = lambda: [h for h in logging.getLogger().handlers if isinstance(h, HelperLogHandler)]
             before = len(otel())
@@ -235,7 +235,7 @@ class TestLogsExporterActive:
         # uvicorn's default LOGGING_CONFIG (propagate=False), applied after setup as
         # uvicorn.run() does; the console logs exporter prints one JSON per record.
         proc = _run("""
-            from otel_helper import setup_telemetry, shutdown_telemetry
+            from staffops_otel_helper import setup_telemetry, shutdown_telemetry
             setup_telemetry()
             logging.config.dictConfig({
                 "version": 1, "disable_existing_loggers": False,
@@ -257,12 +257,12 @@ class TestLogsExporterActive:
     def test_diagnostics_reach_stderr_and_are_never_exported(self):
         # Dead OTLP endpoint + console exporter: what the OTel handler exports shows
         # up on stdout as JSON with a "body"; diagnostics must be on stderr only
-        # (opentelemetry.*) or on stderr and exported (otel_helper.*), no loop.
+        # (opentelemetry.*) or on stderr and exported (staffops_otel_helper.*), no loop.
         proc = _run("""
-            from otel_helper import setup_telemetry, shutdown_telemetry
+            from staffops_otel_helper import setup_telemetry, shutdown_telemetry
             setup_telemetry()
             logging.getLogger("app").warning("APP-RECORD")
-            logging.getLogger("otel_helper.test").warning("HELPER-DIAG")
+            logging.getLogger("staffops_otel_helper.test").warning("HELPER-DIAG")
             logging.getLogger("opentelemetry.sdk.test").warning("SDK-DIAG")
             try:
                 shutdown_telemetry(timeout_ms=5000)
@@ -280,19 +280,19 @@ class TestLogsExporterActive:
 
     def test_diagnostics_handler_steps_aside_when_app_configures_root(self):
         proc = _run("""
-            from otel_helper import setup_telemetry
+            from staffops_otel_helper import setup_telemetry
             setup_telemetry()
             logging.basicConfig(stream=sys.stdout, format="BC %(name)s %(message)s")
-            logging.getLogger("otel_helper.test").warning("ONCE")
+            logging.getLogger("staffops_otel_helper.test").warning("ONCE")
             print("N", len(logging.getLogger().handlers), flush=True)
         """, OTEL_LOGS_EXPORTER="console", ENVIRONMENT="DEV")
-        assert "BC otel_helper.test ONCE" in proc.stdout and "ONCE" not in proc.stderr
+        assert "BC staffops_otel_helper.test ONCE" in proc.stdout and "ONCE" not in proc.stderr
         assert "N 2" in proc.stdout  # app StreamHandler + OTel handler, no diagnostics handler
 
     def test_diagnostic_loggers_reenabled_after_dict_config(self):
         proc = _run("""
-            pre = [logging.getLogger(n) for n in ("otel_helper.pre", "opentelemetry.pre", "app.pre")]
-            from otel_helper import setup_telemetry
+            pre = [logging.getLogger(n) for n in ("staffops_otel_helper.pre", "opentelemetry.pre", "app.pre")]
+            from staffops_otel_helper import setup_telemetry
             setup_telemetry()
             logging.config.dictConfig({"version": 1})  # disable_existing_loggers defaults to True
             print("DISABLED", [lg.disabled for lg in pre], flush=True)
@@ -300,7 +300,7 @@ class TestLogsExporterActive:
         assert "DISABLED [False, False, True]" in proc.stdout
 
     def test_otlp_and_console_both(self, monkeypatch):
-        import otel_helper.logging_setup as ls
+        import staffops_otel_helper.logging_setup as ls
         from opentelemetry.sdk._logs.export import SimpleLogRecordProcessor
 
         exporters = []
@@ -359,21 +359,21 @@ class TestUnits:
 
         fallback = _console.ConsoleFallback(logging.INFO, Prev(logging.WARNING))
         mk = lambda name, lvl: logging.LogRecord(name, lvl, __file__, 1, "msg-" + name, None, None)  # noqa: E731
-        fallback.handle(mk("otel_helper.config", logging.WARNING))
+        fallback.handle(mk("staffops_otel_helper.config", logging.WARNING))
         fallback.handle(mk("opentelemetry.sdk", logging.INFO))  # INFO+ (A5 rulings)
         fallback.handle(mk("opentelemetry.sdk", logging.DEBUG))
         fallback.handle(mk("app", logging.INFO))
-        assert seen == ["otel_helper.config", "opentelemetry.sdk"]
+        assert seen == ["staffops_otel_helper.config", "opentelemetry.sdk"]
         assert "msg-app" in capsys.readouterr().out
-        assert _console.ConsoleFallback(logging.INFO, None).handle(mk("otel_helper", logging.ERROR)) is False
+        assert _console.ConsoleFallback(logging.INFO, None).handle(mk("staffops_otel_helper", logging.ERROR)) is False
 
     def test_handler_never_exports_sdk_diagnostics(self):
         handler = HelperLogHandler(logging.INFO, LoggerProvider(), False)
         emitted = []
         handler.emit = emitted.append
-        for name in ("opentelemetry", "opentelemetry.exporter.otlp", "otel_helper.x", "opentelemetryx"):
+        for name in ("opentelemetry", "opentelemetry.exporter.otlp", "staffops_otel_helper.x", "opentelemetryx"):
             handler.handle(logging.LogRecord(name, logging.WARNING, __file__, 1, "m", None, None))
-        assert [r.name for r in emitted] == ["otel_helper.x", "opentelemetryx"]
+        assert [r.name for r in emitted] == ["staffops_otel_helper.x", "opentelemetryx"]
 
     def test_handler_skips_records_from_the_log_export_thread(self):
         handler = HelperLogHandler(logging.DEBUG, LoggerProvider(), False)
@@ -392,11 +392,11 @@ class TestUnits:
 
         h = _console.SetupDiagnostics(Prev(logging.WARNING))
         mk = lambda name, lvl: logging.LogRecord(name, lvl, __file__, 1, "m", None, None)  # noqa: E731
-        h.handle(mk("otel_helper.x", logging.INFO))
+        h.handle(mk("staffops_otel_helper.x", logging.INFO))
         h.handle(mk("opentelemetry.x", logging.INFO))
         h.handle(mk("app", logging.INFO))
         h.handle(mk("app", logging.WARNING))
-        assert seen == [("otel_helper.x", logging.INFO), ("app", logging.WARNING)]
+        assert seen == [("staffops_otel_helper.x", logging.INFO), ("app", logging.WARNING)]
         assert _console.SetupDiagnostics(None).handle(mk("app", logging.ERROR)) is False
 
     def test_diagnostics_handler_ignores_app_records(self):
@@ -413,7 +413,7 @@ class TestUnits:
         logging.lastResort = original
 
     def test_config_guard_inert_after_detach_when_rewrapped(self):
-        from otel_helper.logging_setup import attach_logging, detach_logging
+        from staffops_otel_helper.logging_setup import attach_logging, detach_logging
 
         handler = HelperLogHandler(logging.INFO, LoggerProvider(), False)
         state = attach_logging(handler, logging.INFO)

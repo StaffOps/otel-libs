@@ -475,6 +475,16 @@ the SDK pipeline. The logger is a package var so tests can hook it.
 handlers added by the library for its own diagnostics; with no app config,
 WARNING+ reaches stderr via `logging.lastResort`). Both are what the parity
 `helper_log` field captures; a test enforces it (A3).
+
+> **Amended 2026-10-29 (ADR-011).** The Python package is renamed
+> `staffops_otel_helper` (distribution `staffops-otel-helper`), so the
+> diagnostics channel is the named loggers under **`staffops_otel_helper`**;
+> every `otel_helper.*` logger name in this design (D6 A5 rulings, D14 ext
+> hints) reads `staffops_otel_helper.*`. The parity `helper_log` capture
+> (`python/tests/parity_driver.py`) keys on the new hierarchy. The
+> `otel_helper` compatibility module (0.3.x only, removed in 1.0) re-exports
+> the API but does **not** alias logger names: filters on `otel_helper.*`
+> must move.
 The enforcement test is a **backstop, not a sandbox**: after four review rounds
 it catches every realistic accidental pattern; deliberately obfuscated writes
 (paths in constants, function values of `os.WriteFile`, `vars(sys)`…) are out
@@ -549,6 +559,14 @@ capability; a dead knob silently accepted misleads users.
 **When wrong**: consumers can't migrate before 1.0. **Reversal action**: extend
 the window; never drop silently.
 **Alternatives rejected**: remove now (no warning period).
+
+> **Amended 2026-10-29 (ADR-011).** The deprecated **import path** `otel_helper`
+> (Python, 0.3.x, removed in 1.0) is a code-level deprecation, so it uses the
+> stdlib channel for those: one `DeprecationWarning` attributed to the importing
+> line (Python ≥ 3.12 via `skip_file_prefixes`). Because the default filters hide
+> it outside `__main__` (an app module loaded by uvicorn/gunicorn), the same
+> notice is also logged once per process on the `staffops_otel_helper.compat`
+> logger, like the env-var deprecations above.
 
 ---
 
@@ -755,7 +773,7 @@ document the old instruments — the ext modules are versioned with the core,
 so either ships in the next minor.
 
 Python ext import failures (A13 validation, 2026-10-28): `otel_helper.ext.{aws,redis,sql}` raise an `ImportError` whose message claims a cause only when it is certain:
-- `ModuleNotFoundError` for the extra's instrumentor module (`opentelemetry.instrumentation.<lib>`, passed in by the entry point) or one of its parent packages → "instrumentation not installed. Install the otel-helper wheel with the [<extra>] extra (not on PyPI; see CONSUMING.md)". *(Corrected 2026-10-28, repo-tooling review H2: the first wording, "Run: pip install otel-helper[<extra>]", told users to install by name from PyPI, where `otel-helper` is not registered — a dependency-confusion vector in a public repo. The hint now points to the wheel and CONSUMING.md.)*
+- `ModuleNotFoundError` for the extra's instrumentor module (`opentelemetry.instrumentation.<lib>`, passed in by the entry point) or one of its parent packages → "instrumentation not installed. Install the staffops-otel-helper wheel with the [<extra>] extra (not on PyPI; see CONSUMING.md)" *(wheel name amended 2026-10-29, ADR-011; was "the otel-helper wheel")*. *(Corrected 2026-10-28, repo-tooling review H2: the first wording, "Run: pip install otel-helper[<extra>]", told users to install by name from PyPI, where `otel-helper` is not registered — a dependency-confusion vector in a public repo. The hint now points to the wheel and CONSUMING.md.)* *(Amended 2026-10-29, ADR-011: the module is `staffops_otel_helper.ext.*` and the hint names the `staffops-otel-helper` wheel; `otel_helper.ext.*` resolves to the same modules through the 0.3.x compatibility module.)*
 - `ModuleNotFoundError` whose missing top-level module is the instrumented library of that extra (`botocore` / `redis` / `sqlalchemy`, passed in by the entry point) → "library '<lib>' is not installed" (the extra does not pull it in).
 - Anything else — another `opentelemetry.*` module (`opentelemetry.semconv._incubating.attributes`: version skew inside the OTel namespace), a submodule of the instrumentor, no module name (A13 review M2), a plain `ImportError` (version skew: `cannot import name 'X' from 'sqlalchemy'`), a missing transitive dependency (`wrapt`) — → "failed to import the <label> instrumentation: <error>", without guessing a cause. Before this ruling both cases were reported as "library not installed".
 

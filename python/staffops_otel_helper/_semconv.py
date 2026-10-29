@@ -15,9 +15,9 @@ from __future__ import annotations
 import logging
 import os
 
-from otel_helper.config import TRIM_CHARS
+from staffops_otel_helper.config import TRIM_CHARS
 
-_log = logging.getLogger("otel_helper.semconv")
+_log = logging.getLogger("staffops_otel_helper.semconv")
 
 ENV_SEMCONV_OPT_IN = "OTEL_SEMCONV_STABILITY_OPT_IN"
 DEFAULT_SEMCONV_OPT_IN = "http,database/dup"
@@ -54,7 +54,7 @@ def ensure_semconv_default() -> None:
     if not tokens & _STABLE_HTTP_TOKENS:
         reason = f"{ENV_SEMCONV_OPT_IN}={value!r} does not include 'http'"
     elif _late_initialized_old_http():
-        reason = "an instrumentation was initialized before otel_helper set the default"
+        reason = "an instrumentation was initialized before staffops_otel_helper set the default"
     else:
         return
     if not _warned:

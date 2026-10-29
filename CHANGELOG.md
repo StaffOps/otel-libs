@@ -16,7 +16,10 @@ Target: **`0.3.0` for Go and Python** (one coordinated release, preceded by
 day but its CI failed (SQLAlchemy test floor on Python 3.13, e2e VCS stamping),
 so no Python release was published for it; its Go tags exist and are superseded
 by `rc.2`. .NET releases are now tagged
-`dotnet/vX.Y.Z` (design D10 A11 ruling). It implements the cross-language config contract in
+`dotnet/vX.Y.Z` (design D10 A11 ruling). **The Python package rename
+(ADR-011: `otel-helper` → `staffops-otel-helper`, `import staffops_otel_helper`)
+lands after rc.2**: `0.3.0rc2` was published as `otel-helper`; the next
+candidate, `0.3.0rc3`, is the first under the new name. It implements the cross-language config contract in
 [`specs/config-contract-v0.3/`](https://github.com/StaffOps/otel-libs/tree/main/specs/config-contract-v0.3) (ADR-001 to
 ADR-008). **.NET is unchanged and stays on 0.2.x**: it adopts the same contract
 in Phase C (ADR-004); until then its differences are `xfail` cases in
@@ -117,6 +120,40 @@ Runtime and operations:
 
 ### Migration guide 0.2 → 0.3 — Python
 
+**First: the package name changed** ([ADR-011](https://github.com/StaffOps/otel-libs/blob/main/specs/decisions/ADR-011-owner-prefixed-package-names.md)).
+
+| | 0.2.x and 0.3.0rc2 | 0.3.0rc3 and later |
+|---|---|---|
+| Install (distribution) name | `otel-helper` | `staffops-otel-helper` (extras `aws`, `redis`, `sql`, `all` unchanged) |
+| Wheel file | `otel_helper-<v>-py3-none-any.whl` | `staffops_otel_helper-<v>-py3-none-any.whl` |
+| Import | `import otel_helper` | `import staffops_otel_helper` (also `staffops_otel_helper.ext.*`, `.metrics`, `.config`, …) |
+| Helper loggers | `otel_helper.*` | `staffops_otel_helper.*` |
+
+- **Never have both distributions installed.** pip treats `otel-helper` and
+  `staffops-otel-helper` as different projects, and both ship an
+  `otel_helper/` directory: installing the new one over the old one makes the
+  old wheel's files and the compatibility module overwrite each other, and a
+  later `pip uninstall otel-helper` deletes the shim. Order: `pip uninstall -y
+  otel-helper`, then install `staffops-otel-helper`. If both were already
+  installed, uninstall both and reinstall the new one
+  (`pip install --force-reinstall <wheel>`). In a lockfile or
+  `requirements.txt`, replace the `otel-helper @ …` line — never add a second one.
+- Update `requirements.txt` URL pins (name before `@` and the wheel file name),
+  then `import` statements — e.g. `perl -pi -e 's/\botel_helper\b/staffops_otel_helper/g' $(git ls-files '*.py')`
+  (covers `from otel_helper...` / `otel_helper.ext...`; BSD `sed` has no `\b`,
+  so don't use `sed` on macOS for this), and isort `force_to_top` if you set it.
+- **`import otel_helper` keeps working during 0.3.x**: the wheel ships a
+  compatibility module that re-exports the public API — the same objects, and
+  `otel_helper.<sub>` resolves to the same module as
+  `staffops_otel_helper.<sub>` — and emits one `DeprecationWarning` naming the
+  new import. It is **removed in 1.0**.
+- **Logger names are not aliased.** Logging config, filters or alerts keyed on
+  `otel_helper` / `otel_helper.*` must move to `staffops_otel_helper.*`.
+- Environment variables (`OTEL_HELPER_*`) and the instrumentation scope name
+  (`otel-helper`, shared with Go) do not change. The plain-text body of the
+  503 that `metrics_app()` returns before setup / after shutdown now starts
+  with `staffops_otel_helper:` instead of `otel_helper:` (status unchanged).
+
 Dependencies and API:
 
 1. **Lockstep bounds:** `opentelemetry-api/sdk/exporter-otlp` `>=1.42,<1.46`,
@@ -125,7 +162,7 @@ Dependencies and API:
    the helper warns when an instrumentor refuses the installed version).
 2. **Removed:** `TelemetryOptions.resolve_insecure()`,
    `otel_helper.tracing.HEALTH_PATHS` / `otel_helper.instrumentation.HEALTH_PATHS`
-   (use `otel_helper.DEFAULT_HEALTH_PATHS`).
+   (use `staffops_otel_helper.DEFAULT_HEALTH_PATHS`).
 3. **`TelemetryOptions` after setup:** `service_name` may be `None`;
    `environment` may be `None` or a plain `str` (values outside
    LOCAL/DEV/HML/PRD) — don't assume `options.environment.value`.
@@ -145,12 +182,12 @@ Dependencies and API:
 5. **`otel_endpoint` in code** always gets `/v1/<signal>` appended for
    `http/protobuf`; a value already ending in `/v1/traces` must move to the new
    `traces_endpoint` (also `metrics_endpoint`, `logs_endpoint`, used verbatim).
-6. **`otel_helper.ext.instrument_sql()` / `instrument_redis()` /
+6. **`staffops_otel_helper.ext.instrument_sql()` / `instrument_redis()` /
    `instrument_aws()`** return `True`/`False`; call them **before**
    `setup_telemetry()` and stop relying on `OTEL_HELPER_EXTRA_INSTRUMENTATION`
    (deprecated, warned) or its implicit `SQL` default.
 7. **Import order:** when `OTEL_PROPAGATORS` may contain values other than
-   `tracecontext`, `baggage`, `none`, import `otel_helper` before any
+   `tracecontext`, `baggage`, `none`, import `staffops_otel_helper` before any
    `opentelemetry.*` module (isort sorts `opentelemetry` first — mark the import
    `# isort: skip`).
 
@@ -537,10 +574,25 @@ Behavior changes, with migration notes:
 
 ### Python — detailed changes
 
+- **Breaking — package renamed to `staffops-otel-helper` / `staffops_otel_helper`
+  (ADR-011, from `0.3.0rc3`; `0.3.0rc2` was still `otel-helper`).** The
+  distribution, the import package and the helper loggers carry the owner
+  prefix, so a third party cannot squat the install name. The wheel also ships
+  a deprecated `otel_helper` compatibility module (0.3.x only, removed in 1.0):
+  one `DeprecationWarning` attributed to the importing line plus the same
+  notice logged once on `staffops_otel_helper.compat` (design D8), re-exports
+  of the public API, submodule imports (`otel_helper.ext.sql`,
+  `otel_helper.metrics`, …) aliased to the same module objects so the helper
+  keeps one copy of its state (safe under concurrent first imports), and `.pyi`
+  stubs so type checkers resolve the old submodule paths. Logger names are not
+  aliased. Design D6/D8/D14 amended 2026-10-29; CI, examples, e2e and docs use
+  the new names (migration guide above).
+- **Packaging:** the wheel and sdist now carry `LICENSE` (Apache-2.0 §4a), and
+  the sdist excludes local coverage, cache and build leftovers.
 - **Fix — the missing-extra `ImportError` no longer says `pip install
-  otel-helper[<extra>]`.** `otel-helper` is not on PyPI and the name is not
+  otel-helper[<extra>]`.** The package is not on PyPI and the name was not
   registered there, so installing it by name could fetch an unrelated package.
-  `otel_helper.ext.{aws,redis,sql}` now say "Install the otel-helper wheel
+  `staffops_otel_helper.ext.{aws,redis,sql}` now say "Install the staffops-otel-helper wheel
   with the [<extra>] extra (not on PyPI; see CONSUMING.md)"; `python/README.md`
   and `python/HOW-TO.md` install the wheel or a hash-pinned URL instead of the
   bare name (design D14, corrected 2026-10-28).
@@ -555,7 +607,7 @@ Behavior changes, with migration notes:
   `minimum_log_level=logging.NOTSET` is honored. **API change:** these
   fields (plus `export_interval_ms` and `metric_exporters`) default to `None`
   and only ever hold the code value; the effective values are on the new
-  read-only `options.resolved` (`ResolvedOptions`, in `otel_helper.config`).
+  read-only `options.resolved` (`ResolvedOptions`, in `staffops_otel_helper.config`).
   So a value assigned after construction counts as code,
   `dataclasses.replace()` of a resolved object and a second
   `setup_telemetry()` with the same object (after `shutdown_telemetry()`)
@@ -569,9 +621,9 @@ Behavior changes, with migration notes:
   `add_route` raised `TypeError`). `app.mount("/metrics", …)` still works but
   redirects `/metrics` → `/metrics/` (307); use the route form. Served on its
   own, it completes the ASGI `lifespan` handshake and ignores non-HTTP scopes.
-- **Fix — `otel_helper.ext.*` import errors name the right cause.** "library
+- **Fix — `staffops_otel_helper.ext.*` import errors name the right cause.** "library
   'X' is not installed" only for a `ModuleNotFoundError` of that extra's
-  library (`botocore`, `redis`, `sqlalchemy`); "pip install otel-helper[…]"
+  library (`botocore`, `redis`, `sqlalchemy`); "instrumentation not installed"
   only when the contrib instrumentor module (`opentelemetry.instrumentation.<lib>`)
   or one of its parent packages is missing; anything else (version skew,
   another missing `opentelemetry.*` module such as
@@ -583,7 +635,7 @@ Config contract, task A3 (`specs/config-contract-v0.3/`, ADR-001, ADR-003,
 design D1/D4/D12). Behavior changes, with migration notes:
 
 - **BREAKING — stable HTTP semantic conventions (R10/D12).** `setup_telemetry()`
-  and the `otel_helper.ext.*` entry points default `OTEL_SEMCONV_STABILITY_OPT_IN`
+  and the `staffops_otel_helper.ext.*` entry points default `OTEL_SEMCONV_STABILITY_OPT_IN`
   to `http,database/dup` (A10 validation: was `http`) before any instrumentor runs: `http.server.duration` (ms, `http.method`,
   `http.target`) becomes `http.server.request.duration` (s, `http.request.method`,
   `http.route`, `url.scheme`), same for the client. A user value always wins;
@@ -662,7 +714,7 @@ design D1/D4/D12). Behavior changes, with migration notes:
 - **`OTEL_PROPAGATORS` is honored** for `tracecontext`, `baggage` and `none`;
   any other value (`b3`, `jaeger`, `xray`, …) is warned and skipped (W3C default
   when nothing supported is left) instead of the API's `ValueError`; casing and
-  empty tokens are normalized. This needs `otel_helper` imported before any
+  empty tokens are normalized. This needs `staffops_otel_helper` imported before any
   other OpenTelemetry module.
 - **New options**: `traces_endpoint` / `metrics_endpoint` / `logs_endpoint`
   (used verbatim), `compression`. A generic `otel_endpoint` set in code always
@@ -680,7 +732,7 @@ design D1/D4/D12). Behavior changes, with migration notes:
   `googleapis-common-protos` (1.76.0, a dependency of the OTLP exporters, whose
   `google/rpc/*_pb2.py` the gRPC exporter imports) is generated with protobuf
   6.33.5 (opentelemetry-proto itself is 5.26.1 gencode).
-- **Diagnostics** go only to the `otel_helper.*` loggers and never print
+- **Diagnostics** go only to the `staffops_otel_helper.*` loggers and never print
   `*_HEADERS`, `*_CLIENT_KEY` or URL userinfo/query values; a source-scan test
   enforces the channel.
 
@@ -695,7 +747,7 @@ Sampler, task A4 (R6, design D3, ADR-002):
   `OTEL_TRACES_SAMPLER_ARG`.
 - `OTEL_TRACES_SAMPLER` / `_ARG` are parsed by the helper (spec names,
   case-insensitive, whitespace trimmed). An unknown name logs one warning on
-  `otel_helper.tracing` and uses the default; an invalid or out-of-range `_ARG`
+  `staffops_otel_helper.tracing` and uses the default; an invalid or out-of-range `_ARG`
   warns and uses 1.0 (SDK 1.42 raised `ValueError` at setup for e.g. `_ARG=2`).
   The spec names the helper does not implement (`jaeger_remote`,
   `parentbased_jaeger_remote`, `xray`) warn "unsupported by this helper".
@@ -767,11 +819,11 @@ Logging, task A5 (P10, P16, design D6):
   attributes, `exception`; same shape as Go) at the environment level — a
   console fallback installed as `logging.lastResort`, so a later
   `basicConfig()` simply takes over. `OTEL_LOGS_EXPORTER=otlp,console` → both.
-- Helper diagnostics (`otel_helper.*`, INFO+; that logger is set to INFO when
+- Helper diagnostics (`staffops_otel_helper.*`, INFO+; that logger is set to INFO when
   left NOTSET) and SDK diagnostics (`opentelemetry.*`, WARNING+) always reach
   stderr, also with a logs exporter active (until the app configures a root
   handler; re-enabled after `dictConfig(disable_existing_loggers=True)`). `opentelemetry.*` records are never exported through OTLP (no
-  export-failure feedback loop); `otel_helper.*` records are also exported.
+  export-failure feedback loop); `staffops_otel_helper.*` records are also exported.
 - A second OpenTelemetry `LoggingHandler` on root (`opentelemetry-instrument`,
   `LoggingInstrumentor().instrument()`) is removed with a warning, so records
   are exported once; set `OTEL_PYTHON_LOG_AUTO_INSTRUMENTATION=false`. It is
@@ -812,7 +864,7 @@ Health exclusion and instrumentation, task A7-py (R7, P11, P13, design D5):
   that filter (upstream would OR it with any filter and re-enable the excluded
   services). Spans a health servicer starts become roots (no server span).
 - Removed `otel_helper.tracing.HEALTH_PATHS` / `otel_helper.instrumentation.HEALTH_PATHS`;
-  use `otel_helper.DEFAULT_HEALTH_PATHS`.
+  use `staffops_otel_helper.DEFAULT_HEALTH_PATHS`.
 - Sync `grpc.server()` / `grpc.insecure_channel()` / `grpc.secure_channel()` are
   instrumented like `grpc.aio` (spans + propagation).
 - New `instrument_fastapi(app)` for apps whose `FastAPI` class was imported
@@ -820,7 +872,7 @@ Health exclusion and instrumentation, task A7-py (R7, P11, P13, design D5):
 
 Deprecations and debug marker, task A9 (R8, R9, D8, ADR-006):
 
-- **Deprecated (removed in 1.0), warned once per process** on the `otel_helper`
+- **Deprecated (removed in 1.0), warned once per process** on the `staffops_otel_helper`
   logger, naming the replacement and never the value. Each warns whenever it is
   set, also when a standard variable or a code value wins; behavior is unchanged:
   `SERVICE_NAME` → `OTEL_SERVICE_NAME`; `ENVIRONMENT` →
@@ -828,7 +880,7 @@ Deprecations and debug marker, task A9 (R8, R9, D8, ADR-006):
   `OTEL_HELPER_SAMPLE_RATIO` → `OTEL_TRACES_SAMPLER=parentbased_traceidratio` +
   `OTEL_TRACES_SAMPLER_ARG`; `OTEL_HELPER_DISABLED_SIGNALS` →
   `OTEL_{TRACES,METRICS,LOGS}_EXPORTER=none`; `OTEL_HELPER_EXTRA_INSTRUMENTATION`
-  → the explicit `otel_helper.ext.{sql,redis,aws}.instrument_*()` calls. An empty
+  → the explicit `staffops_otel_helper.ext.{sql,redis,aws}.instrument_*()` calls. An empty
   `OTEL_HELPER_EXTRA_INSTRUMENTATION` warns in Python (it still turns the `SQL`
   default off) but not in Go (no effect there): intentional. Schemeless
   http/protobuf endpoints (warned since A3) now warn once per process with Go's
@@ -837,7 +889,7 @@ Deprecations and debug marker, task A9 (R8, R9, D8, ADR-006):
 - The implicit `SQL` default is kept (SQLAlchemy is still instrumented globally
   when the `[sql]` extra and SQLAlchemy are installed), but it now logs one
   warning, as do debug-mode-enabled extension instrumentors. **Migration:** call
-  `otel_helper.ext.sql.instrument_sql()` (or `instrument_redis()` / `instrument_aws()`)
+  `staffops_otel_helper.ext.sql.instrument_sql()` (or `instrument_redis()` / `instrument_aws()`)
   **before** `setup_telemetry()`. Setup then finds the instrumentor active and
   logs nothing.
 - **Debug marker on entry spans:** with debug mode on, `debug=true` is set on
@@ -856,11 +908,11 @@ Unsupported instrumentation versions, task A10 (P18):
   The redis (`redis >= 2.6`) and botocore (`botocore~=1.0`) instrumentors accept
   redis 8.1.0 and botocore 1.43.120 on both legs.
 - When an instrumentor (auto-instrumented by `setup_telemetry()`, or through
-  `otel_helper.ext`) refuses an **installed** library version, the helper now
+  `staffops_otel_helper.ext`) refuses an **installed** library version, the helper now
   logs one warning per process naming the instrumentor, the contrib version, the
   installed version and the supported range. A library that is not installed
   stays silent.
-- `otel_helper.ext.instrument_sql()` / `instrument_redis()` / `instrument_aws()`
+- `staffops_otel_helper.ext.instrument_sql()` / `instrument_redis()` / `instrument_aws()`
   now return `True` when the instrumentor is active and `False` when it refused
   (0.2.0: `None`).
 - **Pin SQLAlchemy `<2.1` until a contrib release supports 2.1** (none within
@@ -984,7 +1036,7 @@ Unsupported instrumentation versions, task A10 (P18):
   `<packageSourceMapping>` pinning `OtelHelper*` to the GitHub source (the IDs
   are not registered on nuget.org), and `#sha256=` / `--require-hashes`
   guidance for the Python URL pin. Example `requirements.txt` files no
-  longer name `otel-helper` (not registered on PyPI: a bare name could resolve
+  longer name `staffops-otel-helper` (not registered on PyPI: a bare name could resolve
   to an unrelated package).
 - **CI fixes found by the `v0.3.0-rc.1` tag run.** SQLAlchemy test floor
   `>=2.0.31` (2.0.0 does not import on Python 3.13; `python/ci/lower.txt`), and

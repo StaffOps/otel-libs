@@ -16,9 +16,9 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanE
 from opentelemetry.sdk.trace.sampling import ALWAYS_ON, Decision, ParentBased
 from opentelemetry.trace import NonRecordingSpan, SpanContext, SpanKind, TraceFlags, TraceState
 
-from otel_helper import setup_telemetry
-from otel_helper.config import TelemetryOptions
-from otel_helper.tracing import DEFAULT_HEALTH_PATHS, HealthCheckSampler
+from staffops_otel_helper import setup_telemetry
+from staffops_otel_helper.config import TelemetryOptions
+from staffops_otel_helper.tracing import DEFAULT_HEALTH_PATHS, HealthCheckSampler
 
 _TRACE_ID = 0x0AF7651916CD43DD8448EB211C80319C
 
@@ -115,7 +115,7 @@ import os
 if os.environ.get("PARITY_COVERAGE_DATA"):
     import coverage
     _cov = coverage.Coverage(data_file=os.environ["PARITY_COVERAGE_DATA"], data_suffix=True,
-                             source=["otel_helper"], config_file=False)
+                             source=["staffops_otel_helper"], config_file=False)
     _cov.start()
     import atexit
     atexit.register(lambda: (_cov.stop(), _cov.save()))
@@ -137,7 +137,7 @@ def server_paths(exp):
 
 def counted():
     from starlette.testclient import TestClient
-    from otel_helper import metrics_app
+    from staffops_otel_helper import metrics_app
     total = 0.0
     for line in TestClient(metrics_app()).get("/").text.splitlines():
         if re.match(r"^http_server_request_duration[a-z_]*_count[{ ]", line):
@@ -162,7 +162,7 @@ class TestFastAPI:
         # OTEL_PYTHON_FASTAPI_EXCLUDED_URLS drops span AND metric (upstream);
         # the helper's health exclusion drops only the span.
         out = _run("""
-            from otel_helper import setup_telemetry
+            from staffops_otel_helper import setup_telemetry
             setup_telemetry()
             exp = record()
             from fastapi import FastAPI
@@ -183,7 +183,7 @@ class TestFastAPI:
             import logging
             from fastapi import FastAPI  # imported BEFORE setup (P11)
             from fastapi.testclient import TestClient
-            from otel_helper import instrument_fastapi, setup_telemetry
+            from staffops_otel_helper import instrument_fastapi, setup_telemetry
             app = FastAPI()
             @app.get("/{p:path}")
             def any_(p: str):
@@ -267,7 +267,7 @@ class TestClientExclusion:
     def test_pattern_is_exact(self, url, excluded):
         import re
 
-        from otel_helper.instrumentation import health_url_pattern
+        from staffops_otel_helper.instrumentation import health_url_pattern
 
         pattern = health_url_pattern(DEFAULT_HEALTH_PATHS)
         assert "," not in pattern
@@ -281,7 +281,7 @@ class TestClientExclusion:
         after = dict(os.environ)
         after.pop("OTEL_SEMCONV_STABILITY_OPT_IN", None)  # design D12 default, set on purpose
         assert after == before
-        from otel_helper.instrumentation import _client_excluded_urls
+        from staffops_otel_helper.instrumentation import _client_excluded_urls
 
         assert _client_excluded_urls("OTEL_PYTHON_HTTPX_EXCLUDED_URLS", "H") == "/mine,H"
         os.environ["OTEL_PYTHON_HTTPX_EXCLUDED_URLS"] = ""  # library var set (even empty) wins, as upstream
@@ -289,7 +289,7 @@ class TestClientExclusion:
 
     def test_httpx_health_calls_not_traced(self):
         out = _run("""
-            from otel_helper import setup_telemetry
+            from staffops_otel_helper import setup_telemetry
             setup_telemetry()
             exp = record()
             import http.server, threading, httpx

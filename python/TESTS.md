@@ -1,7 +1,7 @@
-# Tests — otel-helper (Python)
+# Tests — staffops-otel-helper (Python)
 
 How to run and extend the Python test suite. Audience: contributors changing
-`python/otel_helper/`. Everything runs in Docker; no local Python is needed.
+`python/staffops_otel_helper/`. Everything runs in Docker; no local Python is needed.
 
 The suite has four layers:
 
@@ -27,7 +27,7 @@ This starts the fake OTLP receiver (`fakeotlp-py`), copies `python/` out of the
 read-only mount, installs `.[dev,all]` and runs:
 
 ```bash
-python -m pytest tests/ -p no:cacheprovider -q --cov=otel_helper --cov-report=term --cov-fail-under=90
+python -m pytest tests/ -p no:cacheprovider -q --cov=staffops_otel_helper --cov=otel_helper --cov-report=term --cov-fail-under=90
 ```
 
 The receiver records what each `export` parity case sent (destination, protocol,
@@ -109,12 +109,13 @@ The custom-signals example runs against the same Collector; see
 | `test_a9_deprecations_debug.py` | deprecation warnings, debug marker on entry spans |
 | `test_a10_unsupported_instrumentation.py` | unsupported-version warning, `ext` return values |
 | `test_a10_db_semconv.py` | `db.system.name` + `db.system` with real SQLAlchemy |
-| `test_ext.py` | `otel_helper.ext` import paths and `ImportError` hints |
+| `test_ext.py` | `staffops_otel_helper.ext` import paths and `ImportError` hints |
 | `test_otlp_protocol.py` | exporter selection per protocol |
 | `test_propagation.py` | W3C propagation through the global propagator |
 | `test_signal_integration.py` | spans created and exported (in-memory exporter) |
 | `test_setup.py`, `test_features.py` | setup basics, helpers, `start_root_span`, disabled signals |
 | `test_packaging.py` | `py.typed` shipped, no `opentelemetry.*._internal` imports |
+| `test_import_compat.py` | the deprecated `otel_helper` import (ADR-011): one `DeprecationWarning`, same objects and submodules as `staffops_otel_helper` |
 | `test_parity.py` | the shared fixture |
 
 ## Writing tests

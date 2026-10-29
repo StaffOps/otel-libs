@@ -1,15 +1,15 @@
 """Opt-in Redis instrumentation extension."""
 
-from otel_helper._semconv import ensure_semconv_default
-from otel_helper._support import missing_dependency_hint as _missing_hint
-from otel_helper._support import warn_if_unsupported
+from staffops_otel_helper._semconv import ensure_semconv_default
+from staffops_otel_helper._support import missing_dependency_hint as _missing_hint
+from staffops_otel_helper._support import warn_if_unsupported
 
 
 def instrument_redis() -> bool:
     """Enable Redis tracing instrumentation.
 
     Returns True when the instrumentor is active. False (with a warning on the
-    ``otel_helper`` logger) when it refuses the installed library version (P18).
+    ``staffops_otel_helper`` logger) when it refuses the installed library version (P18).
     """
     ensure_semconv_default()  # before the instrumentor reads it (design D12)
     try:

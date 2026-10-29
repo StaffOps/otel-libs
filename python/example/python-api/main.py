@@ -1,8 +1,8 @@
 """Notification API — FastAPI service that receives notification requests."""
 
-# otel_helper first: it must run before any opentelemetry import so unsupported
+# staffops_otel_helper first: it must run before any opentelemetry import so unsupported
 # OTEL_PROPAGATORS values are skipped instead of raising (isort would move it).
-import otel_helper  # isort: skip  # noqa: F401
+import staffops_otel_helper  # isort: skip  # noqa: F401
 
 import os
 import time
@@ -14,7 +14,7 @@ from fastapi import FastAPI
 from pydantic import BaseModel
 from opentelemetry import trace
 
-from otel_helper import (
+from staffops_otel_helper import (
     setup_telemetry, shutdown_telemetry, instrument_fastapi, get_tracer, get_meter, TelemetryOptions,
 )
 

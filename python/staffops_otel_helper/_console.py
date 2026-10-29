@@ -23,7 +23,7 @@ import sys
 import traceback
 
 # Self-diagnostics of the helper and of the OTel SDK reach stderr at INFO and above.
-_DIAGNOSTIC_LOGGERS = ("otel_helper", "opentelemetry")
+_DIAGNOSTIC_LOGGERS = ("staffops_otel_helper", "opentelemetry")
 DIAGNOSTIC_LEVEL = logging.INFO
 
 # LogRecord attributes that are not "extra" fields.
@@ -31,7 +31,7 @@ _RESERVED = frozenset(vars(logging.LogRecord("", 0, "", 0, "", None, None))) | {
 
 
 def is_diagnostic(name: str) -> bool:
-    """True for records of the ``otel_helper`` and ``opentelemetry`` logger hierarchies."""
+    """True for records of the ``staffops_otel_helper`` and ``opentelemetry`` logger hierarchies."""
     return any(name == p or name.startswith(p + ".") for p in _DIAGNOSTIC_LOGGERS)
 
 

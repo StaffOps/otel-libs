@@ -15,7 +15,7 @@ engineers who run the Collector it exports to.
 | Language | Directory | Package | Version | Contract |
 |----------|-----------|---------|---------|----------|
 | Go | [`go/`](go/README.md) | `github.com/staffops/otel-libs/go` + `ext/*` modules | `0.3.0` (unreleased, this branch); latest release `go/v0.2.1` | 0.3 |
-| Python | [`python/`](python/README.md) | `otel-helper` (extras `aws`, `redis`, `sql`) | `0.3.0` (unreleased, this branch); latest release `0.2.0` | 0.3 |
+| Python | [`python/`](python/README.md) | `staffops-otel-helper` (extras `aws`, `redis`, `sql`) | `0.3.0` (unreleased, this branch); latest release `0.2.0` | 0.3 |
 | .NET | [`dotnet/`](dotnet/README.md) | `OtelHelper` + `.AWS` / `.Redis` / `.Sql` / `.Profiling` (NuGet) | `0.2.0` | 0.2.x — the 0.3 contract lands in Phase C |
 | Node.js | `nodejs/` (planned) | — | — | 0.3 from day one (Phase B) |
 
@@ -97,8 +97,8 @@ defer func() {
 ### Python
 
 ```python
-import otel_helper  # before any opentelemetry.* import
-from otel_helper import setup_telemetry, shutdown_telemetry
+import staffops_otel_helper  # before any opentelemetry.* import
+from staffops_otel_helper import setup_telemetry, shutdown_telemetry
 
 setup_telemetry()
 # ... on SIGTERM or in the server's shutdown hook:
@@ -178,7 +178,7 @@ rulings are in [design D1](https://github.com/StaffOps/otel-libs/blob/main/specs
 | `OTEL_HELPER_DISABLED_METRICS` | _(unset)_ | Wildcard patterns of metric names to drop (all exporters) |
 | `OTEL_HELPER_SAMPLE_RATIO` | `1.0` | **Deprecated** → `OTEL_TRACES_SAMPLER=parentbased_traceidratio` + `OTEL_TRACES_SAMPLER_ARG`. Used only while `OTEL_TRACES_SAMPLER` is unset; builds `ParentBased(TraceIdRatioBased(x))` |
 | `OTEL_HELPER_DISABLED_SIGNALS` | _(unset)_ | **Deprecated** → `OTEL_{TRACES,METRICS,LOGS}_EXPORTER=none` |
-| `OTEL_HELPER_EXTRA_INSTRUMENTATION` | Python: `SQL` | **Go: removed** (no effect, warns). **Python: deprecated** — call `otel_helper.ext.instrument_sql()` / `instrument_redis()` / `instrument_aws()` before `setup_telemetry()` |
+| `OTEL_HELPER_EXTRA_INSTRUMENTATION` | Python: `SQL` | **Go: removed** (no effect, warns). **Python: deprecated** — call `staffops_otel_helper.ext.instrument_sql()` / `instrument_redis()` / `instrument_aws()` before `setup_telemetry()` |
 
 Health checks are configured in code, not env: by default server spans for
 `/health /healthz /ready /readyz /live /livez /ping /metrics` (exact,
@@ -207,7 +207,7 @@ lightweight.
 | Language | AWS | Redis | SQL |
 |----------|-----|-------|-----|
 | Go | `ext/otelaws` | `ext/otelredis` | `ext/otelsql` |
-| Python | `otel-helper[aws]` | `otel-helper[redis]` | `otel-helper[sql]` |
+| Python | `staffops-otel-helper[aws]` | `staffops-otel-helper[redis]` | `staffops-otel-helper[sql]` |
 | .NET | `OtelHelper.AWS` | `OtelHelper.Redis` | `OtelHelper.Sql` |
 
 ## Cross-language parity

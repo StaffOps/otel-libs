@@ -1,8 +1,8 @@
 """Notification Process — Background workers for queue consumption, retries, and cleanup."""
 
-# otel_helper first: it must run before any opentelemetry import so unsupported
+# staffops_otel_helper first: it must run before any opentelemetry import so unsupported
 # OTEL_PROPAGATORS values are skipped instead of raising (isort would move it).
-import otel_helper  # isort: skip  # noqa: F401
+import staffops_otel_helper  # isort: skip  # noqa: F401
 
 import os
 import asyncio
@@ -16,8 +16,8 @@ import httpx
 from opentelemetry import trace, context
 from opentelemetry.propagate import inject
 
-from otel_helper import setup_telemetry, shutdown_telemetry, get_tracer, get_meter, TelemetryOptions
-from otel_helper.tracing import start_root_span
+from staffops_otel_helper import setup_telemetry, shutdown_telemetry, get_tracer, get_meter, TelemetryOptions
+from staffops_otel_helper.tracing import start_root_span
 
 logger = logging.getLogger(__name__)
 

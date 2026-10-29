@@ -19,15 +19,15 @@ from opentelemetry.sdk.trace.sampling import (
 from opentelemetry.trace import SpanKind
 from opentelemetry.sdk.resources import Resource
 
-from otel_helper._exporters import build_otlp_exporter
-from otel_helper.config import (
+from staffops_otel_helper._exporters import build_otlp_exporter
+from staffops_otel_helper.config import (
     _DECIMAL_RE,
     ENV_TRACES_SAMPLER,
     ENV_TRACES_SAMPLER_ARG,
     TelemetryOptions,
     _env,
 )
-from otel_helper.processors import DebugProcessor
+from staffops_otel_helper.processors import DebugProcessor
 
 # HTTP paths whose server spans the helper drops unless TelemetryOptions.health_paths
 # replaces the list (R7, design D5) — same list as Go's DefaultHealthPaths.

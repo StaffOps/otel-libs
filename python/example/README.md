@@ -1,6 +1,6 @@
 # Python examples
 
-Runnable apps showing `otel-helper` in use. Audience: developers who want to
+Runnable apps showing `staffops-otel-helper` in use. Audience: developers who want to
 see the helper's output before instrumenting their own service.
 
 | Example | Shows |
@@ -173,7 +173,7 @@ python-backend (gRPC server)
 
 What each app demonstrates:
 
-- **python-api**: `import otel_helper  # isort: skip` first; `FastAPI` imported
+- **python-api**: `import staffops_otel_helper  # isort: skip` first; `FastAPI` imported
   before setup, so `instrument_fastapi(app)`; `/health` has no server span but
   counts in `http.server.request.duration`; `shutdown_telemetry()` in the
   FastAPI lifespan (uvicorn turns SIGTERM into a lifespan shutdown).

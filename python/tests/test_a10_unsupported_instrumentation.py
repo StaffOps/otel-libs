@@ -21,9 +21,9 @@ from types import ModuleType
 import pytest
 from opentelemetry.instrumentation.instrumentor import BaseInstrumentor
 
-from otel_helper import instrumentation
-from otel_helper._support import unsupported_dependency, warn_if_unsupported
-from otel_helper.config import TelemetryOptions
+from staffops_otel_helper import instrumentation
+from staffops_otel_helper._support import unsupported_dependency, warn_if_unsupported
+from staffops_otel_helper.config import TelemetryOptions
 
 PYTEST = version("pytest")
 UNSUPPORTED = f"pytest < {PYTEST}"   # installed version just outside the range
@@ -44,7 +44,7 @@ def _instrumentor_class(name: str, deps: list[str]) -> type:
 
 def _helper_warnings(caplog) -> list[str]:
     return [r.getMessage() for r in caplog.records
-            if r.name.startswith("otel_helper") and r.levelno == logging.WARNING]
+            if r.name.startswith("staffops_otel_helper") and r.levelno == logging.WARNING]
 
 
 @pytest.fixture
@@ -126,7 +126,7 @@ class TestExtEntryPoints:
                                       deps, expected):
         """Failed before A10: instrument_*() returned None with no helper warning."""
         _fake_module(monkeypatch, module_name, fresh(deps, class_name))
-        func = getattr(__import__(f"otel_helper.ext.{ext}", fromlist=["x"]), f"instrument_{ext}")
+        func = getattr(__import__(f"staffops_otel_helper.ext.{ext}", fromlist=["x"]), f"instrument_{ext}")
         with caplog.at_level(logging.WARNING):
             assert func() is expected
         assert bool(_helper_warnings(caplog)) is (not expected)
@@ -134,7 +134,7 @@ class TestExtEntryPoints:
     def test_sql_engine_path(self, monkeypatch, fresh):
         cls = fresh([SUPPORTED])
         _fake_module(monkeypatch, "opentelemetry.instrumentation.sqlalchemy", cls)
-        from otel_helper.ext.sql import instrument_sql
+        from staffops_otel_helper.ext.sql import instrument_sql
 
         assert instrument_sql(engine=object()) is True
 
@@ -172,7 +172,7 @@ class TestConfigureInstrumentations:
         msgs = _helper_warnings(caplog)
         assert turned_on == 1
         assert len(msgs) == 1
-        assert "implicitly" in msgs[0] and "otel_helper.ext.sql.instrument_sql()" in msgs[0]
+        assert "implicitly" in msgs[0] and "staffops_otel_helper.ext.sql.instrument_sql()" in msgs[0]
 
     def test_no_implicit_warning_when_env_var_set(self, monkeypatch, caplog, fresh):
         """The variable's own deprecation warning covers it; no second message."""
@@ -188,7 +188,7 @@ class TestConfigureInstrumentations:
     def test_explicit_ext_before_setup_leaves_nothing_implicit(self, monkeypatch, caplog, fresh):
         cls = fresh([SUPPORTED])
         self._only(monkeypatch, cls, "SQL")
-        cls().instrument()  # what otel_helper.ext.sql.instrument_sql() does
+        cls().instrument()  # what staffops_otel_helper.ext.sql.instrument_sql() does
         opts = self._opts(caplog)
         with caplog.at_level(logging.WARNING):
             assert instrumentation.configure_instrumentations(opts) == []

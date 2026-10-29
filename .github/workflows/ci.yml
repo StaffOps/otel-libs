@@ -143,6 +143,7 @@ jobs:
       # Includes tests/test_parity.py (parity/cases.json, strict xfail).
       - run: >
           pytest tests/ -v
+          --cov=staffops_otel_helper
           --cov=otel_helper
           --cov-report=term-missing
           --cov-report=xml:coverage.xml
@@ -191,6 +192,8 @@ jobs:
         run: python -m unittest discover -s tools/tests
       - name: Spec lint
         run: python tools/spec_lint.py
+      - name: python/LICENSE matches the root LICENSE
+        run: cmp LICENSE python/LICENSE
       - name: Traceability (uncovered SHALL requirements fail)
         run: python tools/trace_matrix.py --check
       - name: docs/site/index.md is regenerated from README.md
@@ -218,8 +221,11 @@ jobs:
             dotnet pack "dotnet/$proj/$proj.csproj" -c Release -o packages
           done
       - run: pip install build -q && python -m build --outdir packages python
-      - name: Python wheel ships py.typed (P17)
-        run: unzip -l packages/otel_helper-*.whl | grep -q 'otel_helper/py.typed'
+      - name: Python wheel ships py.typed (P17) and the otel_helper compat module (ADR-011)
+        run: |
+          unzip -l packages/staffops_otel_helper-*.whl | grep -q ' staffops_otel_helper/py.typed'
+          unzip -l packages/staffops_otel_helper-*.whl | grep -q ' otel_helper/__init__.py'
+          unzip -l packages/staffops_otel_helper-*.whl | grep -q ' otel_helper/ext/sql.pyi'
       - uses: actions/upload-artifact@v4
         with:
           name: packages
