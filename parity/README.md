@@ -189,7 +189,7 @@ fails on Node 22/24.
   - `console`: the child's stdout + stderr.
 - **Adapter seams.** The resource comes from `getResource()` of `/testing`
   (the installed TracerProvider's resource; the 3.0 provider has no public
-  getter; B3 adds it). No probe span is ever started for it. `metric_exporters`,
+  getter; added in B3). No probe span is ever started for it. `metric_exporters`,
   interval and `log_level` come from the frozen `Resolved` that `setup()`
   returns. Span capture (`http_server`, `grpc_server`) passes an in-memory
   `SimpleSpanProcessor` through the `setup()` option `spanProcessors`

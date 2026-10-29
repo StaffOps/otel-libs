@@ -108,6 +108,23 @@ env detector untrimmed and silent on errors; `command_args` leaks secrets.
 **Trade-offs**: no pid/host on the SDK side (Collector enriches, principle 4).
 **When wrong**: platform needs SDK-side host attrs. **Reversal**: opt-in
 `resourceDetectors`. **Alternatives**: SDK env detector (rejected above).
+*Amended 2026-10-29 (B3, after the B3 review): `OTEL_RESOURCE_ATTRIBUTES`
+parsing follows the contract ruling (config-contract design D1 edge-case row
+"`OTEL_RESOURCE_ATTRIBUTES` parsing", 2026-10-29; Go/Python in task A16): split
+on `,`; blank items ignored; each item split at the first `=`; key and value
+trimmed with the contract trim set after percent-decoding; an item without `=`
+or with an empty key is skipped with a warning naming its position only; an
+invalid percent sequence or invalid UTF-8 keeps that value literal with a
+positional warning; values are never echoed (R8). Per the other rows of that
+date: a blank `service.name`, `deployment.environment.name` or
+`service.instance.id` (env or code `resourceAttributes`) counts as not
+provided; the dedicated option (`serviceName`, `environment`) beats the same key
+in code `resourceAttributes`, in `Resolved` and in the emitted resource; a
+code-only `resourceAttributes['service.name']` resolves without the
+missing-name warning. Not in the contract (Node API): unknown `setup()` keys
+throw a `TypeError` (a typo must not fall back to the env), so options of later
+tasks are rejected until their task lands; a key set to `undefined` counts as
+not set; `setup()` reads each option once into a frozen snapshot.*
 
 ### D-JS5 — Diagnostics
 **Choice**: one stderr sink `otelhelper: <msg> key=value…`, hookable; the
@@ -126,6 +143,24 @@ loggers get a warning — documented). **When wrong**: apps routinely own `diag`
 origin plus Node process warnings (Python's "every WARNING+ record and
 `warnings.warn`"). Without the origin, forwarded SDK messages would land in
 `helper_log`, where R8 redaction is asserted.*
+*Amended 2026-10-29 (B3, after the B3 review): a forwarded SDK message is one
+record `otelhelper: opentelemetry diag level=<level> msg=<text>`, the text
+rendered with `util.formatWithOptions` (depth 2, `maxStringLength` 2048,
+`maxArrayLength` 20) and cut at 2048 characters (`… (N more characters)`).
+Like every attribute value, `msg` is JSON-quoted whenever it holds whitespace,
+quotes, `=`, backslashes or control characters (C0, DEL, C1) or U+2028/U+2029
+— the last three escaped as `\uXXXX`, which JSON.stringify does not do — so a
+record can never be split or forged. Echoed env values (`OTEL_LOG_LEVEL`,
+`OTEL_HELPER_DEBUG_LEVEL`) are cut to 64 characters plus `…`. `verbose` maps to
+level `debug`. `OTEL_LOG_LEVEL` is trimmed and case-insensitive (`NONE`,
+`ERROR`, `WARN`, `INFO`, `DEBUG`, `VERBOSE`, `ALL`); any other value warns and
+uses WARN. The DiagLogger is installed before resolution, so SDK messages
+raised while setup builds are captured. `suppressOverrideMessage` is passed only
+while `diag` still holds the helper's logger (read from the API's global
+registry); a re-setup with `installDiagLogger: false` removes the logger an
+earlier setup installed. Foreign globals are detected in that registry before
+any `set*Global*` call, so the API's duplicate-registration error (with a stack
+trace) never reaches `diag`.*
 
 ### D-JS6 — Logging
 **Choice**: core helper logger (JS6); `-pino` exports `createPinoDestination()`
@@ -226,6 +261,23 @@ their providers. **Trade-offs**: CJS core under an ESM wrapper (`require(esm)`
 not needed). **When wrong**: ESM-only consumers need tree-shaking.
 **Reversal**: ESM-only build relying on `require(esm)` (Node ≥ 22.12).
 **Alternatives**: separate ESM/CJS builds (rejected: hazard).
+*Corrected 2026-10-29 (B3 review): the shutdown deadline timer is **ref'd**,
+not `unref()`'d, and cleared in `finally`. An unref'd timer let a process whose
+only pending work was a hung provider exit without ever settling the shutdown
+promise (no rejection, no diagnostic); a ref'd timer keeps it alive for at most
+the deadline (default 30 000 ms, clamped to 2^31-1), and a healthy
+fire-and-forget `shutdown()` still exits at once because the timer is cleared
+when the providers finish. Each provider's shutdown is called as
+`Promise.resolve().then(() => p.shutdown())`, so a synchronous throw is
+reported through `allSettled` (an `AggregateError`). Child-process tests cover
+a hang without a handle, a hang with an open socket and fire-and-forget.*
+*Decided 2026-10-29 (B3 review; implemented in B9): instead of
+`trace.disable()` + a new SDK provider on every rebuild, the helper registers
+**one stable, helper-owned forwarding TracerProvider** (and MeterProvider /
+LoggerProvider when B4/B8 add them) once per process and swaps its SDK delegate
+on rebuild. Tracers (and meters, loggers) obtained before a re-setup keep
+working; with the B3 shape they stay bound to the old, shut-down provider. A
+`todo` test in `test/setup.test.cjs` pins the target behavior until B9.*
 
 ### D-JS11 — Loading, packaging, registry
 **Spike B1c (2026-10-29, `spike-B1c.md`)**: all gates pass on 22.15.0
@@ -308,4 +360,7 @@ cluster/pm2 are Node's prefork model (not `skip:no-prefork-model`).
 | `cluster` workers share the metrics port (round-robin scrapes) | warning; docs recommend per-worker port or OTLP |
 | BSP/BLRP export-timeout env precedence differs between Go and Python | contract follow-up; Node: explicit env wins, else OTLP timeout |
 | gRPC over TLS to an **IP-literal** endpoint fails on Node 26 (Node refuses an IP as TLS ServerName; grpc-js sets it from the target host; DEP0123 warning on 22/24) — spike B1c F5 | recorded; the helper warning for IP-literal gRPC TLS endpoints lands in B4b. *Decided 2026-10-29 (B2): the Node legs reach the fake receiver by DNS name — `fakeotlp` → 127.0.0.2, `fakeotlp-tls` → 127.0.0.3 (new SAN in fakeotlp's default `TLS_HOSTS`; `extra_hosts` on `fakeotlp-node`, which `node-tests` shares through `network_mode: service:`; `/etc/hosts` in the CI `node-test` job); Go and Python keep the IP literals, so their cases and validators are unchanged. Rejected: `skip:node26-ip-servername` on the 26 leg — the validators accept no per-version Node status, the extension would touch all three runners, and it would leave the six gRPC TLS cases unrun on 26 (with DEP0123 noise in `diagnostics` on 22/24). Evidence: a runner test completes a CA-verified TLS handshake by name with both TLS receivers on 22.15.0, 22, 24 and 26; the mapping is visible in the joined container (`docker run --network container:…` sees the owner's `--add-host`). Cost: the IP-literal gRPC TLS path is not exercised by the Node fixture (unit test in B4b).* |
+| Identity warnings (no service name, ADR-003 environment unset, `OTEL_RESOURCE_ATTRIBUTES` parse errors) are written on **every** setup in Node and Go; Python dedupes them per options object (deprecations are once per process everywhere) | recorded until A16 settles one rule; no fixture case depends on it (one setup per case) |
+| `telemetry.sdk.*` in `OTEL_RESOURCE_ATTRIBUTES` overrides the SDK values in Node and Python, the SDK wins in Go (`resource.Default()` applies its telemetry detector last); Go emits the semconv 1.43.0 schema URL, Node and Python none | recorded until A16 picks one direction and the schema URL (Node follows Python today: changing it now would only move the split) |
+| `unknown_service:<suffix>`: Node `process.argv0` (`node`), Go the binary name, Python ≥ 1.45 the interpreter name, Python 1.42 no suffix | recorded; the fixture asserts the `unknown_service` prefix only (R5) |
 | `module.register` runtime-deprecated on Node 26 (DEP0205) — spike B1c F3 | `/hooks` uses sync hooks there; the `module.register` fallback runs only on versions where it is not deprecated |

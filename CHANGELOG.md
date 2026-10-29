@@ -1048,6 +1048,48 @@ Unsupported instrumentation versions, task A10 (P18):
   ServerName (spike F5), so the Node runner reaches the fake receiver by DNS name
   (`fakeotlp` / `fakeotlp-tls`, new certificate SAN, `extra_hosts` in compose,
   `/etc/hosts` in CI); Go and Python keep the IP addresses (design D-JS14).
+- **Node.js resolver, resource and diagnostics (Phase B, task B3; not
+  released).** `@staffops/otel-helper` exports `setup(options?)` (synchronous,
+  idempotent: first call wins, returns a frozen `Resolved` with `serviceName`,
+  `environment`, `serviceInstanceId`, `debug`, `logLevel`), `shutdown(timeoutMs?)`
+  (one ref'd deadline, clamped to 2^31-1 ms, cleared when providers finish;
+  cached promise; a synchronous provider throw is reported as an
+  `AggregateError`; the next `setup()` rebuilds) and `defaultLogLevel(env, debug)`;
+  `/testing` adds `getResource()` and a `reset()` that unregisters what the
+  helper registered. Identity follows the 0.3 contract and the D1 rulings dated
+  2026-10-29: `service.name` code option > code `resourceAttributes` >
+  `OTEL_SERVICE_NAME` > `OTEL_RESOURCE_ATTRIBUTES` > `SERVICE_NAME` > SDK
+  `unknown_service:<argv0>` + warning (no warning for a code-only attribute);
+  `deployment.environment.name` code > `OTEL_RESOURCE_ATTRIBUTES` >
+  `ENVIRONMENT` > absent + warning (ADR-003, unknown values verbatim);
+  `service.instance.id` per-process UUID unless set (D4); blank identity values
+  count as not provided; trim set ` \t\n\r\v\f`. The helper parses
+  `OTEL_RESOURCE_ATTRIBUTES` itself (blank items ignored, trimmed after
+  decoding, malformed, empty-key or badly encoded items warned by position,
+  never by value); the resource is `defaultResource()` plus those attributes,
+  no detectors (D-JS4). Log level per R4 (`minimumLogLevel` option wins).
+  Deprecated `SERVICE_NAME`, `ENVIRONMENT`, `OTEL_HELPER_SAMPLE_RATIO`,
+  `OTEL_HELPER_DISABLED_SIGNALS` warn once per process;
+  `OTEL_HELPER_EXTRA_INSTRUMENTATION` is accepted with no effect and a warning
+  (as Go G9). Invalid code options throw a `TypeError` naming the option
+  (unknown keys included; `undefined` = not set); options are read once into a
+  frozen snapshot; environment problems only warn, echoed values cut to 64
+  characters. A stderr `DiagLogger` forwards OpenTelemetry SDK messages to the
+  helper's sink (`origin: 'diag'`, one bounded, escaped record each) at WARN, or
+  `OTEL_LOG_LEVEL` when set (unknown values warn and use WARN);
+  `installDiagLogger: false` opts out (and removes a logger an earlier setup
+  installed). `setup()` registers the `AsyncLocalStorageContextManager` and a
+  `TracerProvider` with the resource and the optional `spanProcessors`, no
+  exporters yet (B4); a foreign global TracerProvider or context manager is
+  detected first and kept, with one warning each. An inactive copy (another
+  helper version owns the process) resolves without the per-setup warnings and
+  installs nothing. The 27 identity, environment, log-level and deprecation
+  cases of `parity/cases.json` now pass for `nodejs`; 17 new cases (204 in
+  total) cover the D1 identity/`OTEL_RESOURCE_ATTRIBUTES` rulings — `nodejs`
+  pass, Go/Python `xfail:A16` except the ones they already pass (Go 3,
+  Python 4). New D-JS14 rows: per-setup identity warnings, `telemetry.sdk.*`
+  override direction and schema URL, `unknown_service` suffix. `JS3`/`JS4` left
+  `tools/trace-allow.txt`.
 - **License: Apache-2.0** (`LICENSE`, the official text; same as
   OpenTelemetry). Declared in `python/pyproject.toml` (`license`) and the
   NuGet packages (`PackageLicenseExpression`). Before this the repository had

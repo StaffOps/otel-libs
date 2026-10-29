@@ -213,7 +213,7 @@ lightweight.
 ## Cross-language parity
 
 Parity is enforced, not promised. [`parity/cases.json`](https://github.com/StaffOps/otel-libs/blob/main/parity/cases.json) is a
-hand-maintained, language-neutral fixture (187 cases after A13)
+hand-maintained, language-neutral fixture (204 cases: 187 after A13, 17 added by the Node B3 review)
 that every language's test suite runs — config resolution, wire-level export
 against a fake OTLP receiver, sampling, propagation, health exclusion, logging
 and `/metrics` status

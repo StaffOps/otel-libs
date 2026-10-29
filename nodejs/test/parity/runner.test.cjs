@@ -242,8 +242,11 @@ describe('parity harness (matcher and schema are test infrastructure)', () => {
 
   test('driver: reports pending helper APIs, adapter errors and crashes', async () => {
     const env = { PATH: process.env.PATH ?? '' };
-    const pending = await runCase({ id: 'p', kind: 'resolve', env: { OTEL_SERVICE_NAME: 'svc' }, code: {}, expect: {} }, { env });
-    assert.match(String(pending.adapter_pending), /setup\(\), shutdown\(\) yet \(task B3\)/);
+    const pending = await runCase({ id: 'p', kind: 'metrics_scrape', env: { OTEL_SERVICE_NAME: 'svc' }, code: {}, expect: {} }, { env });
+    assert.match(String(pending.adapter_pending), /metricsHandler\(\) yet \(task B7\)/);
+    // setup() exists since B3: a resolve case runs and reports the resource.
+    const resolved = await runCase({ id: 'r', kind: 'resolve', env: { OTEL_SERVICE_NAME: 'svc' }, code: {}, expect: {} }, { env });
+    assert.equal(resolved.resource?.['service.name'], 'svc', JSON.stringify(resolved));
     const unknownKind = await runCase({ id: 'k', kind: 'bogus', env: {}, code: {} }, { env });
     assert.match(String(unknownKind.adapter_error), /unknown kind/);
     const driverModule = require('./driver.cjs');
@@ -256,11 +259,19 @@ describe('parity harness (matcher and schema are test infrastructure)', () => {
     assert.equal(driverModule.signalOf('http', '/otlp/v1/metrics'), 'metrics');
     assert.equal(driverModule.signalOf('http', '/x'), 'other');
     assert.deepEqual(Object.keys(driverModule.KINDS).sort(), Object.keys(SCHEMA).sort());
-    // Every kind is wired: each reports its pending helper API, never "unknown kind".
+    // Every kind is wired, never "unknown kind": kinds whose helper API exists
+    // run (no adapter status); the others report the task that adds it.
+    const runnable = new Set(['resolve', 'sampler', 'propagation', 'fork']);
     for (const kind of Object.keys(SCHEMA)) {
-      if (kind === 'export') continue; // needs the receiver; covered by the export-pending check below
+      if (kind === 'export') continue; // needs the receiver; covered by the export check below
       const res = await runCase({ id: kind, kind, env: {}, code: {}, input: { scenario: 'root', requests: [], method: '/x' } }, { env });
-      assert.match(String(res.adapter_pending), /task B\d/, `${kind}: ${JSON.stringify(res)}`);
+      if (runnable.has(kind)) {
+        assert.equal(res.adapter_pending, undefined, `${kind}: ${JSON.stringify(res)}`);
+        assert.equal(res.adapter_error, undefined, `${kind}: ${JSON.stringify(res)}`);
+        assert.equal(res._crash, undefined, `${kind}: ${JSON.stringify(res)}`);
+      } else {
+        assert.match(String(res.adapter_pending), /task B\d/, `${kind}: ${JSON.stringify(res)}`);
+      }
     }
     // Sink metadata: helper_log = origin helper (any level); diagnostics = warn and above (any origin).
     assert.deepEqual(driverModule.classify({ origin: 'helper', level: 'warn' }), { diagnostics: true, helperLog: true });
@@ -278,9 +289,11 @@ describe('parity harness (matcher and schema are test infrastructure)', () => {
     assert.match(String((await runCase(null))._crash), /^harness error: TypeError/);
   });
 
-  test('driver: export kind reaches the receiver before reporting pending APIs', { skip: process.env.FAKEOTLP_ADMIN ? false : 'needs FAKEOTLP_ADMIN' }, async () => {
+  test('driver: export kind talks to the receiver admin API and reports what it received', { skip: process.env.FAKEOTLP_ADMIN ? false : 'needs FAKEOTLP_ADMIN' }, async () => {
+    // No exporters before B4: nothing reaches the receiver, but the snapshot is built.
     const res = await runCase({ id: 'e', kind: 'export', env: { OTEL_SERVICE_NAME: 'svc' }, code: {}, expect: {} });
-    assert.match(String(res.adapter_pending), /task B3/);
+    assert.equal(res.adapter_pending, undefined, JSON.stringify(res));
+    assert.deepEqual(res.received?.traces, [], JSON.stringify(res));
   });
 });
 

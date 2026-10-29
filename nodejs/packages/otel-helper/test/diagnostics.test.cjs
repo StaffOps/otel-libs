@@ -18,7 +18,8 @@ test('formats message and key=value attributes, quoting only when needed', () =>
 test('control characters, DEL and backslashes are quoted and escaped (no forged records)', () => {
   assert.equal(diag.formatDiagnostic('m', { v: 'a\nb' }), 'otelhelper: m v="a\\nb"');
   assert.equal(diag.formatDiagnostic('m', { v: 'a\u0000b' }), 'otelhelper: m v="a\\u0000b"');
-  assert.equal(diag.formatDiagnostic('m', { v: 'a\u007fb' }), `otelhelper: m v=${JSON.stringify('a\u007fb')}`);
+  assert.equal(diag.formatDiagnostic('m', { v: 'a\u007fb' }), 'otelhelper: m v="a\\u007fb"');
+  assert.equal(diag.formatDiagnostic('m', { v: 'a\u0085b\u2028c\u2029d\u009f' }), 'otelhelper: m v="a\\u0085b\\u2028c\\u2029d\\u009f"');
   assert.equal(diag.formatDiagnostic('m', { v: 'a\\b' }), 'otelhelper: m v="a\\\\b"');
 });
 

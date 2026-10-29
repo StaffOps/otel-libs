@@ -39,6 +39,17 @@ export interface HelperState {
   hooks: HooksMode | undefined;
   /** Diagnostics sink installed by tests or the parity runner; `undefined` = stderr. */
   sink: DiagnosticSink | undefined;
+  /**
+   * Keys of the "once per process" diagnostics already written (design D8).
+   * @internal
+   */
+  readonly warned: Set<string>;
+  /**
+   * What the last `setup()` built (owned by `setup.ts`); `undefined` before the
+   * first setup. Its shape is private and changes without notice.
+   * @internal
+   */
+  runtime: object | undefined;
 }
 
 /** Result of reading the slot: a getter or proxy on `globalThis` may throw. */

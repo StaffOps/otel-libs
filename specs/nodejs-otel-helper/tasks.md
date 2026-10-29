@@ -15,8 +15,8 @@ refutation (`observability` + `dev`), `code-review`, CHANGELOG, commit.
 | B1b Compose `fakeotlp-node`/`node-tests`, CI matrix 22.15.0/22/24/26, `verify.sh` step, api-range install test | B1a | JS1, D-JS12 | ✅ 2026-10-29 (dev refutation + code-review approved after fixes) |
 | B1c Spike gate: hooks on the four Node versions, duplicate-SDK check, context manager wiring, explicit gRPC credentials (no lazy env TLS read) | B1a | D-JS1, D-JS11 | ✅ 2026-10-29 (dev refutation + code-review approved after fixes) |
 | B2 Parity runner + driver (all kinds wired), per-case `skip:B<n>` statuses, TLS receiver by DNS name for Node 26 (D-JS14 F5), `trace_matrix.py` JS support, `parity/README.md` Node notes | B1b, B1c | D-JS12 | ✅ 2026-10-29 (dev refutation + code-review approved after fixes) |
-| B3 Resolver: identity, environment, resource, deprecations, diagnostics sink + DiagLogger | B2 | R4, R5, JS3, JS4, D-JS3–5 | ☐ |
-| B4a Endpoints, protocol, TLS warnings, IPv6/zone ids, gRPC :80 (new fixture case `export.grpc_http_explicit_port_80`, run by the Go and Python suites in the same change) | B3 | R1, R2, D-JS3 | ☐ |
+| B3 Resolver: identity, environment, resource, deprecations, diagnostics sink + DiagLogger | B2 | R4, R5, JS3, JS4, D-JS3–5 | ✅ 2026-10-29 (observability + dev refutation + code-review approved after fixes) |
+| B4a Endpoints, protocol, TLS warnings, IPv6/zone ids, gRPC :80 (new fixture case `export.grpc_http_explicit_port_80`, run by the Go and Python suites in the same change); B3 review LOWs: `globals.ts` treats a registry whose `version` is not `1.10.x` as foreign (reported), `envBool` echoes via `truncateValue` | B3 | R1, R2, D-JS3 | ☐ |
 | B4b Exporter construction (order: instrumentation before credentials/exporters; 3.0 processors take `{exporter}` options — spike F7), env masking, headers, timeout + effective deadline, compression, BSP/BLRP/limits, gRPC credential errors (new fixture cases: unreadable cert, key without cert, bad PEM — run by Go/Python too) | B4a | R2, R8, JS2 | ☐ |
 | B4c Exporter lists, console, `OTEL_SDK_DISABLED`, `OTEL_CONFIG_FILE`, interval | B4b | R8, JS2 | ☐ |
 | B5 Sampler (ParentBased, grammar, health wrapper outside it), propagators, debug marker (`debug="true"` on no/remote parent) | B3 | R6, R7, R9 | ☐ |
@@ -32,7 +32,7 @@ refutation (`observability` + `dev`), `code-review`, CHANGELOG, commit.
 | B11a e2e `node-smoke` (+ 13 expectation rows, markers, CI job name) | B10a–d | acceptance | ☐ |
 | B11b Examples api → backend (gRPC, notification.proto, proto-loader, health) → process; Dockerfile + Dockerfile.demo (npm pack tarballs) | B11a | acceptance | ☐ |
 | B11c custom-signals (same names/shape as Go/Python) + EXAMPLES.md | B11b | acceptance | ☐ |
-| B12 Docs: nodejs README/HOW-TO/TESTS; MkDocs nav + `docs/site/nodejs/` symlinks + `docs.yml` paths + `site_description`; root README (matrix, quick start, env table heading, opt-in, gaps, installing); AGENTS.md; CONSUMING (npmjs + GitHub Packages `.npmrc`); release + parity-case skills; `verify.sh` steps; dashboards: none needed (they read .NET example metrics) | B11c | acceptance | ☐ |
+| B12 Docs: nodejs README/HOW-TO/TESTS; MkDocs nav + `docs/site/nodejs/` symlinks + `docs.yml` paths + `site_description`; root README (matrix, quick start, env table heading, opt-in, gaps, installing); AGENTS.md; CONSUMING (npmjs + GitHub Packages `.npmrc`); release + parity-case skills; `verify.sh` steps; dashboards: none needed (they read .NET example metrics); HOW-TO: the ref'd `shutdown()` deadline can keep a process with a hung provider alive up to `timeoutMs` (default 30 s) | B11c | acceptance | ☐ |
 | B13 Release: CI `node-test` job, `nodejs/v*` tag trigger, `build-lib`/publish `needs`, npm pack, example images, `publish-nodejs-release` (id-token, npmjs + GitHub Packages); exporter-env re-check checklist per SDK bump | B12 + owner claimed `staffops` npm org | JS10 | ☐ |
 | B14 Final validation (refutation + code-review on the whole Node package), Node `0.3.0` rc | B13 | acceptance | ☐ |
 
@@ -41,5 +41,14 @@ refutation (`observability` + `dev`), `code-review`, CHANGELOG, commit.
 `pg`, `mysql2`, `redis`, `ioredis`, `@aws-sdk/client-sqs` (B10); `pino`,
 `winston` (B10d); Docker test services `postgres`, `mysql`. None ship in the
 published packages.
+
+**Checklist carried from the B3 review (2026-10-29)**:
+- B9: stable forwarding providers (design D-JS10, decided 2026-10-29); flip the
+  `todo` test "re-setup keeps tracers obtained earlier working" in
+  `nodejs/packages/otel-helper/test/setup.test.cjs` to a normal test.
+- B10a–c: once `setup({ instrumentations })` exists, reword the
+  `OTEL_HELPER_EXTRA_INSTRUMENTATION` warning (`src/internal/resolve.ts`) to
+  name `sqlInstrumentation()` / `redisInstrumentation()` / `awsInstrumentation()`
+  and the option, and update its unit test.
 
 **Owner actions**: claim the `staffops` org on npmjs before B13 (ADR-011).

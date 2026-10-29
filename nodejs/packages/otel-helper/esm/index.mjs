@@ -3,4 +3,4 @@
 // sync with src/index.ts; test/esm-wrapper.test.mjs fails on drift.
 import cjs from '../dist/index.js';
 
-export const { VERSION } = cjs;
+export const { VERSION, defaultLogLevel, setup, shutdown } = cjs;

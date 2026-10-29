@@ -19,7 +19,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B3-resolver"
+        "nodejs": "pass"
       }
     },
     {
@@ -40,7 +40,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B3-resolver"
+        "nodejs": "pass"
       }
     },
     {
@@ -60,7 +60,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B3-resolver"
+        "nodejs": "pass"
       }
     },
     {
@@ -82,7 +82,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B3-resolver"
+        "nodejs": "pass"
       }
     },
     {
@@ -103,7 +103,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B3-resolver"
+        "nodejs": "pass"
       }
     },
     {
@@ -124,7 +124,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B3-resolver"
+        "nodejs": "pass"
       }
     },
     {
@@ -145,7 +145,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B3-resolver"
+        "nodejs": "pass"
       },
       "note": "The :<exe> suffix is SDK-version dependent (R5): Python 1.42 has none."
     },
@@ -167,7 +167,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B3-resolver"
+        "nodejs": "pass"
       }
     },
     {
@@ -190,7 +190,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B3-resolver"
+        "nodejs": "pass"
       }
     },
     {
@@ -213,7 +213,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B3-resolver"
+        "nodejs": "pass"
       }
     },
     {
@@ -234,7 +234,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B3-resolver"
+        "nodejs": "pass"
       }
     },
     {
@@ -299,7 +299,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B3-resolver"
+        "nodejs": "pass"
       }
     },
     {
@@ -322,7 +322,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B3-resolver"
+        "nodejs": "pass"
       }
     },
     {
@@ -343,7 +343,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B3-resolver"
+        "nodejs": "pass"
       }
     },
     {
@@ -365,7 +365,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B3-resolver"
+        "nodejs": "pass"
       }
     },
     {
@@ -388,7 +388,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B3-resolver"
+        "nodejs": "pass"
       }
     },
     {
@@ -408,7 +408,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B3-resolver"
+        "nodejs": "pass"
       }
     },
     {
@@ -427,7 +427,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B3-log-level"
+        "nodejs": "pass"
       }
     },
     {
@@ -445,7 +445,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B3-log-level"
+        "nodejs": "pass"
       }
     },
     {
@@ -464,7 +464,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B3-log-level"
+        "nodejs": "pass"
       }
     },
     {
@@ -777,7 +777,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B3-resolver"
+        "nodejs": "pass"
       }
     },
     {
@@ -796,7 +796,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B3-resolver"
+        "nodejs": "pass"
       }
     },
     {
@@ -815,7 +815,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B3-resolver"
+        "nodejs": "pass"
       }
     },
     {
@@ -834,7 +834,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B3-resolver"
+        "nodejs": "pass"
       }
     },
     {
@@ -853,7 +853,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B3-resolver"
+        "nodejs": "pass"
       }
     },
     {
@@ -873,7 +873,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B3-resolver"
+        "nodejs": "pass"
       }
     },
     {
@@ -2441,7 +2441,7 @@
           }
         }
       },
-      "note": "Asserted via the grpc-timeout header (gRPC only; HTTP timeouts stay in A3 unit tests). Python: the SDK parses *_TIMEOUT as seconds while the spec says milliseconds (design D1.e); A3 adds the helper ms→s shim. Go: the SDK applies the env since A3 (G10: the helper passes no timeout unless set in code). Bound is lte 600, not 500: grpc encodes the remaining deadline and can round it up (501m observed with timeout=0.5 s passed by the helper); 600 still separates ms (500) from a seconds misread (500000) and the 10 s default (10000).",
+      "note": "Asserted via the grpc-timeout header (gRPC only; HTTP timeouts stay in A3 unit tests). Python: the SDK parses *_TIMEOUT as seconds while the spec says milliseconds (design D1.e); A3 adds the helper ms\u2192s shim. Go: the SDK applies the env since A3 (G10: the helper passes no timeout unless set in code). Bound is lte 600, not 500: grpc encodes the remaining deadline and can round it up (501m observed with timeout=0.5 s passed by the helper); 600 still separates ms (500) from a seconds misread (500000) and the 10 s default (10000).",
       "status": {
         "go": "pass",
         "python": "pass",
@@ -2480,7 +2480,7 @@
         "dotnet": "xfail:phase-c",
         "nodejs": "skip:B4b-otlp-timeout"
       },
-      "note": "Asserted via the grpc-timeout header (gRPC only; HTTP timeouts stay in A3 unit tests). Python: the SDK parses *_TIMEOUT as seconds while the spec says milliseconds (design D1.e); A3 adds the helper ms→s shim. Go: the SDK applies the env since A3 (G10: the helper passes no timeout unless set in code). Bound is lte 600, not 500: grpc encodes the remaining deadline and can round it up (501m observed with timeout=0.5 s passed by the helper); 600 still separates ms (500) from a seconds misread (500000) and the 10 s default (10000)."
+      "note": "Asserted via the grpc-timeout header (gRPC only; HTTP timeouts stay in A3 unit tests). Python: the SDK parses *_TIMEOUT as seconds while the spec says milliseconds (design D1.e); A3 adds the helper ms\u2192s shim. Go: the SDK applies the env since A3 (G10: the helper passes no timeout unless set in code). Bound is lte 600, not 500: grpc encodes the remaining deadline and can round it up (501m observed with timeout=0.5 s passed by the helper); 600 still separates ms (500) from a seconds misread (500000) and the 10 s default (10000)."
     },
     {
       "id": "export.traces_exporter_none",
@@ -4160,7 +4160,440 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B3-resolver"
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "identity.option_beats_code_attribute_service_name",
+      "kind": "resolve",
+      "requirement": "R5/D1 edge-case rulings (2026-10-29)",
+      "note": "Dedicated option wins in the resolved value and the emitted resource (A16).",
+      "env": {
+        "OTEL_RESOURCE_ATTRIBUTES": "deployment.environment.name=DEV"
+      },
+      "code": {
+        "service_name": "svc-option",
+        "resource_attributes": {
+          "service.name": "svc-attribute"
+        }
+      },
+      "expect": {
+        "resource": {
+          "service.name": "svc-option"
+        }
+      },
+      "status": {
+        "go": "xfail:A16",
+        "python": "xfail:A16",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "identity.option_beats_code_attribute_environment",
+      "kind": "resolve",
+      "requirement": "R4/D1 edge-case rulings (2026-10-29)",
+      "note": "Dedicated option wins in the resolved value and the emitted resource (A16).",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc"
+      },
+      "code": {
+        "environment": "PRD",
+        "resource_attributes": {
+          "deployment.environment.name": "DEV"
+        }
+      },
+      "expect": {
+        "resource": {
+          "deployment.environment.name": "PRD"
+        },
+        "log_level": "WARN"
+      },
+      "status": {
+        "go": "xfail:A16",
+        "python": "xfail:A16",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "identity.blank_env_service_name_falls_back",
+      "kind": "resolve",
+      "requirement": "R5/D1 edge-case rulings (2026-10-29)",
+      "note": "A blank service.name in OTEL_RESOURCE_ATTRIBUTES is not provided: the next level applies.",
+      "env": {
+        "OTEL_RESOURCE_ATTRIBUTES": "service.name= ,deployment.environment.name=DEV",
+        "SERVICE_NAME": "svc-legacy"
+      },
+      "code": {},
+      "expect": {
+        "resource": {
+          "service.name": "svc-legacy"
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "identity.blank_env_service_name_uses_sdk_default",
+      "kind": "resolve",
+      "requirement": "R5/D1 edge-case rulings (2026-10-29)",
+      "note": "Blank service.name and nothing else: SDK default plus the warning.",
+      "env": {
+        "OTEL_RESOURCE_ATTRIBUTES": "service.name=,deployment.environment.name=DEV"
+      },
+      "code": {},
+      "expect": {
+        "resource": {
+          "service.name": {
+            "regex": "^unknown_service(:.+)?$"
+          }
+        },
+        "warning": "OTEL_SERVICE_NAME"
+      },
+      "status": {
+        "go": "xfail:A16",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "identity.blank_code_service_name_falls_back",
+      "kind": "resolve",
+      "requirement": "R5/D1 edge-case rulings (2026-10-29)",
+      "note": "A blank code resource_attributes service.name is not provided.",
+      "env": {
+        "OTEL_SERVICE_NAME": "svc-std",
+        "OTEL_RESOURCE_ATTRIBUTES": "deployment.environment.name=DEV"
+      },
+      "code": {
+        "resource_attributes": {
+          "service.name": " "
+        }
+      },
+      "expect": {
+        "resource": {
+          "service.name": "svc-std"
+        }
+      },
+      "status": {
+        "go": "xfail:A16",
+        "python": "xfail:A16",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "identity.blank_env_environment_absent",
+      "kind": "resolve",
+      "requirement": "R4/D1 edge-case rulings (2026-10-29)",
+      "note": "A blank deployment.environment.name is not provided: absent plus the ADR-003 warning.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_RESOURCE_ATTRIBUTES": "deployment.environment.name= "
+      },
+      "code": {},
+      "expect": {
+        "resource": {
+          "deployment.environment.name": {
+            "absent": true
+          }
+        },
+        "warning": "deployment.environment.name",
+        "log_level": "INFO"
+      },
+      "status": {
+        "go": "xfail:A16",
+        "python": "xfail:A16",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "identity.blank_code_environment_falls_back",
+      "kind": "resolve",
+      "requirement": "R4/D1 edge-case rulings (2026-10-29)",
+      "note": "A blank code deployment.environment.name is not provided: OTEL_RESOURCE_ATTRIBUTES applies.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_RESOURCE_ATTRIBUTES": "deployment.environment.name=HML"
+      },
+      "code": {
+        "resource_attributes": {
+          "deployment.environment.name": ""
+        }
+      },
+      "expect": {
+        "resource": {
+          "deployment.environment.name": "HML"
+        }
+      },
+      "status": {
+        "go": "xfail:A16",
+        "python": "xfail:A16",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "identity.blank_env_instance_id_generated",
+      "kind": "resolve",
+      "requirement": "R5/D4/D1 edge-case rulings (2026-10-29)",
+      "note": "A blank service.instance.id is not provided: a per-process id is generated.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_RESOURCE_ATTRIBUTES": "service.instance.id= ,deployment.environment.name=DEV"
+      },
+      "code": {},
+      "expect": {
+        "resource": {
+          "service.instance.id": {
+            "regex": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+          }
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "xfail:A16",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "identity.blank_code_instance_id_generated",
+      "kind": "resolve",
+      "requirement": "R5/D4/D1 edge-case rulings (2026-10-29)",
+      "note": "A blank code service.instance.id is not provided: a per-process id is generated.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_RESOURCE_ATTRIBUTES": "deployment.environment.name=DEV"
+      },
+      "code": {
+        "resource_attributes": {
+          "service.instance.id": ""
+        }
+      },
+      "expect": {
+        "resource": {
+          "service.instance.id": {
+            "regex": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+          }
+        }
+      },
+      "status": {
+        "go": "xfail:A16",
+        "python": "xfail:A16",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "identity.code_attribute_service_name_only_no_warning",
+      "kind": "resolve",
+      "requirement": "R5/D1 edge-case rulings (2026-10-29)",
+      "note": "Code-only resource_attributes service.name resolves to it, with no missing-name warning.",
+      "env": {
+        "OTEL_RESOURCE_ATTRIBUTES": "deployment.environment.name=DEV"
+      },
+      "code": {
+        "resource_attributes": {
+          "service.name": "svc-code-attribute"
+        }
+      },
+      "expect": {
+        "resource": {
+          "service.name": "svc-code-attribute"
+        },
+        "warning_count": {
+          "OTEL_SERVICE_NAME": 0
+        }
+      },
+      "status": {
+        "go": "xfail:A16",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "resource_attributes.item_without_equals_skipped",
+      "kind": "resolve",
+      "requirement": "R8/D1 edge-case rulings (2026-10-29)",
+      "note": "Helper-owned parsing: the item is skipped with a positional warning; the others are kept.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_RESOURCE_ATTRIBUTES": "team.name=payments,broken,region=eu,deployment.environment.name=DEV"
+      },
+      "code": {},
+      "expect": {
+        "resource": {
+          "team.name": "payments",
+          "region": "eu",
+          "broken": {
+            "absent": true
+          }
+        },
+        "warning": "OTEL_RESOURCE_ATTRIBUTES"
+      },
+      "status": {
+        "go": "xfail:A16",
+        "python": "xfail:A16",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "resource_attributes.blank_item_ignored",
+      "kind": "resolve",
+      "requirement": "R8/D1 edge-case rulings (2026-10-29)",
+      "note": "Blank items are ignored without a warning.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_RESOURCE_ATTRIBUTES": "team.name=payments,, ,region=eu,deployment.environment.name=DEV"
+      },
+      "code": {},
+      "expect": {
+        "resource": {
+          "team.name": "payments",
+          "region": "eu"
+        },
+        "warning_count": {
+          "OTEL_RESOURCE_ATTRIBUTES": 0
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "resource_attributes.bad_percent_kept_literal",
+      "kind": "resolve",
+      "requirement": "R8/D1 edge-case rulings (2026-10-29)",
+      "note": "An invalid percent sequence keeps the value literal, with a positional warning.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_RESOURCE_ATTRIBUTES": "team.name=%zz,deployment.environment.name=DEV"
+      },
+      "code": {},
+      "expect": {
+        "resource": {
+          "team.name": "%zz"
+        },
+        "warning": "OTEL_RESOURCE_ATTRIBUTES"
+      },
+      "status": {
+        "go": "xfail:A16",
+        "python": "xfail:A16",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "resource_attributes.invalid_utf8_kept_literal",
+      "kind": "resolve",
+      "requirement": "R8/D1 edge-case rulings (2026-10-29)",
+      "note": "A decode that is not valid UTF-8 keeps the value literal, with a positional warning.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_RESOURCE_ATTRIBUTES": "team.name=%C3,deployment.environment.name=DEV"
+      },
+      "code": {},
+      "expect": {
+        "resource": {
+          "team.name": "%C3"
+        },
+        "warning": "OTEL_RESOURCE_ATTRIBUTES"
+      },
+      "status": {
+        "go": "xfail:A16",
+        "python": "xfail:A16",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "resource_attributes.encoded_leading_space_trimmed",
+      "kind": "resolve",
+      "requirement": "R8/D1 edge-case rulings (2026-10-29)",
+      "note": "Values are trimmed with the contract set after percent-decoding.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_RESOURCE_ATTRIBUTES": "team.name=%20payments%09,deployment.environment.name=DEV"
+      },
+      "code": {},
+      "expect": {
+        "resource": {
+          "team.name": "payments"
+        },
+        "warning_count": {
+          "OTEL_RESOURCE_ATTRIBUTES": 0
+        }
+      },
+      "status": {
+        "go": "xfail:A16",
+        "python": "xfail:A16",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "resource_attributes.empty_key_skipped",
+      "kind": "resolve",
+      "requirement": "R8/D1 edge-case rulings (2026-10-29)",
+      "note": "An item with an empty key is skipped with a positional warning.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_RESOURCE_ATTRIBUTES": "=orphan,team.name=payments,deployment.environment.name=DEV"
+      },
+      "code": {},
+      "expect": {
+        "resource": {
+          "team.name": "payments"
+        },
+        "warning": "OTEL_RESOURCE_ATTRIBUTES"
+      },
+      "status": {
+        "go": "xfail:A16",
+        "python": "xfail:A16",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "resource_attributes.values_never_echoed",
+      "kind": "resolve",
+      "requirement": "R8/D1 edge-case rulings (2026-10-29)",
+      "note": "Malformed or undecodable items are reported by position; their text never reaches helper diagnostics or the process output.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_RESOURCE_ATTRIBUTES": "token-s3cr3t-value,api.key=%zzs3cr3t,team.name=payments,deployment.environment.name=DEV"
+      },
+      "code": {},
+      "expect": {
+        "resource": {
+          "team.name": "payments"
+        },
+        "warning": "OTEL_RESOURCE_ATTRIBUTES",
+        "helper_log": {
+          "not_contains": "s3cr3t"
+        },
+        "log": {
+          "not_contains": "s3cr3t"
+        }
+      },
+      "status": {
+        "go": "xfail:A16",
+        "python": "xfail:A16",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "pass"
       }
     },
     {
@@ -4646,7 +5079,7 @@
       "id": "redaction.headers_all_malformed_never_logged",
       "kind": "resolve",
       "requirement": "R8/D1 edge-case rulings",
-      "note": "No valid header item: the SDK must not re-parse the env var and echo it (Python masks it during exporter construction). Go: helper diagnostics pass (position only) but the OTel Go SDK's global logger echoes the raw value (parse headers) — out of the helper's control per the design D1 edge-case ruling on the SDK's own log output (G7 forbids masking env).",
+      "note": "No valid header item: the SDK must not re-parse the env var and echo it (Python masks it during exporter construction). Go: helper diagnostics pass (position only) but the OTel Go SDK's global logger echoes the raw value (parse headers) \u2014 out of the helper's control per the design D1 edge-case ruling on the SDK's own log output (G7 forbids masking env).",
       "env": {
         "OTEL_SERVICE_NAME": "parity-svc",
         "OTEL_EXPORTER_OTLP_ENDPOINT": "http://collector:4317",
@@ -4925,7 +5358,7 @@
         "dotnet": "xfail:phase-c",
         "nodejs": "skip:B4b-otlp-timeout"
       },
-      "note": "gte lowered 300→100 (2026-10-28): 212 ms observed under load; 100 still separates the 1 ms clamp from the 500 ms fallback."
+      "note": "gte lowered 300\u2192100 (2026-10-28): 212 ms observed under load; 100 still separates the 1 ms clamp from the 500 ms fallback."
     },
     {
       "id": "export.per_signal_timeout_trailing_dot_falls_back_grpc",
@@ -4955,7 +5388,7 @@
         "dotnet": "xfail:phase-c",
         "nodejs": "skip:B4b-otlp-timeout"
       },
-      "note": "gte lowered 300→100 (2026-10-28): 212 ms observed under load; 100 still separates the 1 ms clamp from the 500 ms fallback."
+      "note": "gte lowered 300\u2192100 (2026-10-28): 212 ms observed under load; 100 still separates the 1 ms clamp from the 500 ms fallback."
     },
     {
       "id": "export.headers_value_literal_whole",
@@ -5254,7 +5687,7 @@
       "id": "config.code_sample_ratio_one_is_parentbased",
       "kind": "sampler",
       "requirement": "R6/D1 edge-case rulings",
-      "note": "A13 review L5: a code ratio of 1.0 builds ParentBased(TraceIdRatioBased(1)) — an unsampled remote parent stays unsampled. Fails on a regression to bare AlwaysOn, and on OTEL_TRACES_SAMPLER=always_on winning over the code value.",
+      "note": "A13 review L5: a code ratio of 1.0 builds ParentBased(TraceIdRatioBased(1)) \u2014 an unsampled remote parent stays unsampled. Fails on a regression to bare AlwaysOn, and on OTEL_TRACES_SAMPLER=always_on winning over the code value.",
       "env": {
         "OTEL_SERVICE_NAME": "parity-svc",
         "OTEL_TRACES_SAMPLER": "always_on"

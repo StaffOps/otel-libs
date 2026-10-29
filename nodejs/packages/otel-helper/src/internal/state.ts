@@ -28,7 +28,7 @@ export function getState(): HelperState | null {
   if (!slot.ok) return inactive('the shared state slot cannot be read');
   const existing = slot.value;
   if (existing === undefined) {
-    const created = Object.defineProperty({ hooks: undefined, sink: undefined }, 'version', {
+    const created = Object.defineProperty({ hooks: undefined, sink: undefined, warned: new Set<string>(), runtime: undefined }, 'version', {
       value: VERSION,
       enumerable: true,
       writable: false,
