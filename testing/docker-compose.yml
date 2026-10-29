@@ -45,6 +45,13 @@ services:
   fakeotlp-node:
     <<: *fakeotlp
     volumes: [fakeotlp-node-out:/out]
+    # DNS names for the receiver addresses, seen by node-tests through the shared
+    # network namespace (it gets this container's /etc/hosts). Node 26 refuses an
+    # IP literal as TLS ServerName (design D-JS14, spike B1c F5); the certificate
+    # carries both names (fakeotlp's default TLS_HOSTS).
+    extra_hosts:
+      - "fakeotlp:127.0.0.2"
+      - "fakeotlp-tls:127.0.0.3"
 
   go-tests:
     # Debian-based image: `-race` needs cgo + gcc. Version follows go.mod (go 1.26).
@@ -109,6 +116,11 @@ services:
         condition: service_healthy
     environment:
       <<: *fakeotlp-env
+      # Receivers by DNS name (extra_hosts on fakeotlp-node): {receiver} and
+      # {receiver_tls} expand to names on the Node legs, IPs for Go/Python.
+      FAKEOTLP_HOST: fakeotlp
+      FAKEOTLP_HOST_TLS: fakeotlp-tls
+      PARITY_CASES: /src/parity/cases.json
       NPM_CONFIG_UPDATE_NOTIFIER: "false"
       NPM_CONFIG_FUND: "false"
       NPM_CONFIG_AUDIT: "false"
@@ -137,6 +149,8 @@ services:
         npm run typecheck
         npm run check
         node ci/check-pack.mjs
+        # Includes the parity runner (test/parity/runner.test.cjs, run by the core
+        # package's test script so its children count towards the coverage gate).
         npm test
         sh ci/api-range-install.sh
 

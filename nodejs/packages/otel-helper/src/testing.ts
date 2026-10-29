@@ -4,7 +4,7 @@
  */
 import { getState, setDiagnosticSink } from './internal/state';
 
-export type { DiagnosticSink, HelperState, HooksMode } from './internal/state';
+export type { DiagnosticLevel, DiagnosticMeta, DiagnosticOrigin, DiagnosticSink, HelperState, HooksMode } from './internal/state';
 export { STATE_KEY } from './internal/state';
 export { getState, setDiagnosticSink };
 

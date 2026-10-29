@@ -35,6 +35,20 @@ test('report() writes through the sink installed on the shared state', () => {
   assert.deepEqual(lines, ['otelhelper: m a=1']);
 });
 
+test('the sink receives {origin, level}: a helper warning by default, else what the caller passes', () => {
+  const records = [];
+  setDiagnosticSink((line, meta) => records.push([line, meta]));
+  diag.report('own');
+  diag.report('forwarded', { n: 1 }, { origin: 'diag', level: 'debug' });
+  diag.report('fatal', undefined, { origin: 'helper', level: 'error' });
+  assert.deepEqual(records, [
+    ['otelhelper: own', { origin: 'helper', level: 'warn' }],
+    ['otelhelper: forwarded n=1', { origin: 'diag', level: 'debug' }],
+    ['otelhelper: fatal', { origin: 'helper', level: 'error' }],
+  ]);
+  assert.ok(Object.isFrozen(records[0][1]), 'the default metadata is shared and frozen');
+});
+
 test('the default sink writes one line to stderr, nothing to stdout', () => {
   const res = runCjs("require('./dist/internal/diagnostics.js').report('to stderr', { k: 'v' })");
   assert.equal(res.status, 0);

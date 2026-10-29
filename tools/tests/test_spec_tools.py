@@ -304,6 +304,43 @@ class TraceTest(Tree):
         for line in ("func helper() {", "def make():", "class Fixture:", "# def test_x"):
             self.assertIsNone(trace_tool.first_test_line([line]), line)
 
+    def test_nodejs_ids_and_test_files(self) -> None:
+        write(self.root, "specs/gamma/requirements.md", """\
+            ### JS91 — Cited by a node:test test
+            The helper SHALL a.
+            ### JS92 — Header only
+            The helper SHALL b.
+            ### JS93 — Only in node_modules
+            The helper SHALL c.
+            ### JS94 — Outside a test directory
+            The helper SHALL d.
+            """)
+        write(self.root, "nodejs/packages/p/test/a.test.cjs",
+              "// JS92: a file header is a claim, not a test.\n"
+              "const test = require('node:test');\n"
+              "test('covers JS91', () => {});\n"
+              "// D-JS92: a design id, never a requirement citation\n")
+        write(self.root, "nodejs/test/parity/b.test.mjs", "describe('x', () => {\n  it('JS91 again', () => {});\n});\n")
+        write(self.root, "nodejs/test/parity/c.test.ts", "// JS92 header, no test start\n")
+        write(self.root, "nodejs/node_modules/dep/test/d.test.js", "test('JS93', () => {});\n")
+        write(self.root, "nodejs/packages/p/test/node_modules/e/f.test.js", "test('JS93', () => {});\n")
+        write(self.root, "nodejs/packages/p/src/g.ts", "test('JS94', () => {});\n")
+        write(self.root, "nodejs/packages/p/test/h.test.json", '{"x": "JS94"}\n')
+        reqs = self.reqs()
+        self.assertEqual(reqs["JS91"].citations,
+                         ["nodejs/packages/p/test/a.test.cjs:3", "nodejs/test/parity/b.test.mjs:2"])
+        self.assertEqual(reqs["JS92"].citations, [])
+        self.assertEqual(reqs["JS93"].citations, [])
+        self.assertEqual(reqs["JS94"].citations, [])
+        for line in ("test('a', () => {", "  it('b', () => {", "describe ('c', () => {", "suite('d', () => {",
+                     "test.skip('e', () => {", "it.only('f', () => {", "  t.test('g', () => {"):
+            self.assertEqual(trace_tool.first_test_line(["// JS91", line], node=True), 1, line)
+            self.assertIsNone(trace_tool.first_test_line(["// JS91", line]), line)  # not a Go/Python start
+        for line in ("const test = require('node:test');", "// test(x)", "t.diagnostic('x')", "def test_x():"):
+            self.assertIsNone(trace_tool.first_test_line([line], node=True), line)
+        write(self.root, "python/tests/test_y.py", "it('JS94 is not a Python test start')\n")
+        self.assertEqual(self.reqs()["JS94"].citations, [])
+
     def test_many_citations_are_truncated(self) -> None:
         write(self.root, "go/y_test.go", "func TestY(t *testing.T) {\n// R91\n// R91\n// R91\n}\n")
         code, out = run_main(trace_tool.main, ["--root", str(self.root)])

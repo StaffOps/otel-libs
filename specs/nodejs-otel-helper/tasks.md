@@ -14,7 +14,7 @@ refutation (`observability` + `dev`), `code-review`, CHANGELOG, commit.
 | B1a Workspaces, tsc CJS + ESM wrapper, eslint, publint/attw, node:test, c8 gate, `.gitignore` (node_modules, coverage, *.tgz), dual-load shared-state test | B0d | JS1, JS5, D-JS10, D-JS11 | ✅ 2026-10-29 (dev refutation + code-review approved after fixes) |
 | B1b Compose `fakeotlp-node`/`node-tests`, CI matrix 22.15.0/22/24/26, `verify.sh` step, api-range install test | B1a | JS1, D-JS12 | ✅ 2026-10-29 (dev refutation + code-review approved after fixes) |
 | B1c Spike gate: hooks on the four Node versions, duplicate-SDK check, context manager wiring, explicit gRPC credentials (no lazy env TLS read) | B1a | D-JS1, D-JS11 | ✅ 2026-10-29 (dev refutation + code-review approved after fixes) |
-| B2 Parity runner + driver (all kinds wired), per-case `skip:B<n>` statuses, TLS receiver by DNS name for Node 26 (D-JS14 F5), `trace_matrix.py` JS support, `parity/README.md` Node notes | B1b, B1c | D-JS12 | ☐ |
+| B2 Parity runner + driver (all kinds wired), per-case `skip:B<n>` statuses, TLS receiver by DNS name for Node 26 (D-JS14 F5), `trace_matrix.py` JS support, `parity/README.md` Node notes | B1b, B1c | D-JS12 | ✅ 2026-10-29 (dev refutation + code-review approved after fixes) |
 | B3 Resolver: identity, environment, resource, deprecations, diagnostics sink + DiagLogger | B2 | R4, R5, JS3, JS4, D-JS3–5 | ☐ |
 | B4a Endpoints, protocol, TLS warnings, IPv6/zone ids, gRPC :80 (new fixture case `export.grpc_http_explicit_port_80`, run by the Go and Python suites in the same change) | B3 | R1, R2, D-JS3 | ☐ |
 | B4b Exporter construction (order: instrumentation before credentials/exporters; 3.0 processors take `{exporter}` options — spike F7), env masking, headers, timeout + effective deadline, compression, BSP/BLRP/limits, gRPC credential errors (new fixture cases: unreadable cert, key without cert, bad PEM — run by Go/Python too) | B4a | R2, R8, JS2 | ☐ |
@@ -35,5 +35,11 @@ refutation (`observability` + `dev`), `code-review`, CHANGELOG, commit.
 | B12 Docs: nodejs README/HOW-TO/TESTS; MkDocs nav + `docs/site/nodejs/` symlinks + `docs.yml` paths + `site_description`; root README (matrix, quick start, env table heading, opt-in, gaps, installing); AGENTS.md; CONSUMING (npmjs + GitHub Packages `.npmrc`); release + parity-case skills; `verify.sh` steps; dashboards: none needed (they read .NET example metrics) | B11c | acceptance | ☐ |
 | B13 Release: CI `node-test` job, `nodejs/v*` tag trigger, `build-lib`/publish `needs`, npm pack, example images, `publish-nodejs-release` (id-token, npmjs + GitHub Packages); exporter-env re-check checklist per SDK bump | B12 + owner claimed `staffops` npm org | JS10 | ☐ |
 | B14 Final validation (refutation + code-review on the whole Node package), Node `0.3.0` rc | B13 | acceptance | ☐ |
+
+**Test-only dependencies approved by the owner (2026-10-29)**: devDependencies
+`express`, `@grpc/grpc-js`, `@grpc/proto-loader`, `grpc-health-check` (B6);
+`pg`, `mysql2`, `redis`, `ioredis`, `@aws-sdk/client-sqs` (B10); `pino`,
+`winston` (B10d); Docker test services `postgres`, `mysql`. None ship in the
+published packages.
 
 **Owner actions**: claim the `staffops` org on npmjs before B13 (ADR-011).

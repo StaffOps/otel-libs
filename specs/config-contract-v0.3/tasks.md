@@ -95,4 +95,6 @@ Contract catch-up R1–R9 in .NET, plus:
 
 **Contract follow-up (2026-10-29, Node B0 review)**: Go always passes the resolved OTLP timeout to the batch span/log processors (overriding `OTEL_BSP_EXPORT_TIMEOUT` / `OTEL_BLRP_EXPORT_TIMEOUT`); Python lets the SDK read those variables. Pick one rule (Node uses: explicit BSP/BLRP env wins, else the OTLP timeout), add parity cases, align Go/Python.
 
+**Contract follow-up (2026-10-29, Node B2 review)**: parity matchers. The Node runner treats `prefix` / `regex` / `not_contains` on a present non-string value as a mismatch and compiles regexes with the JS `u` flag; Go (`fmt.Sprint`) and Python (`str()`) still stringify. Adopt the string-only rule in `go/parity_match_test.go` and `python/tests/test_parity.py`, and reject inline regex flags in their validators (parity/README.md "Text matchers apply to strings only", regex dialect).
+
 Refuted (do not act): .NET ignoring `OTEL_SDK_DISABLED` — SDK ≥ 1.15 honors it.

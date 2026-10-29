@@ -19,7 +19,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B3-resolver"
       }
     },
     {
@@ -40,7 +40,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B3-resolver"
       }
     },
     {
@@ -60,7 +60,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B3-resolver"
       }
     },
     {
@@ -82,7 +82,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B3-resolver"
       }
     },
     {
@@ -103,7 +103,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B3-resolver"
       }
     },
     {
@@ -124,7 +124,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B3-resolver"
       }
     },
     {
@@ -145,7 +145,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B3-resolver"
       },
       "note": "The :<exe> suffix is SDK-version dependent (R5): Python 1.42 has none."
     },
@@ -167,7 +167,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B3-resolver"
       }
     },
     {
@@ -190,7 +190,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B3-resolver"
       }
     },
     {
@@ -213,7 +213,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B3-resolver"
       }
     },
     {
@@ -234,7 +234,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B3-resolver"
       }
     },
     {
@@ -253,7 +253,7 @@
         "go": "skip:no-prefork-model",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B9b-cluster-fork"
       }
     },
     {
@@ -278,7 +278,7 @@
         "go": "skip:no-prefork-model",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B9b-cluster-fork"
       }
     },
     {
@@ -299,7 +299,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B3-resolver"
       }
     },
     {
@@ -322,7 +322,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B3-resolver"
       }
     },
     {
@@ -343,7 +343,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B3-resolver"
       }
     },
     {
@@ -365,7 +365,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B3-resolver"
       }
     },
     {
@@ -388,7 +388,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B3-resolver"
       }
     },
     {
@@ -408,7 +408,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B3-resolver"
       }
     },
     {
@@ -427,7 +427,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B3-log-level"
       }
     },
     {
@@ -445,7 +445,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B3-log-level"
       }
     },
     {
@@ -464,7 +464,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B3-log-level"
       }
     },
     {
@@ -494,7 +494,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B4b-otlp-endpoint"
       }
     },
     {
@@ -515,7 +515,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B4a-protocol"
       }
     },
     {
@@ -539,7 +539,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B4c-exporter-lists"
       }
     },
     {
@@ -561,7 +561,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B4c-exporter-lists"
       }
     },
     {
@@ -583,7 +583,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B4c-exporter-lists"
       }
     },
     {
@@ -608,7 +608,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B4c-exporter-lists"
       }
     },
     {
@@ -632,7 +632,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B4c-exporter-lists"
       }
     },
     {
@@ -657,7 +657,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B4c-exporter-lists"
       }
     },
     {
@@ -679,7 +679,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B4c-exporter-lists"
       }
     },
     {
@@ -697,7 +697,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B4c-export-interval"
       }
     },
     {
@@ -716,7 +716,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B4c-export-interval"
       }
     },
     {
@@ -736,7 +736,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B4c-export-interval"
       }
     },
     {
@@ -759,7 +759,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B4c-export-interval"
       }
     },
     {
@@ -777,7 +777,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B3-resolver"
       }
     },
     {
@@ -796,7 +796,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B3-resolver"
       }
     },
     {
@@ -815,7 +815,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B3-resolver"
       }
     },
     {
@@ -834,7 +834,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B3-resolver"
       }
     },
     {
@@ -853,7 +853,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B3-resolver"
       }
     },
     {
@@ -873,7 +873,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B3-resolver"
       }
     },
     {
@@ -907,7 +907,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B4b-otlp-headers"
       }
     },
     {
@@ -949,7 +949,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B4a-endpoint-redaction"
       }
     },
     {
@@ -982,7 +982,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B4a-tls-warnings"
       }
     },
     {
@@ -1002,7 +1002,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B4a-tls-warnings"
       }
     },
     {
@@ -1022,7 +1022,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B4a-tls-warnings"
       }
     },
     {
@@ -1042,7 +1042,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B4a-tls-warnings"
       }
     },
     {
@@ -1062,7 +1062,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B4a-endpoints"
       }
     },
     {
@@ -1083,7 +1083,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B4a-endpoints"
       }
     },
     {
@@ -1116,7 +1116,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B4a-endpoints"
       }
     },
     {
@@ -1139,7 +1139,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B4c-sdk-disabled"
       }
     },
     {
@@ -1177,7 +1177,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B4b-otlp-endpoint"
       }
     },
     {
@@ -1212,7 +1212,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B4b-otlp-endpoint"
       }
     },
     {
@@ -1248,7 +1248,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B4b-otlp-tls"
       }
     },
     {
@@ -1288,7 +1288,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B4b-otlp-tls"
       }
     },
     {
@@ -1328,7 +1328,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B4b-otlp-tls"
       }
     },
     {
@@ -1367,7 +1367,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B4b-otlp-endpoint"
       }
     },
     {
@@ -1402,7 +1402,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B4b-otlp-endpoint"
       }
     },
     {
@@ -1439,7 +1439,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B4b-otlp-tls"
       }
     },
     {
@@ -1478,7 +1478,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B4b-otlp-endpoint"
       }
     },
     {
@@ -1514,7 +1514,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B4b-otlp-endpoint"
       }
     },
     {
@@ -1554,7 +1554,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B4b-otlp-endpoint"
       }
     },
     {
@@ -1582,7 +1582,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B4b-otlp-endpoint"
       }
     },
     {
@@ -1622,7 +1622,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B4b-otlp-endpoint"
       }
     },
     {
@@ -1651,7 +1651,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B4b-otlp-endpoint"
       }
     },
     {
@@ -1687,7 +1687,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B4b-otlp-tls"
       }
     },
     {
@@ -1723,7 +1723,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B4b-otlp-tls"
       }
     },
     {
@@ -1763,7 +1763,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B4b-otlp-tls"
       }
     },
     {
@@ -1799,7 +1799,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B4b-otlp-tls"
       }
     },
     {
@@ -1839,7 +1839,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B4b-otlp-tls"
       }
     },
     {
@@ -1876,7 +1876,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B4b-otlp-tls"
       }
     },
     {
@@ -1909,7 +1909,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B4b-otlp-endpoint"
       }
     },
     {
@@ -1940,7 +1940,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B4b-otlp-endpoint"
       }
     },
     {
@@ -1973,7 +1973,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B4b-otlp-endpoint"
       }
     },
     {
@@ -2007,7 +2007,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B4b-otlp-endpoint"
       }
     },
     {
@@ -2039,7 +2039,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B4b-otlp-endpoint"
       }
     },
     {
@@ -2077,7 +2077,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B4b-otlp-tls"
       }
     },
     {
@@ -2118,7 +2118,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B4b-otlp-tls"
       }
     },
     {
@@ -2154,7 +2154,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B4b-otlp-tls"
       }
     },
     {
@@ -2181,7 +2181,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B4b-otlp-tls"
       }
     },
     {
@@ -2221,7 +2221,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B4b-otlp-tls"
       }
     },
     {
@@ -2250,7 +2250,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B4b-otlp-endpoint"
       }
     },
     {
@@ -2279,7 +2279,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B4b-otlp-endpoint"
       }
     },
     {
@@ -2309,7 +2309,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B4b-otlp-compression"
       }
     },
     {
@@ -2345,7 +2345,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B4b-otlp-headers"
       }
     },
     {
@@ -2378,7 +2378,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B4b-otlp-headers"
       }
     },
     {
@@ -2406,7 +2406,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B4b-otlp-compression"
       }
     },
     {
@@ -2446,7 +2446,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B4b-otlp-timeout"
       }
     },
     {
@@ -2478,7 +2478,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B4b-otlp-timeout"
       },
       "note": "Asserted via the grpc-timeout header (gRPC only; HTTP timeouts stay in A3 unit tests). Python: the SDK parses *_TIMEOUT as seconds while the spec says milliseconds (design D1.e); A3 adds the helper ms→s shim. Go: the SDK applies the env since A3 (G10: the helper passes no timeout unless set in code). Bound is lte 600, not 500: grpc encodes the remaining deadline and can round it up (501m observed with timeout=0.5 s passed by the helper); 600 still separates ms (500) from a seconds misread (500000) and the 10 s default (10000)."
     },
@@ -2504,7 +2504,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B4c-exporter-lists"
       }
     },
     {
@@ -2529,7 +2529,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B4c-exporter-lists"
       }
     },
     {
@@ -2554,7 +2554,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B4c-exporter-lists"
       }
     },
     {
@@ -2581,7 +2581,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B4c-exporter-lists"
       }
     },
     {
@@ -2609,7 +2609,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B4c-exporter-lists"
       }
     },
     {
@@ -2634,7 +2634,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B4c-exporter-lists"
       }
     },
     {
@@ -2661,7 +2661,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B4c-exporter-lists"
       }
     },
     {
@@ -2689,7 +2689,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B4c-exporter-lists"
       }
     },
     {
@@ -2714,7 +2714,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B4c-exporter-lists"
       }
     },
     {
@@ -2744,7 +2744,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B4c-sdk-disabled"
       }
     },
     {
@@ -2765,7 +2765,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B5-sampler"
       }
     },
     {
@@ -2786,7 +2786,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B5-sampler"
       }
     },
     {
@@ -2807,7 +2807,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B5-sampler"
       }
     },
     {
@@ -2828,7 +2828,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B5-sampler"
       }
     },
     {
@@ -2849,7 +2849,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B5-sampler"
       }
     },
     {
@@ -2871,7 +2871,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B5-sampler"
       }
     },
     {
@@ -2893,7 +2893,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B5-sampler"
       }
     },
     {
@@ -2916,7 +2916,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B5-sampler"
       }
     },
     {
@@ -2939,7 +2939,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B5-sampler"
       }
     },
     {
@@ -2964,7 +2964,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B5-sampler"
       }
     },
     {
@@ -2986,7 +2986,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B5-sampler"
       }
     },
     {
@@ -3010,7 +3010,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B5-debug-marker"
       }
     },
     {
@@ -3034,7 +3034,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B5-debug-marker"
       }
     },
     {
@@ -3060,7 +3060,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B5-debug-marker"
       }
     },
     {
@@ -3085,7 +3085,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B5-debug-marker"
       }
     },
     {
@@ -3110,7 +3110,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B5-debug-marker"
       }
     },
     {
@@ -3131,7 +3131,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B5-propagators"
       }
     },
     {
@@ -3152,7 +3152,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B5-propagators"
       }
     },
     {
@@ -3178,7 +3178,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B6-http-instrumentation"
       }
     },
     {
@@ -3202,7 +3202,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B6-http-instrumentation"
       }
     },
     {
@@ -3228,7 +3228,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B6-http-instrumentation"
       }
     },
     {
@@ -3252,7 +3252,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B6-http-instrumentation"
       }
     },
     {
@@ -3276,7 +3276,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B6-http-instrumentation"
       }
     },
     {
@@ -3302,7 +3302,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B6-http-instrumentation"
       }
     },
     {
@@ -3327,7 +3327,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B6-http-instrumentation"
       }
     },
     {
@@ -3350,7 +3350,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B6-http-instrumentation"
       }
     },
     {
@@ -3374,7 +3374,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B6-http-instrumentation"
       }
     },
     {
@@ -3404,7 +3404,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "skip:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B6-http-instrumentation"
       }
     },
     {
@@ -3426,7 +3426,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B6-grpc-instrumentation"
       }
     },
     {
@@ -3447,7 +3447,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B6-grpc-instrumentation"
       }
     },
     {
@@ -3468,7 +3468,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B6-grpc-instrumentation"
       }
     },
     {
@@ -3490,7 +3490,7 @@
         "go": "pass",
         "python": "skip:no-upstream-rpc-metrics",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:no-upstream-rpc-metrics"
       }
     },
     {
@@ -3511,7 +3511,7 @@
         "go": "pass",
         "python": "skip:no-upstream-rpc-metrics",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:no-upstream-rpc-metrics"
       },
       "note": "otelgrpc v0.56 stream interceptors recorded no RPC duration metric; the v0.72 stats handler (A2) counts Watch in rpc.server.call.duration."
     },
@@ -3533,7 +3533,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B6-grpc-instrumentation"
       }
     },
     {
@@ -3554,7 +3554,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B8-logging"
       }
     },
     {
@@ -3577,7 +3577,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B8-logging"
       }
     },
     {
@@ -3607,7 +3607,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B7-metrics-endpoint"
       }
     },
     {
@@ -3628,7 +3628,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B7-metrics-endpoint"
       }
     },
     {
@@ -3649,7 +3649,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B7-metrics-endpoint"
       }
     },
     {
@@ -3694,7 +3694,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B4b-otlp-tls"
       }
     },
     {
@@ -3718,7 +3718,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B5-propagators"
       }
     },
     {
@@ -3748,7 +3748,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B4b-otlp-endpoint"
       }
     },
     {
@@ -3786,7 +3786,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B4b-otlp-tls"
       }
     },
     {
@@ -3823,7 +3823,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B4b-otlp-tls"
       }
     },
     {
@@ -3861,7 +3861,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B4b-otlp-tls"
       }
     },
     {
@@ -3891,7 +3891,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B4b-otlp-compression"
       }
     },
     {
@@ -3922,7 +3922,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B4b-otlp-compression"
       }
     },
     {
@@ -3952,7 +3952,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B4b-otlp-timeout"
       }
     },
     {
@@ -3993,7 +3993,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B4b-otlp-timeout"
       }
     },
     {
@@ -4041,7 +4041,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B4b-otlp-headers"
       }
     },
     {
@@ -4071,7 +4071,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B4b-otlp-endpoint"
       }
     },
     {
@@ -4098,7 +4098,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B4b-otlp-endpoint"
       }
     },
     {
@@ -4139,7 +4139,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B4b-otlp-endpoint"
       }
     },
     {
@@ -4160,7 +4160,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B3-resolver"
       }
     },
     {
@@ -4180,7 +4180,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B5-sampler"
       }
     },
     {
@@ -4206,7 +4206,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B5-propagators"
       }
     },
     {
@@ -4232,7 +4232,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B5-propagators"
       }
     },
     {
@@ -4270,7 +4270,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B4b-otlp-tls"
       }
     },
     {
@@ -4292,7 +4292,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B4a-endpoints"
       }
     },
     {
@@ -4319,7 +4319,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B4c-sdk-disabled"
       }
     },
     {
@@ -4347,7 +4347,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B4b-otlp-endpoint"
       }
     },
     {
@@ -4382,7 +4382,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B4b-otlp-tls"
       }
     },
     {
@@ -4417,7 +4417,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B4b-otlp-endpoint"
       }
     },
     {
@@ -4453,7 +4453,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B4b-otlp-headers"
       }
     },
     {
@@ -4500,7 +4500,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B4b-otlp-headers"
       }
     },
     {
@@ -4540,7 +4540,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B4b-otlp-headers"
       }
     },
     {
@@ -4569,7 +4569,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B4b-otlp-compression"
       }
     },
     {
@@ -4604,7 +4604,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B4a-endpoint-redaction"
       }
     },
     {
@@ -4639,7 +4639,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B4a-endpoint-redaction"
       }
     },
     {
@@ -4666,7 +4666,7 @@
         "go": "skip:go-sdk-logs-env-values",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B4b-otlp-headers"
       }
     },
     {
@@ -4697,7 +4697,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B4b-otlp-timeout"
       }
     },
     {
@@ -4735,7 +4735,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B4b-otlp-compression"
       }
     },
     {
@@ -4774,7 +4774,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B4b-otlp-compression"
       }
     },
     {
@@ -4814,7 +4814,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B4b-otlp-timeout"
       }
     },
     {
@@ -4854,7 +4854,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B4b-otlp-timeout"
       }
     },
     {
@@ -4894,7 +4894,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B4b-otlp-timeout"
       }
     },
     {
@@ -4923,7 +4923,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B4b-otlp-timeout"
       },
       "note": "gte lowered 300→100 (2026-10-28): 212 ms observed under load; 100 still separates the 1 ms clamp from the 500 ms fallback."
     },
@@ -4953,7 +4953,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B4b-otlp-timeout"
       },
       "note": "gte lowered 300→100 (2026-10-28): 212 ms observed under load; 100 still separates the 1 ms clamp from the 500 ms fallback."
     },
@@ -4992,7 +4992,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B4b-otlp-headers"
       }
     },
     {
@@ -5029,7 +5029,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B4b-otlp-headers"
       }
     },
     {
@@ -5075,7 +5075,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B4b-otlp-headers"
       }
     },
     {
@@ -5103,7 +5103,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B4b-otlp-endpoint"
       }
     },
     {
@@ -5131,7 +5131,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B4b-otlp-endpoint"
       }
     },
     {
@@ -5161,7 +5161,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B4b-otlp-endpoint"
       }
     },
     {
@@ -5197,7 +5197,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B4b-otlp-endpoint"
       }
     },
     {
@@ -5222,7 +5222,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B5-sampler"
       }
     },
     {
@@ -5247,7 +5247,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B5-sampler"
       }
     },
     {
@@ -5272,7 +5272,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:phase-b"
+        "nodejs": "skip:B5-sampler"
       }
     }
   ]

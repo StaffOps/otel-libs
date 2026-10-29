@@ -160,6 +160,8 @@ jobs:
   node-test:
     name: Node.js ${{ matrix.node }} (lint + build + test + coverage)
     runs-on: ubuntu-latest
+    # Parity children time out after 120 s each; this bounds a hung leg.
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -172,8 +174,17 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-      # For the parity export cases (task B2); started now so the job shape is final.
+      # Fake OTLP receiver for the parity export cases (test/parity/, design D-JS12).
       - uses: ./.github/actions/fakeotlp
+      # Node 26 refuses an IP literal as TLS ServerName (design D-JS14, spike B1c F5):
+      # the Node legs reach the receivers by DNS name (in the certificate's SANs),
+      # as testing/docker-compose.yml does with extra_hosts. Go/Python keep the IPs.
+      - name: Receiver DNS names for the Node runner
+        working-directory: .
+        run: |
+          printf '127.0.0.2 fakeotlp\n127.0.0.3 fakeotlp-tls\n' | sudo tee -a /etc/hosts
+          getent hosts fakeotlp fakeotlp-tls
+          { echo "FAKEOTLP_HOST=fakeotlp"; echo "FAKEOTLP_HOST_TLS=fakeotlp-tls"; } >> "$GITHUB_ENV"
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node }}
@@ -192,7 +203,9 @@ jobs:
         run: npm run check
       - name: Pack contents (every exports target, LICENSE; no src/ or test/)
         run: node ci/check-pack.mjs
-      - name: Test + coverage gate (c8 >= 90% lines, per package)
+      # Includes the parity runner (test/parity/runner.test.cjs, strict xfail), run
+      # by the core package's test script so its children count towards the gate.
+      - name: Test + parity + coverage gate (c8 >= 90% lines, per package)
         run: npm test
       - name: Fake receiver logs
         if: failure()

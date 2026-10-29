@@ -9,7 +9,8 @@
 #
 # Steps: go, go-ext, py-3.10-lower, py-3.13-lower, py-3.13-latest, node, e2e,
 # mkdocs, spec-lint, trace, index, tools-tests. `node` runs the Node.js
-# workspace on node:${NODE_VERSION:-24}-slim (CI covers 22.15.0/22/24/26).
+# workspace, parity runner included, on node:${NODE_VERSION:-24}-slim (CI
+# covers 22.15.0/22/24/26).
 #
 # Disk safety: this script never prunes, never runs `compose down -v` and never
 # removes volumes or images. At exit it stops only the compose services it
@@ -27,7 +28,7 @@ TOOLS_IMAGE="python:3.12-slim"
 ALL_STEPS=(go go-ext py-3.10-lower py-3.13-lower py-3.13-latest node e2e mkdocs spec-lint trace index tools-tests)
 QUICK_SKIP=" e2e py-3.10-lower py-3.13-lower "
 
-usage() { sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,19p' "$0" | sed 's/^# \{0,1\}//'; }
 
 quick=0
 only=()
@@ -86,6 +87,10 @@ step_python() { PY_VERSION="$1" PY_DEPS="$2" "${compose[@]}" run --rm python-tes
 
 step_node() {
   [ -n "${NODE_TESTS_OFFLINE:-}" ] && echo "WARNING: NODE_TESTS_OFFLINE is set: the api-range install test is skipped (CI always runs it)" >&2
+  # Rebuild the receiver image first: a stale otel-libs/fakeotlp:local lacks the
+  # fakeotlp / fakeotlp-tls SANs the Node legs dial (design D-JS14). A running
+  # fakeotlp-node keeps its old container; restart it to pick the new image up.
+  "${compose[@]}" build fakeotlp-node || return 1
   "${compose[@]}" run --rm node-tests
 }
 

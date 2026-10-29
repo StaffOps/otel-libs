@@ -1025,6 +1025,29 @@ Unsupported instrumentation versions, task A10 (P18):
   package). Compose `fakeotlp-node` / `node-tests`, `testing/verify.sh` step
   `node`, CI jobs `node-test` (22.15.0, 22, 24, 26) and `node-api-range`. The
   B1c go/no-go spike and its findings: `specs/nodejs-otel-helper/spike-B1c.md`.
+- **Node.js parity runner (Phase B, task B2; not released).**
+  `nodejs/test/parity/` ports the Python runner to `node:test`
+  (`runner.test.cjs` + `harness.cjs`: env reset, placeholders, `_dest_ips`,
+  matcher, well-formedness, strict xfail, `PARITY_REQUIRE_FAKEOTLP`,
+  `PARITY_RELEASE`) and adds `driver.cjs`, one child process per case with every
+  kind wired against the planned helper API (`fork` via `cluster.fork()`); a
+  kind whose helper API does not exist yet reports `adapter_pending` naming its
+  task. It runs inside the core package's `npm test`, so its children count
+  towards the c8 gate. Every `nodejs` status in `parity/cases.json` moved from
+  `skip:phase-b` to `skip:B<n>-<reason>` (the task that will flip it), except
+  the two gRPC RPC-metrics cases: `skip:no-upstream-rpc-metrics`, as Python.
+  The diagnostics sink now receives `(line, {origin: 'helper'|'diag', level})`
+  (design D-JS5): `helper_log` is origin `helper` only, `diagnostics` warn and
+  above plus process warnings. Root devDependencies `express` and
+  `@grpc/grpc-js` (test-only, owner-approved). Text matchers apply to strings
+  only and regexes compile with the `u` flag in the Node runner (Go/Python
+  follow-up in the config-contract tasks).
+  `tools/trace_matrix.py` reads `JS<n>` ids and Node test files
+  (`nodejs/**/test/**`, `test(`/`it(`/`describe(`); `JS2`–`JS10` are
+  allow-listed with their owner task. Node 26 refuses an IP literal as TLS
+  ServerName (spike F5), so the Node runner reaches the fake receiver by DNS name
+  (`fakeotlp` / `fakeotlp-tls`, new certificate SAN, `extra_hosts` in compose,
+  `/etc/hosts` in CI); Go and Python keep the IP addresses (design D-JS14).
 - **License: Apache-2.0** (`LICENSE`, the official text; same as
   OpenTelemetry). Declared in `python/pyproject.toml` (`license`) and the
   NuGet packages (`PackageLicenseExpression`). Before this the repository had

@@ -7,7 +7,7 @@
  * A custom sink lives on the shared state, so a second copy of the same
  * version reports through the sink the first copy installed.
  */
-import { readSlot, stateVersion, type DiagnosticSink, type HelperState } from './key';
+import { readSlot, stateVersion, type DiagnosticMeta, type DiagnosticSink, type HelperState } from './key';
 import { VERSION } from '../version';
 
 /** Value types a diagnostic attribute may carry. Never pass secrets. */
@@ -57,14 +57,25 @@ function currentSink(): DiagnosticSink {
   return defaultSink;
 }
 
-/** Writes one diagnostic record to the current sink. A failing sink never throws into the caller. */
-export function report(message: string, attrs?: Readonly<Record<string, DiagnosticValue>>): void {
+/** Metadata of a helper record when the caller passes none: the helper's own warning. */
+const HELPER_WARN: DiagnosticMeta = Object.freeze({ origin: 'helper', level: 'warn' });
+
+/**
+ * Writes one diagnostic record to the current sink. `meta` defaults to a
+ * helper warning; the DiagLogger (B3) passes `origin: 'diag'` and the SDK
+ * message's level. A failing sink never throws into the caller.
+ */
+export function report(
+  message: string,
+  attrs?: Readonly<Record<string, DiagnosticValue>>,
+  meta: DiagnosticMeta = HELPER_WARN,
+): void {
   const line = formatDiagnostic(message, attrs);
   const sink = currentSink();
   try {
-    sink(line);
+    sink(line, meta);
   } catch {
     // A broken custom sink must not break the app; fall back to stderr.
-    if (sink !== defaultSink) defaultSink(line);
+    if (sink !== defaultSink) defaultSink(line, meta);
   }
 }

@@ -19,13 +19,13 @@ nodejs/  (npm workspaces, private root; package-lock.json committed)
 | `Setup(ctx, opts…)` / `setup_telemetry(opts)` | `setup(options?) → Resolved` (sync) |
 | `shutdown(ctx)` / `shutdown_telemetry()` | `shutdown(timeoutMs?) → Promise` |
 | Python `options.resolved` | returned frozen `Resolved` (`serviceName`, `environment`, `metricExporters`, `metricExportIntervalMs`, `logLevel`, `debug`, …) |
-| options (`With*` / `TelemetryOptions`) | camelCase: `serviceName`, `environment`, `otelEndpoint`, `tracesEndpoint`, `metricsEndpoint`, `logsEndpoint`, `otlpProtocol`, `insecure`, `exportTimeoutMs`, `compression`, `metricExporters`, `exportIntervalMs`, `prometheusMetricsPort` (0 = no listener), `disabledMetrics`, `disabledSignals`, `sampleRatio`, `healthPaths`, `debug`, `minimumLogLevel`, `resourceAttributes`, `instrumentations`, `installDiagLogger`, `replaceGlobals` |
+| options (`With*` / `TelemetryOptions`) | camelCase: `serviceName`, `environment`, `otelEndpoint`, `tracesEndpoint`, `metricsEndpoint`, `logsEndpoint`, `otlpProtocol`, `insecure`, `exportTimeoutMs`, `compression`, `metricExporters`, `exportIntervalMs`, `prometheusMetricsPort` (0 = no listener), `disabledMetrics`, `disabledSignals`, `sampleRatio`, `healthPaths`, `debug`, `minimumLogLevel`, `resourceAttributes`, `instrumentations`, `installDiagLogger`, `replaceGlobals`; test/advanced (never a fixture `code` key): `spanProcessors` |
 | `StartRootSpan` / `start_root_span` | `startRootSpan(name, fn, {tracer?, attributes?})` — runs `fn(span)` on `ROOT_CONTEXT`, ends it, records exceptions + ERROR on throw/reject |
 | `GetTracer`/`get_tracer` (default scope `otel-helper`) | `getTracer(name = 'otel-helper')`, `getMeter` |
 | `MetricsHandler()` / `metrics_app()` | `metricsHandler(): (req, res) => void` (node:http, express) |
 | `NewHTTPHandler`, gRPC options / FastAPI auto | nothing to wrap: http, undici, express, grpc instrumented by setup |
 | `NewLogger`, `NewSlogHandler`, `DefaultLogLevel` | `createLogger`, `defaultLogLevel`, `DeploymentEnvironment` type |
-| `reset_telemetry` | `@staffops/otel-helper/testing` → `reset()` (tests only) |
+| `reset_telemetry` | `@staffops/otel-helper/testing` → `reset()`, `setDiagnosticSink()`, `getResource()` (tests only) |
 | (preload) | `@staffops/otel-helper/hooks` (hooks only), `/register` (hooks + env setup) |
 | ext `Instrument(...)` / `instrument_*()` | `awsInstrumentation()`, `redisInstrumentation()`, `sqlInstrumentation()` passed to `setup({instrumentations})` |
 
@@ -118,6 +118,14 @@ stderr. **Trade-offs**: overrides an app `diag` logger set earlier (both
 loggers get a warning — documented). **When wrong**: apps routinely own `diag`.
 **Reversal**: default `installDiagLogger` to false. **Alternatives**:
 `console.warn` (patched by apps), `process.emitWarning` (wrong channel).
+*Amended 2026-10-29 (B2 review): the sink is
+`(line, meta: {origin: 'helper' | 'diag', level: 'error' | 'warn' | 'info' | 'debug'})`;
+`report()` defaults to a helper warning and the DiagLogger (B3) passes
+`origin: 'diag'` with the SDK message's level. The parity driver's
+`helper_log` is origin `helper` only; `diagnostics` is warn and above of any
+origin plus Node process warnings (Python's "every WARNING+ record and
+`warnings.warn`"). Without the origin, forwarded SDK messages would land in
+`helper_log`, where R8 redaction is asserted.*
 
 ### D-JS6 — Logging
 **Choice**: core helper logger (JS6); `-pino` exports `createPinoDestination()`
@@ -147,6 +155,11 @@ name-based gRPC match depends on the span-name format (asserted by a unit
 test). **When wrong**: span name format changes. **Reversal**: gRPC server
 interceptor filter. **Alternatives**: `ignoreGrpcMethods` (rejected: drops
 every service's Check/Watch).
+*Amended 2026-10-29 (B2 review): extra span processors (the parity driver's
+in-memory capture) go through the `setup()` option `spanProcessors`
+(test/advanced, never a fixture `code` key), added after the helper's own
+processors. SDK 3.0 accepts processors only at construction; a mutable
+composite kept for a test seam would cost on every span in production.*
 
 ### D-JS8 — `/metrics`
 **Choice**: `exporter-prometheus` with `preventServerStart: true` always; the
@@ -175,6 +188,14 @@ histogram name and one counter with a unit. **Justification**: exporter listens 
 server in the helper. **When wrong**: upstream adds unit suffixes / host option
 semantics change. **Reversal**: drop the adapter / own server. **Alternatives**:
 async setup (rejected: breaks `--require` preload).
+*Amended 2026-10-29 (B2 review): the parity driver calls `metricsHandler()`
+with in-memory request/response objects instead of an uninstrumented server
+(the instrumentation patches `http` globally once setup ran). The handler may
+use only this response surface: `statusCode`, `headersSent`,
+`setHeader`/`getHeader`/`removeHeader`, `writeHead(status[, headers])`,
+`write(chunk[, encoding][, cb])`, `end([chunk][, encoding][, cb])`; it reads
+`req.method`, `req.url`, `req.headers`. B7 also unit-tests the handler on a real
+`http.Server` (the mock alone could drift from Node's `ServerResponse`).*
 
 ### D-JS9 — Semconv opt-in
 **Choice**: helper parses `OTEL_SEMCONV_STABILITY_OPT_IN` (default
@@ -249,6 +270,18 @@ the `/metrics` name assertions) run in the Go and Python suites in the same
 change (`pass` or a recorded status). Compose `fakeotlp-node` + `node-tests` (`node:${NODE_VERSION}-slim`).
 `tools/trace_matrix.py` learns `JS`, `.cjs/.mjs/.js/.ts`, `test(`/`it(`/
 `describe(` starts, `nodejs/**/test/**`, excluding `node_modules`.
+*B2 (2026-10-29): the schema/matcher/child execution live in `harness.cjs`
+next to the runner (requiring a `node:test` file runs its tests); the runner
+runs inside the core package's `npm test` so c8 merges the children's
+coverage into that gate; a kind whose helper API is missing reports
+`adapter_pending` (a hard failure unless the case is skipped). Review
+amendments (same day): the resource comes from `/testing` `getResource()`
+(B3; Python reads `provider.resource`), never from a probe span, which would
+reach the wire in export cases; span capture passes `spanProcessors` to
+`setup()` (D-JS7); non-export concurrency is `min(8, 2 × CPUs)`; a case is
+validated before its child is spawned; text matchers (`prefix`, `regex`,
+`not_contains`) apply to strings only and regexes compile with the `u` flag
+(parity/README.md).*
 **Justification**: Go/Python runners (serial export only). **Trade-offs**:
 spawn cost (unmeasured; Python ≈ 3.5–5 min/leg). **When wrong**: too slow.
 **Reversal**: batch non-export cases per child. **Alternatives**: one process
@@ -274,5 +307,5 @@ cluster/pm2 are Node's prefork model (not `skip:no-prefork-model`).
 | IPv6 zone ids in endpoints rejected (WHATWG URL) | recorded; warning + fallback |
 | `cluster` workers share the metrics port (round-robin scrapes) | warning; docs recommend per-worker port or OTLP |
 | BSP/BLRP export-timeout env precedence differs between Go and Python | contract follow-up; Node: explicit env wins, else OTLP timeout |
-| gRPC over TLS to an **IP-literal** endpoint fails on Node 26 (Node refuses an IP as TLS ServerName; grpc-js sets it from the target host; DEP0123 warning on 22/24) — spike B1c F5 | **proposed** (decided in B2/B4b): helper warns for IP-literal gRPC TLS endpoints; fixture TLS receivers resolved by DNS name (fakeotlp cert SAN, shared with Go/Python) or `skip:node26-ip-servername` on the 26 leg |
+| gRPC over TLS to an **IP-literal** endpoint fails on Node 26 (Node refuses an IP as TLS ServerName; grpc-js sets it from the target host; DEP0123 warning on 22/24) — spike B1c F5 | recorded; the helper warning for IP-literal gRPC TLS endpoints lands in B4b. *Decided 2026-10-29 (B2): the Node legs reach the fake receiver by DNS name — `fakeotlp` → 127.0.0.2, `fakeotlp-tls` → 127.0.0.3 (new SAN in fakeotlp's default `TLS_HOSTS`; `extra_hosts` on `fakeotlp-node`, which `node-tests` shares through `network_mode: service:`; `/etc/hosts` in the CI `node-test` job); Go and Python keep the IP literals, so their cases and validators are unchanged. Rejected: `skip:node26-ip-servername` on the 26 leg — the validators accept no per-version Node status, the extension would touch all three runners, and it would leave the six gRPC TLS cases unrun on 26 (with DEP0123 noise in `diagnostics` on 22/24). Evidence: a runner test completes a CA-verified TLS handshake by name with both TLS receivers on 22.15.0, 22, 24 and 26; the mapping is visible in the joined container (`docker run --network container:…` sees the owner's `--add-host`). Cost: the IP-literal gRPC TLS path is not exercised by the Node fixture (unit test in B4b).* |
 | `module.register` runtime-deprecated on Node 26 (DEP0205) — spike B1c F3 | `/hooks` uses sync hooks there; the `module.register` fallback runs only on versions where it is not deprecated |

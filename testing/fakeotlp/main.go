@@ -157,7 +157,9 @@ func main() {
 		}
 		return s.SendMsg(&emptypb.Empty{}) // zero bytes == valid Export*ServiceResponse
 	}))
-	hosts := strings.Split(envOr("TLS_HOSTS", "localhost,127.0.0.1,127.0.0.2,127.0.0.3,::1,fakeotlp"), ",")
+	// fakeotlp / fakeotlp-tls: DNS names the Node.js runner maps to 127.0.0.2 /
+	// 127.0.0.3 (Node 26 refuses an IP literal as TLS ServerName; design D-JS14).
+	hosts := strings.Split(envOr("TLS_HOSTS", "localhost,127.0.0.1,127.0.0.2,127.0.0.3,::1,fakeotlp,fakeotlp-tls"), ",")
 	if os.Getenv("CERTS_ONLY") != "" {
 		certs(out, hosts, true)
 		log.Printf("fakeotlp: wrote CA, cert and key to %s", out)

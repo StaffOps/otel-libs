@@ -10,7 +10,7 @@ not linked from the "Shipped (historical" item of specs/README.md), in one of
 these forms:
   "### R1 — ...", "### SR4 — ..."          (heading, levels 2-4)
   "- **G3** ...", "- **RT2 Guard** ..."    (bold bullet)
-with a prefix R, G, P, SR or RT. A requirement's text runs to the next
+with a prefix R, G, P, SR, RT or JS. A requirement's text runs to the next
 definition or heading; it is a SHALL requirement when that text contains
 "SHALL".
 
@@ -18,6 +18,7 @@ Citations (word-bounded id, T-D4):
   * Go test files: **/*_test.go
   * Python tests: python/tests/**/*.py
   * tools/tests/**/*.py (tests of these tools)
+  * Node.js tests: nodejs/**/test/**/*.{cjs,mjs,js,ts} (node_modules excluded)
   * parity/cases.json: a case's "id", "requirement" or "note" field, counted
     only when the case passes in at least one language (an xfail/skip-only
     case is not evidence)
@@ -25,7 +26,9 @@ Citations (word-bounded id, T-D4):
 
 In the test files (the Go, Python and tools test globs above) only lines from
 the first test definition on count: "func Test"/"func Fuzz" in Go, "def test_"
-(sync or async) or a test class ("class Test...", "class ...Test") in Python.
+(sync or async) or a test class ("class Test...", "class ...Test") in Python;
+in Node.js files (.cjs/.mjs/.js/.ts) a "test(", "it(", "describe(" or "suite("
+call (also with .skip/.only/.todo) or a "t.test(" subtest.
 A file-header comment or module docstring that names an id is a claim, not an
 asserting test, and is ignored; a test file with no test definition cites
 nothing. Cite an id in the test function, its docstring or its class.
@@ -40,6 +43,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import sys
 from dataclasses import dataclass, field
@@ -47,7 +51,7 @@ from pathlib import Path
 
 from speclib import REPO_ROOT, active_spec_dirs, rel
 
-ID_PATTERN = r"(?:SR|RT|R|G|P)\d+"
+ID_PATTERN = r"(?:SR|RT|JS|R|G|P)\d+"
 DEF_HEADING_RE = re.compile(rf"^#{{2,4}}\s+({ID_PATTERN})\b")
 DEF_BULLET_RE = re.compile(rf"^\s*[-*]\s+\*\*({ID_PATTERN})\b")
 HEADING_RE = re.compile(r"^#{1,6}\s")
@@ -56,7 +60,11 @@ TEST_START_RE = re.compile(
     r"^\s*(?:func\s+(?:Test|Fuzz)\w*\s*\("
     r"|(?:async\s+)?def\s+test_\w*"
     r"|class\s+(?:Test\w*|\w+Test)\b)")
+# Node.js test files only (node:test / mocha-style starts).
+NODE_TEST_START_RE = re.compile(
+    r"^\s*(?:(?:test|it|describe|suite)(?:\.(?:skip|only|todo))?|t\.test)\s*\(")
 TEXT_SUFFIXES = {".go", ".py", ".sh", ".yaml", ".yml", ".md", ".json", ".txt"}
+NODE_TEST_SUFFIXES = {".cjs", ".mjs", ".js", ".ts"}
 
 
 def id_regex(ids: list[str]) -> re.Pattern[str]:
@@ -111,7 +119,20 @@ def test_files(root: Path) -> set[Path]:
     files = {p for p in root.rglob("*_test.go") if "/vendor/" not in p.as_posix()}
     files |= set((root / "python" / "tests").rglob("*.py"))
     files |= set((root / "tools" / "tests").rglob("*.py"))
+    files |= node_test_files(root / "nodejs")
     return files
+
+
+def node_test_files(nodejs: Path) -> set[Path]:
+    """nodejs/**/test/**/*.{cjs,mjs,js,ts}; node_modules is never descended into."""
+    found: set[Path] = set()
+    for dirpath, dirnames, filenames in os.walk(nodejs):
+        dirnames[:] = [d for d in dirnames if d != "node_modules"]
+        here = Path(dirpath)
+        if "test" not in here.relative_to(nodejs).parts:
+            continue
+        found |= {here / f for f in filenames if Path(f).suffix in NODE_TEST_SUFFIXES}
+    return found
 
 
 def citation_files(root: Path) -> list[Path]:
@@ -122,10 +143,15 @@ def citation_files(root: Path) -> list[Path]:
     return sorted(files)
 
 
-def first_test_line(lines: list[str]) -> int | None:
-    """Index of the first test definition, or None when the file has none."""
+def first_test_line(lines: list[str], node: bool = False) -> int | None:
+    """Index of the first test definition, or None when the file has none.
+
+    node=True uses the Node.js markers (test(, it(, describe(, …) instead of
+    the Go/Python ones.
+    """
+    rx = NODE_TEST_START_RE if node else TEST_START_RE
     for i, line in enumerate(lines):
-        if TEST_START_RE.match(line):
+        if rx.match(line):
             return i
     return None
 
@@ -142,7 +168,7 @@ def collect_citations(root: Path, reqs: dict[str, Requirement]) -> None:
             continue
         start = 0
         if path in tests:
-            first = first_test_line(lines)
+            first = first_test_line(lines, node=path.suffix in NODE_TEST_SUFFIXES)
             if first is None:
                 continue
             start = first

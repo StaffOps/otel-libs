@@ -3,7 +3,7 @@ import { readSlot, stateVersion, STATE_KEY, type DiagnosticSink, type HelperStat
 import { VERSION } from '../version';
 
 export { STATE_KEY };
-export type { DiagnosticSink, HelperState, HooksMode } from './key';
+export type { DiagnosticLevel, DiagnosticMeta, DiagnosticOrigin, DiagnosticSink, HelperState, HooksMode } from './key';
 
 // Resolved once per module instance: `null` = this copy is inactive.
 let resolved: HelperState | null | undefined;
@@ -51,7 +51,8 @@ export function getState(): HelperState | null {
 
 /**
  * Replaces the diagnostics sink of the shared state (parity runner, tests);
- * `undefined` restores stderr. No effect while this copy is inactive.
+ * `undefined` restores stderr. The sink receives `(line, {origin, level})`.
+ * No effect while this copy is inactive.
  */
 export function setDiagnosticSink(next: DiagnosticSink | undefined): void {
   const state = getState();
