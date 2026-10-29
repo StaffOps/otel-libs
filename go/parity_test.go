@@ -10,8 +10,7 @@ package otelhelper
 // fail hard whatever the status. Format: parity/README.md.
 //
 // Each case runs in a child process (this test binary re-executed): OTel and
-// SDK state is set-once per process — e.g. resource.Default() caches
-// OTEL_RESOURCE_ATTRIBUTES on first use.
+// SDK state is set-once per process — e.g. the OTel globals.
 //
 // The adapter reads what Setup installed: the resource of a span from the
 // installed TracerProvider, the helper's MetricsHandler, its public logger

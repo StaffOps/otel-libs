@@ -60,14 +60,14 @@ class TestServiceName:
         os.environ["OTEL_SERVICE_NAME"] = "std"
         opts = _resolved()
         assert opts.service_name == "std"
-        assert "service.name" not in opts._resource_overrides  # the SDK sets it
+        assert opts._resource_overrides["service.name"] == "std"
 
     def test_resource_attributes_beat_legacy(self):
         os.environ["SERVICE_NAME"] = "legacy"
         os.environ["OTEL_RESOURCE_ATTRIBUTES"] = "service.name=ra"
         opts = _resolved()
         assert opts.service_name == "ra"
-        assert "service.name" not in opts._resource_overrides
+        assert opts._resource_overrides["service.name"] == "ra"
 
     def test_legacy_alias_alone_is_used(self):
         os.environ["SERVICE_NAME"] = "legacy"
@@ -89,7 +89,7 @@ class TestServiceName:
         with caplog.at_level(logging.WARNING, logger="staffops_otel_helper"):
             opts = _resolved()
         assert opts.service_name is None
-        assert "service.name" not in opts._resource_overrides
+        assert opts._resource_overrides["service.name"] is None  # _build_resource applies the SDK default
         assert "OTEL_SERVICE_NAME" in caplog.text
 
     @pytest.mark.parametrize("bad", ["", "   "])
@@ -105,7 +105,7 @@ class TestEnvironment:
         with caplog.at_level(logging.WARNING, logger="staffops_otel_helper"):
             opts = _resolved(service_name="s")
         assert opts.environment is None
-        assert "deployment.environment.name" not in opts._resource_overrides
+        assert opts._resource_overrides["deployment.environment.name"] is None
         assert caplog.text.count("deployment.environment.name") == 1
 
     def test_known_alias_value_normalized(self):
@@ -125,7 +125,7 @@ class TestEnvironment:
         os.environ["OTEL_RESOURCE_ATTRIBUTES"] = "deployment.environment.name=PRD"
         opts = _resolved(service_name="s")
         assert opts.environment == DeploymentEnvironment.PRD
-        assert "deployment.environment.name" not in opts._resource_overrides
+        assert opts._resource_overrides["deployment.environment.name"] == "PRD"
 
     def test_code_enum_wins(self):
         os.environ["OTEL_RESOURCE_ATTRIBUTES"] = "deployment.environment.name=PRD"

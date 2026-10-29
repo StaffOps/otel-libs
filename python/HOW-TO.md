@@ -634,7 +634,7 @@ sets the CA; with a plaintext endpoint it is warned and ignored.
 |---|---|---|
 | `service_name` | `str \| None = None` | `service.name` |
 | `environment` | `DeploymentEnvironment \| str \| None = None` | `deployment.environment.name`; any string is emitted verbatim |
-| `resource_attributes` | `dict = {}` | Extra resource attributes; code wins per key over `OTEL_RESOURCE_ATTRIBUTES` |
+| `resource_attributes` | `dict = {}` | Extra resource attributes; code wins per key over `OTEL_RESOURCE_ATTRIBUTES` ([resource attributes](#resource-attributes)) |
 | `otel_endpoint` | `str = ""` | Generic endpoint (`/v1/<signal>` appended for HTTP) |
 | `traces_endpoint`, `metrics_endpoint`, `logs_endpoint` | `str = ""` | Per-signal endpoints, used as-is |
 | `otlp_protocol` | `str \| None = None` | `grpc` or `http/protobuf` |
@@ -664,6 +664,39 @@ resolved and then count as code values; read effective values from the read-only
 reading `options.environment.value` must handle both).
 `options.is_signal_enabled("traces")` reports whether a signal is on.
 `resolve_insecure()` was removed in 0.3.
+
+### Resource attributes
+
+The helper builds the resource itself (never `Resource.create()`), lowest to
+highest precedence: `OTEL_RESOURCE_ATTRIBUTES` < `resource_attributes` <
+the resolved identity < the SDK's `telemetry.sdk.*`.
+
+| Attribute | Order (a blank value — empty or whitespace — at any level counts as unset) |
+|---|---|
+| `service.name` | `service_name=` > `resource_attributes["service.name"]` > `OTEL_SERVICE_NAME` > `OTEL_RESOURCE_ATTRIBUTES` > `SERVICE_NAME` (deprecated) > `unknown_service:<interpreter>` + one warning |
+| `deployment.environment.name` | `environment=` > `resource_attributes[...]` > `OTEL_RESOURCE_ATTRIBUTES` > `ENVIRONMENT` (deprecated) > absent + one warning |
+| `service.instance.id` | `resource_attributes[...]` > `OTEL_RESOURCE_ATTRIBUTES` > the SDK's per-process id (SDK ≥ 1.45) > a helper UUID; kept across a fork (SDK ≥ 1.45) |
+| `telemetry.sdk.*` | Always the SDK's. Env values are ignored silently; a code value is ignored with one warning naming the key |
+
+```python
+setup_telemetry(TelemetryOptions(
+    service_name="orders-api",                  # beats resource_attributes["service.name"]
+    resource_attributes={"team.name": "payments", "service.namespace": "shop"},
+))
+```
+
+- `OTEL_RESOURCE_ATTRIBUTES` is parsed by the helper: split on `,` (blank
+  items ignored), each item at its first `=`, values percent-decoded then
+  trimmed. An item without `=`, with an empty or non-UTF-8 key, or a value
+  with a bad `%` escape is reported **by position only**, once per process;
+  the bad-escape value is kept literally. Values are never printed.
+- In code, an empty key, a non-string key, or a non-string `service.name` /
+  `deployment.environment.name` / `service.instance.id` raises `ValueError`
+  in `setup_telemetry()`.
+- The resource declares `schema_url = https://opentelemetry.io/schemas/1.43.0`.
+- `OTEL_EXPERIMENTAL_RESOURCE_DETECTORS` is ignored (one warning): add
+  host/process/cloud attributes in the Collector (`resourcedetection`,
+  `k8sattributes`).
 
 ---
 

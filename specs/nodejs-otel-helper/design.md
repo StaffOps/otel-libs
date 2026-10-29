@@ -108,6 +108,10 @@ env detector untrimmed and silent on errors; `command_args` leaks secrets.
 **Trade-offs**: no pid/host on the SDK side (Collector enriches, principle 4).
 **When wrong**: platform needs SDK-side host attrs. **Reversal**: opt-in
 `resourceDetectors`. **Alternatives**: SDK env detector (rejected above).
+*Amended 2026-10-29 (A16): `telemetry.sdk.*` always come from
+`defaultResource()` (env/code values ignored) and the resource declares
+`https://opentelemetry.io/schemas/1.43.0`, per the contract design D1 row
+"`telemetry.sdk.*` and the resource schema URL".*
 *Amended 2026-10-29 (B3, after the B3 review): `OTEL_RESOURCE_ATTRIBUTES`
 parsing follows the contract ruling (config-contract design D1 edge-case row
 "`OTEL_RESOURCE_ATTRIBUTES` parsing", 2026-10-29; Go/Python in task A16): split
@@ -360,7 +364,6 @@ cluster/pm2 are Node's prefork model (not `skip:no-prefork-model`).
 | `cluster` workers share the metrics port (round-robin scrapes) | warning; docs recommend per-worker port or OTLP |
 | BSP/BLRP export-timeout env precedence differs between Go and Python | contract follow-up; Node: explicit env wins, else OTLP timeout |
 | gRPC over TLS to an **IP-literal** endpoint fails on Node 26 (Node refuses an IP as TLS ServerName; grpc-js sets it from the target host; DEP0123 warning on 22/24) — spike B1c F5 | recorded; the helper warning for IP-literal gRPC TLS endpoints lands in B4b. *Decided 2026-10-29 (B2): the Node legs reach the fake receiver by DNS name — `fakeotlp` → 127.0.0.2, `fakeotlp-tls` → 127.0.0.3 (new SAN in fakeotlp's default `TLS_HOSTS`; `extra_hosts` on `fakeotlp-node`, which `node-tests` shares through `network_mode: service:`; `/etc/hosts` in the CI `node-test` job); Go and Python keep the IP literals, so their cases and validators are unchanged. Rejected: `skip:node26-ip-servername` on the 26 leg — the validators accept no per-version Node status, the extension would touch all three runners, and it would leave the six gRPC TLS cases unrun on 26 (with DEP0123 noise in `diagnostics` on 22/24). Evidence: a runner test completes a CA-verified TLS handshake by name with both TLS receivers on 22.15.0, 22, 24 and 26; the mapping is visible in the joined container (`docker run --network container:…` sees the owner's `--add-host`). Cost: the IP-literal gRPC TLS path is not exercised by the Node fixture (unit test in B4b).* |
-| Identity warnings (no service name, ADR-003 environment unset, `OTEL_RESOURCE_ATTRIBUTES` parse errors) are written on **every** setup in Node and Go; Python dedupes them per options object (deprecations are once per process everywhere) | recorded until A16 settles one rule; no fixture case depends on it (one setup per case) |
-| `telemetry.sdk.*` in `OTEL_RESOURCE_ATTRIBUTES` overrides the SDK values in Node and Python, the SDK wins in Go (`resource.Default()` applies its telemetry detector last); Go emits the semconv 1.43.0 schema URL, Node and Python none | recorded until A16 picks one direction and the schema URL (Node follows Python today: changing it now would only move the split) |
-| `unknown_service:<suffix>`: Node `process.argv0` (`node`), Go the binary name, Python ≥ 1.45 the interpreter name, Python 1.42 no suffix | recorded; the fixture asserts the `unknown_service` prefix only (R5) |
+| A `__proto__` resource attribute (env or code) is kept by the helper as an own data property but dropped by `@opentelemetry/resources` 3.0: `Resource.attributes` builds a plain object with `attrs[k] = v` (A16, 2026-10-29) | `skip:no-upstream-resource-proto-key` on `resource_attributes.proto_key_kept`; helper side unit-tested via `getRawAttributes()` |
+| `unknown_service:<suffix>`: Node `process.argv0` (`node`), Go the binary name, Python the interpreter name (helper-computed on every SDK version since A16) | recorded; the fixture asserts the `unknown_service` prefix only (R5) |
 | `module.register` runtime-deprecated on Node 26 (DEP0205) — spike B1c F3 | `/hooks` uses sync hooks there; the `module.register` fallback runs only on versions where it is not deprecated |

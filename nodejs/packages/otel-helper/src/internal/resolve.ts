@@ -6,7 +6,7 @@
  * (R8). This module covers the identity rows (task B3); later tasks add theirs.
  */
 import { randomUUID } from 'node:crypto';
-import { report, reportOnce } from './diagnostics';
+import { reportOnce } from './diagnostics';
 import { envBool, envValue, trimWS } from './env';
 import { defaultLogLevel, knownEnvironment, LOG_LEVELS, type LogLevel } from './log-level';
 import { parseResourceAttributes } from './resource-attributes';
@@ -20,10 +20,17 @@ export const ENV_DEBUG_LEVEL = 'OTEL_HELPER_DEBUG_LEVEL';
 export const ENV_SAMPLE_RATIO = 'OTEL_HELPER_SAMPLE_RATIO';
 export const ENV_DISABLED_SIGNALS = 'OTEL_HELPER_DISABLED_SIGNALS';
 export const ENV_EXTRA_INSTRUMENTATION = 'OTEL_HELPER_EXTRA_INSTRUMENTATION';
+export const ENV_NODE_RESOURCE_DETECTORS = 'OTEL_NODE_RESOURCE_DETECTORS';
 
 export const ATTR_SERVICE_NAME = 'service.name';
 export const ATTR_ENVIRONMENT = 'deployment.environment.name';
 export const ATTR_INSTANCE_ID = 'service.instance.id';
+
+/** `telemetry.sdk.*` keys the SDK sets; env and code values for them are ignored (contract D1). */
+export const TELEMETRY_SDK_KEYS: readonly string[] = ['telemetry.sdk.name', 'telemetry.sdk.language', 'telemetry.sdk.version'];
+
+// Detector names that only name what the helper already does (env parse, instance id) or none.
+const BUILTIN_DETECTORS: ReadonlySet<string> = new Set(['env', 'serviceinstance', 'none']);
 
 /**
  * `setup()` options set in code (design API table). A key left `undefined` is
@@ -185,6 +192,16 @@ function warnDeprecatedEnv(): void {
       });
     }
   }
+  // Detector-selection rule (contract design D1, 2026-10-29): the helper builds
+  // the resource itself, so only the variable name is reported.
+  const detectors = (envValue(ENV_NODE_RESOURCE_DETECTORS) ?? '').split(',').map((d) => trimWS(d)).filter((d) => d !== '');
+  if (detectors.some((d) => !BUILTIN_DETECTORS.has(d))) {
+    reportOnce(
+      `unused:${ENV_NODE_RESOURCE_DETECTORS}`,
+      `${ENV_NODE_RESOURCE_DETECTORS} is ignored: the helper builds the resource itself; add host/process/cloud attributes in the Collector (resourcedetection, k8sattributes processors)`,
+      { variable: ENV_NODE_RESOURCE_DETECTORS },
+    );
+  }
   if (envValue(ENV_EXTRA_INSTRUMENTATION) !== undefined) {
     reportOnce(
       `unused:${ENV_EXTRA_INSTRUMENTATION}`,
@@ -194,24 +211,24 @@ function warnDeprecatedEnv(): void {
   }
 }
 
-function envResourceAttributes(warn: boolean): Record<string, string> {
+function envResourceAttributes(warn: boolean): Readonly<Record<string, string>> {
   const raw = process.env[ENV_RESOURCE_ATTRIBUTES];
   if (raw === undefined || trimWS(raw) === '') return Object.create(null) as Record<string, string>;
   const parsed = parseResourceAttributes(raw);
-  // Positions only: a resource attribute value is never printed.
+  // Positions only: a resource attribute value is never printed. Once per process (D1 cadence row).
   if (warn && parsed.malformed.length > 0) {
-    report('resource attribute items are not key=value and were skipped', {
+    reportOnce('resource-attributes:malformed', 'resource attribute items are not key=value and were skipped', {
       variable: ENV_RESOURCE_ATTRIBUTES,
       items: parsed.malformed.join(','),
     });
   }
   if (warn && parsed.undecodable.length > 0) {
-    report('resource attribute values have an invalid percent-encoding and are kept literally', {
+    reportOnce('resource-attributes:undecodable', 'resource attribute values have an invalid percent-encoding and are kept literally', {
       variable: ENV_RESOURCE_ATTRIBUTES,
       items: parsed.undecodable.join(','),
     });
   }
-  return { ...parsed.attributes };
+  return parsed.attributes;
 }
 
 /**
@@ -227,7 +244,7 @@ export function resolvePlan(options: SetupOptions, defaultServiceName: string, q
   const code: Readonly<Record<string, string>> = options.resourceAttributes ?? {};
   const env = envResourceAttributes(!quiet);
   const layer: Record<string, string> = Object.create(null) as Record<string, string>;
-  Object.assign(layer, env);
+  for (const [key, value] of Object.entries(env)) defineAttr(layer, key, value);
 
   // service.name: code > OTEL_SERVICE_NAME > OTEL_RESOURCE_ATTRIBUTES >
   // SERVICE_NAME (deprecated) > SDK default + warning. Whitespace-only = unset.
@@ -236,7 +253,7 @@ export function resolvePlan(options: SetupOptions, defaultServiceName: string, q
   let serviceName = codeName ?? envValue(ENV_OTEL_SERVICE_NAME) ?? raName ?? envValue(ENV_SERVICE_NAME);
   if (serviceName === undefined) {
     serviceName = defaultServiceName;
-    if (!quiet) report(`no service name configured; set ${ENV_OTEL_SERVICE_NAME}`, { using: defaultServiceName });
+    if (!quiet) reportOnce('identity:service.name', `no service name configured; set ${ENV_OTEL_SERVICE_NAME}`, { using: defaultServiceName });
   }
 
   // deployment.environment.name: code > OTEL_RESOURCE_ATTRIBUTES > ENVIRONMENT
@@ -249,7 +266,8 @@ export function resolvePlan(options: SetupOptions, defaultServiceName: string, q
     if (alias !== undefined) environment = knownEnvironment(alias) ?? alias;
   }
   if (environment === undefined && !quiet) {
-    report(
+    reportOnce(
+      'identity:environment',
       `${ATTR_ENVIRONMENT} is not set; set it in ${ENV_RESOURCE_ATTRIBUTES} (e.g. ${ATTR_ENVIRONMENT}=PRD); log level defaults to INFO`,
       { using: 'absent' },
     );
@@ -258,7 +276,14 @@ export function resolvePlan(options: SetupOptions, defaultServiceName: string, q
   // service.instance.id: code > OTEL_RESOURCE_ATTRIBUTES > per-process UUID (D4).
   const serviceInstanceId = nonBlank(code[ATTR_INSTANCE_ID]) ?? nonBlank(env[ATTR_INSTANCE_ID]) ?? randomUUID();
 
-  Object.assign(layer, code);
+  // Own data properties only (never `Object.assign`/`[[Set]]`): `__proto__` is an ordinary key.
+  for (const [key, value] of Object.entries(code)) {
+    if (TELEMETRY_SDK_KEYS.includes(key)) {
+      if (!quiet) reportOnce(`code-telemetry-sdk:${key}`, `${key} in resourceAttributes is ignored; the OpenTelemetry SDK sets it`, { key });
+      continue;
+    }
+    defineAttr(layer, key, value);
+  }
   layer[ATTR_SERVICE_NAME] = serviceName;
   layer[ATTR_INSTANCE_ID] = serviceInstanceId;
   if (environment === undefined) Reflect.deleteProperty(layer, ATTR_ENVIRONMENT);
@@ -269,7 +294,11 @@ export function resolvePlan(options: SetupOptions, defaultServiceName: string, q
   const logLevel = options.minimumLogLevel ?? defaultLogLevel(environment, debug);
 
   const resolved: Resolved = Object.freeze({ serviceName, environment, serviceInstanceId, debug, logLevel });
-  return { resolved, resourceAttributes: Object.freeze({ ...layer }) };
+  return { resolved, resourceAttributes: Object.freeze(layer) };
+}
+
+function defineAttr(target: Record<string, string>, key: string, value: string): void {
+  Object.defineProperty(target, key, { value, enumerable: true, writable: true, configurable: true });
 }
 
 function nonBlank(value: string | undefined): string | undefined {

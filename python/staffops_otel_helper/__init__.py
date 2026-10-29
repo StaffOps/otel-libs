@@ -10,6 +10,12 @@ from staffops_otel_helper._propagators import import_propagate_safely as _import
 
 _import_propagate_safely()
 
+# Before anything imports the SDK log module: it parses OTEL_RESOURCE_ATTRIBUTES on import
+# and would echo malformed items (see _resource_echo).
+from staffops_otel_helper._resource_echo import import_sdk_logs_quietly as _import_sdk_logs_quietly  # noqa: E402
+
+_import_sdk_logs_quietly()
+
 from opentelemetry import trace as _trace  # noqa: E402
 from opentelemetry import metrics as _metrics  # noqa: E402
 

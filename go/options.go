@@ -3,7 +3,6 @@ package otelhelper
 import (
 	"strings"
 
-	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/propagation"
 )
 
@@ -11,12 +10,16 @@ import (
 // With* options; anything left unset is resolved from the environment
 // (code > standard OTEL_* env > legacy env > default — design D1).
 type Options struct {
-	// ServiceName sets service.name in code. Empty = OTEL_SERVICE_NAME >
+	// ServiceName sets service.name in code; it beats service.name in
+	// ResourceAttributes. Empty = ResourceAttributes > OTEL_SERVICE_NAME >
 	// OTEL_RESOURCE_ATTRIBUTES > SERVICE_NAME (deprecated) > SDK default
-	// unknown_service:<exe>. After Setup it holds the effective name.
+	// unknown_service:<exe>; a blank value at any level counts as unset.
+	// After Setup it holds the effective name.
 	ServiceName string
-	// Environment sets deployment.environment.name in code. Empty =
-	// OTEL_RESOURCE_ATTRIBUTES > ENVIRONMENT (deprecated alias) > absent.
+	// Environment sets deployment.environment.name in code; it beats the same
+	// key in ResourceAttributes. Empty = ResourceAttributes >
+	// OTEL_RESOURCE_ATTRIBUTES > ENVIRONMENT (deprecated alias) > absent; a
+	// blank value at any level counts as unset.
 	// After Setup it holds the effective value ("" when absent).
 	Environment DeploymentEnvironment
 	// OtelEndpoint is the generic OTLP endpoint set in code: a URL
@@ -77,10 +80,10 @@ type Options struct {
 
 	// Resolution results (filled by resolveFromEnv / lazily).
 	identityResolved       bool
-	sampleRatioFromEnv     bool // SampleRatio came from OTEL_HELPER_SAMPLE_RATIO
-	codeServiceName        bool
-	codeEnvironment        bool
-	resourceFallbacks      []attribute.KeyValue
+	sampleRatioFromEnv     bool              // SampleRatio came from OTEL_HELPER_SAMPLE_RATIO
+	envResource            map[string]string // OTEL_RESOURCE_ATTRIBUTES as the helper parsed it
+	envResourceEcho        bool              // the SDK's own parse of it would echo items (quietResourceEnvEcho)
+	serviceInstanceID      string
 	sdkDisabled            bool
 	exports                map[string]*signalExport
 	tracesExporters        []string
@@ -172,7 +175,10 @@ func WithCompression(compression string) Option {
 }
 
 // WithResourceAttributes adds resource attributes set in code; each key wins
-// over the same key in OTEL_RESOURCE_ATTRIBUTES.
+// over the same key in OTEL_RESOURCE_ATTRIBUTES. WithServiceName and
+// WithEnvironment win over service.name / deployment.environment.name here,
+// a blank identity value counts as unset, telemetry.sdk.* are ignored (the
+// SDK sets them; warned once), and an empty key fails Setup.
 func WithResourceAttributes(attrs map[string]string) Option {
 	return func(o *Options) { o.ResourceAttributes = attrs }
 }

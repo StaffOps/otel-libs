@@ -6,14 +6,14 @@
  * task B9; the shape below (one runtime record on the shared state, rebuilt
  * after shutdown) is what it extends.
  */
-import { context, diag, trace } from '@opentelemetry/api';
+import { context, diag, trace, type Attributes } from '@opentelemetry/api';
 import { AsyncLocalStorageContextManager } from '@opentelemetry/context-async-hooks';
 import { defaultResource, resourceFromAttributes, type Resource } from '@opentelemetry/resources';
 import { TracerProvider } from '@opentelemetry/sdk-trace';
 import { clearReportedOnce, report } from './diagnostics';
 import { installDiagLogger } from './diag-logger';
 import { registeredGlobal } from './globals';
-import { ATTR_SERVICE_NAME, resolvePlan, validateOptions, type Resolved, type SetupOptions } from './resolve';
+import { ATTR_SERVICE_NAME, TELEMETRY_SDK_KEYS, resolvePlan, validateOptions, type Resolved, type SetupOptions } from './resolve';
 import { getState, setDiagnosticSink, type HelperState } from './state';
 
 /** What one successful `setup()` built. */
@@ -42,6 +42,34 @@ const MAX_TIMEOUT_MS = 2 ** 31 - 1;
 function runtimeOf(state: HelperState): Runtime {
   state.runtime ??= { active: undefined, diagLogger: undefined } satisfies Runtime;
   return state.runtime as Runtime;
+}
+
+/**
+ * The semantic-conventions schema the helper's resource declares: the semconv
+ * version the helper targets, the same literal in every language (contract
+ * design D1 row "telemetry.sdk.* and the resource schema URL", 2026-10-29).
+ * Bumping it is a contract change.
+ */
+export const SCHEMA_URL = 'https://opentelemetry.io/schemas/1.43.0';
+
+
+/**
+ * The resolved attributes with the SDK's `telemetry.sdk.*` on top: env and
+ * code values for those keys are ignored (same D1 row).
+ */
+function buildResource(base: Resource, attributes: Readonly<Record<string, string>>): Resource {
+  // Null prototype and own data properties: a `__proto__` key stays an ordinary attribute.
+  const merged = Object.create(null) as Attributes;
+  const define = (key: string, value: Attributes[string]): void => {
+    Object.defineProperty(merged, key, { value, enumerable: true, writable: true, configurable: true });
+  };
+  for (const key of Object.keys(attributes)) define(key, attributes[key]);
+  for (const key of TELEMETRY_SDK_KEYS) {
+    const value = base.attributes[key];
+    if (value === undefined) Reflect.deleteProperty(merged, key);
+    else define(key, value);
+  }
+  return resourceFromAttributes(merged, { schemaUrl: SCHEMA_URL });
 }
 
 function defaultServiceName(base: Resource): string {
@@ -94,7 +122,7 @@ export function setup(options?: SetupOptions): Resolved {
     rt.diagLogger = registeredGlobal('diag');
   }
   const plan = resolvePlan(validated, defaultServiceName(base));
-  const resource = base.merge(resourceFromAttributes(plan.resourceAttributes));
+  const resource = buildResource(base, plan.resourceAttributes);
   const tracerProvider = new TracerProvider({ resource, spanProcessors: [...(validated.spanProcessors ?? [])] });
   if (rt.active !== undefined) releaseGlobals(rt.active);
   // A global registered by someone else is kept; checking first avoids the

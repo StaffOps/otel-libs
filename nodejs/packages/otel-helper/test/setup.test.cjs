@@ -12,7 +12,7 @@ const testing = require('@staffops/otel-helper/testing');
 const { runCjs, lastJson } = require('./helpers.cjs');
 
 const IDENTITY_VARS = [
-  'OTEL_SERVICE_NAME', 'OTEL_RESOURCE_ATTRIBUTES', 'SERVICE_NAME', 'ENVIRONMENT', 'OTEL_HELPER_DEBUG_LEVEL',
+  'OTEL_NODE_RESOURCE_DETECTORS', 'OTEL_SERVICE_NAME', 'OTEL_RESOURCE_ATTRIBUTES', 'SERVICE_NAME', 'ENVIRONMENT', 'OTEL_HELPER_DEBUG_LEVEL',
   'OTEL_HELPER_SAMPLE_RATIO', 'OTEL_HELPER_DISABLED_SIGNALS', 'OTEL_HELPER_EXTRA_INSTRUMENTATION', 'OTEL_LOG_LEVEL',
 ];
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
@@ -129,6 +129,78 @@ test('R5 resource: OTEL_RESOURCE_ATTRIBUTES keys kept, code wins per key, teleme
   assert.equal(a['telemetry.sdk.language'], 'nodejs');
   assert.equal(a['telemetry.sdk.name'], 'opentelemetry');
   for (const k of Object.keys(a)) assert.doesNotMatch(k, /^(process|host|os)\./, `${k}: no detector attributes (D-JS4)`);
+});
+
+test('D1 2026-10-29: telemetry.sdk.* come from the SDK (env and code ignored); schema URL is the contract literal', () => {
+  setEnv({
+    OTEL_SERVICE_NAME: 'svc',
+    OTEL_RESOURCE_ATTRIBUTES: 'telemetry.sdk.name=env,telemetry.sdk.language=env,telemetry.distro.name=d',
+  });
+  helper.setup({ resourceAttributes: { 'telemetry.sdk.version': 'code' } });
+  const a = attrs();
+  const sdkVersion = require('@opentelemetry/resources').defaultResource().attributes['telemetry.sdk.version'];
+  assert.deepEqual(
+    [a['telemetry.sdk.name'], a['telemetry.sdk.language'], a['telemetry.sdk.version'], a['telemetry.distro.name']],
+    ['opentelemetry', 'nodejs', sdkVersion, 'd'],
+  );
+  assert.equal(testing.getResource().schemaUrl, 'https://opentelemetry.io/schemas/1.43.0');
+});
+
+test('D1 2026-10-29: identity and parse warnings are written once per process, not per setup', async () => {
+  setEnv({ OTEL_RESOURCE_ATTRIBUTES: 'broken,k=%zz' });
+  helper.setup();
+  await helper.shutdown();
+  helper.setup();
+  const count = (needle) => lines((r) => r.line.includes(needle)).length;
+  assert.equal(count('no service name configured'), 1);
+  assert.equal(count('deployment.environment.name is not set'), 1);
+  assert.equal(count('not key=value'), 1);
+  assert.equal(count('invalid percent-encoding'), 1);
+});
+
+test('D1 2026-10-29: code telemetry.sdk.* keys warn once by key; env values are silent', async () => {
+  setEnv({ OTEL_SERVICE_NAME: 'svc', OTEL_RESOURCE_ATTRIBUTES: 'telemetry.sdk.name=from-env' });
+  helper.setup({ resourceAttributes: { 'telemetry.sdk.version': 's3cr3t' } });
+  await helper.shutdown();
+  helper.setup({ resourceAttributes: { 'telemetry.sdk.version': 's3cr3t' } });
+  const sdkLines = lines((r) => r.line.includes('telemetry.sdk'));
+  assert.equal(sdkLines.length, 1, sdkLines.join('\n'));
+  assert.match(sdkLines[0], /telemetry\.sdk\.version in resourceAttributes is ignored/);
+  assert.doesNotMatch(sdkLines[0], /s3cr3t|from-env/);
+  assert.notEqual(attrs()['telemetry.sdk.version'], 's3cr3t');
+});
+
+test('D1 2026-10-29: OTEL_NODE_RESOURCE_DETECTORS is ignored and warned once (name only)', async () => {
+  for (const value of ['env', 'env, serviceinstance', 'none']) {
+    resetAndCapture();
+    setEnv({ OTEL_SERVICE_NAME: 'svc', OTEL_NODE_RESOURCE_DETECTORS: value });
+    helper.setup();
+    await helper.shutdown();
+    assert.equal(lines((r) => r.line.includes('OTEL_NODE_RESOURCE_DETECTORS')).length, 0, value);
+  }
+  resetAndCapture();
+  setEnv({ OTEL_SERVICE_NAME: 'svc', OTEL_NODE_RESOURCE_DETECTORS: 'env,host,process' });
+  helper.setup();
+  await helper.shutdown();
+  helper.setup();
+  const det = lines((r) => r.line.includes('OTEL_NODE_RESOURCE_DETECTORS'));
+  assert.equal(det.length, 1);
+  assert.doesNotMatch(det[0], /host,process/);
+  for (const k of Object.keys(attrs())) assert.doesNotMatch(k, /^(process|host)\./);
+});
+
+test('D1 2026-10-29: a __proto__ key stays an ordinary attribute up to the SDK resource (env and code)', () => {
+  // The helper keeps it as an own data property; @opentelemetry/resources 3.0's
+  // Resource.attributes getter then drops it (attrs[k] = v on {}) — D-JS14.
+  const raw = () => Object.fromEntries(testing.getResource().getRawAttributes().filter(([k]) => k === '__proto__'));
+  setEnv({ OTEL_SERVICE_NAME: 'svc', OTEL_RESOURCE_ATTRIBUTES: '__proto__=from-env,team.name=payments' });
+  helper.setup();
+  assert.deepEqual(Object.getOwnPropertyDescriptor(raw(), '__proto__')?.value, 'from-env');
+  assert.equal(attrs()['team.name'], 'payments');
+  assert.equal(Object.getPrototypeOf(testing.getResource().attributes), Object.prototype, 'no prototype write');
+  resetAndCapture();
+  helper.setup({ resourceAttributes: JSON.parse('{"__proto__": "from-code"}') });
+  assert.equal(Object.getOwnPropertyDescriptor(raw(), '__proto__')?.value, 'from-code');
 });
 
 test('JS4 OTEL_RESOURCE_ATTRIBUTES parse errors warn by position, never printing values', () => {

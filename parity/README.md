@@ -130,8 +130,8 @@ Without `FAKEOTLP_HOST`, cases that need the receiver skip locally. With
 IPv6 and `{receiver_tls}` cases when those addresses are missing.
 
 Each case runs in its own process (Go re-executes the test binary, Python runs
-`tests/parity_driver.py`, Node runs `nodejs/test/parity/driver.cjs`): OTel and SDK state is set-once per process — Go's
-`resource.Default()` caches `OTEL_RESOURCE_ATTRIBUTES` on first use. Coverage
+`tests/parity_driver.py`, Node runs `nodejs/test/parity/driver.cjs`): OTel and SDK state is set-once per process — e.g. the OTel globals, and
+Python's SDK log module, which parses `OTEL_RESOURCE_ATTRIBUTES` when first imported. Coverage
 from those processes is merged into each suite's gate (Go: `PARITY_GOCOVERDIR`
 + `go tool covdata`; Python: `PARITY_COVERAGE_DATA`, combined by pytest-cov;
 Node: children inherit `NODE_V8_COVERAGE` and exit with `process.exit()`, and

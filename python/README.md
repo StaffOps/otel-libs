@@ -98,7 +98,7 @@ credentials.
 | Variable | Default | Notes |
 |---|---|---|
 | `OTEL_SERVICE_NAME` | _(unset)_ | Wins over `OTEL_RESOURCE_ATTRIBUTES` and `SERVICE_NAME`. Unset everywhere → SDK `unknown_service` + one warning. Whitespace-only = unset |
-| `OTEL_RESOURCE_ATTRIBUTES` | _(unset)_ | Any resource attribute, e.g. `deployment.environment.name=PRD`. Never overwritten by a helper default |
+| `OTEL_RESOURCE_ATTRIBUTES` | _(unset)_ | Any resource attribute, e.g. `deployment.environment.name=PRD`. Never overwritten by a helper default. Parsed by the helper: values percent-decoded then trimmed; an item without `=`, with an empty key or a bad `%` escape is warned by position (never by value); a blank identity value (`service.name=`) counts as unset; `telemetry.sdk.*` are ignored (the SDK sets them). `OTEL_EXPERIMENTAL_RESOURCE_DETECTORS` is ignored (warned) |
 | `SERVICE_NAME` | _(unset)_ | **Deprecated** (removed in 1.0) → `OTEL_SERVICE_NAME`. Used only when nothing else sets `service.name` |
 | `ENVIRONMENT` | _(unset)_ | **Deprecated** alias → `OTEL_RESOURCE_ATTRIBUTES=deployment.environment.name=<value>`. Unset → attribute absent + one warning; unknown values are emitted verbatim |
 

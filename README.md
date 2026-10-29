@@ -138,7 +138,7 @@ rulings are in [design D1](specs/config-contract-v0.3/design.md).
 | Variable | Default | Behavior |
 |----------|---------|----------|
 | `OTEL_SERVICE_NAME` | _(unset)_ → SDK `unknown_service:<exe>` + warning | Service name. Beats `OTEL_RESOURCE_ATTRIBUTES` and `SERVICE_NAME` |
-| `OTEL_RESOURCE_ATTRIBUTES` | _(unset)_ | Set `deployment.environment.name=<env>` here; beats `ENVIRONMENT` and is never overwritten by a helper value. The resolved environment sets the log level: `LOCAL` DEBUG, `DEV`/`HML` INFO, `PRD` WARN; unset or any other value (emitted verbatim) INFO |
+| `OTEL_RESOURCE_ATTRIBUTES` | _(unset)_ | Set `deployment.environment.name=<env>` here; beats `ENVIRONMENT` and is never overwritten by a helper value. The resolved environment sets the log level: `LOCAL` DEBUG, `DEV`/`HML` INFO, `PRD` WARN; unset or any other value (emitted verbatim) INFO. Parsed by the helper: values percent-decoded then trimmed; an item without `=`, with an empty key or a bad `%` escape is warned by position (never by value); a blank identity value (`service.name=`) counts as unset; `telemetry.sdk.*` are ignored (the SDK sets them) (Go limitation: see [known gaps](#known-emitted-telemetry-gaps)) |
 | `SERVICE_NAME` | — | **Deprecated** (warned once; removed in 1.0) → `OTEL_SERVICE_NAME` |
 | `ENVIRONMENT` | — | **Deprecated alias** → `deployment.environment.name`. With neither set, the attribute is absent and one warning is logged — never `LOCAL` ([ADR-003](specs/decisions/ADR-003-environment-unset-not-local.md)) |
 
@@ -211,7 +211,7 @@ lightweight.
 ## Cross-language parity
 
 Parity is enforced, not promised. [`parity/cases.json`](parity/cases.json) is a
-hand-maintained, language-neutral fixture (204 cases: 187 after A13, 17 added by the Node B3 review)
+hand-maintained, language-neutral fixture (210 cases: 187 after A13, 17 added by the Node B3 review, 6 by A16)
 that every language's test suite runs — config resolution, wire-level export
 against a fake OTLP receiver, sampling, propagation, health exclusion, logging
 and `/metrics` status
@@ -228,6 +228,7 @@ always identical:
 | Area | Gap |
 |------|-----|
 | Python gRPC | Spans carry the legacy `rpc.system`, `rpc.service`, `rpc.method` and `rpc.grpc.status_code` attributes, and no RPC metrics are emitted (upstream `opentelemetry-instrumentation-grpc`). Go emits the current RPC semconv and `rpc.server.call.duration` / `rpc.client.call.duration` |
+| Go resource from `OTEL_RESOURCE_ATTRIBUTES` | The Go SDK providers parse the variable again under the helper's resource (`WithResource` merges `resource.Environment()`): a blank `deployment.environment.name=` comes back as `""` instead of being absent, and a key with surrounding Unicode whitespace (e.g. U+00A0) is emitted twice, verbatim and trimmed. Python and Node.js emit only the helper's parse. Workaround: don't set blank values; use ASCII keys ([design D1](specs/config-contract-v0.3/design.md)) |
 | .NET | Still on the 0.2.x contract and instrumentation set until Phase C ([differences](#net-02x-differences)) |
 
 ## Collector and platform prerequisites

@@ -11,9 +11,7 @@ import (
 	"strconv"
 	"strings"
 
-	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/propagation"
-	"go.opentelemetry.io/otel/sdk/resource"
 	semconv "go.opentelemetry.io/otel/semconv/v1.43.0"
 )
 
@@ -156,7 +154,7 @@ func (o *Options) resolveFromEnv() {
 		o.sdkDisabled = v
 	}
 
-	o.resolveIdentity(resource.Default())
+	o.resolveIdentity()
 
 	if !o.DebugLevel {
 		o.DebugLevel, _ = envBool(EnvDebugLevel)
@@ -264,73 +262,80 @@ func splitList(v string, lower bool) []string {
 }
 
 // resolveIdentity decides service.name, deployment.environment.name and
-// service.instance.id (design D1 table, D4, ADR-003). base is the SDK's
-// default resource, which already carries OTEL_SERVICE_NAME and
-// OTEL_RESOURCE_ATTRIBUTES. The helper only fills keys the environment does
-// not provide (resourceFallbacks) and never overwrites them; code values are
-// applied on top in buildResource.
-func (o *Options) resolveIdentity(base *resource.Resource) {
+// service.instance.id (design D1 table and 2026-10-29 rows, D4, ADR-003). The
+// helper parses OTEL_RESOURCE_ATTRIBUTES itself (envResource); the SDK's
+// resource.Default() is not used. A blank value (empty or contract-trim-set
+// only) counts as not provided at every level, so the next one applies. The
+// dedicated code option beats the same key in code ResourceAttributes.
+func (o *Options) resolveIdentity() {
 	o.identityResolved = true
-	o.resourceFallbacks = nil
-	attrs := base.Set()
-	get := func(k attribute.Key) (string, bool) {
-		v, ok := attrs.Value(k)
-		if !ok || v.Emit() == "" {
-			return "", false
-		}
-		return v.Emit(), true
-	}
-	_, codeInstanceID := o.ResourceAttributes[string(semconv.ServiceInstanceIDKey)]
+	parsed := envResourceAttributes()
+	o.envResource, o.envResourceEcho = parsed.attrs, parsed.sdkWouldEcho()
+	code := o.ResourceAttributes
 
-	// service.name: code > OTEL_SERVICE_NAME > OTEL_RESOURCE_ATTRIBUTES >
-	// SERVICE_NAME (deprecated) > SDK default unknown_service:<exe> + warning.
-	baseName, _ := get(semconv.ServiceNameKey)
-	// base already applied OTEL_SERVICE_NAME > OTEL_RESOURCE_ATTRIBUTES (both
-	// trimmed); only the SDK's own default starts with "unknown_service".
-	envProvidesName := baseName != "" && !strings.HasPrefix(baseName, "unknown_service")
-	switch {
-	case o.ServiceName != "":
-		o.codeServiceName = true
-	case envProvidesName:
-		o.ServiceName = baseName
-	case trimWS(os.Getenv(EnvServiceName)) != "":
-		o.ServiceName = trimWS(os.Getenv(EnvServiceName))
-		o.resourceFallbacks = append(o.resourceFallbacks, semconv.ServiceName(o.ServiceName))
+	// service.name: code option > code attribute > OTEL_SERVICE_NAME >
+	// OTEL_RESOURCE_ATTRIBUTES > SERVICE_NAME (deprecated) > SDK default
+	// unknown_service:<exe> + warning.
+	nameKey := string(semconv.ServiceNameKey)
+	switch name := firstNonBlank(o.ServiceName, code[nameKey], os.Getenv(EnvOtelServiceName),
+		o.envResource[nameKey], os.Getenv(EnvServiceName)); {
+	case o.serviceNameSet && trimWS(o.ServiceName) == "":
+		// Invalid code value: kept so validate() rejects it (R8).
+	case name != "":
+		o.ServiceName = name
 	default:
-		o.ServiceName = baseName
-		diagLogger.Warn("otelhelper: no service name configured; set "+EnvOtelServiceName,
-			"using", baseName)
+		o.ServiceName = defaultServiceName()
+		warnOncePerProcess("identity:service.name", "otelhelper: no service name configured; set "+EnvOtelServiceName,
+			"using", o.ServiceName)
 	}
 
-	// deployment.environment.name: code > OTEL_RESOURCE_ATTRIBUTES >
-	// ENVIRONMENT (deprecated alias) > absent + warning.
-	envKey := semconv.DeploymentEnvironmentNameKey
-	if v, ok := o.ResourceAttributes[string(envKey)]; ok && o.Environment == "" {
+	// deployment.environment.name: code option > code attribute >
+	// OTEL_RESOURCE_ATTRIBUTES > ENVIRONMENT (deprecated alias, known values
+	// canonicalized) > absent + warning. Emitted verbatim.
+	envKey := string(semconv.DeploymentEnvironmentNameKey)
+	alias := trimWS(os.Getenv(EnvEnvironment))
+	switch v := firstNonBlank(string(o.Environment), code[envKey], o.envResource[envKey]); {
+	case o.environmentSet && trimWS(string(o.Environment)) == "":
+		// Invalid code value: kept so validate() rejects it (R8).
+	case v != "":
 		o.Environment = DeploymentEnvironment(v)
-	}
-	switch raEnv, inBase := get(envKey); {
-	case o.Environment != "":
-		o.codeEnvironment = true
-	case inBase:
-		o.Environment = DeploymentEnvironment(raEnv)
-	case trimWS(os.Getenv(EnvEnvironment)) != "":
-		v := trimWS(os.Getenv(EnvEnvironment))
-		if known, ok := knownEnvironment(v); ok {
-			v = string(known)
+	case alias != "":
+		if known, ok := knownEnvironment(alias); ok {
+			alias = string(known)
 		}
-		o.Environment = DeploymentEnvironment(v)
-		o.resourceFallbacks = append(o.resourceFallbacks, envKey.String(v))
+		o.Environment = DeploymentEnvironment(alias)
 	default:
-		diagLogger.Warn("otelhelper: deployment.environment.name is not set; set it in "+EnvResourceAttributes+
-			" (e.g. deployment.environment.name=PRD); log level defaults to INFO", "using", "absent")
+		o.Environment = ""
+		warnOncePerProcess("identity:environment", "otelhelper: deployment.environment.name is not set; set it in "+
+			EnvResourceAttributes+" (e.g. deployment.environment.name=PRD); log level defaults to INFO", "using", "absent")
 	}
 
-	// service.instance.id: code > OTEL_RESOURCE_ATTRIBUTES > per-process UUID.
-	// The Go SDK's own detector is experimental (OTEL_GO_X_RESOURCE); when it
-	// ran, base already has the id and the helper adds nothing.
-	if _, inBase := get(semconv.ServiceInstanceIDKey); !inBase && !codeInstanceID {
-		o.resourceFallbacks = append(o.resourceFallbacks, semconv.ServiceInstanceID(newInstanceID()))
+	// service.instance.id: code > OTEL_RESOURCE_ATTRIBUTES > per-process UUID (D4).
+	idKey := string(semconv.ServiceInstanceIDKey)
+	o.serviceInstanceID = firstNonBlank(code[idKey], o.envResource[idKey])
+	if o.serviceInstanceID == "" {
+		o.serviceInstanceID = newInstanceID()
 	}
+
+	// telemetry.sdk.* set in code are ignored (the SDK sets them): warned once
+	// per process, naming the key only. Env values are ignored silently.
+	for k := range code {
+		if isTelemetrySDKKey(k) {
+			warnOncePerProcess("code-telemetry-sdk:"+k, "otelhelper: "+k+" in WithResourceAttributes is ignored; the OpenTelemetry SDK sets it",
+				"key", k)
+		}
+	}
+}
+
+// firstNonBlank returns the first value that is not blank, trimmed with the
+// contract set, or "" when every value is blank.
+func firstNonBlank(values ...string) string {
+	for _, v := range values {
+		if t := trimWS(v); t != "" {
+			return t
+		}
+	}
+	return ""
 }
 
 // parseExporterEnv parses OTEL_{TRACES,METRICS,LOGS}_EXPORTER (R8). nil means
@@ -495,6 +500,12 @@ func (o *Options) validate() error {
 	}
 	if o.environmentSet && trimWS(string(o.Environment)) == "" {
 		errs = append(errs, errors.New("WithEnvironment: environment must not be empty"))
+	}
+	for k := range o.ResourceAttributes {
+		if trimWS(k) == "" {
+			errs = append(errs, errors.New("WithResourceAttributes: resource attributes have an empty key"))
+			break
+		}
 	}
 	if (o.exportTimeoutSet && o.ExportTimeoutMs <= 0) || o.ExportTimeoutMs < 0 {
 		errs = append(errs, fmt.Errorf("WithExportTimeout: timeout must be > 0 ms, got %d", o.ExportTimeoutMs))

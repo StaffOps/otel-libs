@@ -470,8 +470,12 @@ return an error naming the option.
 
 | Setting | Rule |
 |---------|------|
-| `service.name` | Code > `OTEL_SERVICE_NAME` > `OTEL_RESOURCE_ATTRIBUTES` > `SERVICE_NAME` > `unknown_service:<exe>` + warning |
-| `deployment.environment.name` | Code > `OTEL_RESOURCE_ATTRIBUTES` > `ENVIRONMENT` > absent + warning ([ADR-003](https://github.com/StaffOps/otel-libs/blob/main/specs/decisions/ADR-003-environment-unset-not-local.md)) |
+| `service.name` | `WithServiceName` > `WithResourceAttributes["service.name"]` > `OTEL_SERVICE_NAME` > `OTEL_RESOURCE_ATTRIBUTES` > `SERVICE_NAME` > `unknown_service:<exe>` + one warning per process |
+| `deployment.environment.name` | `WithEnvironment` > `WithResourceAttributes[...]` > `OTEL_RESOURCE_ATTRIBUTES` > `ENVIRONMENT` > absent + one warning per process ([ADR-003](https://github.com/StaffOps/otel-libs/blob/main/specs/decisions/ADR-003-environment-unset-not-local.md)) |
+| `service.instance.id` | `WithResourceAttributes[...]` > `OTEL_RESOURCE_ATTRIBUTES` > a per-process UUID |
+| Blank identity values | Empty or whitespace-only (`service.name=`) at any level count as unset: the next level applies |
+| Other resource attributes | `WithResourceAttributes` > `OTEL_RESOURCE_ATTRIBUTES`; `telemetry.sdk.*` always the SDK's (a code value warns once, naming the key); an empty code key fails `Setup`; schema URL `https://opentelemetry.io/schemas/1.43.0` |
+| `OTEL_RESOURCE_ATTRIBUTES` parsing | Helper-owned: blank items ignored, split at the first `=`, values percent-decoded then trimmed; an item without `=`, with an empty or non-UTF-8 key, or a bad `%` escape is warned **by position only**, once per process. The SDK's own re-parse is kept from echoing items through `otel.Handle`. **Limitation:** the Go SDK providers still merge their own parse under the helper's resource, so a blank `deployment.environment.name=` comes back as `""` and a key with surrounding Unicode whitespace appears twice ([known gaps](https://github.com/StaffOps/otel-libs/blob/main/README.md#known-emitted-telemetry-gaps)) |
 | Sampler | Code ratio (`WithSampleRatio`, any value incl. 1.0) > `OTEL_TRACES_SAMPLER`/`_ARG` > `OTEL_HELPER_SAMPLE_RATIO` (only while `OTEL_TRACES_SAMPLER` is unset) > `parentbased_always_on`; health-drop wrapper on top |
 | Signals on/off | `OTEL_SDK_DISABLED=true` (no-op everything) / `OTEL_<SIGNAL>_EXPORTER=none` > `OTEL_HELPER_DISABLED_SIGNALS` |
 | Metric exporters | Code > `OTEL_METRICS_EXPORTER` > inference (`otlp` if a metrics endpoint is configured, else `prometheus`). Env `otlp` without an endpoint warns and is dropped; code `otlp` without one fails `Setup` |

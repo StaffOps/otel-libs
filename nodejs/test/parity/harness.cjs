@@ -17,7 +17,7 @@ const CHILD_TIMEOUT_MS = 120_000; // export cases may wait up to 75 s for a long
 const DRAIN_MS = 2_000; // after the child exits, wait at most this long for its pipes to close
 const LANGS = ['go', 'python', 'dotnet', 'nodejs'];
 // D-JS14 statuses that are not waiting for a task (a recorded Node difference).
-const PERMANENT_SKIPS = new Set(['skip:no-upstream-rpc-metrics']);
+const PERMANENT_SKIPS = new Set(['skip:no-upstream-rpc-metrics', 'skip:no-upstream-resource-proto-key']);
 
 // ── schema (mirrors python/tests/test_parity.py and go/parity_match_test.go) ──
 const COMMON_EXPECT = new Set(['error', 'warning', 'warning_count', 'log', 'diagnostics', 'helper_log', 'console']);

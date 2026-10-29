@@ -43,6 +43,9 @@ export function parseResourceAttributes(raw: string): ParsedResourceAttributes {
     } catch {
       undecodable.push(index + 1);
     }
+    // Node decodes the environment before the helper sees it (invalid bytes are
+    // already U+FFFD), so the "key or value is not UTF-8" rule of Go/Python
+    // cannot trigger here: an invalid byte reaches the resource as U+FFFD.
     attributes[key] = trimWS(decoded);
   });
   return { attributes, malformed, undecodable };

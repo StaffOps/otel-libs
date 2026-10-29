@@ -7,26 +7,32 @@ package otelhelper
 // xfail:A3 (failing) before the fix.
 
 import (
+	"bytes"
 	"context"
 	"encoding/pem"
 	"errors"
+	"fmt"
+	"log"
 	"log/slog"
 	"math"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"go.opentelemetry.io/otel"
-	"go.opentelemetry.io/otel/attribute"
 	logglobal "go.opentelemetry.io/otel/log/global"
 	"go.opentelemetry.io/otel/propagation"
+	"go.opentelemetry.io/otel/sdk"
 	sdklog "go.opentelemetry.io/otel/sdk/log"
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
@@ -41,7 +47,17 @@ func captureDiag(t *testing.T) *syncBuffer {
 	resetDeprecationsForTest(t) // once-per-process warnings must fire in this test
 	buf := &syncBuffer{}
 	prev := diagLogger
-	diagLogger = slog.New(slog.NewTextHandler(buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	// No timestamp: tests assert that a value never appears in the output, and
+	// a time's digits could contain a short value by chance.
+	diagLogger = slog.New(slog.NewTextHandler(buf, &slog.HandlerOptions{
+		Level: slog.LevelDebug,
+		ReplaceAttr: func(groups []string, a slog.Attr) slog.Attr {
+			if len(groups) == 0 && a.Key == slog.TimeKey {
+				return slog.Attr{}
+			}
+			return a
+		},
+	}))
 	t.Cleanup(func() { diagLogger = prev })
 	return buf
 }
@@ -305,78 +321,123 @@ func TestEndpointPort(t *testing.T) {
 	}
 }
 
-// ── identity (R4, R5, D4, ADR-003) ──────────────────────────────────────────
+// ── identity (R4, R5, D4, ADR-003; D1 rows of 2026-10-29) ─────────────────
 
-func baseRes(kv ...attribute.KeyValue) *resource.Resource {
-	return resource.NewSchemaless(append([]attribute.KeyValue{semconv.ServiceName("unknown_service:test")}, kv...)...)
-}
-
-func fallbackMap(o *Options) map[string]string {
+// resourceMap returns the attributes buildResource emits for o.
+func resourceMap(o *Options) map[string]string {
 	m := map[string]string{}
-	for _, kv := range o.resourceFallbacks {
+	for _, kv := range buildResource(o).Attributes() {
 		m[string(kv.Key)] = kv.Value.Emit()
 	}
 	return m
 }
 
+var unknownServiceRe = regexp.MustCompile(`^unknown_service:.+$`)
+
 func TestResolveIdentity_ServiceName(t *testing.T) {
 	t.Run("code wins", func(t *testing.T) {
 		t.Setenv(EnvOtelServiceName, "std")
-		o := &Options{ServiceName: "code"}
-		o.resolveIdentity(baseRes())
-		if !o.codeServiceName || o.ServiceName != "code" {
-			t.Errorf("got %q code=%v", o.ServiceName, o.codeServiceName)
+		o := &Options{ServiceName: " code "}
+		o.resolveIdentity()
+		if o.ServiceName != "code" {
+			t.Errorf("got %q", o.ServiceName)
 		}
 	})
-	t.Run("OTEL_SERVICE_NAME beats SERVICE_NAME", func(t *testing.T) {
+	t.Run("OTEL_SERVICE_NAME beats OTEL_RESOURCE_ATTRIBUTES and SERVICE_NAME", func(t *testing.T) {
 		// Regression: svc.otel_service_name_beats_legacy (SERVICE_NAME used to win).
-		t.Setenv(EnvOtelServiceName, "std")
+		t.Setenv(EnvOtelServiceName, " std\t")
+		t.Setenv(EnvResourceAttributes, "service.name=from-ra")
 		t.Setenv(EnvServiceName, "legacy")
 		o := &Options{}
-		o.resolveIdentity(resource.NewSchemaless(semconv.ServiceName("std")))
-		if o.ServiceName != "std" || fallbackMap(o)["service.name"] != "" {
-			t.Errorf("ServiceName = %q fallbacks=%v", o.ServiceName, fallbackMap(o))
+		o.resolveIdentity()
+		if o.ServiceName != "std" || resourceMap(o)["service.name"] != "std" {
+			t.Errorf("ServiceName = %q resource=%v", o.ServiceName, resourceMap(o))
 		}
 	})
 	t.Run("OTEL_RESOURCE_ATTRIBUTES beats SERVICE_NAME", func(t *testing.T) {
+		t.Setenv(EnvResourceAttributes, "service.name=from-ra")
 		t.Setenv(EnvServiceName, "legacy")
 		o := &Options{}
-		o.resolveIdentity(resource.NewSchemaless(semconv.ServiceName("from-ra")))
-		if o.ServiceName != "from-ra" || fallbackMap(o)["service.name"] != "" {
-			t.Errorf("ServiceName = %q fallbacks=%v", o.ServiceName, fallbackMap(o))
+		o.resolveIdentity()
+		if o.ServiceName != "from-ra" {
+			t.Errorf("ServiceName = %q", o.ServiceName)
 		}
 	})
 	t.Run("SERVICE_NAME fallback", func(t *testing.T) {
 		t.Setenv(EnvServiceName, "legacy")
 		o := &Options{}
-		o.resolveIdentity(baseRes())
-		if o.ServiceName != "legacy" || fallbackMap(o)["service.name"] != "legacy" {
-			t.Errorf("ServiceName = %q fallbacks=%v", o.ServiceName, fallbackMap(o))
+		if got := resourceMap(o)["service.name"]; got != "legacy" || o.ServiceName != "legacy" {
+			t.Errorf("ServiceName = %q resource=%q", o.ServiceName, got)
 		}
 	})
 	t.Run("none: SDK default + warning", func(t *testing.T) {
 		// Regression: svc.unset_uses_sdk_default_and_warns (was "my-service").
 		logs := captureDiag(t)
 		o := &Options{}
-		o.resolveIdentity(baseRes())
-		if o.ServiceName != "unknown_service:test" || fallbackMap(o)["service.name"] != "" {
-			t.Errorf("ServiceName = %q fallbacks=%v", o.ServiceName, fallbackMap(o))
+		if got := resourceMap(o)["service.name"]; !unknownServiceRe.MatchString(got) || got != o.ServiceName {
+			t.Errorf("ServiceName = %q resource=%q", o.ServiceName, got)
 		}
 		if !strings.Contains(logs.String(), EnvOtelServiceName) {
 			t.Errorf("no warning naming %s: %q", EnvOtelServiceName, logs.String())
 		}
 	})
+	t.Run("option beats the code attribute, in the value and the resource", func(t *testing.T) {
+		o := &Options{ServiceName: "svc-option", ResourceAttributes: map[string]string{"service.name": "svc-attribute"}}
+		if got := resourceMap(o)["service.name"]; got != "svc-option" || o.ServiceName != "svc-option" {
+			t.Errorf("ServiceName = %q resource=%q", o.ServiceName, got)
+		}
+	})
+	t.Run("code-only attribute resolves without the missing-name warning", func(t *testing.T) {
+		logs := captureDiag(t)
+		o := &Options{ResourceAttributes: map[string]string{"service.name": " svc-code "}}
+		if got := resourceMap(o)["service.name"]; got != "svc-code" || o.ServiceName != "svc-code" {
+			t.Errorf("ServiceName = %q resource=%q", o.ServiceName, got)
+		}
+		if strings.Contains(logs.String(), "no service name") {
+			t.Errorf("unexpected missing-name warning: %q", logs.String())
+		}
+	})
+	for name, tc := range map[string]struct{ code, ra string }{
+		"blank code attribute": {code: " \t", ra: ""},
+		"blank env attribute":  {code: "", ra: "service.name= "},
+		"empty env attribute":  {code: "", ra: "service.name="},
+	} {
+		t.Run(name+" is not provided", func(t *testing.T) {
+			logs := captureDiag(t)
+			if tc.ra != "" {
+				t.Setenv(EnvResourceAttributes, tc.ra)
+			}
+			o := &Options{}
+			if tc.code != "" {
+				o.ResourceAttributes = map[string]string{"service.name": tc.code}
+			}
+			got := resourceMap(o)["service.name"]
+			if !unknownServiceRe.MatchString(got) {
+				t.Errorf("service.name = %q, want the SDK default", got)
+			}
+			if !strings.Contains(logs.String(), "no service name") || strings.Contains(logs.String(), `using=""`) {
+				t.Errorf("want the missing-name warning with the default: %q", logs.String())
+			}
+		})
+	}
+	t.Run("blank code attribute falls back to OTEL_SERVICE_NAME", func(t *testing.T) {
+		t.Setenv(EnvOtelServiceName, "svc-std")
+		o := &Options{ResourceAttributes: map[string]string{"service.name": " "}}
+		if got := resourceMap(o)["service.name"]; got != "svc-std" {
+			t.Errorf("service.name = %q, want svc-std", got)
+		}
+	})
 }
 
 func TestResolveIdentity_Environment(t *testing.T) {
-	envKey := semconv.DeploymentEnvironmentNameKey
+	envKey := string(semconv.DeploymentEnvironmentNameKey)
 	t.Run("unset: absent, warned once, INFO", func(t *testing.T) {
 		// Regression: env.unset_absent_and_warns / log_level.unset_is_info (was LOCAL + DEBUG).
 		logs := captureDiag(t)
 		o := &Options{}
-		o.resolveIdentity(baseRes())
-		if o.Environment != "" || fallbackMap(o)[string(envKey)] != "" {
-			t.Errorf("Environment = %q fallbacks=%v", o.Environment, fallbackMap(o))
+		res := resourceMap(o)
+		if _, ok := res[envKey]; ok || o.Environment != "" {
+			t.Errorf("Environment = %q resource=%v", o.Environment, res)
 		}
 		if n := countLines(logs.String(), "deployment.environment.name"); n != 1 {
 			t.Errorf("warned %d times, want 1: %q", n, logs.String())
@@ -388,42 +449,57 @@ func TestResolveIdentity_Environment(t *testing.T) {
 	t.Run("ENVIRONMENT known canonicalized", func(t *testing.T) {
 		t.Setenv(EnvEnvironment, "prd")
 		o := &Options{}
-		o.resolveIdentity(baseRes())
-		if o.Environment != PRD || fallbackMap(o)[string(envKey)] != "PRD" {
-			t.Errorf("Environment = %q fallbacks=%v", o.Environment, fallbackMap(o))
+		if got := resourceMap(o)[envKey]; o.Environment != PRD || got != "PRD" {
+			t.Errorf("Environment = %q resource=%q", o.Environment, got)
 		}
 	})
 	t.Run("ENVIRONMENT unknown verbatim", func(t *testing.T) {
 		// Regression: env.unknown_value_verbatim (was coerced to LOCAL).
 		t.Setenv(EnvEnvironment, "staging")
 		o := &Options{}
-		o.resolveIdentity(baseRes())
-		if o.Environment != "staging" || fallbackMap(o)[string(envKey)] != "staging" {
-			t.Errorf("Environment = %q fallbacks=%v", o.Environment, fallbackMap(o))
+		if got := resourceMap(o)[envKey]; o.Environment != "staging" || got != "staging" {
+			t.Errorf("Environment = %q resource=%q", o.Environment, got)
 		}
 		if lvl := DefaultLogLevel(o.Environment, false); lvl != slog.LevelInfo {
 			t.Errorf("log level = %v, want INFO", lvl)
 		}
 	})
-	t.Run("OTEL_RESOURCE_ATTRIBUTES beats ENVIRONMENT and is never overwritten", func(t *testing.T) {
+	t.Run("OTEL_RESOURCE_ATTRIBUTES beats ENVIRONMENT and is emitted verbatim", func(t *testing.T) {
 		// Regression: env.resource_attributes_beat_alias / resource.env_attribute_not_overwritten.
 		t.Setenv(EnvEnvironment, "DEV")
+		t.Setenv(EnvResourceAttributes, envKey+"=hml")
 		o := &Options{}
-		o.resolveIdentity(baseRes(envKey.String("HML")))
-		if o.Environment != HML || o.codeEnvironment || fallbackMap(o)[string(envKey)] != "" {
-			t.Errorf("Environment = %q code=%v fallbacks=%v", o.Environment, o.codeEnvironment, fallbackMap(o))
+		if got := resourceMap(o)[envKey]; o.Environment != "hml" || got != "hml" {
+			t.Errorf("Environment = %q resource=%q", o.Environment, got)
 		}
 	})
-	t.Run("code wins (incl. via ResourceAttributes)", func(t *testing.T) {
-		o := &Options{Environment: "qa"}
-		o.resolveIdentity(baseRes(envKey.String("HML")))
-		if o.Environment != "qa" || !o.codeEnvironment {
-			t.Errorf("Environment = %q code=%v", o.Environment, o.codeEnvironment)
+	t.Run("option beats the code attribute, which beats the env", func(t *testing.T) {
+		t.Setenv(EnvResourceAttributes, envKey+"=HML")
+		o := &Options{Environment: "PRD", ResourceAttributes: map[string]string{envKey: "DEV"}}
+		if got := resourceMap(o)[envKey]; o.Environment != PRD || got != "PRD" {
+			t.Errorf("Environment = %q resource=%q", o.Environment, got)
 		}
-		o = &Options{ResourceAttributes: map[string]string{string(envKey): "perf"}}
-		o.resolveIdentity(baseRes(envKey.String("HML")))
-		if o.Environment != "perf" {
-			t.Errorf("Environment = %q, want perf", o.Environment)
+		o = &Options{ResourceAttributes: map[string]string{envKey: "perf"}}
+		if got := resourceMap(o)[envKey]; o.Environment != "perf" || got != "perf" {
+			t.Errorf("Environment = %q resource=%q", o.Environment, got)
+		}
+	})
+	t.Run("blank env attribute is absent and warned", func(t *testing.T) {
+		logs := captureDiag(t)
+		t.Setenv(EnvResourceAttributes, envKey+"= ")
+		o := &Options{}
+		if v, ok := resourceMap(o)[envKey]; ok {
+			t.Errorf("blank environment emitted as %q", v)
+		}
+		if !strings.Contains(logs.String(), "deployment.environment.name is not set") {
+			t.Errorf("missing ADR-003 warning: %q", logs.String())
+		}
+	})
+	t.Run("blank code attribute falls back to the env", func(t *testing.T) {
+		t.Setenv(EnvResourceAttributes, envKey+"=HML")
+		o := &Options{ResourceAttributes: map[string]string{envKey: ""}}
+		if got := resourceMap(o)[envKey]; got != "HML" {
+			t.Errorf("environment = %q, want HML", got)
 		}
 	})
 }
@@ -433,25 +509,295 @@ var uuidRe = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-
 func TestResolveIdentity_InstanceID(t *testing.T) {
 	// Regression: resource.instance_id_generated (no id before A3).
 	o := &Options{ServiceName: "svc"}
-	o.resolveIdentity(baseRes())
-	id := fallbackMap(o)["service.instance.id"]
+	id := resourceMap(o)["service.instance.id"]
 	if !uuidRe.MatchString(id) {
 		t.Errorf("instance id %q is not a v4 UUID", id)
 	}
-	o2 := &Options{ServiceName: "svc"}
-	o2.resolveIdentity(baseRes())
-	if fallbackMap(o2)["service.instance.id"] == id {
+	if resourceMap(&Options{ServiceName: "svc"})["service.instance.id"] == id {
 		t.Error("two resolutions produced the same id")
 	}
-	o = &Options{ServiceName: "svc"}
-	o.resolveIdentity(baseRes(semconv.ServiceInstanceID("from-env")))
-	if _, ok := fallbackMap(o)["service.instance.id"]; ok {
-		t.Error("helper id added although OTEL_RESOURCE_ATTRIBUTES provides one")
+	t.Setenv(EnvResourceAttributes, "service.instance.id=from-env")
+	if got := resourceMap(&Options{ServiceName: "svc"})["service.instance.id"]; got != "from-env" {
+		t.Errorf("env id not kept: %q", got)
 	}
 	o = &Options{ServiceName: "svc", ResourceAttributes: map[string]string{"service.instance.id": "code"}}
-	o.resolveIdentity(baseRes())
-	if _, ok := fallbackMap(o)["service.instance.id"]; ok {
-		t.Error("helper id added although code provides one")
+	if got := resourceMap(o)["service.instance.id"]; got != "code" {
+		t.Errorf("code id not kept: %q", got)
+	}
+	for _, blank := range []string{"", " \t"} {
+		t.Setenv(EnvResourceAttributes, "service.instance.id="+blank)
+		if got := resourceMap(&Options{ServiceName: "svc"})["service.instance.id"]; !uuidRe.MatchString(got) {
+			t.Errorf("blank env id %q: got %q, want a generated UUID", blank, got)
+		}
+		o = &Options{ServiceName: "svc", ResourceAttributes: map[string]string{"service.instance.id": blank}}
+		t.Setenv(EnvResourceAttributes, "")
+		if got := resourceMap(o)["service.instance.id"]; !uuidRe.MatchString(got) {
+			t.Errorf("blank code id %q: got %q, want a generated UUID", blank, got)
+		}
+	}
+}
+
+// ── OTEL_RESOURCE_ATTRIBUTES parsing (D1 row of 2026-10-29, R8) ──────────────
+
+func TestParseResourceAttributes(t *testing.T) {
+	tests := []struct {
+		name                   string
+		raw                    string
+		want                   map[string]string
+		malformed, undecodable []int
+	}{
+		{"plain", "a=1,b=2", map[string]string{"a": "1", "b": "2"}, nil, nil},
+		{"blank items ignored silently", " ,a=1,,\t,", map[string]string{"a": "1"}, nil, nil},
+		{"first = splits", "a=b=c", map[string]string{"a": "b=c"}, nil, nil},
+		{"no = skipped", "a=1,broken,b=2", map[string]string{"a": "1", "b": "2"}, []int{2}, nil},
+		{"empty key skipped", "=orphan, \t=x,a=1", map[string]string{"a": "1"}, []int{1, 2}, nil},
+		{"key and value trimmed", " a \v= 1\f", map[string]string{"a": "1"}, nil, nil},
+		{"decode then trim", "a=%20payments%09", map[string]string{"a": "payments"}, nil, nil},
+		{"plus kept", "a=x+y", map[string]string{"a": "x+y"}, nil, nil},
+		{"utf-8 decoded", "a=caf%C3%A9", map[string]string{"a": "café"}, nil, nil},
+		{"bad escape literal", "a=%zz", map[string]string{"a": "%zz"}, nil, []int{1}},
+		{"bad escape literal, trimmed", "a= %zz ", map[string]string{"a": "%zz"}, nil, []int{1}},
+		{"truncated escape literal", "a=%4", map[string]string{"a": "%4"}, nil, []int{1}},
+		{"invalid utf-8 literal", "x=1,a=%C3", map[string]string{"x": "1", "a": "%C3"}, nil, []int{2}},
+		{"raw invalid utf-8 replaced", "a=\xff", map[string]string{"a": "\uFFFD"}, nil, []int{1}},
+		{"one replacement per invalid byte", "a=\xff\xfe", map[string]string{"a": "\uFFFD\uFFFD"}, nil, []int{1}},
+		{"valid runes kept around invalid bytes", "a=é\xffx", map[string]string{"a": "é\uFFFDx"}, nil, []int{1}},
+		{"non-utf-8 key malformed", "k\xff=1,a=1", map[string]string{"a": "1"}, []int{1}, nil},
+		{"unicode space not trimmed", "a=\u00a0x", map[string]string{"a": "\u00a0x"}, nil, nil},
+		{"later duplicate wins", "a=1,a=2", map[string]string{"a": "2"}, nil, nil},
+		{"empty value kept", "a=", map[string]string{"a": ""}, nil, nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := parseResourceAttributes(tt.raw)
+			if !reflect.DeepEqual(p.attrs, tt.want) || !reflect.DeepEqual(p.malformed, tt.malformed) ||
+				!reflect.DeepEqual(p.undecodable, tt.undecodable) {
+				t.Errorf("parse(%q) = %v malformed=%v undecodable=%v; want %v %v %v",
+					tt.raw, p.attrs, p.malformed, p.undecodable, tt.want, tt.malformed, tt.undecodable)
+			}
+		})
+	}
+}
+
+func TestEnvResourceAttributes_PositionalWarningsNeverEchoValues(t *testing.T) {
+	logs := captureDiag(t)
+	t.Setenv(EnvResourceAttributes, "token-s3cr3t-value,api.key=%zzs3cr3t,=s3cr3t-orphan,team.name=payments,x=%C3s3cr3t")
+	got := envResourceAttributes().attrs
+	if got["team.name"] != "payments" || got["api.key"] != "%zzs3cr3t" {
+		t.Errorf("attrs = %v", got)
+	}
+	out := logs.String()
+	if strings.Contains(out, "s3cr3t") {
+		t.Fatalf("diagnostics echo a value: %q", out)
+	}
+	if !strings.Contains(out, "not key=value") || !strings.Contains(out, "items=1,3") ||
+		!strings.Contains(out, "invalid percent-encoding") || !strings.Contains(out, "items=2,5") ||
+		strings.Count(out, EnvResourceAttributes) != 2 {
+		t.Errorf("want one positional warning per kind naming %s: %q", EnvResourceAttributes, out)
+	}
+}
+
+func TestEnvResourceAttributes_CleanInputDoesNotWarn(t *testing.T) {
+	logs := captureDiag(t)
+	t.Setenv(EnvResourceAttributes, " , team.name=%20payments%09,,")
+	p := envResourceAttributes()
+	if p.attrs["team.name"] != "payments" || !p.blank || !p.sdkWouldEcho() {
+		t.Errorf("parse = %+v (blank items must still arm the SDK echo filter)", p)
+	}
+	if logs.String() != "" {
+		t.Errorf("unexpected diagnostics: %q", logs.String())
+	}
+	t.Setenv(EnvResourceAttributes, " \t")
+	if p := envResourceAttributes(); len(p.attrs) != 0 || p.sdkWouldEcho() {
+		t.Errorf("blank variable parsed to %+v", p)
+	}
+	t.Setenv(EnvResourceAttributes, "a=1,b=2")
+	if envResourceAttributes().sdkWouldEcho() {
+		t.Error("clean value must not arm the echo filter")
+	}
+}
+
+func TestEnvResourceAttributes_WarnedOncePerProcess(t *testing.T) {
+	logs := captureDiag(t)
+	t.Setenv(EnvResourceAttributes, "broken,a=%zz")
+	envResourceAttributes()
+	envResourceAttributes()
+	if n := strings.Count(logs.String(), "not key=value"); n != 1 {
+		t.Errorf("malformed warning %d times, want 1: %q", n, logs.String())
+	}
+	if n := strings.Count(logs.String(), "invalid percent-encoding"); n != 1 {
+		t.Errorf("undecodable warning %d times, want 1: %q", n, logs.String())
+	}
+}
+
+func TestResolveIdentity_WarningsOncePerProcess(t *testing.T) {
+	logs := captureDiag(t)
+	for range 2 {
+		(&Options{}).resolveIdentity()
+	}
+	if n := countLines(logs.String(), "no service name configured"); n != 1 {
+		t.Errorf("missing-name warning %d times, want 1", n)
+	}
+	if n := countLines(logs.String(), "deployment.environment.name is not set"); n != 1 {
+		t.Errorf("ADR-003 warning %d times, want 1", n)
+	}
+}
+
+func TestResolveIdentity_CodeTelemetrySDKWarnedOnceByKey(t *testing.T) {
+	logs := captureDiag(t)
+	t.Setenv(EnvResourceAttributes, "telemetry.sdk.name=from-env")
+	for range 2 {
+		(&Options{ServiceName: "svc", ResourceAttributes: map[string]string{"telemetry.sdk.version": "s3cr3t"}}).resolveIdentity()
+	}
+	out := logs.String()
+	if n := countLines(out, "telemetry.sdk.version in WithResourceAttributes is ignored"); n != 1 {
+		t.Errorf("code telemetry.sdk warning %d times, want 1: %q", n, out)
+	}
+	if strings.Contains(out, "s3cr3t") || strings.Contains(out, "telemetry.sdk.name") {
+		t.Errorf("the warning must name the code key only, never a value or an env key: %q", out)
+	}
+}
+
+func TestValidate_EmptyResourceAttributeKeyFails(t *testing.T) {
+	for _, k := range []string{"", " \t"} {
+		o := newOptions(WithServiceName("svc"), WithResourceAttributes(map[string]string{k: "x", "a": "b"}))
+		if err := o.validate(); err == nil || !strings.Contains(err.Error(), "empty key") {
+			t.Errorf("key %q: err = %v, want an empty-key error", k, err)
+		}
+	}
+}
+
+// ── SDK echo filter (D1 row "Go: SDK providers re-read OTEL_RESOURCE_ATTRIBUTES") ──
+
+// recordingHandler is goroutine-safe: the first SetErrorHandler of the process
+// makes the API's default delegator forward to it for good, so SDK goroutines
+// of later tests may still reach it.
+type recordingHandler struct {
+	mu  sync.Mutex
+	got []string
+}
+
+func (h *recordingHandler) Handle(err error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.got = append(h.got, err.Error())
+}
+
+func (h *recordingHandler) errors() []string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return append([]string(nil), h.got...)
+}
+
+func withErrorHandler(t *testing.T, h otel.ErrorHandler) {
+	t.Helper()
+	prev := otel.GetErrorHandler()
+	otel.SetErrorHandler(h)
+	t.Cleanup(func() { otel.SetErrorHandler(prev) })
+}
+
+func TestQuietResourceEnvEcho_DropsOnlyTheSDKEcho(t *testing.T) {
+	user := &recordingHandler{}
+	withErrorHandler(t, user)
+	stop := quietResourceEnvEcho(true)
+	otel.Handle(fmt.Errorf("%w: missing value: [token-s3cr3t]", resource.ErrPartialResource))
+	otel.Handle(url.EscapeError("%zz"))
+	otel.Handle(&url.Error{Op: "Post", URL: "https://c", Err: url.EscapeError("%zz")}) // an exporter's: kept
+	otel.Handle(errors.New("exporter failed"))
+	stop()
+	stop() // idempotent
+
+	otel.Handle(fmt.Errorf("%w: later", resource.ErrPartialResource)) // outside the window: kept
+	want := []string{`Post "https://c": invalid URL escape "%zz"`, "exporter failed", "partial resource: later"}
+	if got := user.errors(); !reflect.DeepEqual(got, want) {
+		t.Errorf("user handler got %q, want %q", got, want)
+	}
+	if otel.GetErrorHandler() != otel.ErrorHandler(user) {
+		t.Error("previous handler not restored")
+	}
+}
+
+func TestQuietResourceEnvEcho_NotNeededInstallsNothing(t *testing.T) {
+	user := &recordingHandler{}
+	withErrorHandler(t, user)
+	quietResourceEnvEcho(false)()
+	if otel.GetErrorHandler() != otel.ErrorHandler(user) {
+		t.Error("handler replaced although nothing would be echoed")
+	}
+}
+
+func TestQuietResourceEnvEcho_KeepsAHandlerSetDuringTheWindow(t *testing.T) {
+	user, late := &recordingHandler{}, &recordingHandler{}
+	withErrorHandler(t, user)
+	stop := quietResourceEnvEcho(true)
+	otel.SetErrorHandler(late)
+	stop()
+	if otel.GetErrorHandler() != otel.ErrorHandler(late) {
+		t.Error("a handler installed during the window was overwritten")
+	}
+}
+
+func TestResourceEnvEchoFilter_NeverLoops(t *testing.T) {
+	var buf bytes.Buffer
+	prevOut := log.Writer()
+	log.SetOutput(&buf)
+	t.Cleanup(func() { log.SetOutput(prevOut) })
+	f := &resourceEnvEchoFilter{prev: nil}
+	f.active.Store(true)
+	f.Handle(errors.New("to log, not to a nil handler"))
+	f.prev = f
+	f.Handle(errors.New("to log, not back to itself"))
+	f.active.Store(false)
+	withErrorHandler(t, f) // inactive and global: forwarding to the global would loop
+	f.Handle(errors.New("inactive global"))
+	for _, msg := range []string{"nil handler", "back to itself", "inactive global"} {
+		if !strings.Contains(buf.String(), msg) {
+			t.Errorf("%q not logged: %q", msg, buf.String())
+		}
+	}
+	if !forwardsBackToFilter(otelDefaultHandlerForTest()) {
+		t.Error("the SDK default delegator must be treated as looping back")
+	}
+}
+
+// sdkDefaultErrorHandler is the API's default delegating handler, read at
+// package init, before any test installs one.
+var sdkDefaultErrorHandler = otel.GetErrorHandler()
+
+func otelDefaultHandlerForTest() otel.ErrorHandler { return sdkDefaultErrorHandler }
+
+func TestSetup_SDKDoesNotEchoMalformedResourceItems(t *testing.T) {
+	user := &recordingHandler{}
+	withErrorHandler(t, user)
+	t.Setenv(EnvResourceAttributes, "token-s3cr3t-value,,api.key=%zzs3cr3t,team.name=payments,deployment.environment.name=DEV")
+	shutdown, err := Setup(context.Background(), WithServiceName("svc"), WithoutMetricsListener())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = shutdown(context.Background()) })
+	for _, e := range user.errors() {
+		if strings.Contains(e, "s3cr3t") || strings.Contains(e, "partial resource") {
+			t.Errorf("SDK echo reached the application's handler: %q", e)
+		}
+	}
+	if otel.GetErrorHandler() != otel.ErrorHandler(user) {
+		t.Error("Setup did not restore the application's error handler")
+	}
+}
+
+// ── telemetry.sdk.* and schema URL (D1 row of 2026-10-29) ──────────────────
+
+func TestBuildResource_TelemetrySDKFromSDKAndSchemaURL(t *testing.T) {
+	t.Setenv(EnvResourceAttributes, "telemetry.sdk.name=env,telemetry.sdk.language=env,telemetry.sdk.version=0,telemetry.distro.name=d")
+	o := &Options{ServiceName: "svc", ResourceAttributes: map[string]string{"telemetry.sdk.version": "code"}}
+	res := buildResource(o)
+	got := resourceMap(o)
+	if got["telemetry.sdk.name"] != "opentelemetry" || got["telemetry.sdk.language"] != "go" ||
+		got["telemetry.sdk.version"] != sdk.Version() || got["telemetry.distro.name"] != "d" {
+		t.Errorf("resource = %v", got)
+	}
+	if res.SchemaURL() != "https://opentelemetry.io/schemas/1.43.0" || semconv.SchemaURL != schemaURL {
+		t.Errorf("schema URL = %q (semconv package %q), want the contract literal", res.SchemaURL(), semconv.SchemaURL)
 	}
 }
 

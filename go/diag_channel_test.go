@@ -22,6 +22,13 @@ var diagAllowed = map[string]int{
 	// (stdout JSON), not helper diagnostics.
 	"logging.go:newStdoutJSONHandler|os.Stdout": 1,
 	"logging.go:NewLogger|slog.New":             1,
+	// The OTEL_RESOURCE_ATTRIBUTES echo filter (resource.go) is an OTel error
+	// handler: it forwards SDK pipeline errors to the previous/current handler,
+	// and to log.Print (the SDK default handler's own output) when that one
+	// would route them back to the filter.
+	"resource.go:resourceEnvEchoFilter.Handle|otel.GetErrorHandler": 1,
+	"resource.go:resourceEnvEchoFilter.Handle|log.Print":            1,
+	"resource.go:quietResourceEnvEcho|otel.GetErrorHandler":         2,
 }
 
 // stdStreamFiles may reference os.Stdout/os.Stderr and build slog loggers:

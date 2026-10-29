@@ -4183,8 +4183,8 @@
         }
       },
       "status": {
-        "go": "xfail:A16",
-        "python": "xfail:A16",
+        "go": "pass",
+        "python": "pass",
         "dotnet": "xfail:phase-c",
         "nodejs": "pass"
       }
@@ -4210,8 +4210,8 @@
         "log_level": "WARN"
       },
       "status": {
-        "go": "xfail:A16",
-        "python": "xfail:A16",
+        "go": "pass",
+        "python": "pass",
         "dotnet": "xfail:phase-c",
         "nodejs": "pass"
       }
@@ -4256,7 +4256,7 @@
         "warning": "OTEL_SERVICE_NAME"
       },
       "status": {
-        "go": "xfail:A16",
+        "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
         "nodejs": "pass"
@@ -4282,8 +4282,8 @@
         }
       },
       "status": {
-        "go": "xfail:A16",
-        "python": "xfail:A16",
+        "go": "pass",
+        "python": "pass",
         "dotnet": "xfail:phase-c",
         "nodejs": "pass"
       }
@@ -4292,7 +4292,7 @@
       "id": "identity.blank_env_environment_absent",
       "kind": "resolve",
       "requirement": "R4/D1 edge-case rulings (2026-10-29)",
-      "note": "A blank deployment.environment.name is not provided: absent plus the ADR-003 warning.",
+      "note": "A blank deployment.environment.name is not provided: absent plus the ADR-003 warning. Go: the SDK providers' WithResource merges resource.Environment(), which re-adds the blank key as \"\" (D1 row \"Go: SDK providers re-read OTEL_RESOURCE_ATTRIBUTES\"; G7 forbids masking env).",
       "env": {
         "OTEL_SERVICE_NAME": "parity-svc",
         "OTEL_RESOURCE_ATTRIBUTES": "deployment.environment.name= "
@@ -4308,8 +4308,8 @@
         "log_level": "INFO"
       },
       "status": {
-        "go": "xfail:A16",
-        "python": "xfail:A16",
+        "go": "skip:no-upstream-go-resource-env-merge",
+        "python": "pass",
         "dotnet": "xfail:phase-c",
         "nodejs": "pass"
       }
@@ -4334,8 +4334,8 @@
         }
       },
       "status": {
-        "go": "xfail:A16",
-        "python": "xfail:A16",
+        "go": "pass",
+        "python": "pass",
         "dotnet": "xfail:phase-c",
         "nodejs": "pass"
       }
@@ -4359,7 +4359,7 @@
       },
       "status": {
         "go": "pass",
-        "python": "xfail:A16",
+        "python": "pass",
         "dotnet": "xfail:phase-c",
         "nodejs": "pass"
       }
@@ -4386,8 +4386,8 @@
         }
       },
       "status": {
-        "go": "xfail:A16",
-        "python": "xfail:A16",
+        "go": "pass",
+        "python": "pass",
         "dotnet": "xfail:phase-c",
         "nodejs": "pass"
       }
@@ -4414,7 +4414,7 @@
         }
       },
       "status": {
-        "go": "xfail:A16",
+        "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
         "nodejs": "pass"
@@ -4441,8 +4441,8 @@
         "warning": "OTEL_RESOURCE_ATTRIBUTES"
       },
       "status": {
-        "go": "xfail:A16",
-        "python": "xfail:A16",
+        "go": "pass",
+        "python": "pass",
         "dotnet": "xfail:phase-c",
         "nodejs": "pass"
       }
@@ -4490,8 +4490,8 @@
         "warning": "OTEL_RESOURCE_ATTRIBUTES"
       },
       "status": {
-        "go": "xfail:A16",
-        "python": "xfail:A16",
+        "go": "pass",
+        "python": "pass",
         "dotnet": "xfail:phase-c",
         "nodejs": "pass"
       }
@@ -4513,8 +4513,8 @@
         "warning": "OTEL_RESOURCE_ATTRIBUTES"
       },
       "status": {
-        "go": "xfail:A16",
-        "python": "xfail:A16",
+        "go": "pass",
+        "python": "pass",
         "dotnet": "xfail:phase-c",
         "nodejs": "pass"
       }
@@ -4538,8 +4538,8 @@
         }
       },
       "status": {
-        "go": "xfail:A16",
-        "python": "xfail:A16",
+        "go": "pass",
+        "python": "pass",
         "dotnet": "xfail:phase-c",
         "nodejs": "pass"
       }
@@ -4561,8 +4561,8 @@
         "warning": "OTEL_RESOURCE_ATTRIBUTES"
       },
       "status": {
-        "go": "xfail:A16",
-        "python": "xfail:A16",
+        "go": "pass",
+        "python": "pass",
         "dotnet": "xfail:phase-c",
         "nodejs": "pass"
       }
@@ -4571,7 +4571,7 @@
       "id": "resource_attributes.values_never_echoed",
       "kind": "resolve",
       "requirement": "R8/D1 edge-case rulings (2026-10-29)",
-      "note": "Malformed or undecodable items are reported by position; their text never reaches helper diagnostics or the process output.",
+      "note": "Malformed or undecodable items are reported by position; their text never reaches helper diagnostics or the process output. Go: the SDK providers re-parse the variable; the helper's scoped error-handler filter drops their echo (A16).",
       "env": {
         "OTEL_SERVICE_NAME": "parity-svc",
         "OTEL_RESOURCE_ATTRIBUTES": "token-s3cr3t-value,api.key=%zzs3cr3t,team.name=payments,deployment.environment.name=DEV"
@@ -4590,10 +4590,183 @@
         }
       },
       "status": {
-        "go": "xfail:A16",
-        "python": "xfail:A16",
+        "go": "pass",
+        "python": "pass",
         "dotnet": "xfail:phase-c",
         "nodejs": "pass"
+      }
+    },
+    {
+      "id": "resource_attributes.telemetry_sdk_env_ignored",
+      "kind": "resolve",
+      "requirement": "R5/D1 edge-case rulings (2026-10-29)",
+      "note": "telemetry.sdk.* always come from the SDK: OTEL_RESOURCE_ATTRIBUTES values for them are ignored silently (A16).",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_RESOURCE_ATTRIBUTES": "telemetry.sdk.name=custom,telemetry.sdk.language=custom,telemetry.sdk.version=custom,deployment.environment.name=DEV"
+      },
+      "code": {},
+      "expect": {
+        "resource": {
+          "telemetry.sdk.name": "opentelemetry",
+          "telemetry.sdk.language": {
+            "regex": "^(go|python|nodejs|dotnet)$"
+          },
+          "telemetry.sdk.version": {
+            "regex": "^[0-9]+\\.[0-9]+\\.[0-9]+"
+          }
+        },
+        "warning_count": {
+          "telemetry.sdk": 0
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "resource_attributes.telemetry_sdk_code_ignored",
+      "kind": "resolve",
+      "requirement": "R5/D1 edge-case rulings (2026-10-29)",
+      "note": "telemetry.sdk.* always come from the SDK: code resource_attributes values for them are ignored, warned once naming the key (A16).",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_RESOURCE_ATTRIBUTES": "deployment.environment.name=DEV"
+      },
+      "code": {
+        "resource_attributes": {
+          "telemetry.sdk.name": "custom",
+          "telemetry.sdk.language": "custom",
+          "telemetry.sdk.version": "custom"
+        }
+      },
+      "expect": {
+        "resource": {
+          "telemetry.sdk.name": "opentelemetry",
+          "telemetry.sdk.language": {
+            "regex": "^(go|python|nodejs|dotnet)$"
+          },
+          "telemetry.sdk.version": {
+            "regex": "^[0-9]+\\.[0-9]+\\.[0-9]+"
+          }
+        },
+        "warning": "telemetry.sdk.version",
+        "helper_log": {
+          "not_contains": "custom"
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "resource_attributes.unicode_space_key_verbatim",
+      "kind": "resolve",
+      "requirement": "R5/R8/D1 edge-case rulings (2026-10-29)",
+      "note": "Keys are trimmed with the contract set only: a leading U+00A0 stays part of the key, and no trimmed duplicate appears. Go: the SDK providers' own parse (Unicode TrimSpace) adds the trimmed key (D1 Go row).",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_RESOURCE_ATTRIBUTES": "\u00a0team.name=payments,deployment.environment.name=DEV"
+      },
+      "code": {},
+      "expect": {
+        "resource": {
+          "\u00a0team.name": "payments",
+          "team.name": {
+            "absent": true
+          }
+        }
+      },
+      "status": {
+        "go": "skip:no-upstream-go-resource-env-merge",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "resource_attributes.code_empty_key_fails",
+      "kind": "resolve",
+      "requirement": "R8/D1 edge-case rulings (2026-10-29)",
+      "note": "An empty (or trim-set-only) key in code resource_attributes is an invalid code value: setup fails naming the option (A16).",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_RESOURCE_ATTRIBUTES": "deployment.environment.name=DEV"
+      },
+      "code": {
+        "resource_attributes": {
+          "": "orphan"
+        }
+      },
+      "expect": {
+        "error": "empty key"
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "resource.detector_var_ignored_warned",
+      "kind": "resolve",
+      "requirement": "R5/D1 edge-case rulings (2026-10-29)",
+      "note": "Detector-selection variables are not honored: no detector attributes, one warning naming the variable (Python OTEL_EXPERIMENTAL_RESOURCE_DETECTORS, Node OTEL_NODE_RESOURCE_DETECTORS). Go has no such variable (OTEL_GO_X_RESOURCE only gates the instance id).",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_RESOURCE_ATTRIBUTES": "deployment.environment.name=DEV",
+        "OTEL_EXPERIMENTAL_RESOURCE_DETECTORS": "otel,process,os,host",
+        "OTEL_NODE_RESOURCE_DETECTORS": "env,host,os,process"
+      },
+      "code": {},
+      "expect": {
+        "resource": {
+          "process.pid": {
+            "absent": true
+          },
+          "host.name": {
+            "absent": true
+          },
+          "os.type": {
+            "absent": true
+          }
+        },
+        "warning": "RESOURCE_DETECTORS is ignored"
+      },
+      "status": {
+        "go": "skip:no-detector-variable",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "resource_attributes.proto_key_kept",
+      "kind": "resolve",
+      "requirement": "R5/R8/D1 edge-case rulings (2026-10-29)",
+      "note": "A __proto__ key is an ordinary attribute (Node: own data property, never a prototype write). Node: the helper keeps it, but @opentelemetry/resources 3.0 Resource.attributes builds a plain object with attrs[k] = v, which drops __proto__ (D-JS14).",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_RESOURCE_ATTRIBUTES": "__proto__=kept,deployment.environment.name=DEV"
+      },
+      "code": {},
+      "expect": {
+        "resource": {
+          "__proto__": "kept"
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:no-upstream-resource-proto-key"
       }
     },
     {

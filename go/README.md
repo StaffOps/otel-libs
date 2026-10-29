@@ -73,7 +73,7 @@ compression, headers) are in [HOW-TO §9](HOW-TO.md#9-configuration-reference).
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `OTEL_SERVICE_NAME` | _(unset)_ | `service.name`. Order: code > `OTEL_SERVICE_NAME` > `service.name` in `OTEL_RESOURCE_ATTRIBUTES` > `SERVICE_NAME` > SDK `unknown_service:<exe>` + warning. Whitespace-only = unset |
-| `OTEL_RESOURCE_ATTRIBUTES` | _(unset)_ | Resource attributes, incl. `deployment.environment.name` and `service.instance.id`. A key set in code (`WithResourceAttributes`) wins; a helper default never overwrites a key set here |
+| `OTEL_RESOURCE_ATTRIBUTES` | _(unset)_ | Resource attributes, incl. `deployment.environment.name` and `service.instance.id`. A key set in code (`WithResourceAttributes`) wins; a helper default never overwrites a key set here. Parsed by the helper: values percent-decoded then trimmed; an item without `=`, with an empty key or a bad `%` escape is warned by position (never by value); a blank identity value (`service.name=`) counts as unset; `telemetry.sdk.*` are ignored (the SDK sets them). Limitation: the Go SDK providers re-read the variable, so a blank `deployment.environment.name=` comes back as `""` and a key with surrounding Unicode whitespace appears twice (the helper keeps the SDK from echoing malformed items) |
 | `SERVICE_NAME` | _(unset)_ | **Deprecated** alias of `OTEL_SERVICE_NAME` (lowest priority); warns once per process when set |
 | `ENVIRONMENT` | _(unset)_ | **Deprecated** alias of `deployment.environment.name` (`OTEL_RESOURCE_ATTRIBUTES` wins); warns once when set. Unset everywhere → attribute absent + one warning. Values other than `LOCAL`/`DEV`/`HML`/`PRD` are emitted verbatim |
 

@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"go.opentelemetry.io/otel"
-	"go.opentelemetry.io/otel/sdk/resource"
+	semconv "go.opentelemetry.io/otel/semconv/v1.43.0"
 )
 
 // --- Functional options (With*) table-driven ---
@@ -154,15 +154,14 @@ func TestDebugProcessorShutdown(t *testing.T) {
 
 // --- buildResource ---
 
-// The helper's semconv version must match resource.Default()'s, or
-// resource.Merge drops the schema URL from every signal.
+// The resource declares the schema of the semconv package the helper targets.
 func TestBuildResourceHasSchemaURL(t *testing.T) {
 	res := buildResource(newOptions())
 	if res.SchemaURL() == "" {
-		t.Fatal("buildResource: empty schema URL (semconv version mismatch with resource.Default())")
+		t.Fatal("buildResource: empty schema URL")
 	}
-	if got, want := res.SchemaURL(), resource.Default().SchemaURL(); got != want {
-		t.Errorf("schema URL = %q, want resource.Default()'s %q", got, want)
+	if got, want := res.SchemaURL(), semconv.SchemaURL; got != want {
+		t.Errorf("schema URL = %q, want the helper's semconv package %q", got, want)
 	}
 }
 

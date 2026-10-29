@@ -5,18 +5,35 @@ from __future__ import annotations
 import atexit
 import logging
 import os
+import sys
 import threading
 import time
 import uuid
+import weakref
 from dataclasses import dataclass, field
 
 from opentelemetry import _logs, metrics, trace
 from opentelemetry.propagate import set_global_textmap
-from opentelemetry.sdk.resources import Resource
+from opentelemetry.sdk.resources import (
+    TELEMETRY_SDK_LANGUAGE,
+    TELEMETRY_SDK_NAME,
+    TELEMETRY_SDK_VERSION,
+    Resource,
+)
+from opentelemetry.sdk.version import __version__ as _sdk_version
 
 from staffops_otel_helper._propagators import build_propagator
+from staffops_otel_helper._resource_echo import suppress_sdk_resource_echo
 from staffops_otel_helper._semconv import ensure_semconv_default
-from staffops_otel_helper.config import ATTR_INSTANCE_ID, TelemetryOptions
+from staffops_otel_helper._diag import warn_once_per_process
+from staffops_otel_helper.config import (
+    ATTR_ENVIRONMENT,
+    ATTR_INSTANCE_ID,
+    ATTR_SERVICE_NAME,
+    ENV_RESOURCE_DETECTORS,
+    TRIM_CHARS,
+    TelemetryOptions,
+)
 from staffops_otel_helper.tracing import build_tracer_provider
 from staffops_otel_helper import metrics as _metrics_state
 from staffops_otel_helper.metrics import build_metrics, stop_listener
@@ -174,29 +191,143 @@ if hasattr(os, "register_at_fork"):
     os.register_at_fork(after_in_child=_mark_forked)
 
 
-def _build_resource(options: TelemetryOptions) -> Resource:
-    """Helper-resolved attributes + code attributes on top of the SDK's env resource.
+# The semantic-conventions schema the helper's resource declares: the semconv version the
+# helper targets, the same literal in every language (design D1 row "telemetry.sdk.* and the
+# resource schema URL", 2026-10-29). It is a contract literal, not read from the installed
+# semconv package, so on SDK 1.42-1.44 it may be newer than that package's newest schema.
+# Bumping it is a contract change.
+SCHEMA_URL = "https://opentelemetry.io/schemas/1.43.0"
 
-    The helper never sets a key the env already provides unless code asked for it
-    (R5); ``service.instance.id`` falls back to the SDK detector (sdk >= 1.45) and
-    then to a per-process UUID (D4).
+# telemetry.sdk.* always come from the SDK; env and code values for these keys are ignored.
+_TELEMETRY_SDK = {
+    TELEMETRY_SDK_NAME: "opentelemetry",
+    TELEMETRY_SDK_LANGUAGE: "python",
+    TELEMETRY_SDK_VERSION: _sdk_version,
+}
+
+# Detector names that only name what the helper already does (env parse, instance id).
+_BUILTIN_DETECTORS = frozenset({"otel", "service_instance"})
+
+
+def _default_service_name() -> str:
+    """The SDK default, ``unknown_service:<interpreter>`` (sdk >= 1.45 spelling, on every version)."""
+    return f"unknown_service:{os.path.basename(sys.executable)}" if sys.executable else "unknown_service"
+
+
+def _sdk_instance_id() -> str | None:
+    """The SDK's per-process id (``ServiceInstanceIdResourceDetector``, sdk >= 1.45), else None."""
+    try:
+        from opentelemetry.sdk.resources import ServiceInstanceIdResourceDetector
+    except ImportError:  # sdk 1.42-1.44
+        return None
+    value = ServiceInstanceIdResourceDetector().detect().attributes.get(ATTR_INSTANCE_ID)
+    return value if isinstance(value, str) and value else None
+
+
+def _warn_unused_detectors() -> None:
+    """Design D1 detector-selection rule: the variable is not honored, warned once per process."""
+    raw = os.environ.get(ENV_RESOURCE_DETECTORS) or ""
+    names = {n.strip(TRIM_CHARS) for n in raw.split(",")} - {""}
+    if names - _BUILTIN_DETECTORS:
+        warn_once_per_process(
+            _log, f"unused:{ENV_RESOURCE_DETECTORS}",
+            "[OtelHelper] %s is ignored: the helper builds the resource itself (service identity, "
+            "OTEL_RESOURCE_ATTRIBUTES, code attributes), also after a fork. Add host/process/cloud "
+            "attributes in the Collector (resourcedetection, k8sattributes processors).",
+            ENV_RESOURCE_DETECTORS)
+
+
+def _warn_code_telemetry_sdk(options: TelemetryOptions) -> None:
+    """A telemetry.sdk.* key set in code is ignored: warned once per process, naming the key only."""
+    for key in sorted(k for k in options.resource_attributes if k in _TELEMETRY_SDK):
+        warn_once_per_process(
+            _log, f"code-telemetry-sdk:{key}",
+            "[OtelHelper] resource_attributes[%r] is ignored: the OpenTelemetry SDK sets %s.", key, key)
+
+
+def _build_resource(options: TelemetryOptions) -> Resource:
+    """OTEL_RESOURCE_ATTRIBUTES (the helper's parse) < code attributes < resolved identity < telemetry.sdk.*.
+
+    The SDK's ``Resource.create()`` is not used: its env detector would parse
+    OTEL_RESOURCE_ATTRIBUTES again and log invalid items verbatim (R8). Identity
+    (design D1, D4): ``service.name`` always set (SDK default when none was
+    configured), ``deployment.environment.name`` absent when unset, and
+    ``service.instance.id`` from code or env, else the SDK detector (sdk >= 1.45,
+    refreshed after fork), else a per-process UUID.
     """
-    attributes: dict[str, object] = dict(options._resource_overrides)
+    _warn_unused_detectors()
+    _warn_code_telemetry_sdk(options)
+    identity = options._resource_overrides
+    attributes: dict[str, object] = dict(options._env_resource)
     attributes.update(options.resource_attributes)
-    resource = Resource.create(attributes)
+    attributes[ATTR_SERVICE_NAME] = identity.get(ATTR_SERVICE_NAME) or _default_service_name()
+    environment = identity.get(ATTR_ENVIRONMENT)
+    if environment is None:
+        attributes.pop(ATTR_ENVIRONMENT, None)
+    else:
+        attributes[ATTR_ENVIRONMENT] = environment
 
     global _helper_instance_id
-    _helper_instance_id = ATTR_INSTANCE_ID not in resource.attributes
-    if _helper_instance_id:
-        return resource.merge(Resource({ATTR_INSTANCE_ID: str(uuid.uuid4())}))
-    provided = ATTR_INSTANCE_ID in options.resource_attributes or ATTR_INSTANCE_ID in options._env_resource
+    provided = identity.get(ATTR_INSTANCE_ID)
+    sdk_id = None if provided else _sdk_instance_id()
+    _helper_instance_id = not provided and sdk_id is None
+    attributes[ATTR_INSTANCE_ID] = provided or sdk_id or str(uuid.uuid4())
     if provided and _forked_after_import:
         _log.warning(
             "[OtelHelper] %s is set explicitly (code or OTEL_RESOURCE_ATTRIBUTES) in a forked worker "
             "process: every worker reports the same id. Leave it unset so each process gets its own.",
             ATTR_INSTANCE_ID,
         )
-    return resource
+    attributes.update(_TELEMETRY_SDK)
+    return Resource(attributes, SCHEMA_URL)
+
+
+def _restore_resource(providers: list, resource: Resource, explicit_id: bool) -> None:
+    """Put the helper's resource back on providers after the SDK's fork refresh (sdk >= 1.45).
+
+    The SDK merges its process-dependent detectors (``ServiceInstanceIdResourceDetector``
+    and any from ``OTEL_EXPERIMENTAL_RESOURCE_DETECTORS``) on top of the resource after a
+    fork, which replaced an explicit ``service.instance.id`` and re-added detector
+    attributes. The child keeps the helper's resource, with the SDK's fresh per-process
+    id unless code or the env set one (design D4). Private SDK attributes, guarded by
+    ``hasattr``; runs inside the fork hook, so it never logs and never raises.
+    """
+    desired = resource
+    if not explicit_id:
+        fresh = _sdk_instance_id()
+        if fresh is not None:
+            desired = Resource({**resource.attributes, ATTR_INSTANCE_ID: fresh}, resource.schema_url)
+    for provider in providers:
+        if provider is None:
+            continue
+        try:
+            if hasattr(provider, "_sdk_config"):  # MeterProvider
+                provider._sdk_config.resource = desired
+            elif hasattr(provider, "_resource"):  # TracerProvider, LoggerProvider
+                provider._resource = desired
+            else:
+                continue
+            provider._update_resource(Resource.get_empty())  # pushes the resource to tracers/loggers
+        except Exception:  # noqa: BLE001 - a fork hook must not raise; the SDK's own refresh stays
+            pass
+
+
+def _register_fork_restore(pipeline: _Pipeline, resource: Resource, explicit_id: bool) -> None:
+    """Register :func:`_restore_resource` after the providers' own fork hooks (sdk >= 1.45).
+
+    ``after_in_child`` hooks run in registration order, so this one runs after the SDK
+    refresh. Providers are held weakly: a hook of a shut-down pipeline does nothing.
+    """
+    providers = [p for p in (pipeline.tracer_provider, pipeline.meter_provider, pipeline.logger_provider)
+                 if p is not None and hasattr(type(p), "_handle_fork") and hasattr(p, "_update_resource")]
+    if not providers or not hasattr(os, "register_at_fork"):
+        return
+    refs = [weakref.ref(p) for p in providers]
+
+    def _after_in_child() -> None:
+        _restore_resource([r() for r in refs], resource, explicit_id)
+
+    os.register_at_fork(after_in_child=_after_in_child)
 
 
 def setup_telemetry(options: TelemetryOptions | None = None) -> TelemetryOptions:
@@ -286,6 +417,11 @@ def _setup_locked(options: TelemetryOptions, prep) -> None:
 
 
 def _build_signals(pipeline: _Pipeline, options: TelemetryOptions) -> None:
+    with suppress_sdk_resource_echo():
+        _build_signals_quietly(pipeline, options)
+
+
+def _build_signals_quietly(pipeline: _Pipeline, options: TelemetryOptions) -> None:
     resource = _build_resource(options)
     want_traces = options.is_signal_enabled("traces")
     want_metrics = options.is_signal_enabled("metrics") and bool(options.resolved_metric_exporters())
@@ -304,6 +440,7 @@ def _build_signals(pipeline: _Pipeline, options: TelemetryOptions) -> None:
         pipeline.logger_provider, pipeline.log_handler, pipeline.log_level = build_logging(resource, options)
     else:
         pipeline.log_level = build_logging_level(options)
+    _register_fork_restore(pipeline, resource, explicit_id=bool(options._resource_overrides.get(ATTR_INSTANCE_ID)))
 
 
 def _install(pipeline: _Pipeline, options: TelemetryOptions, prep=None) -> None:

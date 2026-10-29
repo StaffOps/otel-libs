@@ -850,6 +850,9 @@ class TestDiagnosticsChannel:
             # back to restore it on shutdown), only in logging_setup.py.
             tuning = (str(rel) in ("logging_setup.py", "_console.py") and isinstance(parent, ast.Attribute)
                       and parent.attr in ("setLevel", "level", "addHandler", "removeHandler", "handlers"))
+            # The SDK resources logger: only the A16 echo filter, only in _resource_echo.py.
+            tuning = tuning or (str(rel) == "_resource_echo.py" and isinstance(parent, ast.Attribute)
+                                and parent.attr in ("filters", "addFilter", "removeFilter"))
             if not tuning:
                 bad.append(f"{rel}:{node.lineno} getLogger({ast.unparse(arg) if arg else ''})")
         return bad
@@ -863,6 +866,8 @@ class TestDiagnosticsChannel:
         ("config.py", "import logging\nx = logging.getLogger()"),
         ("config.py", "import logging\nx = logging.getLogger(name='app')"),
         ("logging_setup.py", "import logging\nlogging.getLogger('app').info('x')"),
+        ("_resource_echo.py", "import logging\nlogging.getLogger('app').warning('x')"),
+        ("config.py", "import logging\nlogging.getLogger('app').addFilter(None)"),
     ])
     def test_logger_scan_catches(self, rel, snippet):
         assert self._logger_offenders(rel, ast.parse(snippet))

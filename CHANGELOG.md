@@ -117,6 +117,17 @@ Runtime and operations:
 17. **Debug marker:** with debug mode on, `debug=true` is now set on spans with a
     **remote** parent too, so a debug service marks every inbound request — see
     the Collector prerequisites below.
+18. **Resource identity (design D1 rows of 2026-10-29, A16):** a blank
+    `service.name`, `deployment.environment.name` or `service.instance.id`
+    (in `OTEL_RESOURCE_ATTRIBUTES` or `WithResourceAttributes`) means "not
+    provided": the next source applies (except a blank env
+    `deployment.environment.name=`, which the Go SDK re-adds as `""` — known
+    gap). `WithServiceName` / `WithEnvironment` now win over the same key in
+    `WithResourceAttributes` on the wire too. `OTEL_RESOURCE_ATTRIBUTES`
+    values are trimmed with the contract set after percent-decoding
+    (`%20x%09` → `x`); `telemetry.sdk.*` set there or in code are ignored (a
+    code value warns once). An empty key in `WithResourceAttributes` now
+    **fails `Setup`**. The identity warnings are written once per process.
 
 ### Migration guide 0.2 → 0.3 — Python
 
@@ -247,6 +258,25 @@ Telemetry and runtime:
     server's shutdown hook — Python skips `atexit` on an unhandled SIGTERM.
     Traces and metrics cannot be re-enabled by a setup after shutdown in the
     same process (API limitation).
+19. **BREAKING — resource (design D1 rows of 2026-10-29, A16):** the helper
+    builds the resource itself instead of `Resource.create()`, so
+    `OTEL_EXPERIMENTAL_RESOURCE_DETECTORS` (`process`, `os`, `host`, contrib
+    detectors) is **ignored** and warned once — add those attributes in the
+    Collector (`resourcedetection`, `k8sattributes`); on SDK ≥ 1.45 the SDK's
+    after-fork refresh no longer re-adds them either. `telemetry.sdk.*` set in
+    `OTEL_RESOURCE_ATTRIBUTES` or `resource_attributes` are ignored (the SDK's
+    values win; a code value warns once), the resource declares the schema URL
+    `https://opentelemetry.io/schemas/1.43.0`, and the default service name is
+    `unknown_service:<interpreter>` on every SDK version (1.42–1.44 had no
+    suffix). A blank `service.name`, `deployment.environment.name` or
+    `service.instance.id` now means "not provided", and `service_name=` /
+    `environment=` beat the same key in `resource_attributes` on the wire.
+    `resource_attributes` with an empty or non-string key, or a non-string
+    `service.name` / `deployment.environment.name` / `service.instance.id`,
+    now **raises `ValueError`**. An explicit `service.instance.id` now
+    survives a fork on SDK ≥ 1.45 (the SDK replaced it before). The identity
+    and parse warnings are written once per process (they were once per
+    options object).
 
 ### Collector / platform prerequisites (before rolling 0.3.0 out)
 
@@ -299,8 +329,9 @@ upgrading.
 | **BREAKING** Go HTTP server span names | the `operation` argument of `NewHTTPHandler` | `<METHOD> <route>` from the `http.ServeMux` pattern (`GET /orders/{id}`), or `<METHOD>` without a pattern | none; `dashboards/03-traces-reliability.json` groups by span name, so those series break |
 | Go gRPC health RPCs | `Check` traced and counted in `rpc.server.duration` (the server filter never matched); `Watch` and all client RPCs emitted no metrics; client-side health spans dropped | `Check` and `Watch` counted in `rpc.server.call.duration` (only `Watch` counting is new), their server spans dropped by the health sampler (A7-go); client RPCs counted in the new `rpc.client.call.duration`, except health calls (no client span, no client metric) | exclude `rpc_method=~"grpc.health.v1.Health/.*"` in SLO queries (long-lived `Watch` streams inflate tail latency) |
 | **BREAKING** Go HTTP health requests | `/ping /health /healthz /ready` (exact) through `NewHTTPHandler`: no span **and no metric** | `/health /healthz /ready /readyz /live /livez /ping /metrics` (exact, case-insensitive, trailing slash and query ignored): no server span, but **counted** in `http.server.request.duration` | exclude health routes (`http_route` / probe paths) in SLI queries; `WithHealthPaths(...)` changes the list |
-| Go resource `schema_url` | `https://opentelemetry.io/schemas/1.26.0` | `https://opentelemetry.io/schemas/1.43.0` (the helper's semconv now matches sdk v1.47's `resource.Default()`; a mismatch would make `resource.Merge` drop the schema URL, and a merge error is now logged) | — |
+| Go resource `schema_url` | `https://opentelemetry.io/schemas/1.26.0` | `https://opentelemetry.io/schemas/1.43.0`, the contract literal shared with Python and Node.js (the helper builds its resource with `resource.NewWithAttributes`, no merge with `resource.Default()`) | — |
 | Python resource | — | on sdk ≥ 1.45 the SDK adds `service.instance.id` (one value per process: a new label per restart where resource attributes become labels) | — |
+| **BREAKING** Python resource `schema_url`, `telemetry.sdk.*`, extra detectors (A16) | no schema URL; `telemetry.sdk.*` overridable through `OTEL_RESOURCE_ATTRIBUTES`; `OTEL_EXPERIMENTAL_RESOURCE_DETECTORS` attributes (`process.*`, `os.*`, `host.*`, …) | `https://opentelemetry.io/schemas/1.43.0`; `telemetry.sdk.*` always the SDK's; detector attributes gone (warned) | add host/process attributes in the Collector (`resourcedetection`) |
 
 Python HTTP metrics switch to the stable semconv too in 0.3.0 (R10/D12 — see
 the Python section below), so both languages emit `http.server.request.duration`
@@ -317,6 +348,35 @@ after the upgrade.
 
 ### Go — detailed changes
 
+- **Fix — identity and `OTEL_RESOURCE_ATTRIBUTES` rulings (design D1 rows of
+  2026-10-29, task A16).** `WithServiceName` / `WithEnvironment` now beat the
+  same key in `WithResourceAttributes` in the emitted resource, not only in
+  the resolved value. A blank identity value (empty or contract-trim-set only)
+  in `OTEL_RESOURCE_ATTRIBUTES` or `WithResourceAttributes` counts as not
+  provided — no more `service.name=""` with a `using=""` warning; a blank
+  code environment falls back; a blank instance id gets a generated UUID. A
+  code-only `WithResourceAttributes({"service.name": …})` resolves to that
+  value without the "no service name" warning. The helper now parses
+  `OTEL_RESOURCE_ATTRIBUTES` itself (no `resource.Default()`): blank items
+  ignored, split at the first `=`, percent-decode then trim with the contract
+  set; an item without `=`, with an empty or non-UTF-8 key is skipped, and an
+  invalid escape or non-UTF-8 decode keeps the value literal (one U+FFFD per
+  invalid raw byte), each with one warning naming the item **positions** only
+  (R8). The SDK providers still re-parse the variable (`WithResource` merges
+  `resource.Environment()`); while `Setup` builds them a scoped
+  `otel.ErrorHandler` filter drops exactly the SDK's echo of malformed items
+  (`resource.ErrPartialResource`, bare `url.EscapeError`) and forwards every
+  other error to the previous handler, which is restored afterwards. Still a
+  known gap (G7): a blank env `deployment.environment.name=` comes back as
+  `""`, and a key with surrounding Unicode whitespace appears twice — parity
+  cases `identity.blank_env_environment_absent` and
+  `resource_attributes.unicode_space_key_verbatim` are
+  `skip:no-upstream-go-resource-env-merge`. `telemetry.sdk.*` always come
+  from the SDK (a code value warns once, naming the key); the schema URL
+  stays semconv 1.43.0, now the contract literal shared by Go, Python and
+  Node.js. An empty key in `WithResourceAttributes` fails `Setup`. The
+  identity and parse warnings are written once per process. The helper's
+  instance id is used even with `OTEL_GO_X_RESOURCE=true`.
 - **Fix — `NewSlogHandler` level-filters records exported through the OTel
   bridge (R4, design D6 A13 ruling).** Only the stdout fallback was filtered,
   so with an OTLP logs exporter in PRD the handler exported DEBUG/INFO. Both
@@ -574,6 +634,37 @@ Behavior changes, with migration notes:
 
 ### Python — detailed changes
 
+- **BREAKING — identity and resource rulings (design D1 rows of 2026-10-29,
+  task A16; migration item 19).** `service_name=` / `environment=` beat the
+  same key in `resource_attributes` in the emitted resource, not only in the
+  resolved value. A blank `service.name`, `deployment.environment.name` or
+  `service.instance.id` (empty or contract-trim-set only) in
+  `OTEL_RESOURCE_ATTRIBUTES` or `resource_attributes` counts as not provided:
+  the next precedence level applies (SDK default + warning; absent + ADR-003
+  warning; SDK/helper-generated id). The helper parses
+  `OTEL_RESOURCE_ATTRIBUTES` itself (`parse_resource_attributes`, no
+  `OTELResourceDetector`): blank items ignored, split at the first `=`,
+  percent-decode then trim with the contract set; an item without `=`, with
+  an empty or non-UTF-8 key is skipped and an invalid `%` escape or non-UTF-8
+  decode keeps the value literal, each with one warning per process naming
+  item **positions** only. The SDK's own warning, which printed the raw item
+  when `opentelemetry.sdk._logs` called `Resource.create()` at import, is
+  dropped by a process-local `logging.Filter` on `opentelemetry.sdk.resources`
+  during the helper's import and setup (only that record; the environment is
+  never touched). The resource is built without `Resource.create()`:
+  `telemetry.sdk.*` always come from the SDK (a code value warns once, naming
+  the key), the schema URL is semconv 1.43.0 (the contract literal), the
+  default service name is `unknown_service:<interpreter>` on every SDK
+  version, and `OTEL_EXPERIMENTAL_RESOURCE_DETECTORS` is ignored with a
+  once-per-process warning. On SDK ≥ 1.45 the helper restores its resource
+  after the SDK's fork refresh, so detector attributes are not re-added and an
+  explicit (code/env) `service.instance.id` survives the fork — the SDK used
+  to replace it; a generated id still becomes the SDK's fresh per-process id
+  (precedence: code > env > SDK detector on ≥ 1.45 > helper UUID). New
+  `ValueError`s: an empty or non-string key in `resource_attributes`, and a
+  non-string identity value (`service.name`, `deployment.environment.name`,
+  `service.instance.id`). The "no service name" and ADR-003 warnings are now
+  once per process (were once per options object).
 - **Breaking — package renamed to `staffops-otel-helper` / `staffops_otel_helper`
   (ADR-011, from `0.3.0rc3`; `0.3.0rc2` was still `otel-helper`).** The
   distribution, the import package and the helper loggers carry the owner
@@ -1090,6 +1181,26 @@ Unsupported instrumentation versions, task A10 (P18):
   Python 4). New D-JS14 rows: per-setup identity warnings, `telemetry.sdk.*`
   override direction and schema URL, `unknown_service` suffix. `JS3`/`JS4` left
   `tools/trace-allow.txt`.
+- **Identity/resource rulings in Go, Python and Node.js (task A16).** No
+  fixture status says `xfail:A16` any more: Go 13 of the 14 Go cases pass
+  (`identity.blank_env_environment_absent` is
+  `skip:no-upstream-go-resource-env-merge`), Python all 13. Six new cases
+  (210 in total): `resource_attributes.telemetry_sdk_{env,code}_ignored`
+  (all three keys), `resource_attributes.unicode_space_key_verbatim` (Go
+  skip, same reason), `resource_attributes.code_empty_key_fails`,
+  `resource.detector_var_ignored_warned` (Go `skip:no-detector-variable`)
+  and `resource_attributes.proto_key_kept` (Node
+  `skip:no-upstream-resource-proto-key`: `@opentelemetry/resources` 3.0
+  drops a `__proto__` key in `Resource.attributes`; new D-JS14 row). Node.js
+  follows the same rules: `telemetry.sdk.*` always from the SDK (code value
+  warned once), schema URL `https://opentelemetry.io/schemas/1.43.0`,
+  `OTEL_NODE_RESOURCE_DETECTORS` beyond `env`/`serviceinstance`/`none`
+  ignored and warned once, identity and parse warnings once per process, and
+  `__proto__` kept as an ordinary key up to the SDK resource. Two D-JS14 rows
+  removed (`telemetry.sdk.*` direction, per-setup warning cadence).
+- **Go test hygiene:** `captureDiag` (`go/config_contract_test.go`) no longer
+  prints slog timestamps, which made `TestDeprecatedEnvWarnsNamingReplacement`
+  (`go/deprecation_test.go`) flaky.
 - **License: Apache-2.0** (`LICENSE`, the official text; same as
   OpenTelemetry). Declared in `python/pyproject.toml` (`license`) and the
   NuGet packages (`PackageLicenseExpression`). Before this the repository had

@@ -6,6 +6,7 @@ resolves everything else from the standard env vars (ADR-001).
 
 from __future__ import annotations
 
+import importlib
 import os
 from contextlib import contextmanager
 from collections.abc import Iterator
@@ -49,8 +50,6 @@ def _masked(names: tuple[str, ...]) -> Iterator[None]:
 
 def build_otlp_exporter(plan: SignalExport):  # noqa: ANN201 - one of six SDK exporter types
     """Instantiate the OTLP exporter for one signal."""
-    import importlib
-
     module_name, class_name = (_HTTP if plan.protocol == PROTOCOL_HTTP else _GRPC)[plan.signal]
     cls = getattr(importlib.import_module(module_name), class_name)
     kwargs = dict(plan.kwargs)

@@ -25,7 +25,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Literal
 import re
-from urllib.parse import SplitResult, unquote, urlsplit, urlunsplit
+from urllib.parse import SplitResult, unquote, unquote_to_bytes, urlsplit, urlunsplit
 
 from staffops_otel_helper._diag import warn_once_per_process
 
@@ -61,6 +61,8 @@ ENV_TRACES_SAMPLER = "OTEL_TRACES_SAMPLER"
 ENV_TRACES_SAMPLER_ARG = "OTEL_TRACES_SAMPLER_ARG"
 ENV_OTLP_PROTOCOL = "OTEL_EXPORTER_OTLP_PROTOCOL"
 ENV_SDK_DISABLED = "OTEL_SDK_DISABLED"
+ENV_RESOURCE_ATTRIBUTES = "OTEL_RESOURCE_ATTRIBUTES"
+ENV_RESOURCE_DETECTORS = "OTEL_EXPERIMENTAL_RESOURCE_DETECTORS"
 
 ATTR_SERVICE_NAME = "service.name"
 ATTR_ENVIRONMENT = "deployment.environment.name"
@@ -105,6 +107,76 @@ def _env(name: str) -> str | None:
     if value is None or not value.strip(TRIM_CHARS):
         return None
     return value.strip(TRIM_CHARS)
+
+
+_BAD_PERCENT_RE = re.compile(r"%(?![0-9A-Fa-f]{2})")
+
+
+def _non_blank(value: object) -> str | None:
+    """A string trimmed with the contract set, or None when it is not a string or is blank."""
+    if not isinstance(value, str):
+        return None
+    return value.strip(TRIM_CHARS) or None
+
+
+def _percent_decode(value: str) -> str | None:
+    """Strict percent-decoding (``decodeURIComponent``); None on a bad escape or non-UTF-8 result."""
+    if _BAD_PERCENT_RE.search(value):
+        return None
+    try:
+        return unquote_to_bytes(value).decode("utf-8")
+    except UnicodeError:  # not UTF-8 once decoded, or a surrogate-escaped raw byte
+        return None
+
+
+def _is_utf8(value: str) -> bool:
+    """False for a str carrying surrogate-escaped raw bytes (``os.environ`` decodes non-UTF-8 that way)."""
+    try:
+        value.encode("utf-8")
+    except UnicodeEncodeError:
+        return False
+    return True
+
+
+@dataclass(frozen=True)
+class ParsedResourceAttributes:
+    """Result of :func:`parse_resource_attributes`."""
+
+    attributes: dict[str, str]
+    #: 1-based positions of items without ``=`` or with an empty key (skipped).
+    malformed: tuple[int, ...] = ()
+    #: 1-based positions whose value is an invalid percent-encoding or not UTF-8 (kept literally).
+    undecodable: tuple[int, ...] = ()
+
+
+def parse_resource_attributes(raw: str) -> ParsedResourceAttributes:
+    """Parse ``OTEL_RESOURCE_ATTRIBUTES`` (design D1 row of 2026-10-29).
+
+    The helper owns this parse: the SDK's ``OTELResourceDetector`` logs invalid items
+    verbatim (R8) and trims Unicode whitespace. Split on ``,``; blank items are ignored;
+    each item splits at its first ``=``; the key is trimmed with the contract set (an
+    empty or non-UTF-8 key makes the item malformed); the value is percent-decoded, then
+    trimmed. A bad escape or a decode that is not UTF-8
+    keeps the value literal (still trimmed). Callers report positions only, never values.
+    """
+    attributes: dict[str, str] = {}
+    malformed: list[int] = []
+    undecodable: list[int] = []
+    for position, item in enumerate(raw.split(","), start=1):
+        if not item.strip(TRIM_CHARS):
+            continue
+        key, sep, value = item.partition("=")
+        key = key.strip(TRIM_CHARS)
+        if not sep or not key or not _is_utf8(key):
+            malformed.append(position)
+            continue
+        decoded = _percent_decode(value)
+        if decoded is None:
+            undecodable.append(position)
+            # A raw env byte that is not UTF-8 arrives surrogate-escaped; OTLP strings must be UTF-8.
+            decoded = value.encode("utf-8", "surrogateescape").decode("utf-8", "replace")
+        attributes[key] = decoded.strip(TRIM_CHARS)
+    return ParsedResourceAttributes(attributes, tuple(malformed), tuple(undecodable))
 
 
 # Deprecated environment variables (R8/D8): warned once per process, removed in 1.0.
@@ -352,11 +424,10 @@ class TelemetryOptions:
     _otlp: dict[str, SignalExport] = field(default_factory=dict, init=False, repr=False)
     _span_log_exporters: dict[str, list[str]] = field(default_factory=dict, init=False, repr=False)
     _resource_overrides: dict[str, object] = field(default_factory=dict, init=False, repr=False)
-    _env_resource: dict[str, object] = field(default_factory=dict, init=False, repr=False)
+    _env_resource: dict[str, str] = field(default_factory=dict, init=False, repr=False)
     _warned: set[str] = field(default_factory=set, init=False, repr=False)
     _resolved: bool = field(default=False, init=False, repr=False)
     _sdk_disabled: bool = field(default=False, init=False, repr=False)
-    _whitespace_service_name: bool = field(default=False, init=False, repr=False)
     _setup_disabled: set[str] = field(default_factory=set, init=False, repr=False)
     # Effective values of the _CODE_ONLY_DEFAULTS fields (+ "sample_ratio_set"), rebuilt
     # by every resolve_from_env(); empty before the first one.
@@ -471,6 +542,15 @@ class TelemetryOptions:
             if not isinstance(value, str):
                 fail(option, f"must be a string, got {type(value).__name__}")
 
+        if not isinstance(self.resource_attributes, dict):
+            fail("resource_attributes", f"must be a dict, got {type(self.resource_attributes).__name__}")
+        for key, value in self.resource_attributes.items():
+            if not isinstance(key, str):
+                fail("resource_attributes", f"keys must be strings, got {type(key).__name__}")
+            if not key.strip(TRIM_CHARS):
+                fail("resource_attributes", "has an empty key")
+            if key in (ATTR_SERVICE_NAME, ATTR_ENVIRONMENT, ATTR_INSTANCE_ID) and not isinstance(value, str):
+                fail(f"resource_attributes[{key!r}]", f"must be a string, got {type(value).__name__}")
         check_str("service_name", self.service_name)
         if isinstance(self.service_name, str) and not self.service_name.strip(TRIM_CHARS):
             fail("service_name", "must not be empty")
@@ -543,8 +623,6 @@ class TelemetryOptions:
 
         Raises ValueError for invalid values set in code; env problems only warn.
         """
-        from opentelemetry.sdk.resources import OTELResourceDetector
-
         self._validate_code()
         # Every resolution starts from the code values only (A13 review M1): a second
         # setup_telemetry() with the same object re-reads the environment.
@@ -553,16 +631,12 @@ class TelemetryOptions:
         self._span_log_exporters = {}
         self._resource_overrides = {}
         _warn_deprecated_env()
-        whitespace_name = ENV_OTEL_SERVICE_NAME in os.environ and _env(ENV_OTEL_SERVICE_NAME) is None
-        saved = os.environ.pop(ENV_OTEL_SERVICE_NAME) if whitespace_name else None
-        try:
-            self._env_resource = dict(OTELResourceDetector().detect().attributes)
-        finally:
-            if saved is not None:
-                os.environ[ENV_OTEL_SERVICE_NAME] = saved
-        self._whitespace_service_name = whitespace_name
+        self._env_resource = self._parse_env_resource()
         self._resolve_service_name()
         self._resolve_environment()
+        self._resource_overrides[ATTR_INSTANCE_ID] = (
+            _non_blank(self.resource_attributes.get(ATTR_INSTANCE_ID))
+            or _non_blank(self._env_resource.get(ATTR_INSTANCE_ID)))
 
         # A value set in code wins whatever it is (D1 A13 ruling): only None reads the env.
         eff = self._effective
@@ -636,37 +710,44 @@ class TelemetryOptions:
                             ENV_SAMPLE_RATIO, raw, clamped)
         self._effective["sample_ratio"], self._effective["sample_ratio_set"] = clamped, True
 
+    def _parse_env_resource(self) -> dict[str, str]:
+        """``OTEL_RESOURCE_ATTRIBUTES`` as the helper parses it; problems warned once per process, by position only."""
+        raw = os.environ.get(ENV_RESOURCE_ATTRIBUTES)
+        if raw is None or not raw.strip(TRIM_CHARS):
+            return {}
+        parsed = parse_resource_attributes(raw)
+        if parsed.malformed:
+            warn_once_per_process(_log, "resource_attributes:malformed", "[OtelHelper] %s: items %s are not key=value "
+                            "and were skipped.", ENV_RESOURCE_ATTRIBUTES, ",".join(map(str, parsed.malformed)))
+        if parsed.undecodable:
+            warn_once_per_process(_log, "resource_attributes:undecodable", "[OtelHelper] %s: the values of items %s have an "
+                            "invalid percent-encoding and are kept literally.", ENV_RESOURCE_ATTRIBUTES,
+                            ",".join(map(str, parsed.undecodable)))
+        return parsed.attributes
+
     def _resolve_service_name(self) -> None:
-        """code > OTEL_SERVICE_NAME > OTEL_RESOURCE_ATTRIBUTES > SERVICE_NAME > SDK default (D1)."""
+        """code option > code attribute > OTEL_SERVICE_NAME > OTEL_RESOURCE_ATTRIBUTES > SERVICE_NAME >
+        SDK default (D1). A blank value at any level is not provided."""
         if self.service_name is not None:
             self.service_name = self.service_name.strip(TRIM_CHARS)
             self._resource_overrides[ATTR_SERVICE_NAME] = self.service_name
             return
-        code_attr = self.resource_attributes.get(ATTR_SERVICE_NAME)
-        env_name = str(self._env_resource.get(ATTR_SERVICE_NAME) or "").strip(TRIM_CHARS)
-        legacy = _env(ENV_SERVICE_NAME)
-        if code_attr:
-            self.service_name = str(code_attr)
-        elif env_name:
-            self.service_name = env_name  # set by the SDK from the env; the helper adds nothing
-            if self._whitespace_service_name:
-                # The SDK would let the whitespace-only OTEL_SERVICE_NAME win over this value.
-                self._resource_overrides[ATTR_SERVICE_NAME] = env_name
-        elif legacy:
-            self.service_name = legacy
-            self._resource_overrides[ATTR_SERVICE_NAME] = legacy
+        name = (_non_blank(self.resource_attributes.get(ATTR_SERVICE_NAME)) or _env(ENV_OTEL_SERVICE_NAME)
+                or _non_blank(self._env_resource.get(ATTR_SERVICE_NAME)) or _env(ENV_SERVICE_NAME))
+        if name is not None:
+            self.service_name = name
         else:
-            if self._whitespace_service_name or ATTR_SERVICE_NAME in self._env_resource:
-                # Whitespace-only = unset: an empty value makes Resource.create() apply the SDK default.
-                self._resource_overrides[ATTR_SERVICE_NAME] = ""
-            self._warn_once(
-                "service.name",
+            warn_once_per_process(
+                _log, "identity:service.name",
                 "[OtelHelper] No service name configured: set %s. The SDK default "
                 "(unknown_service) will be used.", ENV_OTEL_SERVICE_NAME,
             )
+        # None: _build_resource() applies the SDK default.
+        self._resource_overrides[ATTR_SERVICE_NAME] = name
 
     def _resolve_environment(self) -> None:
-        """code > OTEL_RESOURCE_ATTRIBUTES > ENVIRONMENT (deprecated alias) > unset (ADR-003)."""
+        """code option > code attribute > OTEL_RESOURCE_ATTRIBUTES > ENVIRONMENT (deprecated alias) >
+        unset (ADR-003). A blank value at any level is not provided; emitted verbatim."""
         if self.environment is not None:
             if isinstance(self.environment, DeploymentEnvironment):
                 value: str = self.environment.value
@@ -675,26 +756,25 @@ class TelemetryOptions:
                 self.environment = _parse_environment(value)
             self._resource_overrides[ATTR_ENVIRONMENT] = value
             return
-        code_attr = self.resource_attributes.get(ATTR_ENVIRONMENT)
-        env_attr = self._env_resource.get(ATTR_ENVIRONMENT)
+        attr = (_non_blank(self.resource_attributes.get(ATTR_ENVIRONMENT))
+                or _non_blank(self._env_resource.get(ATTR_ENVIRONMENT)))
         legacy = _env(ENV_ENVIRONMENT)
-        if code_attr:
-            self.environment = _parse_environment(str(code_attr))
-        elif env_attr:
-            # Behavior follows the env value; the SDK emits it unchanged.
-            self.environment = _parse_environment(str(env_attr))
-        elif legacy:
+        emitted: str | None = None
+        if attr is not None:
+            # Behavior follows the value; the resource carries it unchanged.
+            self.environment, emitted = _parse_environment(attr), attr
+        elif legacy is not None:
             parsed = _parse_environment(legacy)
             self.environment = parsed
-            self._resource_overrides[ATTR_ENVIRONMENT] = (
-                parsed.value if isinstance(parsed, DeploymentEnvironment) else parsed
-            )
+            emitted = parsed.value if isinstance(parsed, DeploymentEnvironment) else parsed
         else:
-            self._warn_once(
-                "environment",
+            warn_once_per_process(
+                _log, "identity:environment",
                 "[OtelHelper] %s is not set (OTEL_RESOURCE_ATTRIBUTES, or the legacy %s alias): the "
                 "attribute is omitted and the log level defaults to INFO.", ATTR_ENVIRONMENT, ENV_ENVIRONMENT,
             )
+        # None: the attribute is absent from the resource.
+        self._resource_overrides[ATTR_ENVIRONMENT] = emitted
 
     def _parse_exporter_list(self, var: str, raw: str, valid: tuple[str, ...]) -> list[str] | None:
         """Parse ``OTEL_<SIGNAL>_EXPORTER``; returns None when no valid entry is left."""

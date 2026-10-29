@@ -78,6 +78,16 @@ func warnEnvOncePerProcess(key, msg, variable, value, using string) {
 	warnEnv(msg, variable, value, using)
 }
 
+// warnOncePerProcess is diagLogger.Warn deduplicated per process by key (the
+// identity and OTEL_RESOURCE_ATTRIBUTES warnings, design D1 cadence row).
+// args must already be safe to print.
+func warnOncePerProcess(key, msg string, args ...any) {
+	if _, seen := deprecationsWarned.LoadOrStore("once:"+key, true); seen {
+		return
+	}
+	diagLogger.Warn(msg, args...)
+}
+
 // warnUnused logs, once per process, that variable is set but has no effect.
 func warnUnused(variable, why string) {
 	if _, seen := deprecationsWarned.LoadOrStore("unused:"+variable, true); seen {

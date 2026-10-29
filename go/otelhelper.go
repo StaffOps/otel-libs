@@ -172,6 +172,11 @@ func Setup(ctx context.Context, opts ...Option) (Shutdown, error) {
 	}
 
 	res := buildResource(options)
+	// The SDK providers re-parse OTEL_RESOURCE_ATTRIBUTES (WithResource merges
+	// resource.Environment()) and echo malformed items through otel.Handle:
+	// filter exactly those while they are built (design D1 row of 2026-10-29).
+	stopQuiet := quietResourceEnvEcho(options.envResourceEcho)
+	defer stopQuiet()
 
 	// built holds release functions in build order; fail runs them in reverse.
 	var built []func(context.Context) error
@@ -226,6 +231,7 @@ func Setup(ctx context.Context, opts ...Option) (Shutdown, error) {
 		p.groups = append(p.groups, []func(context.Context) error{lp.Shutdown})
 	}
 
+	stopQuiet() // providers built: the SDK will not parse the variable again
 	// Everything built: install.
 	if tp != nil {
 		otel.SetTracerProvider(tp)
@@ -283,38 +289,34 @@ func GetMeter(name ...string) metric.Meter {
 	return otel.Meter(n)
 }
 
-// buildResource layers, lowest to highest precedence: the SDK default
-// resource (telemetry.sdk.*, OTEL_SERVICE_NAME, OTEL_RESOURCE_ATTRIBUTES,
-// unknown_service:<exe>), the helper fallbacks for keys the environment does
-// not set (SERVICE_NAME, ENVIRONMENT, service.instance.id) and code values.
-// A helper default never overwrites an OTEL_RESOURCE_ATTRIBUTES key (R5).
+// buildResource layers, lowest to highest precedence: OTEL_RESOURCE_ATTRIBUTES
+// (the helper's parse), code ResourceAttributes, the resolved identity
+// (service.name, deployment.environment.name — absent when unset —,
+// service.instance.id) and the SDK's telemetry.sdk.*, which env and code
+// cannot override. The schema URL is the semconv version the helper targets
+// (design D1 rows of 2026-10-29).
 func buildResource(opts *Options) *resource.Resource {
 	if !opts.identityResolved {
-		opts.resolveIdentity(resource.Default())
+		opts.resolveIdentity()
 	}
-	var code []attribute.KeyValue
-	if opts.codeServiceName {
-		code = append(code, semconv.ServiceName(opts.ServiceName))
-	}
-	if opts.codeEnvironment {
-		code = append(code, semconv.DeploymentEnvironmentNameKey.String(string(opts.Environment)))
-	}
-	for k, v := range opts.ResourceAttributes {
-		code = append(code, attribute.String(k, v))
-	}
-	// The semconv version must match the one resource.Default() uses (v1.43.0
-	// for sdk v1.47.0): resource.Merge drops the schema URL when the two differ.
-	res := resource.Default()
-	for _, layer := range [][]attribute.KeyValue{opts.resourceFallbacks, code} {
-		if len(layer) == 0 {
-			continue
+	merged := map[string]string{}
+	for _, layer := range []map[string]string{opts.envResource, opts.ResourceAttributes} {
+		for k, v := range layer {
+			merged[k] = v
 		}
-		merged, err := resource.Merge(res, resource.NewWithAttributes(semconv.SchemaURL, layer...))
-		if err != nil {
-			// Merge still returns the merged attributes (without a schema URL).
-			diagLogger.Warn("otelhelper: resource merge", "error", err)
-		}
-		res = merged
 	}
-	return res
+	merged[string(semconv.ServiceNameKey)] = opts.ServiceName
+	merged[string(semconv.ServiceInstanceIDKey)] = opts.serviceInstanceID
+	if opts.Environment == "" {
+		delete(merged, string(semconv.DeploymentEnvironmentNameKey))
+	} else {
+		merged[string(semconv.DeploymentEnvironmentNameKey)] = string(opts.Environment)
+	}
+	kvs := make([]attribute.KeyValue, 0, len(merged)+3)
+	for k, v := range merged {
+		if !isTelemetrySDKKey(k) {
+			kvs = append(kvs, attribute.String(k, v))
+		}
+	}
+	return resource.NewWithAttributes(schemaURL, append(kvs, telemetrySDKAttributes()...)...)
 }
