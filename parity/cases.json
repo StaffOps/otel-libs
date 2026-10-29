@@ -515,7 +515,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B4a-protocol"
+        "nodejs": "pass"
       }
     },
     {
@@ -949,7 +949,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B4a-endpoint-redaction"
+        "nodejs": "pass"
       }
     },
     {
@@ -982,7 +982,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B4a-tls-warnings"
+        "nodejs": "pass"
       }
     },
     {
@@ -1002,7 +1002,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B4a-tls-warnings"
+        "nodejs": "pass"
       }
     },
     {
@@ -1022,7 +1022,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B4a-tls-warnings"
+        "nodejs": "pass"
       }
     },
     {
@@ -1042,7 +1042,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B4a-tls-warnings"
+        "nodejs": "pass"
       }
     },
     {
@@ -1062,7 +1062,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B4a-endpoints"
+        "nodejs": "pass"
       }
     },
     {
@@ -1083,7 +1083,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B4a-endpoints"
+        "nodejs": "pass"
       }
     },
     {
@@ -1116,7 +1116,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B4a-endpoints"
+        "nodejs": "pass"
       }
     },
     {
@@ -1394,6 +1394,42 @@
           "logs": {
             "proto": "grpc",
             "port": 4317,
+            "tls": false
+          }
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:B4b-otlp-endpoint"
+      }
+    },
+    {
+      "id": "export.grpc_http_explicit_port_80",
+      "kind": "export",
+      "requirement": "R1/D1.b",
+      "note": "An explicit :80 on a gRPC http:// URL is kept: the target is <host>:80 over plaintext. WHATWG URL drops a scheme-default port (URL.host), which would make the Node gRPC exporter dial 443 (Node design D-JS3).",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "http://{receiver}:80"
+      },
+      "code": {},
+      "expect": {
+        "received": {
+          "traces": {
+            "proto": "grpc",
+            "port": 80,
+            "tls": false
+          },
+          "metrics": {
+            "proto": "grpc",
+            "port": 80,
+            "tls": false
+          },
+          "logs": {
+            "proto": "grpc",
+            "port": 80,
             "tls": false
           }
         }
@@ -4898,7 +4934,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B4a-endpoints"
+        "nodejs": "pass"
       }
     },
     {
@@ -5210,7 +5246,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B4a-endpoint-redaction"
+        "nodejs": "pass"
       }
     },
     {
@@ -5245,7 +5281,1120 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B4a-endpoint-redaction"
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "tls.insecure_unparseable_warns_without_endpoint",
+      "kind": "resolve",
+      "requirement": "R8/D1 edge-case rulings (2026-10-29)",
+      "note": "An unparseable INSECURE warns even when no endpoint is configured (principle 8).",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_INSECURE": "yes"
+      },
+      "code": {},
+      "expect": {
+        "warning": "OTEL_EXPORTER_OTLP_INSECURE"
+      },
+      "status": {
+        "go": "pass",
+        "python": "xfail:A17",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "tls.insecure_signal_unparseable_warns_without_endpoint",
+      "kind": "resolve",
+      "requirement": "R8/D1 edge-case rulings (2026-10-29)",
+      "note": "Per-signal variant of the INSECURE ruling.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_TRACES_INSECURE": "maybe"
+      },
+      "code": {},
+      "expect": {
+        "warning": "OTEL_EXPORTER_OTLP_TRACES_INSECURE"
+      },
+      "status": {
+        "go": "pass",
+        "python": "xfail:A17",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "endpoint.control_char_beats_opaque_scheme",
+      "kind": "resolve",
+      "requirement": "R8/D1 edge-case rulings (2026-10-29)",
+      "note": "A control character inside an opaque-scheme value makes it invalid (fall back to the generic endpoint), not an unsupported scheme.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "http://collector:4317",
+        "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT": "unix:/x\u007f"
+      },
+      "code": {},
+      "expect": {
+        "helper_log": {
+          "all": [
+            {
+              "regex": "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"
+            },
+            {
+              "regex": "<unparseable URL>"
+            },
+            {
+              "not_contains": "unsupported"
+            }
+          ]
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "xfail:A17",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "config.code_control_char_beats_opaque_scheme_fails",
+      "kind": "resolve",
+      "requirement": "R8/D1 edge-case rulings (2026-10-29)",
+      "note": "Code variant: fails fast as a control-character error, not as an unsupported scheme.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc"
+      },
+      "code": {
+        "otel_endpoint": "unix:/x\u007f"
+      },
+      "expect": {
+        "error": "control character"
+      },
+      "status": {
+        "go": "pass",
+        "python": "xfail:A17",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "config.code_empty_otlp_protocol_not_set",
+      "kind": "resolve",
+      "requirement": "R8/D1 edge-case rulings (2026-10-29)",
+      "note": "An empty code otlp_protocol is not set (A13 ruling): env and defaults apply, no error.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "http://collector:4318"
+      },
+      "code": {
+        "otlp_protocol": ""
+      },
+      "expect": {
+        "error": {
+          "absent": true
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "xfail:A17",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "config.code_empty_compression_not_set",
+      "kind": "resolve",
+      "requirement": "R8/D1 edge-case rulings (2026-10-29)",
+      "note": "An empty code compression is not set (A13 ruling). Node: the compression option lands in B4b.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "http://collector:4317"
+      },
+      "code": {
+        "compression": ""
+      },
+      "expect": {
+        "error": {
+          "absent": true
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "xfail:A17",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:B4b-otlp-compression"
+      }
+    },
+    {
+      "id": "endpoint.port_out_of_range_invalid",
+      "kind": "resolve",
+      "requirement": "R8/D1 edge-case rulings (2026-10-29)",
+      "note": "A port above 65535 is invalid: warn <unparseable URL>, fall back.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "http://collector:70000"
+      },
+      "code": {},
+      "expect": {
+        "helper_log": {
+          "all": [
+            {
+              "regex": "OTEL_EXPORTER_OTLP_ENDPOINT"
+            },
+            {
+              "regex": "<unparseable URL>"
+            }
+          ]
+        }
+      },
+      "status": {
+        "go": "xfail:A17",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "endpoint.port_zero_invalid",
+      "kind": "resolve",
+      "requirement": "R8/D1 edge-case rulings (2026-10-29)",
+      "note": "Port 0 is outside 1-65535: invalid (WHATWG URL and Go accept it; Python treats it as no port).",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "http://collector:0"
+      },
+      "code": {},
+      "expect": {
+        "helper_log": {
+          "all": [
+            {
+              "regex": "OTEL_EXPORTER_OTLP_ENDPOINT"
+            },
+            {
+              "regex": "<unparseable URL>"
+            }
+          ]
+        }
+      },
+      "status": {
+        "go": "xfail:A17",
+        "python": "xfail:A17",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "config.code_port_out_of_range_fails",
+      "kind": "resolve",
+      "requirement": "R8/D1 edge-case rulings (2026-10-29)",
+      "note": "Code variant: a port outside 1-65535 fails fast naming the option.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc"
+      },
+      "code": {
+        "otel_endpoint": "http://collector:70000"
+      },
+      "expect": {
+        "error": {
+          "regex": "(otel_endpoint|otelEndpoint|WithEndpoint)"
+        }
+      },
+      "status": {
+        "go": "xfail:A17",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "redaction.unparseable_hostless_constant",
+      "kind": "resolve",
+      "requirement": "R8/D1 edge-case rulings (2026-10-29)",
+      "note": "An unparseable endpoint is always shown as the constant, never as a host-less rendering.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "http://:4317"
+      },
+      "code": {},
+      "expect": {
+        "helper_log": {
+          "all": [
+            {
+              "regex": "OTEL_EXPORTER_OTLP_ENDPOINT"
+            },
+            {
+              "regex": "<unparseable URL>"
+            },
+            {
+              "not_contains": "http://:4317"
+            }
+          ]
+        }
+      },
+      "status": {
+        "go": "xfail:A17",
+        "python": "xfail:A17",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "redaction.unparseable_schemeless_constant",
+      "kind": "resolve",
+      "requirement": "R8/D1 edge-case rulings (2026-10-29)",
+      "note": "Schemeless variant of the constant-rendering ruling (non-numeric port).",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "collector:abc"
+      },
+      "code": {},
+      "expect": {
+        "helper_log": {
+          "all": [
+            {
+              "regex": "OTEL_EXPORTER_OTLP_ENDPOINT"
+            },
+            {
+              "regex": "<unparseable URL>"
+            },
+            {
+              "not_contains": "collector:abc"
+            }
+          ]
+        }
+      },
+      "status": {
+        "go": "xfail:A17",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "config.code_unparseable_endpoint_constant",
+      "kind": "resolve",
+      "requirement": "R8/D1 edge-case rulings (2026-10-29)",
+      "note": "Code variant: the error names the option and shows the constant.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc"
+      },
+      "code": {
+        "otel_endpoint": "http://:4317"
+      },
+      "expect": {
+        "error": {
+          "all": [
+            {
+              "regex": "(otel_endpoint|otelEndpoint|WithEndpoint)"
+            },
+            {
+              "regex": "<unparseable URL>"
+            },
+            {
+              "not_contains": "http://:4317"
+            }
+          ]
+        }
+      },
+      "status": {
+        "go": "xfail:A17",
+        "python": "xfail:A17",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "redaction.password_with_backslash",
+      "kind": "resolve",
+      "requirement": "R8/D1 edge-case rulings (2026-10-29, Node B4a refutation)",
+      "note": "A backslash anywhere makes the endpoint invalid (RFC 3986 ruling); WHATWG would end the authority there and leak the password. Env: warn <unparseable URL>, fall back to the generic endpoint.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "http://collector:4317",
+        "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT": "http://user:parity-secret\\pw@collector:4317"
+      },
+      "code": {},
+      "expect": {
+        "error": {
+          "absent": true
+        },
+        "helper_log": {
+          "all": [
+            {
+              "regex": "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"
+            },
+            {
+              "regex": "<unparseable URL>"
+            },
+            {
+              "not_contains": "parity-secret"
+            }
+          ]
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "xfail:A17",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "config.code_password_with_backslash_fails",
+      "kind": "resolve",
+      "requirement": "R8/D1 edge-case rulings (2026-10-29, Node B4a refutation)",
+      "note": "Code variant of the backslash ruling; the password never appears. Code: fail fast naming the option.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc"
+      },
+      "code": {
+        "otel_endpoint": "http://user:parity-secret\\pw@collector:4317"
+      },
+      "expect": {
+        "error": {
+          "all": [
+            {
+              "regex": "(otel_endpoint|otelEndpoint|WithEndpoint)"
+            },
+            {
+              "not_contains": "parity-secret"
+            }
+          ]
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "xfail:A17",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "endpoint.empty_authority_invalid",
+      "kind": "resolve",
+      "requirement": "R8/D1 edge-case rulings (2026-10-29, Node B4a refutation)",
+      "note": "A URL scheme must be followed by // and a non-empty host. Env: warn <unparseable URL>, fall back to the generic endpoint.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "http://collector:4317",
+        "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT": "http:///collector:4317"
+      },
+      "code": {},
+      "expect": {
+        "error": {
+          "absent": true
+        },
+        "helper_log": {
+          "all": [
+            {
+              "regex": "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"
+            },
+            {
+              "regex": "<unparseable URL>"
+            }
+          ]
+        }
+      },
+      "status": {
+        "go": "xfail:A17",
+        "python": "xfail:A17",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "config.code_empty_authority_fails",
+      "kind": "resolve",
+      "requirement": "R8/D1 edge-case rulings (2026-10-29, Node B4a refutation)",
+      "note": "Empty-authority ruling. Code: fail fast naming the option.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc"
+      },
+      "code": {
+        "otel_endpoint": "http:///collector:4317"
+      },
+      "expect": {
+        "error": {
+          "all": [
+            {
+              "regex": "(otel_endpoint|otelEndpoint|WithEndpoint)"
+            }
+          ]
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "endpoint.double_slash_schemeless_invalid",
+      "kind": "resolve",
+      "requirement": "R8/D1 edge-case rulings (2026-10-29, Node B4a refutation)",
+      "note": "A schemeless value starting with / is invalid. Env: warn <unparseable URL>, fall back to the generic endpoint.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "http://collector:4317",
+        "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT": "//collector:4317"
+      },
+      "code": {},
+      "expect": {
+        "error": {
+          "absent": true
+        },
+        "helper_log": {
+          "all": [
+            {
+              "regex": "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"
+            },
+            {
+              "regex": "<unparseable URL>"
+            }
+          ]
+        }
+      },
+      "status": {
+        "go": "xfail:A17",
+        "python": "xfail:A17",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "config.code_double_slash_schemeless_fails",
+      "kind": "resolve",
+      "requirement": "R8/D1 edge-case rulings (2026-10-29, Node B4a refutation)",
+      "note": "Schemeless-with-slash ruling. Code: fail fast naming the option.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc"
+      },
+      "code": {
+        "otel_endpoint": "//collector:4317"
+      },
+      "expect": {
+        "error": {
+          "all": [
+            {
+              "regex": "(otel_endpoint|otelEndpoint|WithEndpoint)"
+            }
+          ]
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "endpoint.leading_zero_port_4318_inference",
+      "kind": "resolve",
+      "requirement": "R8/D1 edge-case rulings (2026-10-29, Node B4a refutation)",
+      "note": "Leading-zero ports compare numerically: 04318 = 4318, so the port-4318 inference (logged) applies.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "http://collector:04318"
+      },
+      "code": {},
+      "expect": {
+        "warning": "http/protobuf"
+      },
+      "status": {
+        "go": "xfail:A17",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "config.code_leading_zero_port_4318_inference",
+      "kind": "resolve",
+      "requirement": "R8/D1 edge-case rulings (2026-10-29, Node B4a refutation)",
+      "note": "Code variant of the leading-zero port ruling.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc"
+      },
+      "code": {
+        "otel_endpoint": "http://collector:04318"
+      },
+      "expect": {
+        "warning": "http/protobuf"
+      },
+      "status": {
+        "go": "xfail:A17",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "endpoint.percent_encoded_host_invalid",
+      "kind": "resolve",
+      "requirement": "R8/D1 edge-case rulings (2026-10-29, Node B4a refutation)",
+      "note": "A percent-encoded byte in the host is invalid (host-characters ruling). Env: warn <unparseable URL>, fall back to the generic endpoint.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "http://collector:4317",
+        "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT": "http://%63ollector:4317"
+      },
+      "code": {},
+      "expect": {
+        "error": {
+          "absent": true
+        },
+        "helper_log": {
+          "all": [
+            {
+              "regex": "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"
+            },
+            {
+              "regex": "<unparseable URL>"
+            }
+          ]
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "xfail:A17",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "config.code_percent_encoded_host_fails",
+      "kind": "resolve",
+      "requirement": "R8/D1 edge-case rulings (2026-10-29, Node B4a refutation)",
+      "note": "Host-characters ruling. Code: fail fast naming the option.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc"
+      },
+      "code": {
+        "otel_endpoint": "http://%63ollector:4317"
+      },
+      "expect": {
+        "error": {
+          "all": [
+            {
+              "regex": "(otel_endpoint|otelEndpoint|WithEndpoint)"
+            }
+          ]
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "xfail:A17",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "endpoint.space_in_host_invalid",
+      "kind": "resolve",
+      "requirement": "R8/D1 edge-case rulings (2026-10-29, Node B4a refutation)",
+      "note": "A space in the host is invalid (host-characters ruling). Env: warn <unparseable URL>, fall back to the generic endpoint.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "http://collector:4317",
+        "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT": "http://coll ector:4317"
+      },
+      "code": {},
+      "expect": {
+        "error": {
+          "absent": true
+        },
+        "helper_log": {
+          "all": [
+            {
+              "regex": "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"
+            },
+            {
+              "regex": "<unparseable URL>"
+            }
+          ]
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "xfail:A17",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "config.code_space_in_host_fails",
+      "kind": "resolve",
+      "requirement": "R8/D1 edge-case rulings (2026-10-29, Node B4a refutation)",
+      "note": "Host-characters ruling. Code: fail fast naming the option.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc"
+      },
+      "code": {
+        "otel_endpoint": "http://coll ector:4317"
+      },
+      "expect": {
+        "error": {
+          "all": [
+            {
+              "regex": "(otel_endpoint|otelEndpoint|WithEndpoint)"
+            }
+          ]
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "xfail:A17",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "endpoint.zone_id_invalid",
+      "kind": "resolve",
+      "requirement": "R8/D1 edge-case rulings (2026-10-29, Node B4a refutation)",
+      "note": "An unescaped IPv6 zone id is invalid (host-characters ruling). Env: warn <unparseable URL>, fall back to the generic endpoint.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "http://collector:4317",
+        "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT": "http://[fe80::1%eth0]:4317"
+      },
+      "code": {},
+      "expect": {
+        "error": {
+          "absent": true
+        },
+        "helper_log": {
+          "all": [
+            {
+              "regex": "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"
+            },
+            {
+              "regex": "<unparseable URL>"
+            }
+          ]
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "xfail:A17",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "config.code_zone_id_fails",
+      "kind": "resolve",
+      "requirement": "R8/D1 edge-case rulings (2026-10-29, Node B4a refutation)",
+      "note": "Host-characters ruling. Code: fail fast naming the option.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc"
+      },
+      "code": {
+        "otel_endpoint": "http://[fe80::1%eth0]:4317"
+      },
+      "expect": {
+        "error": {
+          "all": [
+            {
+              "regex": "(otel_endpoint|otelEndpoint|WithEndpoint)"
+            }
+          ]
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "xfail:A17",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "endpoint.empty_query_removed_warns",
+      "kind": "resolve",
+      "requirement": "R8/D1 edge-case rulings (2026-10-29, Node B4a refutation)",
+      "note": "An empty query is removed with the userinfo/query warning.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "http://collector:4317/?"
+      },
+      "code": {},
+      "expect": {
+        "error": {
+          "absent": true
+        },
+        "helper_log": {
+          "all": [
+            {
+              "regex": "OTEL_EXPORTER_OTLP_ENDPOINT"
+            },
+            {
+              "regex": "query"
+            }
+          ]
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "xfail:A17",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "endpoint.empty_fragment_removed_warns",
+      "kind": "resolve",
+      "requirement": "R8/D1 edge-case rulings (2026-10-29, Node B4a refutation)",
+      "note": "An empty fragment is removed with the userinfo/query warning.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "http://collector:4317#"
+      },
+      "code": {},
+      "expect": {
+        "error": {
+          "absent": true
+        },
+        "helper_log": {
+          "all": [
+            {
+              "regex": "OTEL_EXPORTER_OTLP_ENDPOINT"
+            },
+            {
+              "regex": "query"
+            }
+          ]
+        }
+      },
+      "status": {
+        "go": "xfail:A17",
+        "python": "xfail:A17",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "config.code_empty_query_removed_warns",
+      "kind": "resolve",
+      "requirement": "R8/D1 edge-case rulings (2026-10-29, Node B4a refutation)",
+      "note": "Code variant: removed with the warning, not an error.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc"
+      },
+      "code": {
+        "otel_endpoint": "http://collector:4317/?"
+      },
+      "expect": {
+        "error": {
+          "absent": true
+        },
+        "helper_log": {
+          "regex": "query"
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "xfail:A17",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "endpoint.at_in_path_warns",
+      "kind": "resolve",
+      "requirement": "R8/D1 edge-case rulings (2026-10-29, Node B4a refutation)",
+      "note": "An '@' in the path warns naming the variable only; the endpoint is used as parsed.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_PROTOCOL": "http/protobuf",
+        "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT": "http://user:4318/parity-secret@collector"
+      },
+      "code": {},
+      "expect": {
+        "error": {
+          "absent": true
+        },
+        "helper_log": {
+          "all": [
+            {
+              "regex": "misplaced credentials"
+            },
+            {
+              "regex": "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"
+            },
+            {
+              "not_contains": "parity-secret"
+            }
+          ]
+        }
+      },
+      "status": {
+        "go": "xfail:A17",
+        "python": "xfail:A17",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "config.code_at_in_path_warns",
+      "kind": "resolve",
+      "requirement": "R8/D1 edge-case rulings (2026-10-29, Node B4a refutation)",
+      "note": "Code variant of the '@'-in-path ruling.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_PROTOCOL": "http/protobuf"
+      },
+      "code": {
+        "traces_endpoint": "http://user:4318/parity-secret@collector"
+      },
+      "expect": {
+        "error": {
+          "absent": true
+        },
+        "helper_log": {
+          "all": [
+            {
+              "regex": "misplaced credentials"
+            },
+            {
+              "not_contains": "parity-secret"
+            }
+          ]
+        }
+      },
+      "status": {
+        "go": "xfail:A17",
+        "python": "xfail:A17",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "endpoint.userinfo_warning_once_per_variable",
+      "kind": "resolve",
+      "requirement": "R8/D1 edge-case rulings (2026-10-29, Node B4a refutation)",
+      "note": "The userinfo/query warning is written once per variable and value per setup, not once per signal.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_PROTOCOL": "http/protobuf",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "http://u:p@collector:4318"
+      },
+      "code": {},
+      "expect": {
+        "warning_count": {
+          "userinfo": 1
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "config.code_userinfo_warning_once_per_variable",
+      "kind": "resolve",
+      "requirement": "R8/D1 edge-case rulings (2026-10-29, Node B4a refutation)",
+      "note": "Code variant of the warning dedupe ruling.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc"
+      },
+      "code": {
+        "otel_endpoint": "http://u:p@collector:4318",
+        "otlp_protocol": "http/protobuf"
+      },
+      "expect": {
+        "warning_count": {
+          "userinfo": 1
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "redaction.credentials_in_path_never_echoed",
+      "kind": "resolve",
+      "requirement": "R8/D1 edge-case rulings (2026-10-29, Node B4a re-review)",
+      "note": "Credentials put in the path (host 'user', path '/parity-secret@collector') must never be echoed: the portless gRPC warning and the '@'-in-path warning show at most scheme://host:port.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "http://user/parity-secret@collector"
+      },
+      "code": {},
+      "expect": {
+        "error": {
+          "absent": true
+        },
+        "helper_log": {
+          "all": [
+            {
+              "regex": "OTEL_EXPORTER_OTLP_ENDPOINT"
+            },
+            {
+              "not_contains": "parity-secret"
+            }
+          ]
+        },
+        "log": {
+          "not_contains": "parity-secret"
+        }
+      },
+      "status": {
+        "go": "xfail:A17",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "endpoint.backslash_in_path_invalid",
+      "kind": "resolve",
+      "requirement": "R1/D1 edge-case rulings (2026-10-29, Node B4a re-review)",
+      "note": "A backslash in the path makes the endpoint invalid (RFC 3986 ruling; Go would send %5C, Python the raw byte). Env: warn <unparseable URL>, fall back to the generic endpoint.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "http://collector:4317",
+        "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT": "https://h:4318/x\\y"
+      },
+      "code": {},
+      "expect": {
+        "error": {
+          "absent": true
+        },
+        "helper_log": {
+          "all": [
+            {
+              "regex": "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"
+            },
+            {
+              "regex": "<unparseable URL>"
+            }
+          ]
+        }
+      },
+      "status": {
+        "go": "xfail:A17",
+        "python": "xfail:A17",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "config.code_backslash_in_path_fails",
+      "kind": "resolve",
+      "requirement": "R1/D1 edge-case rulings (2026-10-29, Node B4a re-review)",
+      "note": "Code variant of the backslash-in-path ruling. Code: fail fast naming the option.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc"
+      },
+      "code": {
+        "otel_endpoint": "https://h:4318/x\\y"
+      },
+      "expect": {
+        "error": {
+          "regex": "(otel_endpoint|otelEndpoint|WithEndpoint)"
+        }
+      },
+      "status": {
+        "go": "xfail:A17",
+        "python": "xfail:A17",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "endpoint.idn_host_punycoded",
+      "kind": "resolve",
+      "requirement": "R1/D1 edge-case rulings (2026-10-29, Node B4a re-review)",
+      "note": "IDN hosts are punycoded (dial and render). The resolve snapshot has no URL, so the portless gRPC warning (which renders the host it will use) carries the assertion; the dialed target is unit-tested per language.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "http://b\u00fccher.de"
+      },
+      "code": {},
+      "expect": {
+        "error": {
+          "absent": true
+        },
+        "helper_log": {
+          "all": [
+            {
+              "regex": "explicit port"
+            },
+            {
+              "regex": "xn--bcher-kva\\.de"
+            }
+          ]
+        }
+      },
+      "status": {
+        "go": "xfail:A17",
+        "python": "xfail:A17",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "endpoint.idna_failure_invalid",
+      "kind": "resolve",
+      "requirement": "R1/D1 edge-case rulings (2026-10-29, Node B4a re-review)",
+      "note": "A host that fails IDNA processing (U+FFFD is disallowed by UTS 46) is invalid. Env: warn <unparseable URL>, fall back to the generic endpoint.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "http://collector:4317",
+        "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT": "http://\ufffd.example:4317"
+      },
+      "code": {},
+      "expect": {
+        "error": {
+          "absent": true
+        },
+        "helper_log": {
+          "all": [
+            {
+              "regex": "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"
+            },
+            {
+              "regex": "<unparseable URL>"
+            }
+          ]
+        }
+      },
+      "status": {
+        "go": "xfail:A17",
+        "python": "xfail:A17",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "config.code_idna_failure_fails",
+      "kind": "resolve",
+      "requirement": "R1/D1 edge-case rulings (2026-10-29, Node B4a re-review)",
+      "note": "Code variant of the IDNA-failure ruling. Code: fail fast naming the option.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc"
+      },
+      "code": {
+        "otel_endpoint": "http://\ufffd.example:4317"
+      },
+      "expect": {
+        "error": {
+          "regex": "(otel_endpoint|otelEndpoint|WithEndpoint)"
+        }
+      },
+      "status": {
+        "go": "xfail:A17",
+        "python": "xfail:A17",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "pass"
       }
     },
     {

@@ -2,7 +2,7 @@
  * Environment reading shared by the resolver (contract design D1 edge-case
  * rulings): one trim set in every language and one boolean grammar.
  */
-import { report, truncateValue } from './diagnostics';
+import { report, truncateValue, type DiagnosticValue } from './diagnostics';
 
 /**
  * The exact set the helper trims, identical in Go, Python and Node (design D1
@@ -26,17 +26,34 @@ export function envValue(name: string): string | undefined {
   return value === '' ? undefined : value;
 }
 
+/** Reports one configuration warning (the resolver passes a deduplicating one). */
+export type Warn = (message: string, attrs: Readonly<Record<string, DiagnosticValue>>) => void;
+
+const reportWarning: Warn = (message, attrs) => {
+  report(message, attrs);
+};
+
 /**
  * Boolean env var: case-insensitive `true`/`false`. Any other non-blank value
- * warns and reads as `false` — the spec's reading, never "ignored". Unset or
- * blank returns `undefined`.
+ * warns (through `warn`) and reads as `false` — the spec's reading, never
+ * "ignored". Unset or blank returns `undefined`. The echoed value is cut by
+ * {@link truncateValue}.
  */
-export function envBool(name: string): boolean | undefined {
+export function envBool(name: string, warn: Warn = reportWarning): boolean | undefined {
   const value = envValue(name);
   if (value === undefined) return undefined;
   const lower = value.toLowerCase();
   if (lower === 'true') return true;
   if (lower === 'false') return false;
-  report('unparseable boolean', { variable: name, value: truncateValue(value), using: 'false' });
+  warn('unparseable boolean', { variable: name, value: truncateValue(value), using: 'false' });
+  return false;
+}
+
+/** Whether `value` holds a control character: a code unit < 0x20 or 0x7F (design D1 rulings). */
+export function hasControl(value: string): boolean {
+  for (let i = 0; i < value.length; i++) {
+    const c = value.charCodeAt(i);
+    if (c < 0x20 || c === 0x7f) return true;
+  }
   return false;
 }

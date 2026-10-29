@@ -10,9 +10,9 @@ import { context, diag, trace, type Attributes } from '@opentelemetry/api';
 import { AsyncLocalStorageContextManager } from '@opentelemetry/context-async-hooks';
 import { defaultResource, resourceFromAttributes, type Resource } from '@opentelemetry/resources';
 import { TracerProvider } from '@opentelemetry/sdk-trace';
-import { clearReportedOnce, report } from './diagnostics';
+import { clearReportedOnce, report, truncateValue } from './diagnostics';
 import { installDiagLogger } from './diag-logger';
-import { registeredGlobal } from './globals';
+import { foreignRegistry, registeredGlobal } from './globals';
 import { ATTR_SERVICE_NAME, TELEMETRY_SDK_KEYS, resolvePlan, validateOptions, type Resolved, type SetupOptions } from './resolve';
 import { getState, setDiagnosticSink, type HelperState } from './state';
 
@@ -111,9 +111,18 @@ export function setup(options?: SetupOptions): Resolved {
     }
     return rt.active.resolved;
   }
+  // A registry of another API version refuses every registration (the API
+  // compares versions), so the helper installs no global into it.
+  const foreignApi = foreignRegistry();
   // Before resolution, so SDK messages from everything built below are captured.
   const ownsDiag = helperOwnsDiag(rt);
-  if (validated.installDiagLogger === false) {
+  if (foreignApi !== undefined) {
+    report('the OpenTelemetry API globals belong to another @opentelemetry/api version; the helper registers no global and its telemetry is inactive', {
+      version: truncateValue(foreignApi.version),
+      required: foreignApi.required,
+    });
+    rt.diagLogger = undefined;
+  } else if (validated.installDiagLogger === false) {
     // Opt-out on a re-setup: remove the logger an earlier setup installed.
     if (ownsDiag) diag.disable();
     rt.diagLogger = undefined;
@@ -128,15 +137,26 @@ export function setup(options?: SetupOptions): Resolved {
   // A global registered by someone else is kept; checking first avoids the
   // API's duplicate-registration error (with a stack trace) on `diag`.
   let contextManager: AsyncLocalStorageContextManager | undefined;
-  if (registeredGlobal('context') === undefined) {
+  if (foreignApi !== undefined) {
+    // Reported above.
+  } else if (registeredGlobal('context') === undefined) {
     contextManager = new AsyncLocalStorageContextManager().enable();
-    context.setGlobalContextManager(contextManager);
+    if (!context.setGlobalContextManager(contextManager)) {
+      contextManager.disable();
+      contextManager = undefined;
+      report('the OpenTelemetry API refused the global context manager; in-process context is not propagated');
+    }
   } else {
     report('a global context manager is already registered; the helper keeps it');
   }
   let ownsTracerProvider = false;
-  if (registeredGlobal('trace') === undefined) {
+  if (foreignApi !== undefined) {
+    // Reported above.
+  } else if (registeredGlobal('trace') === undefined) {
     ownsTracerProvider = trace.setGlobalTracerProvider(tracerProvider);
+    if (!ownsTracerProvider) {
+      report('the OpenTelemetry API refused the global TracerProvider; the helper\'s traces are inactive', { signal: 'traces' });
+    }
   } else {
     report('a global TracerProvider is already registered; the helper does not replace it and its traces are inactive', {
       signal: 'traces',

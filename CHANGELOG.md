@@ -1198,6 +1198,64 @@ Unsupported instrumentation versions, task A10 (P18):
   ignored and warned once, identity and parse warnings once per process, and
   `__proto__` kept as an ordinary key up to the SDK resource. Two D-JS14 rows
   removed (`telemetry.sdk.*` direction, per-setup warning cadence).
+- **Node.js OTLP endpoint, protocol and TLS-setting resolution (Phase B, task
+  B4a; not released).** `setup()` accepts `otelEndpoint`, `tracesEndpoint`,
+  `metricsEndpoint`, `logsEndpoint`, `otlpProtocol` and `insecure`, and
+  `Resolved` gains `otlp` (per signal: `protocol`, `url`, `grpcTarget`,
+  `insecure`, `source`, `ignoredTlsVariables`; `undefined` = no OTLP exporter).
+  Resolution only — exporters are built from it in B4b. The contract D1 rows
+  apply (Go's `go/endpoint.go` is the closest reference; the D1 rows dated
+  2026-10-29 record where Go and Python still differ, task A17). Endpoints are
+  split by RFC 3986, then checked against WHATWG `URL`, which must agree on
+  host and port: a backslash, an empty authority, a schemeless value starting
+  with `/`, a percent-encoded byte, space or zone id in the host, or a port
+  outside 1–65535 make the value invalid; leading-zero ports compare
+  numerically; path escapes are kept verbatim; an empty `?`/`#` is removed
+  with the userinfo/query warning (once per variable and value, not per
+  signal); an `@` in the path or query warns naming the variable only. OTLP is
+  configured per signal (code per-signal > code
+  generic > env per-signal > env generic; an unparseable env value warns and
+  falls back to the next level, an unsupported or opaque scheme leaves the
+  signal unconfigured); schemeless `host:port` → `https://` (`http://` with
+  `INSECURE=true`) + default port, deprecated for `http/protobuf` (once per
+  process); portless gRPC URL → `:4317` + warning; an explicit scheme-default
+  port is kept (`http://h:80` → gRPC target `h:80`, which WHATWG `URL.host`
+  would drop and grpc-js would dial on 443); `http/protobuf` generic endpoints get
+  `/v1/<signal>`, per-signal ones keep their path; userinfo, query and
+  fragment are removed and never echoed; a control character makes the value
+  `<unparseable URL>`; IPv6 brackets are kept. WHATWG host normalization
+  remains (lowercase, punycode, IPv4 shorthand, IPv4-mapped IPv6; D-JS14). Protocol: code > per-signal env >
+  generic env > port-4318 inference (INFO once per setup) > `grpc`;
+  `http/json` and unknown env values warn and are ignored. `INSECURE` uses the
+  boolean grammar (garbage warns, reads false); contradicting a URL scheme
+  warns and the scheme wins; TLS file variables with a plaintext endpoint are
+  warned by name only. Code values fail fast with a `TypeError` naming the
+  option (unusable endpoint, unknown `otlpProtocol`, `insecure` contradicting
+  a code URL); an empty string is not set. A global API registry whose
+  `version` differs from the exact version of the `@opentelemetry/api` copy the
+  helper loads (the API registers only into a registry of its own exact
+  version) is now reported with the required version and left alone; a
+  registration the API refuses anyway is reported too. The 12 `nodejs: skip:B4a-…` cases
+  pass on Node 22.15.0/22/24/26; new case `export.grpc_http_explicit_port_80`
+  (Go and Python pass, Node `skip:B4b-otlp-endpoint` until the exporters
+  exist). Five D1 rulings from the B4a review (2026-10-29, task A17 for
+  Go/Python): an unparseable `INSECURE` warns without an endpoint; a control
+  character beats an opaque scheme (invalid, fall back); an empty code
+  `otlp_protocol`/`compression` is not set; a port outside 1–65535 is invalid
+  (Node now also rejects port 0, which WHATWG URL accepts); an unparseable
+  endpoint is always shown as `<unparseable URL>` (Node: also schemeless
+  values such as `collector:abc`). Twelve cases cover them: Node `pass`
+  (`config.code_empty_compression_not_set`: `skip:B4b-otlp-compression`),
+  Go/Python `xfail:A17` where they diverge. Twenty-one more cover the
+  refutation rulings (RFC 3986 parsing, leading-zero ports, host characters,
+  empty query/fragment, `@` in the path, warning dedupe): Node `pass`, Go
+  `xfail:A17` ×7, Python `xfail:A17` ×15. Six more from the re-review (250 in
+  total): `redaction.credentials_in_path_never_echoed` (Go `xfail:A17`) —
+  diagnostics drop an endpoint's path when the path or query holds an `@`,
+  and an opaque value is cut before its last `@`; a backslash in the path
+  (env + code) and IDN rulings — hosts punycoded, a host failing IDNA invalid
+  (`endpoint.idn_host_punycoded`, `endpoint.idna_failure_invalid` + code
+  variant) — Go and Python `xfail:A17`.
 - **Go test hygiene:** `captureDiag` (`go/config_contract_test.go`) no longer
   prints slog timestamps, which made `TestDeprecatedEnvWarnsNamingReplacement`
   (`go/deprecation_test.go`) flaky.

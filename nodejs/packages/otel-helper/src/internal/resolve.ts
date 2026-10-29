@@ -3,11 +3,13 @@
  * frozen {@link Resolved} plus the resource attributes. Explicit code > standard
  * `OTEL_*` env > legacy / `OTEL_HELPER_*` env > default (contract D1). Invalid
  * code values throw before anything is built; environment problems only warn
- * (R8). This module covers the identity rows (task B3); later tasks add theirs.
+ * (R8). This module covers the identity rows (task B3) and the OTLP endpoint,
+ * protocol and TLS-setting rows (task B4a, `otlp.ts`); later tasks add theirs.
  */
 import { randomUUID } from 'node:crypto';
-import { reportOnce } from './diagnostics';
-import { envBool, envValue, trimWS } from './env';
+import { report, reportOnce, type DiagnosticValue } from './diagnostics';
+import { envBool, envValue, trimWS, type Warn } from './env';
+import { checkCodeOtlp, resolveOtlp, type OtlpPlan, type Reporter } from './otlp';
 import { defaultLogLevel, knownEnvironment, LOG_LEVELS, type LogLevel } from './log-level';
 import { parseResourceAttributes } from './resource-attributes';
 import type { SpanProcessor } from '@opentelemetry/sdk-trace';
@@ -35,8 +37,9 @@ const BUILTIN_DETECTORS: ReadonlySet<string> = new Set(['env', 'serviceinstance'
 /**
  * `setup()` options set in code (design API table). A key left `undefined` is
  * not set and reads the environment. Task B3 implements the identity,
- * log-level and diagnostics options; the other documented options land with
- * their tasks and are rejected as unknown until then. Pass a plain object (or
+ * log-level and diagnostics options, task B4a the OTLP endpoint, protocol and
+ * `insecure` options; the other documented options land with their tasks and
+ * are rejected as unknown until then. Pass a plain object (or
  * a null-prototype one); class instances are rejected. `setup()` reads each
  * property once.
  */
@@ -56,6 +59,25 @@ export interface SetupOptions {
    * (default true: level `OTEL_LOG_LEVEL`, else WARN). `false` leaves `diag` alone.
    */
   readonly installDiagLogger?: boolean | undefined;
+  /**
+   * Generic OTLP endpoint (all signals): a URL (`http://`, `https://`) or a
+   * schemeless `host:port`. `http/protobuf` gets `/v1/<signal>` appended. Wins
+   * over every endpoint environment variable; an empty string is not set.
+   */
+  readonly otelEndpoint?: string | undefined;
+  /** Traces endpoint, used verbatim (path kept); wins over `otelEndpoint`. */
+  readonly tracesEndpoint?: string | undefined;
+  /** Metrics endpoint, used verbatim (path kept); wins over `otelEndpoint`. */
+  readonly metricsEndpoint?: string | undefined;
+  /** Logs endpoint, used verbatim (path kept); wins over `otelEndpoint`. */
+  readonly logsEndpoint?: string | undefined;
+  /** OTLP protocol of every signal: `grpc` or `http/protobuf` (case-insensitive). */
+  readonly otlpProtocol?: string | undefined;
+  /**
+   * Plaintext for a schemeless endpoint. With a URL the scheme decides: a code
+   * value contradicting a code URL's scheme throws; contradicting an env URL warns.
+   */
+  readonly insecure?: boolean | undefined;
   /** Test/advanced: extra span processors, added after the helper's own (design D-JS7). */
   readonly spanProcessors?: readonly SpanProcessor[] | undefined;
 }
@@ -75,6 +97,8 @@ export interface Resolved {
   readonly debug: boolean;
   /** `minimumLogLevel` option, else `defaultLogLevel(environment, debug)` (R4). */
   readonly logLevel: LogLevel;
+  /** OTLP endpoint per signal (R1, R2, D1); `undefined` = no OTLP exporter for that signal. */
+  readonly otlp: OtlpPlan;
 }
 
 /** Resolver output: the public view plus what the providers are built from. */
@@ -91,6 +115,12 @@ const OPTION_KEYS: ReadonlySet<string> = new Set([
   'debug',
   'minimumLogLevel',
   'installDiagLogger',
+  'otelEndpoint',
+  'tracesEndpoint',
+  'metricsEndpoint',
+  'logsEndpoint',
+  'otlpProtocol',
+  'insecure',
   'spanProcessors',
 ]);
 
@@ -114,6 +144,10 @@ function checkNonBlankString(option: string, value: unknown): void {
   if (value === undefined) return;
   if (typeof value !== 'string') fail(option, `must be a string, got ${typeName(value)}`);
   if (trimWS(value) === '') fail(option, 'must not be empty');
+}
+
+function checkString(option: string, value: unknown): void {
+  if (value !== undefined && typeof value !== 'string') fail(option, `must be a string, got ${typeName(value)}`);
 }
 
 function checkBoolean(option: string, value: unknown): void {
@@ -156,6 +190,9 @@ export function validateOptions(options: unknown): SetupOptions {
   }
   checkBoolean('debug', o.debug);
   checkBoolean('installDiagLogger', o.installDiagLogger);
+  for (const option of ['otelEndpoint', 'tracesEndpoint', 'metricsEndpoint', 'logsEndpoint', 'otlpProtocol']) checkString(option, o[option]);
+  checkBoolean('insecure', o.insecure);
+  checkCodeOtlp(o);
   const level = o.minimumLogLevel;
   if (level !== undefined && !LOG_LEVELS.includes(level as LogLevel)) {
     const shown = typeof level === 'string' ? JSON.stringify(level) : typeName(level);
@@ -290,11 +327,36 @@ export function resolvePlan(options: SetupOptions, defaultServiceName: string, q
   else layer[ATTR_ENVIRONMENT] = environment;
 
   // A value set in code wins whatever it is (D1 ruling): only `undefined` reads the env.
-  const debug = options.debug ?? envBool(ENV_DEBUG_LEVEL) ?? false;
+  const debug = options.debug ?? envBool(ENV_DEBUG_LEVEL, quiet ? SILENT_REPORTER.warn : undefined) ?? false;
   const logLevel = options.minimumLogLevel ?? defaultLogLevel(environment, debug);
 
-  const resolved: Resolved = Object.freeze({ serviceName, environment, serviceInstanceId, debug, logLevel });
+  const otlp = resolveOtlp(options, quiet ? SILENT_REPORTER : newReporter());
+
+  const resolved: Resolved = Object.freeze({ serviceName, environment, serviceInstanceId, debug, logLevel, otlp });
   return { resolved, resourceAttributes: Object.freeze(layer) };
+}
+
+const SILENT_REPORTER: Reporter = Object.freeze({ warn: () => undefined, info: () => undefined });
+
+/**
+ * A reporter that writes each configuration warning once per message, variable
+ * and value per resolution (Go `warnOnce`: a generic setting shared by three
+ * signals warns once), and each INFO once per key.
+ */
+function newReporter(): Reporter {
+  const seen = new Set<string>();
+  const warn: Warn = (message, attrs) => {
+    const key = `${message}\0${String(attrs.variable)}\0${String(attrs.value)}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    report(message, attrs);
+  };
+  const info = (key: string, message: string, attrs: Readonly<Record<string, DiagnosticValue>>): void => {
+    if (seen.has(`info:${key}`)) return;
+    seen.add(`info:${key}`);
+    report(message, attrs, { origin: 'helper', level: 'info' });
+  };
+  return Object.freeze({ warn, info });
 }
 
 function defineAttr(target: Record<string, string>, key: string, value: string): void {

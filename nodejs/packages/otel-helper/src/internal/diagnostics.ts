@@ -24,9 +24,14 @@ const UNESCAPED_BY_JSON = /[\x7f-\x9f\u2028\u2029]/g;
 /** Longest echoed value in a diagnostic before it is cut (with a trailing `…`). */
 export const MAX_ECHOED_VALUE = 64;
 
-/** `value` cut to {@link MAX_ECHOED_VALUE} characters plus `…` when longer. */
+/**
+ * `value` cut to {@link MAX_ECHOED_VALUE} code points plus `…` when longer
+ * (by code point, so a surrogate pair is never split).
+ */
 export function truncateValue(value: string): string {
-  return value.length > MAX_ECHOED_VALUE ? `${value.slice(0, MAX_ECHOED_VALUE)}…` : value;
+  if (value.length <= MAX_ECHOED_VALUE) return value;
+  const points = Array.from(value);
+  return points.length > MAX_ECHOED_VALUE ? `${points.slice(0, MAX_ECHOED_VALUE).join('')}…` : value;
 }
 
 const KEY = /^[A-Za-z0-9_.]+$/;
