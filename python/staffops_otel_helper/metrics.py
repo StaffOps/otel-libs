@@ -165,8 +165,10 @@ def build_metrics(resource: Resource, options: TelemetryOptions):
     try:
         plan = options.otlp_export("metrics")
         if "otlp" in exporters and plan is not None:
+            # The resolved OTLP timeout is the export deadline (A18); OTEL_METRIC_EXPORT_TIMEOUT is not honored.
             readers.append(PeriodicExportingMetricReader(
                 build_otlp_exporter(plan), export_interval_millis=options.resolved.export_interval_ms,
+                export_timeout_millis=plan.timeout_ms,
             ))
 
         if "console" in exporters:

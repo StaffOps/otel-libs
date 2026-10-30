@@ -13,6 +13,7 @@ import (
 	"go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp"
 	sdklog "go.opentelemetry.io/otel/sdk/log"
 	"go.opentelemetry.io/otel/sdk/resource"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
 )
 
@@ -30,6 +31,9 @@ func configureLogging(ctx context.Context, res *resource.Resource, opts *Options
 	lpOpts := []sdklog.LoggerProviderOption{
 		sdklog.WithResource(res),
 	}
+	if limit, ok := opts.logValueLength(); ok {
+		lpOpts = append(lpOpts, sdklog.WithAttributeValueLengthLimit(limit))
+	}
 
 	var processors []sdklog.Processor
 	for _, name := range opts.signalExporters(signalLogs) {
@@ -43,9 +47,8 @@ func configureLogging(ctx context.Context, res *resource.Resource, opts *Options
 				continue
 			}
 			exporter, err = otlpLogExporter(ctx, e)
-			if e.timeout > 0 {
-				bpOpts = append(bpOpts, sdklog.WithExportTimeout(e.timeout)) // effective deadline
-			}
+			// The export deadline (A18): OTEL_BLRP_EXPORT_TIMEOUT is not honored.
+			bpOpts = append(bpOpts, sdklog.WithExportTimeout(e.timeout))
 		case "console":
 			exporter, err = consoleLogExporter()
 		}
@@ -55,6 +58,9 @@ func configureLogging(ctx context.Context, res *resource.Resource, opts *Options
 				releaseOnFailure(ctx, "log processor", processors[i].Shutdown)
 			}
 			return nil, false, fmt.Errorf("log exporter: %w", err)
+		}
+		if n, ok := opts.batchSizeOverride("OTEL_BLRP"); ok {
+			bpOpts = append(bpOpts, sdklog.WithExportMaxBatchSize(n))
 		}
 		p := sdklog.NewBatchProcessor(exporter, bpOpts...)
 		processors = append(processors, p)
@@ -342,6 +348,9 @@ func newOTLPLogExporter(ctx context.Context, e *signalExport) (sdklog.Exporter, 
 		if e.headers != nil {
 			o = append(o, otlploghttp.WithHeaders(e.headers))
 		}
+		if e.tlsConfig != nil {
+			o = append(o, otlploghttp.WithTLSClientConfig(e.tlsConfig))
+		}
 		if e.dropTLS {
 			// nil clears the TLS config the SDK loaded from env (options are
 			// applied after env); otherwise New() fails on an http:// endpoint.
@@ -363,6 +372,9 @@ func newOTLPLogExporter(ctx context.Context, e *signalExport) (sdklog.Exporter, 
 	}
 	if e.headers != nil {
 		o = append(o, otlploggrpc.WithHeaders(e.headers))
+	}
+	if e.tlsConfig != nil {
+		o = append(o, otlploggrpc.WithTLSCredentials(credentials.NewTLS(e.tlsConfig)))
 	}
 	if e.dropTLS {
 		// The SDK prefers env TLS credentials over Insecure: force plaintext.

@@ -139,6 +139,24 @@ Runtime and operations:
     short name end in a number — `collector.2024` is invalid; use the FQDN
     (`collector.2024.svc.cluster.local`) or `collector.2024.svc`. With an `@`
     in the path or query, diagnostics show only `<scheme>://`.
+20. **BREAKING — export deadline, TLS files, header bytes (design D1 rows of
+    2026-10-29, A18).** `OTEL_BSP_EXPORT_TIMEOUT`, `OTEL_BLRP_EXPORT_TIMEOUT`
+    and `OTEL_METRIC_EXPORT_TIMEOUT` are no longer honored (they warn): set
+    `OTEL_EXPORTER_OTLP_TIMEOUT` / `OTEL_EXPORTER_OTLP_<SIGNAL>_TIMEOUT`, which
+    is now always the deadline of the exporter, the batch processors and the
+    periodic reader (10 s by default; it used to be the SDKs' 30 s when no
+    timeout was set). `WithExportTimeout` above 86 400 000 ms **fails
+    `Setup`**. The helper builds the TLS configuration from the
+    `OTEL_EXPORTER_OTLP[_<SIGNAL>]_CERTIFICATE` / `_CLIENT_KEY` /
+    `_CLIENT_CERTIFICATE` files itself: each file per-signal, then generic; an
+    incomplete or rejected client pair warns and uses server authentication
+    (the log exporter used to drop the CA too). A decoded header value that is
+    not printable ASCII is skipped with a warning (it used to fail every gRPC
+    export). A value-length limit of `0` warns and the next level applies
+    (per-signal, then generic, then no limit; it used to truncate every value
+    to `""`). `OTEL_BSP_MAX_EXPORT_BATCH_SIZE` above `OTEL_BSP_MAX_QUEUE_SIZE`
+    (and the `OTEL_BLRP_*` pair) warns naming both and uses the queue size
+    (the span processor used to clamp silently to min(512, queue)).
 
 ### Migration guide 0.2 → 0.3 — Python
 
@@ -301,6 +319,25 @@ Telemetry and runtime:
     (`collector.2024.svc.cluster.local`) or `collector.2024.svc`. With an `@`
     in the path or query, diagnostics show only `<scheme>://`. IPv6 zone ids (`[fe80::1%eth0]`)
     are invalid too (they used to work over gRPC).
+21. **BREAKING — export deadline, TLS files, header bytes (design D1 rows of
+    2026-10-29, A18).** `OTEL_METRIC_EXPORT_TIMEOUT` is no longer honored by
+    the periodic reader, and `OTEL_BSP_EXPORT_TIMEOUT` /
+    `OTEL_BLRP_EXPORT_TIMEOUT` (which the SDK never used) now warn: set
+    `OTEL_EXPORTER_OTLP_TIMEOUT` / `OTEL_EXPORTER_OTLP_<SIGNAL>_TIMEOUT`, which
+    is now always the deadline of the exporter and the metric reader (10 s by
+    default; the reader used 30 s; the 1.4x batch processors ignore any
+    timeout). `export_timeout_ms`
+    above 86 400 000 **raises `ValueError`**. The helper reads the TLS files
+    itself (each per-signal, then generic) and passes them explicitly: a
+    per-signal CA that cannot be used falls back to the generic one (traces
+    used to fail), and an incomplete or rejected client pair warns and uses
+    server authentication instead of aborting the process. A decoded header
+    value that is not printable ASCII is skipped with a warning; `-bin` gRPC
+    header keys now work (their value is sent as bytes). A value-length limit
+    of `0` warns and the next level applies (per-signal, then generic, then no
+    limit). `OTEL_BSP_MAX_EXPORT_BATCH_SIZE` above `OTEL_BSP_MAX_QUEUE_SIZE`
+    (and the `OTEL_BLRP_*` pair) warns naming both and uses the queue size
+    instead of failing setup.
 
 ### Collector / platform prerequisites (before rolling 0.3.0 out)
 
@@ -372,6 +409,28 @@ after the upgrade.
 
 ### Go — detailed changes
 
+- **BREAKING — A18 rulings from the Node B4b review (design D1 rows of
+  2026-10-29: "TLS files", "Export deadline", "Code export timeout bound",
+  "Header bytes", "Value-length limits"; migration item 20).**
+  `resolveTimeout` returns the 10 s default instead of 0, so the exporter,
+  `BatchSpanProcessor`, log `BatchProcessor` and `PeriodicReader` always get
+  the resolved deadline; `OTEL_BSP_EXPORT_TIMEOUT`, `OTEL_BLRP_EXPORT_TIMEOUT`
+  and `OTEL_METRIC_EXPORT_TIMEOUT` warn once ("not honored").
+  `WithExportTimeout` outside [1, 86 400 000] ms fails `Setup`. For a TLS
+  endpoint with any TLS file variable set, the helper reads the CA and the
+  client pair (per-signal, then generic; unreadable or non-PEM files warned by
+  variable and errno, never the path), validates the pair with
+  `tls.X509KeyPair` and passes a `tls.Config` (`WithTLSCredentials` /
+  `WithTLSClientConfig`); an incomplete or rejected pair warns and the signal
+  uses server authentication with the resolved CA. The SDK still reads the
+  files at `New()` and prints their paths in its own errors (documented
+  limitation, D1 row "SDK's own log output"). Header values must be printable
+  ASCII (`%C3%A9` is skipped by position; grpc-go used to fail the whole
+  export). `OTEL_*_VALUE_LENGTH_LIMIT=0` warns and the next level applies
+  (`WithRawSpanLimits`, log `WithAttributeValueLengthLimit`); the Go log SDK
+  still reads only `OTEL_LOGRECORD_ATTRIBUTE_VALUE_LENGTH_LIMIT`. An export
+  batch size above the queue size warns naming both variables and the queue
+  size is passed (`WithMaxExportBatchSize` / `WithExportMaxBatchSize`).
 - **BREAKING — endpoint rulings from the Node B4a review (design D1 rows of
   2026-10-29, task A17; migration item 19).** Endpoints are split by RFC 3986 (the helper's own
   parser, not `url.Parse`): a port outside 1–65535 — port `0` included — is
@@ -690,6 +749,22 @@ Behavior changes, with migration notes:
 
 ### Python — detailed changes
 
+- **BREAKING — A18 rulings from the Node B4b review (design D1 rows of
+  2026-10-29; migration item 21).** Every OTLP signal gets an explicit
+  `timeout` (10 s by default), which is also the `export_timeout_millis` of
+  its `PeriodicExportingMetricReader` (`OTEL_METRIC_EXPORT_TIMEOUT` is no
+  longer honored; the three timeout variables warn). The batch processors get
+  the same value for consistency, but the 1.4x SDK ignores it. An export batch
+  size above the queue size warns naming both variables and the queue size is
+  passed as `max_export_batch_size` (the SDK raised `ValueError`). `export_timeout_ms` above
+  86 400 000 raises `ValueError`. New module `_tls`: the helper resolves and
+  validates the TLS files (`ssl` `load_verify_locations` / `load_cert_chain`
+  with a non-prompting password callback) and passes gRPC channel credentials
+  or the HTTP file paths, with the TLS variables masked during exporter
+  construction. Header values must be printable ASCII; `-bin` keys are sent
+  as `bytes`. A value-length limit of `0` warns and the next level applies
+  (`SpanLimits`; `LogRecordLimits` where `LoggerProvider` accepts
+  `log_record_limits` — 1.45 does, 1.42 does not: documented limitation).
 - **BREAKING — endpoint rulings from the Node B4a review (design D1 rows of
   2026-10-29, task A17; migration item 20): zone ids, non-canonical IPv4 and
   non-reg-name hosts, port 0, invalid path escapes.** Endpoints are split by RFC 3986 instead of
@@ -1143,6 +1218,18 @@ Unsupported instrumentation versions, task A10 (P18):
 
 ### Fixed
 
+- **Python: a client key without a client certificate (or the reverse, or an
+  unreadable one) aborted the process** in grpc's C core
+  (`grpc_tls_certificate_distributor.cc` CHECK, SIGABRT). The helper now
+  validates the pair first; an incomplete or rejected pair warns and the
+  signal uses server authentication (task A18).
+- **Python: an export batch size above the queue size failed setup**
+  (`OTEL_BSP_MAX_EXPORT_BATCH_SIZE` > `OTEL_BSP_MAX_QUEUE_SIZE`, or the
+  `OTEL_BLRP_*` pair: the SDK raised `ValueError`). The helper now warns
+  naming both variables and passes the queue size (task A18).
+- **Python: `-bin` gRPC header keys and non-ASCII header values failed every
+  export**; the former are now sent as bytes, the latter skipped with a
+  warning (A18).
 - **Security — Go: OTLP/gRPC logs ignored `OTEL_EXPORTER_OTLP_CERTIFICATE`
   under `OTEL_EXPORTER_OTLP_INSECURE=true` and were sent in plaintext**
   (otlploggrpc v0.7.0). v0.23.0 uses TLS with the env CA, as traces and
@@ -1390,6 +1477,72 @@ Unsupported instrumentation versions, task A10 (P18):
   endpoint. `testing/fakeotlp` records the
   path as sent (`raw_path`, `net/url` `EscapedPath`), and the three parity
   runners expose it as a record field.
+- **Node.js OTLP exporters for traces, metrics and logs (Phase B, task B4b;
+  not released).** `setup()` now builds the OTLP exporters (gRPC and
+  http/protobuf) of every configured signal, a `BatchSpanProcessor`, a
+  `PeriodicExportingMetricReader` (interval 30 000 ms until B4c) and a
+  `BatchLogRecordProcessor`, and registers the global `MeterProvider` and
+  `LoggerProvider` (a foreign one is kept and reported); `shutdown()` flushes
+  the three providers. Every helper-owned value is passed explicitly — URL or
+  gRPC `host:port` target, headers, timeout, compression and, for gRPC,
+  channel credentials — and the helper-owned
+  `OTEL_EXPORTER_OTLP[_<SIGNAL>]_{ENDPOINT,HEADERS,TIMEOUT,COMPRESSION,PROTOCOL,INSECURE}`
+  variables are hidden from `process.env` while the exporters are built
+  (restored in `finally`, also when construction throws); the certificate and
+  client key/certificate variables stay visible. New options
+  `exportTimeoutMs` (integer ms in [1, 86 400 000]; larger values fail fast —
+  Go and Python accept them, D-JS14) and `compression` (`gzip`/`none`, empty =
+  not set); `Resolved.otlp[signal]` gains `timeoutMs` and `compression`
+  (headers stay out of `Resolved`). Headers, timeout and compression follow the
+  contract D1 rows as in Go (key grammar, last wins, whole-value decoding,
+  control characters skipped, warnings by position only; plain-decimal ms
+  clamped to [1 ms, 24 h]; case-insensitive `gzip`/`none`, default `gzip`). A
+  header value gRPC metadata or Node's HTTP layer cannot carry is skipped with
+  a warning naming the variable and position. The batch processors use an
+  explicitly set `OTEL_BSP_EXPORT_TIMEOUT`/`OTEL_BLRP_EXPORT_TIMEOUT`, else the
+  resolved OTLP timeout; the metric reader's is capped at the interval with a
+  warning. `OTEL_BSP_*`, `OTEL_BLRP_*` and the attribute/span/log-record limit
+  variables (which SDK 3.0 no longer reads) are read by the helper with the
+  specification defaults; invalid values warn. gRPC credentials are built by
+  the helper (no lazy env TLS read): an unreadable TLS file is ignored with a
+  warning naming the variable (never the path), a CA file without a parseable
+  certificate falls back to the system roots, only one of client key/certificate
+  gives server authentication only, credentials the TLS layer rejects fall
+  back to the system roots, and a TLS IP-literal target is warned (Node 26
+  refuses an IP as TLS server name). A failing exporter construction is
+  reported and that signal is not exported; `setup()` does not throw. The 84
+  `nodejs: skip:B4b-…` cases pass on Node 22.15.0/24/26 (including the A17
+  export twins and `export.http_path_escape_verbatim`). New cases (268 in
+  total) `export.grpc_certificate_unreadable_falls_back` and
+  `export.grpc_certificate_not_pem_falls_back` pass in Go, Python and Node. A
+  key-without-certificate case was not added: Go ignores the incomplete pair
+  silently while Python's grpc aborts the process — open, needs a ruling.
+  **Fix round (B4b review, contract task A18):** the TLS files are read and
+  validated by the helper for both protocols (per-signal then generic, the
+  pair checked with `tls.createSecureContext`, a pair gRPC still rejects
+  retried with the CA only, then the system roots; http/protobuf gets them
+  through `httpAgentOptions`) and every TLS variable is masked too; the
+  resolved OTLP timeout is the deadline of BSP, BLRP and reader
+  (`OTEL_BSP/BLRP/METRIC_EXPORT_TIMEOUT` warn and are ignored); the
+  metric-reader cap warning names the timeout's source; `exportTimeoutMs`
+  accepts finite values in [1, 86 400 000] (decimals allowed);
+  `Resolved.otlp[signal].timeoutSource` is new; decoded header values must be
+  printable ASCII (warned as `item #N`, the env position); a value-length
+  limit of 0 and a batch size above the queue size warn. The gRPC exporter
+  packages are loaded only when a gRPC signal is configured, so
+  `require('@staffops/otel-helper')` no longer loads `@grpc/grpc-js`; each
+  signal's exporter and processor/reader are built under one `tryBuild`
+  (a built exporter is shut down if its processor fails); exporter
+  diagnostics are written after the environment is restored; HTTP headers
+  use a null-prototype object; the `shutdown()` `AggregateError` names the
+  providers that failed and the first reason. Ten new cases (278 in total)
+  pass in Go, Python and Node. Final round: the batch-size warning names both
+  variables (contract row "Batch size above queue size"); Python keeps a
+  non-zero per-signal value-length limit when only the generic one is 0; Go
+  reads any spelling of 0 (`00`) for the log limit. Three more cases (281 in
+  total): `config.attribute_value_length_limit_zero_signal_wins`,
+  `config.bsp_batch_size_above_queue_clamped`,
+  `config.blrp_batch_size_above_queue_clamped`.
 - **Go test hygiene:** `captureDiag` (`go/config_contract_test.go`) no longer
   prints slog timestamps, which made `TestDeprecatedEnvWarnsNamingReplacement`
   (`go/deprecation_test.go`) flaky.

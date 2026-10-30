@@ -223,13 +223,19 @@ func TestResolveExport_Compression(t *testing.T) {
 }
 
 func TestResolveExport_TimeoutOnlyFromCode(t *testing.T) {
-	// Regression G10 / export.timeout_env_grpc: a 10 s default used to be
-	// passed in code, overriding OTEL_EXPORTER_OTLP_TIMEOUT.
+	// Regression G10 / export.timeout_env_grpc: the env timeout must win over
+	// the default. Since A18 the default (10 s) is the resolved deadline when
+	// nothing is set, and an env value replaces it.
 	o := newOptions(WithServiceName("svc"), WithEndpoint("http://c:4317"))
 	for _, s := range allSignals {
-		if d := o.export(s).timeout; d != 0 {
-			t.Errorf("%s timeout = %v, want 0 (not set in code)", s, d)
+		if d := o.export(s).timeout; d != defaultOtlpTimeout {
+			t.Errorf("%s timeout = %v, want the 10 s default", s, d)
 		}
+	}
+	t.Setenv(otlpEnv("", "TIMEOUT"), "700")
+	o = newOptions(WithServiceName("svc"), WithEndpoint("http://c:4317"))
+	if d := o.export(signalTraces).timeout; d != 700*time.Millisecond {
+		t.Errorf("env timeout = %v, want 700ms", d)
 	}
 	o = newOptions(WithServiceName("svc"), WithEndpoint("http://c:4317"), WithExportTimeout(1500))
 	for _, s := range allSignals {
@@ -1205,8 +1211,8 @@ func TestResolveCompressionEnv(t *testing.T) {
 func TestResolveTimeoutEnv(t *testing.T) {
 	logs := captureDiag(t)
 	o := &Options{}
-	if d := o.resolveTimeout(signalTraces); d != 0 {
-		t.Errorf("unset = %v, want 0 (SDK default)", d)
+	if d := o.resolveTimeout(signalTraces); d != defaultOtlpTimeout {
+		t.Errorf("unset = %v, want the 10 s default (A18: always the export deadline)", d)
 	}
 	t.Setenv(otlpEnv("", "TIMEOUT"), "500")
 	t.Setenv(otlpEnv(signalTraces, "TIMEOUT"), "abc")

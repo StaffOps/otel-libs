@@ -3,13 +3,16 @@
  * frozen {@link Resolved} plus the resource attributes. Explicit code > standard
  * `OTEL_*` env > legacy / `OTEL_HELPER_*` env > default (contract D1). Invalid
  * code values throw before anything is built; environment problems only warn
- * (R8). This module covers the identity rows (task B3) and the OTLP endpoint,
- * protocol and TLS-setting rows (task B4a, `otlp.ts`); later tasks add theirs.
+ * (R8). This module covers the identity rows (task B3), the OTLP endpoint,
+ * protocol and TLS-setting rows (task B4a, `otlp.ts`), the OTLP headers,
+ * timeout and compression rows and the batch/limit settings (task B4b,
+ * `otlp-settings.ts`, `sdk-settings.ts`); later tasks add theirs.
  */
 import { randomUUID } from 'node:crypto';
 import { report, reportOnce, type DiagnosticValue } from './diagnostics';
 import { envBool, envValue, trimWS, type Warn } from './env';
-import { checkCodeOtlp, resolveOtlp, type OtlpPlan, type Reporter } from './otlp';
+import { checkCodeOtlp, resolveOtlp, type OtlpHeaders, type OtlpPlan, type Reporter } from './otlp';
+import { resolveSdkSettings, type SdkSettings } from './sdk-settings';
 import { defaultLogLevel, knownEnvironment, LOG_LEVELS, type LogLevel } from './log-level';
 import { parseResourceAttributes } from './resource-attributes';
 import type { SpanProcessor } from '@opentelemetry/sdk-trace';
@@ -38,7 +41,7 @@ const BUILTIN_DETECTORS: ReadonlySet<string> = new Set(['env', 'serviceinstance'
  * `setup()` options set in code (design API table). A key left `undefined` is
  * not set and reads the environment. Task B3 implements the identity,
  * log-level and diagnostics options, task B4a the OTLP endpoint, protocol and
- * `insecure` options; the other documented options land with their tasks and
+ * `insecure` options, task B4b `exportTimeoutMs` and `compression`; the other documented options land with their tasks and
  * are rejected as unknown until then. Pass a plain object (or
  * a null-prototype one); class instances are rejected. `setup()` reads each
  * property once.
@@ -78,6 +81,13 @@ export interface SetupOptions {
    * value contradicting a code URL's scheme throws; contradicting an env URL warns.
    */
   readonly insecure?: boolean | undefined;
+  /**
+   * OTLP export timeout of every signal, in milliseconds (an integer in
+   * [1, 86 400 000]); wins over `OTEL_EXPORTER_OTLP[_<SIGNAL>]_TIMEOUT`.
+   */
+  readonly exportTimeoutMs?: number | undefined;
+  /** OTLP compression of every signal: `gzip` or `none` (case-insensitive); an empty string is not set. */
+  readonly compression?: string | undefined;
   /** Test/advanced: extra span processors, added after the helper's own (design D-JS7). */
   readonly spanProcessors?: readonly SpanProcessor[] | undefined;
 }
@@ -106,6 +116,10 @@ export interface Plan {
   readonly resolved: Resolved;
   /** Attributes layered over the SDK `defaultResource()` (env, helper fallbacks, code). */
   readonly resourceAttributes: Readonly<Record<string, string>>;
+  /** Parsed OTLP headers per configured signal (secrets: kept out of `Resolved`). */
+  readonly otlpHeaders: OtlpHeaders;
+  /** Batch processor settings and limits the SDK 3.0 no longer reads (spec JS2). */
+  readonly sdk: SdkSettings;
 }
 
 const OPTION_KEYS: ReadonlySet<string> = new Set([
@@ -121,6 +135,8 @@ const OPTION_KEYS: ReadonlySet<string> = new Set([
   'logsEndpoint',
   'otlpProtocol',
   'insecure',
+  'exportTimeoutMs',
+  'compression',
   'spanProcessors',
 ]);
 
@@ -190,8 +206,13 @@ export function validateOptions(options: unknown): SetupOptions {
   }
   checkBoolean('debug', o.debug);
   checkBoolean('installDiagLogger', o.installDiagLogger);
-  for (const option of ['otelEndpoint', 'tracesEndpoint', 'metricsEndpoint', 'logsEndpoint', 'otlpProtocol']) checkString(option, o[option]);
+  for (const option of ['otelEndpoint', 'tracesEndpoint', 'metricsEndpoint', 'logsEndpoint', 'otlpProtocol', 'compression']) {
+    checkString(option, o[option]);
+  }
   checkBoolean('insecure', o.insecure);
+  if (o.exportTimeoutMs !== undefined && typeof o.exportTimeoutMs !== 'number') {
+    fail('exportTimeoutMs', `must be a number, got ${typeName(o.exportTimeoutMs)}`);
+  }
   checkCodeOtlp(o);
   const level = o.minimumLogLevel;
   if (level !== undefined && !LOG_LEVELS.includes(level as LogLevel)) {
@@ -330,10 +351,12 @@ export function resolvePlan(options: SetupOptions, defaultServiceName: string, q
   const debug = options.debug ?? envBool(ENV_DEBUG_LEVEL, quiet ? SILENT_REPORTER.warn : undefined) ?? false;
   const logLevel = options.minimumLogLevel ?? defaultLogLevel(environment, debug);
 
-  const otlp = resolveOtlp(options, quiet ? SILENT_REPORTER : newReporter());
+  const reporter = quiet ? SILENT_REPORTER : newReporter();
+  const { plan: otlp, headers: otlpHeaders } = resolveOtlp(options, reporter);
+  const sdk = resolveSdkSettings(reporter.warn);
 
   const resolved: Resolved = Object.freeze({ serviceName, environment, serviceInstanceId, debug, logLevel, otlp });
-  return { resolved, resourceAttributes: Object.freeze(layer) };
+  return { resolved, resourceAttributes: Object.freeze(layer), otlpHeaders, sdk };
 }
 
 const SILENT_REPORTER: Reporter = Object.freeze({ warn: () => undefined, info: () => undefined });

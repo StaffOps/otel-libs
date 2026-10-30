@@ -1,8 +1,9 @@
 /**
  * OTLP endpoint, protocol and TLS-setting resolution (task B4a; design D-JS3
  * ownership table; contract R1, R2, R8, design D1, D1.a–D1.c and the D1
- * edge-case rulings). Pure resolution: exporters are built from the result in
- * task B4b. Endpoints are split by RFC 3986 and the host is checked by the
+ * edge-case rulings). Pure resolution: exporters are built from the result by
+ * `exporters.ts` (task B4b); headers, timeout and compression come from
+ * `otlp-settings.ts`. Endpoints are split by RFC 3986 and the host is checked by the
  * contract's one host rule (D1 rulings, 2026-10-29), the same rule as Go and
  * Python. WHATWG is only used for IDNA (`domainToASCII`, non-ASCII hosts),
  * behind a guard label so its IPv4 parsing never runs. The rows follow the contract D1
@@ -13,9 +14,20 @@ import { isIPv6 } from 'node:net';
 import { domainToASCII } from 'node:url';
 import { reportOnce, truncateValue, type DiagnosticValue } from './diagnostics';
 import { envBool, envValue, hasControl, trimWS, type Warn } from './env';
+import {
+  checkCodeSettings,
+  otlpEnv,
+  resolveCompression,
+  resolveHeaders,
+  resolveTimeout,
+  type OtlpCompression,
+  type ResolvedHeaders,
+  type SettingsCodeOptions,
+  type Signal,
+} from './otlp-settings';
 
-/** The three OTLP signals. */
-export type Signal = 'traces' | 'metrics' | 'logs';
+export type { Signal } from './otlp-settings';
+export { otlpEnv } from './otlp-settings';
 export const SIGNALS: readonly Signal[] = ['traces', 'metrics', 'logs'];
 
 /** OTLP protocols the helper builds exporters for. */
@@ -34,11 +46,6 @@ const DEFAULT_HTTP_PORT = '4318';
 /** Shown instead of an endpoint the helper cannot parse safely (D1 ruling). */
 export const UNPARSEABLE_URL = '<unparseable URL>';
 
-/** `OTEL_EXPORTER_OTLP[_<SIGNAL>]_<suffix>`; `signal` undefined = the generic variable. */
-export function otlpEnv(signal: Signal | undefined, suffix: string): string {
-  return signal === undefined ? `OTEL_EXPORTER_OTLP_${suffix}` : `OTEL_EXPORTER_OTLP_${signal.toUpperCase()}_${suffix}`;
-}
-
 /** Code-option names of the per-signal endpoints. */
 export const SIGNAL_ENDPOINT_OPTION: Readonly<Record<Signal, 'tracesEndpoint' | 'metricsEndpoint' | 'logsEndpoint'>> = {
   traces: 'tracesEndpoint',
@@ -47,7 +54,7 @@ export const SIGNAL_ENDPOINT_OPTION: Readonly<Record<Signal, 'tracesEndpoint' | 
 };
 
 /** The OTLP-related code options the resolver reads (already type-checked). */
-export interface OtlpCodeOptions {
+export interface OtlpCodeOptions extends SettingsCodeOptions {
   readonly otelEndpoint?: string | undefined;
   readonly tracesEndpoint?: string | undefined;
   readonly metricsEndpoint?: string | undefined;
@@ -64,7 +71,7 @@ export interface OtlpEndpoint {
    * The resolved URL, userinfo, query and fragment removed. `http/protobuf`:
    * the request URL (a generic endpoint gets `/v1/<signal>`, a per-signal one
    * keeps its path, escapes verbatim). `grpc`: `scheme://host:port`, no path,
-   * for diagnostics only — B4b passes {@link grpcTarget} and explicit channel
+   * for diagnostics only — the helper passes {@link grpcTarget} and explicit channel
    * credentials (from {@link insecure}) to the gRPC exporters, never this URL:
    * the exporter would derive its target from `URL.host`, which drops a
    * scheme-default port (`http://h:80` → grpc-js dials 443).
@@ -78,10 +85,29 @@ export interface OtlpEndpoint {
   readonly source: string;
   /** TLS file variables that are set but ignored because the endpoint is plaintext (names only). */
   readonly ignoredTlsVariables: readonly string[];
+  /**
+   * Export deadline in milliseconds: code > `_<SIGNAL>_TIMEOUT` >
+   * `OTEL_EXPORTER_OTLP_TIMEOUT` > 10 000 (D1, A18). Passed to the exporter and
+   * to its batch processor or metric reader.
+   */
+  readonly timeoutMs: number;
+  /** Where {@link timeoutMs} came from: `exportTimeoutMs`, the env variable, or `default`. */
+  readonly timeoutSource: string;
+  /** Compression: code > `_<SIGNAL>_COMPRESSION` > `OTEL_EXPORTER_OTLP_COMPRESSION` > `gzip` (D1.d). */
+  readonly compression: OtlpCompression;
 }
 
 /** Per-signal OTLP plan; `undefined` = no OTLP exporter for that signal. */
 export type OtlpPlan = Readonly<Record<Signal, OtlpEndpoint | undefined>>;
+
+/** Parsed headers per configured signal (secrets: never in `Resolved`, never printed). */
+export type OtlpHeaders = Readonly<Record<Signal, ResolvedHeaders | undefined>>;
+
+/** What {@link resolveOtlp} returns: the public plan and the headers kept out of it. */
+export interface OtlpResolution {
+  readonly plan: OtlpPlan;
+  readonly headers: OtlpHeaders;
+}
 
 // "<scheme>:/…" without "//" (RFC 3986 scheme syntax): a scheme, not a host (D1 ruling).
 const OPAQUE_SCHEME = /^[A-Za-z][A-Za-z0-9+.-]*:\//;
@@ -489,7 +515,11 @@ function sourcesFor(signal: Signal, code: OtlpCodeOptions): Source[] {
 
 const TLS_SUFFIXES = ['CERTIFICATE', 'CLIENT_CERTIFICATE', 'CLIENT_KEY'] as const;
 
-function resolveSignal(signal: Signal, code: OtlpCodeOptions, rep: Reporter): OtlpEndpoint | undefined {
+function resolveSignal(
+  signal: Signal,
+  code: OtlpCodeOptions,
+  rep: Reporter,
+): { readonly endpoint: OtlpEndpoint; readonly headers: ResolvedHeaders | undefined } | undefined {
   const insecure = insecureFor(signal, code, rep);
   for (const src of sourcesFor(signal, code)) {
     if (src.raw === '') continue;
@@ -515,14 +545,22 @@ function resolveSignal(signal: Signal, code: OtlpCodeOptions, rep: Reporter): Ot
         );
       }
     }
-    return Object.freeze({
+    // Settings only for a configured signal, as in Go (resolveExport).
+    const headers = resolveHeaders(signal, rep.warn);
+    const timeout = resolveTimeout(signal, code.exportTimeoutMs, rep.warn);
+    const compression = resolveCompression(signal, code.compression, rep.warn);
+    const endpoint: OtlpEndpoint = Object.freeze({
       protocol: choice.protocol,
       url: parsed.url,
       grpcTarget: parsed.grpcTarget,
       insecure: parsed.scheme === 'http',
       source: src.variable,
       ignoredTlsVariables: Object.freeze(ignoredTlsVariables),
+      timeoutMs: timeout.ms,
+      timeoutSource: timeout.source,
+      compression,
     });
+    return { endpoint, headers };
   }
   return undefined;
 }
@@ -532,10 +570,15 @@ function resolveSignal(signal: Signal, code: OtlpCodeOptions, rep: Reporter): Ot
  * is per signal: code endpoint ∨ generic env ∨ that signal's env endpoint.
  * Throws a `TypeError` for an unusable code value.
  */
-export function resolveOtlp(code: OtlpCodeOptions, rep: Reporter): OtlpPlan {
+export function resolveOtlp(code: OtlpCodeOptions, rep: Reporter): OtlpResolution {
   const plan: Record<Signal, OtlpEndpoint | undefined> = { traces: undefined, metrics: undefined, logs: undefined };
-  for (const signal of SIGNALS) plan[signal] = resolveSignal(signal, code, rep);
-  return Object.freeze(plan);
+  const headers: Record<Signal, ResolvedHeaders | undefined> = { traces: undefined, metrics: undefined, logs: undefined };
+  for (const signal of SIGNALS) {
+    const resolved = resolveSignal(signal, code, rep);
+    plan[signal] = resolved?.endpoint;
+    headers[signal] = resolved?.headers;
+  }
+  return { plan: Object.freeze(plan), headers: Object.freeze(headers) };
 }
 
 const SILENT: Reporter = Object.freeze({
@@ -544,11 +587,13 @@ const SILENT: Reporter = Object.freeze({
 });
 
 /**
- * Fails fast on code OTLP values (R8): an unknown `otlpProtocol`, and for each
+ * Fails fast on code OTLP values (R8): `exportTimeoutMs` / `compression`
+ * (`checkCodeSettings`), an unknown `otlpProtocol`, and for each
  * signal the code endpoint it would use (per-signal, else `otelEndpoint`) when
  * it is unusable or contradicts the code `insecure`. Pure: no diagnostics.
  */
 export function checkCodeOtlp(code: OtlpCodeOptions): void {
+  checkCodeSettings(code);
   const p = codeProtocol(code);
   if (p !== undefined && !PROTOCOLS.includes(p)) {
     throw new TypeError(

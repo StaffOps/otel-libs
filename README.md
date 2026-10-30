@@ -211,7 +211,7 @@ lightweight.
 ## Cross-language parity
 
 Parity is enforced, not promised. [`parity/cases.json`](parity/cases.json) is a
-hand-maintained, language-neutral fixture (266 cases: 187 after A13, 17 added by the Node B3 review, 6 by A16, 40 by Node B4a and its rulings, 16 by A17)
+hand-maintained, language-neutral fixture (281 cases: 187 after A13, 17 added by the Node B3 review, 6 by A16, 40 by Node B4a and its rulings, 16 by A17, 2 by Node B4b, 13 by A18)
 that every language's test suite runs — config resolution, wire-level export
 against a fake OTLP receiver, sampling, propagation, health exclusion, logging
 and `/metrics` status
@@ -231,6 +231,7 @@ always identical:
 | Go resource from `OTEL_RESOURCE_ATTRIBUTES` | The Go SDK providers parse the variable again under the helper's resource (`WithResource` merges `resource.Environment()`): a blank `deployment.environment.name=` comes back as `""` instead of being absent, and a key with surrounding Unicode whitespace (e.g. U+00A0) is emitted twice, verbatim and trimmed. Python and Node.js emit only the helper's parse. Workaround: don't set blank values; use ASCII keys ([design D1](specs/config-contract-v0.3/design.md)) |
 | Go OTLP/HTTP endpoint path escapes | The Go exporters send the decoded path: `/a%2Fb` reaches the Collector as `/a/b` (`WithEndpointURL` keeps `url.URL.Path`). The helper warns once per variable. Python and Node.js send the path as written ([design D1](specs/config-contract-v0.3/design.md), "Go: path escapes decoded") |
 | Python IDN hosts | Python validates IDN labels by IDNA 2008 (`idna` package), so it rejects some hosts Go and Node.js accept — emoji, `_` next to non-ASCII text, labels over 63 characters, hyphens in the third and fourth position — as `<unparseable URL>` (empty labels and hosts over 253 characters are invalid in every language) ([design D1](specs/config-contract-v0.3/design.md), "IDN hosts: Python residual divergence") |
+| Python log value-length limit with SDK 1.42 | `OTEL_LOGRECORD_ATTRIBUTE_VALUE_LENGTH_LIMIT=0` (or the generic `0`) is invalid by contract (warned, no limit), but the SDK 1.42 `LoggerProvider` takes no limits, so log attribute values are still emptied there; SDKs whose `LoggerProvider` accepts `log_record_limits` (1.45) follow the contract ([design D1](specs/config-contract-v0.3/design.md), "Value-length limits") |
 | .NET | Still on the 0.2.x contract and instrumentation set until Phase C ([differences](#net-02x-differences)) |
 
 ## Collector and platform prerequisites

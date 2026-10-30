@@ -46,7 +46,7 @@ export function loadedApiVersion(): string | undefined {
 }
 
 /** Names of the API globals the helper registers. */
-export type ApiGlobal = 'trace' | 'context' | 'diag' | 'metrics' | 'propagation';
+export type ApiGlobal = 'trace' | 'context' | 'diag' | 'metrics' | 'logs' | 'propagation';
 
 function registry(): Record<string, unknown> | undefined {
   const value = (globalThis as Record<symbol, unknown>)[API_GLOBAL_KEY];

@@ -305,7 +305,7 @@ class TestLogsExporterActive:
 
         exporters = []
         monkeypatch.setattr(ls, "BatchLogRecordProcessor",
-                            lambda exp: (exporters.append(type(exp).__name__), SimpleLogRecordProcessor(exp))[1])
+                            lambda exp, **_: (exporters.append(type(exp).__name__), SimpleLogRecordProcessor(exp))[1])
         opts = TelemetryOptions(service_name="s", logs_endpoint="http://127.0.0.1:9")
         os.environ["OTEL_LOGS_EXPORTER"] = "otlp,console"
         opts.resolve_from_env()

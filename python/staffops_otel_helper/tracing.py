@@ -5,7 +5,7 @@ import math
 from contextlib import contextmanager
 
 from opentelemetry import context, trace
-from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace import SpanLimits, TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from opentelemetry.sdk.trace.sampling import (
     ALWAYS_OFF,
@@ -172,16 +172,28 @@ def build_tracer_provider(resource: Resource, options: TelemetryOptions) -> Trac
     """
     paths = DEFAULT_HEALTH_PATHS if options.health_paths is None else options.health_paths
     sampler = HealthCheckSampler(build_sampler(options), paths)
-    provider = TracerProvider(resource=resource, sampler=sampler, shutdown_on_exit=False)
+    limits = options.value_length_limits()
+    kwargs = {}
+    if "span" in limits or "generic" in limits:
+        # A value-length limit of 0 is invalid (D1 ruling, A18): pass the next level explicitly.
+        kwargs["span_limits"] = SpanLimits(
+            max_attribute_length=limits.get("generic"),
+            max_span_attribute_length=limits.get("span"),  # None: the SDK reads a non-zero env value
+        )
+    provider = TracerProvider(resource=resource, sampler=sampler, shutdown_on_exit=False, **kwargs)
     try:
         exporters = options.resolved_exporters("traces")
         plan = options.otlp_export("traces")
         if "otlp" in exporters and plan is not None:
-            provider.add_span_processor(BatchSpanProcessor(build_otlp_exporter(plan)))
+            # The resolved OTLP timeout is the export deadline (A18); OTEL_BSP_EXPORT_TIMEOUT is not honored.
+            provider.add_span_processor(BatchSpanProcessor(build_otlp_exporter(plan),
+                                                           export_timeout_millis=plan.timeout_ms,
+                                                           **options.batch_size_override("OTEL_BSP")))
         if "console" in exporters:
             from opentelemetry.sdk.trace.export import ConsoleSpanExporter
 
-            provider.add_span_processor(BatchSpanProcessor(ConsoleSpanExporter()))
+            provider.add_span_processor(BatchSpanProcessor(ConsoleSpanExporter(),
+                                                           **options.batch_size_override("OTEL_BSP")))
 
         if options.resolved.debug_level:
             provider.add_span_processor(DebugProcessor())

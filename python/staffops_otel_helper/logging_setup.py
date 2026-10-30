@@ -10,6 +10,7 @@ stdout through a console fallback installed as ``logging.lastResort`` (see
 
 from __future__ import annotations
 
+import inspect
 import logging
 import logging.config
 import threading
@@ -17,7 +18,7 @@ import weakref
 from dataclasses import dataclass, field
 
 from opentelemetry.instrumentation.logging.handler import LoggingHandler
-from opentelemetry.sdk._logs import LoggerProvider
+from opentelemetry.sdk._logs import LoggerProvider, LogRecordLimits
 from opentelemetry.sdk._logs import LoggingHandler as _SDKLoggingHandler
 from opentelemetry.sdk._logs.export import BatchLogRecordProcessor
 from opentelemetry.sdk.resources import Resource
@@ -44,6 +45,7 @@ _EXTRA_LOGGERS = ("uvicorn", "uvicorn.error", "uvicorn.access")
 # Name of the SDK BatchLogRecordProcessor worker thread (sdk 1.42-1.45): records it
 # emits come from exporting logs and would feed the next batch.
 _LOG_EXPORT_THREAD = "OtelBatchLogRecordProcessor"
+_ACCEPTS_LIMITS = "log_record_limits" in inspect.signature(LoggerProvider.__init__).parameters
 _HELPER_LOGGER = "staffops_otel_helper"
 
 # Serializes the guarded stdlib config functions (they mutate root's handler list).
@@ -94,14 +96,28 @@ def build_logging(resource: Resource, options: TelemetryOptions):
     want_otlp = "otlp" in exporters and plan is not None
     if not want_otlp and "console" not in exporters:
         return None, None, level
-    provider = LoggerProvider(resource=resource, shutdown_on_exit=False)
+    limits = options.value_length_limits()
+    kwargs = {}
+    # LoggerProvider takes log_record_limits in sdk 1.45 (not 1.42); without it the
+    # SDK's own handling of a 0 limit stays (documented limitation).
+    if ("log" in limits or "generic" in limits) and _ACCEPTS_LIMITS:
+        # A value-length limit of 0 is invalid (D1 ruling, A18): pass the next level explicitly.
+        kwargs["log_record_limits"] = LogRecordLimits(
+            max_attribute_length=limits.get("generic"),
+            max_log_record_attribute_length=limits.get("log"),  # None: the SDK reads a non-zero env value
+        )
+    provider = LoggerProvider(resource=resource, shutdown_on_exit=False, **kwargs)
     try:
         if want_otlp:
-            provider.add_log_record_processor(BatchLogRecordProcessor(build_otlp_exporter(plan)))
+            # The resolved OTLP timeout is the export deadline (A18); OTEL_BLRP_EXPORT_TIMEOUT is not honored.
+            provider.add_log_record_processor(BatchLogRecordProcessor(build_otlp_exporter(plan),
+                                                                      export_timeout_millis=plan.timeout_ms,
+                                                                      **options.batch_size_override("OTEL_BLRP")))
         if "console" in exporters:
             from opentelemetry.sdk._logs.export import ConsoleLogRecordExporter
 
-            provider.add_log_record_processor(BatchLogRecordProcessor(ConsoleLogRecordExporter()))
+            provider.add_log_record_processor(BatchLogRecordProcessor(ConsoleLogRecordExporter(),
+                                                                      **options.batch_size_override("OTEL_BLRP")))
         code_attributes = (_env(ENV_LOG_CODE_ATTRIBUTES) or "").lower() == "true"
         handler = HelperLogHandler(level, provider, code_attributes)
     except BaseException:

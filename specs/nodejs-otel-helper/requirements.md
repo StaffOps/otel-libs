@@ -68,7 +68,12 @@ are listed in the root README "Known emitted-telemetry gaps".
   variable (endpoint, headers, timeout, compression, protocol, insecure) SHALL
   be hidden from `process.env`, so rejected values never reach the wire and
   the SDK never warns raw values (R8); certificate/client-key/client-cert
-  variables stay visible (gRPC reads them lazily).
+  variables stay visible (gRPC reads them lazily). *Amended 2026-10-29
+  (contract task A18, D1 row "TLS files"): the helper now reads and validates
+  the TLS files itself and passes them explicitly (gRPC channel credentials,
+  HTTPS agent options), so the certificate/client-key/client-cert variables
+  are hidden too; "gRPC reads them lazily" is no longer the reason they would
+  stay visible.*
 - WHEN `OTEL_CONFIG_FILE` is set THEN warn once that it is not supported.
 - Settings the 3.0 SDK no longer reads (`OTEL_BSP_*`, `OTEL_BLRP_*`,
   attribute/span limits) SHALL be read by the helper with the spec defaults;

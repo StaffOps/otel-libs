@@ -31,6 +31,7 @@ from urllib.parse import unquote, unquote_to_bytes
 import idna
 
 from staffops_otel_helper._diag import warn_once_per_process
+from staffops_otel_helper._tls import TlsFiles, resolve_tls, tls_variables
 
 _log = logging.getLogger("staffops_otel_helper.config")
 
@@ -91,6 +92,12 @@ _DECIMAL_RE = re.compile(r"^[0-9]+(\.[0-9]+)?$")  # plain decimal ms: no sign/ex
 _HEADER_KEY_RE = re.compile(r"^[A-Za-z0-9._-]+$")
 # A "%" not followed by two hex digits (headers, OTEL_RESOURCE_ATTRIBUTES, endpoint paths).
 _BAD_ESCAPE_RE = re.compile(r"%(?![0-9A-Fa-f]{2})")
+_PRINTABLE_ASCII_RE = re.compile(r"^[\x20-\x7e]*$")
+_MAX_CODE_TIMEOUT_MS = 86_400_000  # D1 ruling "Code export timeout bound" (A18): the env clamp range
+#: Export-timeout variables the helper does not honor (D1 ruling "Export deadline", A18).
+IGNORED_TIMEOUT_VARS = ("OTEL_BSP_EXPORT_TIMEOUT", "OTEL_BLRP_EXPORT_TIMEOUT", "OTEL_METRIC_EXPORT_TIMEOUT")
+_VALUE_LENGTH_VARS = ("OTEL_ATTRIBUTE_VALUE_LENGTH_LIMIT", "OTEL_SPAN_ATTRIBUTE_VALUE_LENGTH_LIMIT",
+                      "OTEL_LOGRECORD_ATTRIBUTE_VALUE_LENGTH_LIMIT")
 UNPARSEABLE_URL = "<unparseable URL>"
 _OPAQUE_SCHEME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*:/")
 
@@ -459,7 +466,7 @@ def _parse_headers(raw: str) -> tuple[dict[str, str], list[int], list[int]]:
             continue
         decoded, ok = _decode_header_value(value)
         decoded = decoded.strip(TRIM_CHARS)
-        if _has_control(decoded):
+        if not _PRINTABLE_ASCII_RE.match(decoded):  # control or non-ASCII (D1 "Header bytes", A18)
             bad.append(pos)
             continue
         if not ok:
@@ -486,6 +493,11 @@ class SignalExport:
     source: Literal["code", "env"]
     kwargs: dict[str, object] = field(default_factory=dict)
     masked_env: tuple[str, ...] = ()
+    #: The signal's single export deadline (D1 ruling "Export deadline", A18):
+    #: passed to the exporter and to its batch processor or periodic reader.
+    timeout_ms: float = _DEFAULT_TIMEOUT_MS
+    #: Validated TLS files of a TLS endpoint (None: plaintext); the TLS variables are masked.
+    tls: TlsFiles | None = None
 
 
 @dataclass(frozen=True)
@@ -747,6 +759,8 @@ class TelemetryOptions:
                 fail(option, f"must be an integer (milliseconds), got {type(value).__name__}")
             if value <= 0:
                 fail(option, "must be greater than 0")
+            if option == "export_timeout_ms" and value > _MAX_CODE_TIMEOUT_MS:
+                fail(option, f"must be in [1, {_MAX_CODE_TIMEOUT_MS}] ms, got {value}")
         if self.debug_level is not None:
             # bool or int (truthiness, as before 0.3); a string such as "false" would read as true.
             if not isinstance(self.debug_level, int):
@@ -802,6 +816,11 @@ class TelemetryOptions:
         self._span_log_exporters = {}
         self._resource_overrides = {}
         _warn_deprecated_env()
+        for var in IGNORED_TIMEOUT_VARS:
+            if _env(var) is not None:
+                self._warn_once(f"ignored-timeout:{var}", "[OtelHelper] %s is not honored: the OTLP export timeout is "
+                                "the export deadline of every signal; set OTEL_EXPORTER_OTLP_TIMEOUT or "
+                                "OTEL_EXPORTER_OTLP_<SIGNAL>_TIMEOUT.", var)
         self._env_resource = self._parse_env_resource()
         self._resolve_service_name()
         self._resolve_environment()
@@ -1187,6 +1206,10 @@ class TelemetryOptions:
                 if protocol == PROTOCOL_GRPC:
                     explicit = True  # pass insecure=True so the SDK doesn't load the files
 
+        # The helper owns the TLS files (D1 ruling "TLS files", A18): resolved and
+        # validated here, passed explicitly, and hidden from the SDK.
+        tls = resolve_tls(signal, self._warn_once) if scheme == "https" else None
+
         kwargs: dict[str, object] = {}
         if explicit:
             netloc = f"{ep.host}:{port}" if port else ep.host
@@ -1198,7 +1221,7 @@ class TelemetryOptions:
                 kwargs["endpoint"] = f"{scheme}://{netloc}"
                 kwargs["insecure"] = scheme == "http"
 
-        masked: list[str] = []
+        masked: list[str] = [v for v in tls_variables(signal) if v in os.environ]
         headers = self._headers_for(signal)
         if headers is not None:
             kwargs["headers"] = headers
@@ -1207,11 +1230,12 @@ class TelemetryOptions:
             masked += [v for v in (_signal_var("HEADERS", signal), "OTEL_EXPORTER_OTLP_HEADERS")
                        if v in os.environ]
         timeout_s = self._timeout_for(signal, masked)
-        if timeout_s is not None:
-            kwargs["timeout"] = timeout_s
+        if timeout_s is None:
+            timeout_s = _DEFAULT_TIMEOUT_MS / 1000  # the export deadline is always explicit (A18)
+        kwargs["timeout"] = timeout_s
         kwargs["compression"] = self._compression_for(signal)
         return SignalExport(signal=signal, protocol=protocol, source=source, kwargs=kwargs,
-                            masked_env=tuple(masked))
+                            masked_env=tuple(masked), timeout_ms=timeout_s * 1000, tls=tls)
 
     def _insecure_setting(self, signal: str) -> tuple[bool | None, str]:
         if self.insecure is not None:
@@ -1305,6 +1329,66 @@ class TelemetryOptions:
             self._warn_once(f"compression:{var}", "[OtelHelper] %s=%r is not a supported compression "
                             "(valid: %s); ignoring it.", var, raw, ", ".join(_VALID_COMPRESSIONS))
         return "gzip"
+
+    def batch_size_override(self, prefix: str) -> dict[str, int]:
+        """``max_export_batch_size`` to pass when it exceeds the queue size (D1 ruling, A18).
+
+        ``<prefix>_MAX_EXPORT_BATCH_SIZE`` above ``<prefix>_MAX_QUEUE_SIZE``
+        (defaults 512 / 2048) warns once naming both variables and the queue
+        size is used — the SDK would raise ``ValueError`` and fail setup.
+        Unparseable values are left to the SDK.
+        """
+        def read(var: str, default: int) -> int | None:
+            raw = _env(var)
+            if raw is None:
+                return default
+            try:
+                return int(raw)
+            except ValueError:
+                return None
+
+        queue_var, batch_var = f"{prefix}_MAX_QUEUE_SIZE", f"{prefix}_MAX_EXPORT_BATCH_SIZE"
+        queue, batch = read(queue_var, 2048), read(batch_var, 512)
+        if queue is None or batch is None or queue <= 0 or batch <= queue:
+            return {}
+        self._warn_once(f"batch-above-queue:{prefix}", "[OtelHelper] %s=%d is larger than %s=%d; using the queue "
+                        "size as the export batch size.", batch_var, batch, queue_var, queue)
+        return {"max_export_batch_size": queue}
+
+    def value_length_limits(self) -> dict[str, int | None]:
+        """Value-length limits to pass explicitly because an env value is 0 (D1 ruling, A18).
+
+        0 is not a valid limit: it warns once and the next level applies
+        (per-signal → generic → no limit). Returns ``{}`` when no 0 is set (the
+        SDK reads the variables itself); otherwise the keys ``span`` and/or
+        ``log`` with the limit to use (-1 = ``SpanLimits.UNSET``, no limit).
+        """
+        values: dict[str, int | None] = {}
+        zero: set[str] = set()
+        for var in _VALUE_LENGTH_VARS:
+            raw = _env(var)
+            n: int | None = None
+            if raw is not None:
+                try:
+                    n = int(raw)
+                except ValueError:
+                    n = None  # the SDK reports it
+            if n == 0:
+                self._warn_once(f"value-length-zero:{var}", "[OtelHelper] %s=0: a value-length limit of 0 is invalid; "
+                                "the next level or no limit is used.", var)
+                zero.add(var)
+                n = None
+            values[var] = n
+        generic, span, log = (values[v] for v in _VALUE_LENGTH_VARS)
+        out: dict[str, int | None] = {}
+        fallback = generic if generic is not None else -1
+        if _VALUE_LENGTH_VARS[1] in zero or (_VALUE_LENGTH_VARS[0] in zero and span is None):
+            out["span"] = span if span is not None else fallback
+        if _VALUE_LENGTH_VARS[2] in zero or (_VALUE_LENGTH_VARS[0] in zero and log is None):
+            out["log"] = log if log is not None else fallback
+        if _VALUE_LENGTH_VARS[0] in zero:
+            out["generic"] = -1
+        return out
 
     # ── validation ────────────────────────────────────────────────────────
 

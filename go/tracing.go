@@ -12,6 +12,7 @@ import (
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/trace"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/encoding"
 )
@@ -31,6 +32,9 @@ func configureTracing(ctx context.Context, res *resource.Resource, opts *Options
 		// Health-check server spans are dropped by the sampler (design D5).
 		sdktrace.WithSampler(newHealthSampler(buildSampler(opts), opts.healthPaths())),
 	}
+	if limits, ok := opts.spanLimits(); ok {
+		tpOpts = append(tpOpts, sdktrace.WithRawSpanLimits(limits))
+	}
 
 	// Processors are built here, not with WithBatcher: a batch processor
 	// starts its export goroutine on creation, so a later failure must shut
@@ -47,11 +51,9 @@ func configureTracing(ctx context.Context, res *resource.Resource, opts *Options
 				continue // no endpoint for traces: spans stay in-process
 			}
 			exporter, err = otlpTraceExporter(ctx, e)
-			if e.timeout > 0 {
-				// The processor's own 30 s export timeout would otherwise cap
-				// the resolved one (design D1 "Effective export deadline").
-				bspOpts = append(bspOpts, sdktrace.WithExportTimeout(e.timeout))
-			}
+			// The resolved OTLP timeout is the export deadline (D1 ruling
+			// "Export deadline", A18): OTEL_BSP_EXPORT_TIMEOUT is not honored.
+			bspOpts = append(bspOpts, sdktrace.WithExportTimeout(e.timeout))
 		case "console":
 			exporter, err = consoleSpanExporter()
 		}
@@ -60,6 +62,9 @@ func configureTracing(ctx context.Context, res *resource.Resource, opts *Options
 				releaseOnFailure(ctx, "span processor", processors[i].Shutdown)
 			}
 			return nil, fmt.Errorf("trace exporter: %w", err)
+		}
+		if n, ok := opts.batchSizeOverride("OTEL_BSP"); ok {
+			bspOpts = append(bspOpts, sdktrace.WithMaxExportBatchSize(n))
 		}
 		p := sdktrace.NewBatchSpanProcessor(exporter, bspOpts...)
 		processors = append(processors, p)
@@ -156,6 +161,9 @@ func newOTLPTraceExporter(ctx context.Context, e *signalExport) (sdktrace.SpanEx
 		if e.headers != nil {
 			o = append(o, otlptracehttp.WithHeaders(e.headers))
 		}
+		if e.tlsConfig != nil {
+			o = append(o, otlptracehttp.WithTLSClientConfig(e.tlsConfig))
+		}
 		if e.dropTLS {
 			// nil clears the TLS config the SDK loaded from env (options are
 			// applied after env); otherwise New() fails on an http:// endpoint.
@@ -177,6 +185,9 @@ func newOTLPTraceExporter(ctx context.Context, e *signalExport) (sdktrace.SpanEx
 	}
 	if e.headers != nil {
 		o = append(o, otlptracegrpc.WithHeaders(e.headers))
+	}
+	if e.tlsConfig != nil {
+		o = append(o, otlptracegrpc.WithTLSCredentials(credentials.NewTLS(e.tlsConfig)))
 	}
 	if e.dropTLS {
 		// The SDK prefers env TLS credentials over Insecure: force plaintext.

@@ -1,6 +1,7 @@
 package otelhelper
 
 import (
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"net/url"
@@ -30,7 +31,11 @@ type signalExport struct {
 	// helper overrides the env TLS config so the scheme wins: the HTTP
 	// exporters' New() would fail, gRPC would dial TLS (design D1.c).
 	dropTLS bool
-	// timeout: code, else a parsed env value (0 = no env var set: SDK default).
+	// tlsConfig: the helper-resolved TLS files of a TLS endpoint (A18), passed
+	// explicitly; nil = no TLS file variable set (SDK default, system roots).
+	tlsConfig *tls.Config
+	// timeout: code, else a parsed env value, else 10 s — the signal's single
+	// export deadline (A18).
 	timeout time.Duration
 	// headers parsed from OTEL_EXPORTER_OTLP[_<SIGNAL>]_HEADERS (nil = unset).
 	headers map[string]string
@@ -358,6 +363,8 @@ func (o *Options) resolveExport(signal string) (*signalExport, error) {
 				strings.Join(tlsVars, ","), "<file paths not shown>", "plaintext"})
 			e.dropTLS = true
 		}
+	} else {
+		e.tlsConfig = o.checkTLSFiles(signal)
 	}
 
 	e.compression = o.resolveCompression(signal)
@@ -402,19 +409,18 @@ var decimalMs = regexp.MustCompile(`^[0-9]+(\.[0-9]+)?$`)
 // resolveTimeout: code > OTEL_EXPORTER_OTLP_<SIGNAL>_TIMEOUT >
 // OTEL_EXPORTER_OTLP_TIMEOUT (decimal milliseconds) > 10 s. Unparseable or
 // zero values warn and fall back to the next level; values outside
-// [1 ms, 24 h] are clamped with a warning. 0 = no code value and no env var
-// set (SDK default, nothing passed — G10).
+// [1 ms, 24 h] are clamped with a warning. The result is the signal's single
+// export deadline, always passed to the exporter and to its batch processor
+// or periodic reader (D1 ruling "Export deadline", A18).
 func (o *Options) resolveTimeout(signal string) time.Duration {
 	if o.ExportTimeoutMs > 0 {
 		return time.Duration(o.ExportTimeoutMs) * time.Millisecond
 	}
-	anySet := false
 	for _, key := range []string{otlpEnv(signal, "TIMEOUT"), otlpEnv("", "TIMEOUT")} {
 		raw := trimWS(os.Getenv(key))
 		if raw == "" {
 			continue
 		}
-		anySet = true
 		ms, err := strconv.ParseFloat(raw, 64)
 		if !decimalMs.MatchString(raw) || err != nil || ms <= 0 {
 			o.warnOnce(endpointWarning{msg: "invalid timeout (positive decimal milliseconds)", variable: key, value: raw, using: "next level, else 10000"})
@@ -431,10 +437,7 @@ func (o *Options) resolveTimeout(signal string) time.Duration {
 		}
 		return time.Duration(ms * float64(time.Millisecond))
 	}
-	if anySet {
-		return defaultOtlpTimeout
-	}
-	return 0
+	return defaultOtlpTimeout
 }
 
 // resolveHeaders parses OTEL_EXPORTER_OTLP_<SIGNAL>_HEADERS, else the
@@ -468,6 +471,9 @@ func (o *Options) resolveHeaders(signal string) map[string]string {
 // isControl reports a byte < 0x20 or 0x7F (DEL).
 func isControl(r rune) bool { return r < 0x20 || r == 0x7f }
 
+// notPrintableASCII reports a rune outside 0x20–0x7E.
+func notPrintableASCII(r rune) bool { return r < 0x20 || r > 0x7e }
+
 // headerKey is the intersection of HTTP tokens and gRPC metadata keys.
 var headerKey = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
 
@@ -491,9 +497,11 @@ func parseHeaders(raw string) (headers map[string]string, skipped, literal []int
 			literal = append(literal, i+1)
 		}
 		val = trimWS(val)
-		if strings.IndexFunc(val, isControl) >= 0 {
-			// e.g. %0D%0A: would fail every export. Only the "skipped"
-			// warning: drop a "literal" mark for the same item.
+		if strings.IndexFunc(val, notPrintableASCII) >= 0 {
+			// e.g. %0D%0A or %C3%A9: printable ASCII only (D1 ruling
+			// "Header bytes", A18; grpc-go fails the whole export on a
+			// non-ASCII value). Only the "skipped" warning: drop a
+			// "literal" mark for the same item.
 			if n := len(literal); n > 0 && literal[n-1] == i+1 {
 				literal = literal[:n-1]
 			}

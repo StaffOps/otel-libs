@@ -20,6 +20,7 @@ import (
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/resource"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/encoding"
 )
@@ -222,6 +223,9 @@ func newOTLPMetricExporter(ctx context.Context, e *signalExport) (sdkmetric.Expo
 		if e.headers != nil {
 			o = append(o, otlpmetrichttp.WithHeaders(e.headers))
 		}
+		if e.tlsConfig != nil {
+			o = append(o, otlpmetrichttp.WithTLSClientConfig(e.tlsConfig))
+		}
 		if e.dropTLS {
 			// nil clears the TLS config the SDK loaded from env (options are
 			// applied after env); otherwise New() fails on an http:// endpoint.
@@ -243,6 +247,9 @@ func newOTLPMetricExporter(ctx context.Context, e *signalExport) (sdkmetric.Expo
 	}
 	if e.headers != nil {
 		o = append(o, otlpmetricgrpc.WithHeaders(e.headers))
+	}
+	if e.tlsConfig != nil {
+		o = append(o, otlpmetricgrpc.WithTLSCredentials(credentials.NewTLS(e.tlsConfig)))
 	}
 	if e.dropTLS {
 		// The SDK prefers env TLS credentials over Insecure: force plaintext.

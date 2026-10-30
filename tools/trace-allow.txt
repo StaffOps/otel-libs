@@ -31,7 +31,6 @@ SR14 not implemented yet (spec draft); owner task: S6
 # nodejs-otel-helper (Phase B): "JS<n> pending B<x>" = not cited yet; owner task B<x>
 # from specs/nodejs-otel-helper/tasks.md. The owner task deletes its line when its
 # tests cite the id (added by B2, 2026-10-29).
-JS2 pending B4b (composition without NodeSDK, env masking during exporter construction, BSP/BLRP/limits)
 JS5 pending B9 (setup warning in an ESM process without hooks; dual-load state already tested by B1a)
 JS6 pending B8 (createLogger, stdout fallback, console exporter)
 JS7 pending B9 (idempotent setup, rollback, foreign globals, shutdown)

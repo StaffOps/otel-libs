@@ -1,8 +1,9 @@
 'use strict';
 // OTLP endpoint, protocol and TLS-setting resolution (task B4a): contract R1,
 // R2, R8, design D1, D1.a–D1.c and the D1 edge-case rulings; Node design D-JS3
-// (ownership table) and D-JS14 (IPv6 zone ids). Exporters are task B4b, so
-// these tests read the resolved plan (`Resolved.otlp`) and the diagnostics.
+// (ownership table) and D-JS14 (IPv6 zone ids). These tests read the resolved
+// plan (`Resolved.otlp`) and the diagnostics; exporter construction (B4b) is
+// tested in exporters.test.cjs.
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const helper = require('@staffops/otel-helper');
@@ -70,6 +71,9 @@ test('R1 generic gRPC endpoint configures every signal: target host:port, plaint
       insecure: true,
       source: 'OTEL_EXPORTER_OTLP_ENDPOINT',
       ignoredTlsVariables: [],
+      timeoutMs: 10000,
+      timeoutSource: 'default',
+      compression: 'gzip',
     });
     assert.ok(Object.isFrozen(otlp[signal]));
   }
@@ -491,10 +495,13 @@ test('R2 TLS files with a plaintext endpoint: warned by name only, listed as ign
   const text = warnings().join('\n');
   assert.match(text, /TLS files are set but the endpoint is plaintext .* variable=OTEL_EXPORTER_OTLP_CERTIFICATE,OTEL_EXPORTER_OTLP_TRACES_CLIENT_KEY value="<file paths not shown>"/);
   assert.ok(!text.includes('s3cret') && !text.includes('/x/'), text);
-  // TLS endpoint: nothing ignored, nothing warned.
+  // TLS endpoint: nothing ignored; the gRPC credentials (B4b) then report the
+  // missing file once (shared by the three signals), by variable name only.
   const tls = fresh({ OTEL_EXPORTER_OTLP_ENDPOINT: 'https://collector:4317', OTEL_EXPORTER_OTLP_CERTIFICATE: '/x/ca.pem' });
   assert.deepEqual(tls.traces.ignoredTlsVariables, []);
-  assert.deepEqual(warnings(), []);
+  assert.deepEqual(warnings(), [
+    'otelhelper: TLS file cannot be read; ignored variable=OTEL_EXPORTER_OTLP_CERTIFICATE value=ENOENT using="the system roots"',
+  ]);
 });
 
 test('R8 code values fail fast naming the option, before anything is installed, never echoing secrets', () => {
@@ -587,16 +594,16 @@ test('globals: a registry of another @opentelemetry/api version is foreign — r
     helper.setup({ serviceName: 'svc', environment: 'DEV' });
     console.log(JSON.stringify(Object.keys(globalThis[key]).sort()));
   `);
-  assert.deepEqual(lastJson(res), ['context', 'diag', 'trace', 'version']);
+  assert.deepEqual(lastJson(res), ['context', 'diag', 'logs', 'metrics', 'trace', 'version']);
 });
 
-test('globals: a registration the API refuses anyway is reported (context manager, TracerProvider)', () => {
+test('globals: a registration the API refuses anyway is reported (context manager, Tracer/Meter/LoggerProvider)', () => {
   const res = runCjs(`
     const key = Symbol.for('opentelemetry.js.api.1');
     const { loadedApiVersion } = require('./dist/internal/globals.js');
     const reg = { version: loadedApiVersion() };
     // Empty for the helper's check, taken for the API's duplicate check.
-    for (const type of ['context', 'trace']) {
+    for (const type of ['context', 'trace', 'metrics', 'logs']) {
       let reads = 0;
       Object.defineProperty(reg, type, { get: () => (reads++ === 0 ? undefined : {}), set: () => {}, configurable: true });
     }
@@ -609,6 +616,8 @@ test('globals: a registration the API refuses anyway is reported (context manage
   assert.deepEqual(lastJson(res), [
     'otelhelper: the OpenTelemetry API refused the global context manager; in-process context is not propagated',
     "otelhelper: the OpenTelemetry API refused the global TracerProvider; the helper's traces are inactive signal=traces",
+    "otelhelper: the OpenTelemetry API refused the global MeterProvider; the helper's metrics are inactive signal=metrics",
+    "otelhelper: the OpenTelemetry API refused the global LoggerProvider; the helper's logs are inactive signal=logs",
   ]);
 });
 

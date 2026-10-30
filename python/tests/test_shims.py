@@ -36,11 +36,12 @@ class TestDeferToSdk:
         os.environ["OTEL_EXPORTER_OTLP_PROTOCOL"] = "http/protobuf"
         plan = _plan()
         assert plan.source == "env"
-        assert plan.kwargs == {"compression": "gzip"}
+        # The export deadline is always explicit since A18.
+        assert plan.kwargs == {"compression": "gzip", "timeout": 10.0}
 
     def test_per_signal_env_url_not_passed(self):
         os.environ["OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"] = "http://collector:4317"
-        assert _plan().kwargs == {"compression": "gzip"}
+        assert _plan().kwargs == {"compression": "gzip", "timeout": 10.0}
 
 
 class TestCodeEndpoints:
@@ -305,8 +306,9 @@ class TestUserinfo:
 class TestTimeout:
     """D1.e: env *_TIMEOUT is milliseconds; passed as seconds."""
 
-    def test_unset_not_passed(self):
-        assert "timeout" not in _plan(otel_endpoint="http://c:4317").kwargs
+    def test_unset_passes_the_default_deadline(self):
+        # A18 ruling "Export deadline": the 10 s default is passed explicitly.
+        assert _plan(otel_endpoint="http://c:4317").kwargs["timeout"] == 10.0
 
     def test_generic_ms_to_seconds(self):
         os.environ["OTEL_EXPORTER_OTLP_TIMEOUT"] = "2500"

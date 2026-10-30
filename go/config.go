@@ -224,6 +224,7 @@ func (o *Options) resolveFromEnv() {
 	}
 
 	o.propagator = parsePropagators(os.Getenv(EnvPropagators))
+	o.warnIgnoredTimeouts()
 }
 
 // warnDeprecatedEnv warns, once per process, about every deprecated or dead
@@ -505,8 +506,9 @@ func (o *Options) validate() error {
 			break
 		}
 	}
-	if (o.exportTimeoutSet && o.ExportTimeoutMs <= 0) || o.ExportTimeoutMs < 0 {
-		errs = append(errs, fmt.Errorf("WithExportTimeout: timeout must be > 0 ms, got %d", o.ExportTimeoutMs))
+	if (o.exportTimeoutSet && o.ExportTimeoutMs <= 0) || o.ExportTimeoutMs < 0 || o.ExportTimeoutMs > maxExportTimeoutMs {
+		// [1 ms, 24 h], the env clamp range (D1 ruling "Code export timeout bound", A18).
+		errs = append(errs, fmt.Errorf("WithExportTimeout: timeout must be in [1, %d] ms, got %d", maxExportTimeoutMs, o.ExportTimeoutMs))
 	}
 	if (o.exportIntervalSet && o.ExportIntervalMs <= 0) || o.ExportIntervalMs < 0 {
 		errs = append(errs, fmt.Errorf("WithExportInterval: interval must be > 0 ms, got %d", o.ExportIntervalMs))

@@ -494,7 +494,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B4b-otlp-endpoint"
+        "nodejs": "pass"
       }
     },
     {
@@ -907,7 +907,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B4b-otlp-headers"
+        "nodejs": "pass"
       }
     },
     {
@@ -1177,7 +1177,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B4b-otlp-endpoint"
+        "nodejs": "pass"
       }
     },
     {
@@ -1212,7 +1212,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B4b-otlp-endpoint"
+        "nodejs": "pass"
       }
     },
     {
@@ -1248,7 +1248,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B4b-otlp-tls"
+        "nodejs": "pass"
       }
     },
     {
@@ -1288,7 +1288,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B4b-otlp-tls"
+        "nodejs": "pass"
       }
     },
     {
@@ -1328,7 +1328,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B4b-otlp-tls"
+        "nodejs": "pass"
       }
     },
     {
@@ -1367,7 +1367,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B4b-otlp-endpoint"
+        "nodejs": "pass"
       }
     },
     {
@@ -1402,7 +1402,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B4b-otlp-endpoint"
+        "nodejs": "pass"
       }
     },
     {
@@ -1438,7 +1438,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B4b-otlp-endpoint"
+        "nodejs": "pass"
       }
     },
     {
@@ -1478,7 +1478,7 @@
         "go": "skip:no-upstream-go-http-raw-path",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B4b-otlp-endpoint"
+        "nodejs": "pass"
       }
     },
     {
@@ -1515,7 +1515,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B4b-otlp-tls"
+        "nodejs": "pass"
       }
     },
     {
@@ -1554,7 +1554,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B4b-otlp-endpoint"
+        "nodejs": "pass"
       }
     },
     {
@@ -1590,7 +1590,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B4b-otlp-endpoint"
+        "nodejs": "pass"
       }
     },
     {
@@ -1630,7 +1630,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B4b-otlp-endpoint"
+        "nodejs": "pass"
       }
     },
     {
@@ -1658,7 +1658,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B4b-otlp-endpoint"
+        "nodejs": "pass"
       }
     },
     {
@@ -1698,7 +1698,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B4b-otlp-endpoint"
+        "nodejs": "pass"
       }
     },
     {
@@ -1727,7 +1727,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B4b-otlp-endpoint"
+        "nodejs": "pass"
       }
     },
     {
@@ -1763,7 +1763,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B4b-otlp-tls"
+        "nodejs": "pass"
       }
     },
     {
@@ -1799,7 +1799,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B4b-otlp-tls"
+        "nodejs": "pass"
       }
     },
     {
@@ -1839,7 +1839,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B4b-otlp-tls"
+        "nodejs": "pass"
       }
     },
     {
@@ -1875,7 +1875,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B4b-otlp-tls"
+        "nodejs": "pass"
       }
     },
     {
@@ -1915,7 +1915,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B4b-otlp-tls"
+        "nodejs": "pass"
       }
     },
     {
@@ -1952,7 +1952,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B4b-otlp-tls"
+        "nodejs": "pass"
       }
     },
     {
@@ -1985,7 +1985,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B4b-otlp-endpoint"
+        "nodejs": "pass"
       }
     },
     {
@@ -2016,7 +2016,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B4b-otlp-endpoint"
+        "nodejs": "pass"
       }
     },
     {
@@ -2049,7 +2049,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B4b-otlp-endpoint"
+        "nodejs": "pass"
       }
     },
     {
@@ -2083,7 +2083,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B4b-otlp-endpoint"
+        "nodejs": "pass"
       }
     },
     {
@@ -2115,7 +2115,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B4b-otlp-endpoint"
+        "nodejs": "pass"
       }
     },
     {
@@ -2153,7 +2153,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B4b-otlp-tls"
+        "nodejs": "pass"
       }
     },
     {
@@ -2194,7 +2194,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B4b-otlp-tls"
+        "nodejs": "pass"
       }
     },
     {
@@ -2230,7 +2230,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B4b-otlp-tls"
+        "nodejs": "pass"
       }
     },
     {
@@ -2257,7 +2257,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B4b-otlp-tls"
+        "nodejs": "pass"
       }
     },
     {
@@ -2297,7 +2297,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B4b-otlp-tls"
+        "nodejs": "pass"
       }
     },
     {
@@ -2326,7 +2326,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B4b-otlp-endpoint"
+        "nodejs": "pass"
       }
     },
     {
@@ -2355,7 +2355,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B4b-otlp-endpoint"
+        "nodejs": "pass"
       }
     },
     {
@@ -2385,7 +2385,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B4b-otlp-compression"
+        "nodejs": "pass"
       }
     },
     {
@@ -2421,7 +2421,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B4b-otlp-headers"
+        "nodejs": "pass"
       }
     },
     {
@@ -2454,7 +2454,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B4b-otlp-headers"
+        "nodejs": "pass"
       }
     },
     {
@@ -2482,7 +2482,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B4b-otlp-compression"
+        "nodejs": "pass"
       }
     },
     {
@@ -2522,7 +2522,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B4b-otlp-timeout"
+        "nodejs": "pass"
       }
     },
     {
@@ -2554,7 +2554,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B4b-otlp-timeout"
+        "nodejs": "pass"
       },
       "note": "Asserted via the grpc-timeout header (gRPC only; HTTP timeouts stay in A3 unit tests). Python: the SDK parses *_TIMEOUT as seconds while the spec says milliseconds (design D1.e); A3 adds the helper ms\u2192s shim. Go: the SDK applies the env since A3 (G10: the helper passes no timeout unless set in code). Bound is lte 600, not 500: grpc encodes the remaining deadline and can round it up (501m observed with timeout=0.5 s passed by the helper); 600 still separates ms (500) from a seconds misread (500000) and the 10 s default (10000)."
     },
@@ -3770,7 +3770,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B4b-otlp-tls"
+        "nodejs": "pass"
       }
     },
     {
@@ -3824,7 +3824,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B4b-otlp-endpoint"
+        "nodejs": "pass"
       }
     },
     {
@@ -3862,7 +3862,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B4b-otlp-tls"
+        "nodejs": "pass"
       }
     },
     {
@@ -3899,7 +3899,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B4b-otlp-tls"
+        "nodejs": "pass"
       }
     },
     {
@@ -3937,7 +3937,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B4b-otlp-tls"
+        "nodejs": "pass"
       }
     },
     {
@@ -3967,7 +3967,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B4b-otlp-compression"
+        "nodejs": "pass"
       }
     },
     {
@@ -3998,7 +3998,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B4b-otlp-compression"
+        "nodejs": "pass"
       }
     },
     {
@@ -4028,7 +4028,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B4b-otlp-timeout"
+        "nodejs": "pass"
       }
     },
     {
@@ -4069,7 +4069,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B4b-otlp-timeout"
+        "nodejs": "pass"
       }
     },
     {
@@ -4117,7 +4117,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B4b-otlp-headers"
+        "nodejs": "pass"
       }
     },
     {
@@ -4147,7 +4147,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B4b-otlp-endpoint"
+        "nodejs": "pass"
       }
     },
     {
@@ -4174,7 +4174,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B4b-otlp-endpoint"
+        "nodejs": "pass"
       }
     },
     {
@@ -4215,7 +4215,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B4b-otlp-endpoint"
+        "nodejs": "pass"
       }
     },
     {
@@ -4952,7 +4952,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B4b-otlp-tls"
+        "nodejs": "pass"
       }
     },
     {
@@ -5029,7 +5029,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B4b-otlp-endpoint"
+        "nodejs": "pass"
       }
     },
     {
@@ -5064,7 +5064,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B4b-otlp-tls"
+        "nodejs": "pass"
       }
     },
     {
@@ -5099,7 +5099,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B4b-otlp-endpoint"
+        "nodejs": "pass"
       }
     },
     {
@@ -5135,7 +5135,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B4b-otlp-headers"
+        "nodejs": "pass"
       }
     },
     {
@@ -5182,7 +5182,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B4b-otlp-headers"
+        "nodejs": "pass"
       }
     },
     {
@@ -5222,7 +5222,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B4b-otlp-headers"
+        "nodejs": "pass"
       }
     },
     {
@@ -5251,7 +5251,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B4b-otlp-compression"
+        "nodejs": "pass"
       }
     },
     {
@@ -5463,7 +5463,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B4b-otlp-compression"
+        "nodejs": "pass"
       }
     },
     {
@@ -6790,7 +6790,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B4b-otlp-endpoint"
+        "nodejs": "pass"
       }
     },
     {
@@ -6830,7 +6830,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B4b-otlp-endpoint"
+        "nodejs": "pass"
       }
     },
     {
@@ -6870,7 +6870,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B4b-otlp-endpoint"
+        "nodejs": "pass"
       }
     },
     {
@@ -6910,7 +6910,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B4b-otlp-endpoint"
+        "nodejs": "pass"
       }
     },
     {
@@ -6978,7 +6978,7 @@
         "go": "skip:go-sdk-logs-env-values",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B4b-otlp-headers"
+        "nodejs": "pass"
       }
     },
     {
@@ -7009,7 +7009,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B4b-otlp-timeout"
+        "nodejs": "pass"
       }
     },
     {
@@ -7047,7 +7047,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B4b-otlp-compression"
+        "nodejs": "pass"
       }
     },
     {
@@ -7086,7 +7086,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B4b-otlp-compression"
+        "nodejs": "pass"
       }
     },
     {
@@ -7126,7 +7126,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B4b-otlp-timeout"
+        "nodejs": "pass"
       }
     },
     {
@@ -7166,7 +7166,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B4b-otlp-timeout"
+        "nodejs": "pass"
       }
     },
     {
@@ -7206,7 +7206,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B4b-otlp-timeout"
+        "nodejs": "pass"
       }
     },
     {
@@ -7235,7 +7235,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B4b-otlp-timeout"
+        "nodejs": "pass"
       },
       "note": "gte lowered 300\u2192100 (2026-10-28): 212 ms observed under load; 100 still separates the 1 ms clamp from the 500 ms fallback."
     },
@@ -7265,7 +7265,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B4b-otlp-timeout"
+        "nodejs": "pass"
       },
       "note": "gte lowered 300\u2192100 (2026-10-28): 212 ms observed under load; 100 still separates the 1 ms clamp from the 500 ms fallback."
     },
@@ -7304,7 +7304,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B4b-otlp-headers"
+        "nodejs": "pass"
       }
     },
     {
@@ -7341,7 +7341,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B4b-otlp-headers"
+        "nodejs": "pass"
       }
     },
     {
@@ -7387,7 +7387,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B4b-otlp-headers"
+        "nodejs": "pass"
       }
     },
     {
@@ -7415,7 +7415,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B4b-otlp-endpoint"
+        "nodejs": "pass"
       }
     },
     {
@@ -7443,7 +7443,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B4b-otlp-endpoint"
+        "nodejs": "pass"
       }
     },
     {
@@ -7473,7 +7473,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B4b-otlp-endpoint"
+        "nodejs": "pass"
       }
     },
     {
@@ -7509,7 +7509,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B4b-otlp-endpoint"
+        "nodejs": "pass"
       }
     },
     {
@@ -7585,6 +7585,634 @@
         "python": "pass",
         "dotnet": "xfail:phase-c",
         "nodejs": "skip:B5-sampler"
+      }
+    },
+    {
+      "id": "export.grpc_certificate_unreadable_falls_back",
+      "kind": "export",
+      "requirement": "R8",
+      "note": "gRPC credential errors (Node B4b, design D-JS3 row 'gRPC channel credentials'): an unreadable OTEL_EXPORTER_OTLP_CERTIFICATE never fails setup; the file is ignored and the system roots are used, so the receiver's private CA is not trusted and nothing is received. Go: SDK error 'read tls ca cert file'; Python: SDK error 'Failed to read file'; Node: helper warning naming the variable. Short timeout so the failed exports end quickly. A18: every language warns through the helper naming the variable, never the path.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "https://{receiver}:14317",
+        "OTEL_EXPORTER_OTLP_CERTIFICATE": "/nonexistent/parity-ca.pem",
+        "OTEL_EXPORTER_OTLP_TIMEOUT": "1000"
+      },
+      "code": {},
+      "expect": {
+        "error": {
+          "absent": true
+        },
+        "received": {
+          "traces": {
+            "absent": true
+          },
+          "metrics": {
+            "absent": true
+          },
+          "logs": {
+            "absent": true
+          }
+        },
+        "helper_log": {
+          "all": [
+            {
+              "regex": "OTEL_EXPORTER_OTLP_CERTIFICATE"
+            },
+            {
+              "not_contains": "parity-ca.pem"
+            }
+          ]
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "export.grpc_certificate_not_pem_falls_back",
+      "kind": "export",
+      "requirement": "R8",
+      "note": "gRPC credential errors (Node B4b, design D-JS3): a readable CA file with no PEM certificate (/dev/null) never fails setup; the system roots are used, so nothing is received. Go: SDK error 'create tls cert pool'; Node: helper warning naming the variable. A18: every language warns through the helper naming the variable.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "https://{receiver}:14317",
+        "OTEL_EXPORTER_OTLP_CERTIFICATE": "/dev/null",
+        "OTEL_EXPORTER_OTLP_TIMEOUT": "1000"
+      },
+      "code": {},
+      "expect": {
+        "error": {
+          "absent": true
+        },
+        "received": {
+          "traces": {
+            "absent": true
+          },
+          "metrics": {
+            "absent": true
+          },
+          "logs": {
+            "absent": true
+          }
+        },
+        "helper_log": {
+          "all": [
+            {
+              "regex": "OTEL_EXPORTER_OTLP_CERTIFICATE"
+            }
+          ]
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "export.grpc_client_key_without_certificate_server_auth",
+      "kind": "export",
+      "requirement": "R8",
+      "note": "A18 (D1 ruling 'TLS files', 2026-10-29): only the client key resolves; the helper warns naming the variable and the signal uses server authentication with the resolved CA. Python used to abort the process in grpc's C core.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "https://{receiver}:14317",
+        "OTEL_EXPORTER_OTLP_CERTIFICATE": "{receiver_ca}",
+        "OTEL_EXPORTER_OTLP_CLIENT_KEY": "{receiver_ca}"
+      },
+      "code": {},
+      "expect": {
+        "error": {
+          "absent": true
+        },
+        "helper_log": {
+          "all": [
+            {
+              "regex": "OTEL_EXPORTER_OTLP_CLIENT_KEY"
+            }
+          ]
+        },
+        "received": {
+          "traces": {
+            "proto": "grpc",
+            "port": 14317,
+            "tls": true
+          },
+          "metrics": {
+            "proto": "grpc",
+            "port": 14317,
+            "tls": true
+          },
+          "logs": {
+            "proto": "grpc",
+            "port": 14317,
+            "tls": true
+          }
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "export.grpc_client_pair_mismatch_server_auth",
+      "kind": "export",
+      "requirement": "R8",
+      "note": "A18 (D1 ruling 'TLS files'): a client pair the TLS layer rejects (here the CA certificate given as the key) warns naming the variables; the signal uses server authentication with the resolved CA.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "https://{receiver}:14317",
+        "OTEL_EXPORTER_OTLP_CERTIFICATE": "{receiver_ca}",
+        "OTEL_EXPORTER_OTLP_CLIENT_KEY": "{receiver_ca}",
+        "OTEL_EXPORTER_OTLP_CLIENT_CERTIFICATE": "{receiver_ca}"
+      },
+      "code": {},
+      "expect": {
+        "error": {
+          "absent": true
+        },
+        "helper_log": {
+          "all": [
+            {
+              "regex": "OTEL_EXPORTER_OTLP_CLIENT_KEY"
+            }
+          ]
+        },
+        "received": {
+          "traces": {
+            "proto": "grpc",
+            "port": 14317,
+            "tls": true
+          },
+          "metrics": {
+            "proto": "grpc",
+            "port": 14317,
+            "tls": true
+          },
+          "logs": {
+            "proto": "grpc",
+            "port": 14317,
+            "tls": true
+          }
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "export.grpc_certificate_per_signal_bad_generic_good",
+      "kind": "export",
+      "requirement": "R8",
+      "note": "A18 (D1 ruling 'TLS files'): a per-signal CA with no PEM certificate warns and falls back to the generic CA, so every signal is received over TLS.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "https://{receiver}:14317",
+        "OTEL_EXPORTER_OTLP_CERTIFICATE": "{receiver_ca}",
+        "OTEL_EXPORTER_OTLP_TRACES_CERTIFICATE": "/dev/null"
+      },
+      "code": {},
+      "expect": {
+        "error": {
+          "absent": true
+        },
+        "helper_log": {
+          "all": [
+            {
+              "regex": "OTEL_EXPORTER_OTLP_TRACES_CERTIFICATE"
+            }
+          ]
+        },
+        "received": {
+          "traces": {
+            "proto": "grpc",
+            "port": 14317,
+            "tls": true
+          },
+          "metrics": {
+            "proto": "grpc",
+            "port": 14317,
+            "tls": true
+          },
+          "logs": {
+            "proto": "grpc",
+            "port": 14317,
+            "tls": true
+          }
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "export.batch_export_timeout_env_ignored_grpc",
+      "kind": "export",
+      "requirement": "R2",
+      "note": "A18 (D1 ruling 'Export deadline'): OTEL_BSP_EXPORT_TIMEOUT, OTEL_BLRP_EXPORT_TIMEOUT and OTEL_METRIC_EXPORT_TIMEOUT are not honored and warn; the resolved OTLP timeout (default 10000 ms) is the deadline of every signal.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "http://{receiver}:4317",
+        "OTEL_BSP_EXPORT_TIMEOUT": "1",
+        "OTEL_BLRP_EXPORT_TIMEOUT": "1",
+        "OTEL_METRIC_EXPORT_TIMEOUT": "1"
+      },
+      "code": {},
+      "expect": {
+        "helper_log": {
+          "all": [
+            {
+              "regex": "OTEL_BSP_EXPORT_TIMEOUT"
+            },
+            {
+              "regex": "OTEL_BLRP_EXPORT_TIMEOUT"
+            },
+            {
+              "regex": "OTEL_METRIC_EXPORT_TIMEOUT"
+            }
+          ]
+        },
+        "received": {
+          "traces": {
+            "timeout_ms": {
+              "gte": 9000,
+              "lte": 10100
+            }
+          },
+          "metrics": {
+            "timeout_ms": {
+              "gte": 9000,
+              "lte": 10100
+            }
+          },
+          "logs": {
+            "timeout_ms": {
+              "gte": 9000,
+              "lte": 10100
+            }
+          }
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "export.code_export_timeout_wins_grpc",
+      "kind": "export",
+      "requirement": "R2",
+      "note": "A18 (D1 ruling 'Export deadline'): a code export timeout beats OTEL_EXPORTER_OTLP_TIMEOUT and the per-signal variable, for every signal.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "http://{receiver}:4317",
+        "OTEL_EXPORTER_OTLP_TIMEOUT": "500",
+        "OTEL_EXPORTER_OTLP_TRACES_TIMEOUT": "300"
+      },
+      "code": {
+        "export_timeout_ms": 2000
+      },
+      "expect": {
+        "received": {
+          "traces": {
+            "timeout_ms": {
+              "gte": 1500,
+              "lte": 2000
+            }
+          },
+          "metrics": {
+            "timeout_ms": {
+              "gte": 1500,
+              "lte": 2000
+            }
+          },
+          "logs": {
+            "timeout_ms": {
+              "gte": 1500,
+              "lte": 2000
+            }
+          }
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "config.code_export_timeout_above_24h_fails",
+      "kind": "resolve",
+      "requirement": "R8",
+      "note": "A18 (D1 ruling 'Code export timeout bound'): a code export timeout outside [1, 86400000] ms fails fast in every language.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "http://collector:4317"
+      },
+      "code": {
+        "export_timeout_ms": 86400001
+      },
+      "expect": {
+        "error": "86400000"
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "export.headers_value_non_ascii_skipped",
+      "kind": "export",
+      "requirement": "R8",
+      "note": "A18 (D1 ruling 'Header bytes'): a decoded header value must be printable ASCII; %C3%A9 is skipped with a warning by position, the other items still arrive (grpc-go and Python grpc used to fail the whole export).",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "http://{receiver}:4317",
+        "OTEL_EXPORTER_OTLP_HEADERS": "x-parity-n=%C3%A9,x-parity-a=1"
+      },
+      "code": {},
+      "expect": {
+        "helper_log": {
+          "all": [
+            {
+              "regex": "OTEL_EXPORTER_OTLP_HEADERS"
+            }
+          ]
+        },
+        "received": {
+          "traces": {
+            "headers": {
+              "x-parity-a": "1",
+              "x-parity-n": {
+                "absent": true
+              }
+            }
+          },
+          "metrics": {
+            "headers": {
+              "x-parity-a": "1",
+              "x-parity-n": {
+                "absent": true
+              }
+            }
+          },
+          "logs": {
+            "headers": {
+              "x-parity-a": "1",
+              "x-parity-n": {
+                "absent": true
+              }
+            }
+          }
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "export.headers_bin_key_sent_as_bytes",
+      "kind": "export",
+      "requirement": "R8",
+      "note": "A18 (D1 ruling 'Header bytes'): a -bin gRPC metadata key gets no special handling beyond the ASCII rule; its value's bytes are sent (gRPC base64-encodes binary metadata on the wire: 'abc' arrives as 'YWJj'). Python used to fail the export on a str value.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "http://{receiver}:4317",
+        "OTEL_EXPORTER_OTLP_HEADERS": "x-parity-bin=abc,x-parity-a=1"
+      },
+      "code": {},
+      "expect": {
+        "received": {
+          "traces": {
+            "headers": {
+              "x-parity-a": "1",
+              "x-parity-bin": "YWJj"
+            }
+          },
+          "metrics": {
+            "headers": {
+              "x-parity-a": "1",
+              "x-parity-bin": "YWJj"
+            }
+          },
+          "logs": {
+            "headers": {
+              "x-parity-a": "1",
+              "x-parity-bin": "YWJj"
+            }
+          }
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "export.per_signal_headers_replace_generic",
+      "kind": "export",
+      "requirement": "R8",
+      "note": "D1 header rows: OTEL_EXPORTER_OTLP_<SIGNAL>_HEADERS replaces OTEL_EXPORTER_OTLP_HEADERS for that signal (no merge); other signals keep the generic headers.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "http://{receiver}:4318",
+        "OTEL_EXPORTER_OTLP_HEADERS": "x-parity-g=1",
+        "OTEL_EXPORTER_OTLP_TRACES_HEADERS": "x-parity-t=1"
+      },
+      "code": {},
+      "expect": {
+        "received": {
+          "traces": {
+            "headers": {
+              "x-parity-t": "1",
+              "x-parity-g": {
+                "absent": true
+              }
+            }
+          },
+          "metrics": {
+            "headers": {
+              "x-parity-g": "1",
+              "x-parity-t": {
+                "absent": true
+              }
+            }
+          }
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "config.attribute_value_length_limit_zero_warns",
+      "kind": "resolve",
+      "requirement": "R8",
+      "note": "A18 (D1 ruling 'Value-length limits'): 0 is not a valid value-length limit; it warns through the helper and no limit applies (Go and Python truncated values to empty, Node JS SDK warned per attribute).",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "http://collector:4317",
+        "OTEL_ATTRIBUTE_VALUE_LENGTH_LIMIT": "0"
+      },
+      "code": {},
+      "expect": {
+        "error": {
+          "absent": true
+        },
+        "helper_log": {
+          "all": [
+            {
+              "regex": "OTEL_ATTRIBUTE_VALUE_LENGTH_LIMIT"
+            }
+          ]
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "config.attribute_value_length_limit_zero_signal_wins",
+      "kind": "resolve",
+      "requirement": "R8",
+      "note": "A18 (D1 ruling 'Value-length limits'), twin of config.attribute_value_length_limit_zero_warns: with the generic limit 0 and OTEL_SPAN_ATTRIBUTE_VALUE_LENGTH_LIMIT=20, only the generic variable warns and setup succeeds; the span limit 20 stays in effect (asserted by the unit tests: Python TestValueLengthZero, Go TestValueLengthLimit_ZeroUsesNextLevel, Node exporters.test.cjs \u2014 the fixture cannot observe attribute values).",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "http://collector:4317",
+        "OTEL_ATTRIBUTE_VALUE_LENGTH_LIMIT": "0",
+        "OTEL_SPAN_ATTRIBUTE_VALUE_LENGTH_LIMIT": "20"
+      },
+      "code": {},
+      "expect": {
+        "error": {
+          "absent": true
+        },
+        "helper_log": {
+          "all": [
+            {
+              "regex": "OTEL_ATTRIBUTE_VALUE_LENGTH_LIMIT"
+            },
+            {
+              "not_contains": "OTEL_SPAN_ATTRIBUTE_VALUE_LENGTH_LIMIT"
+            }
+          ]
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "config.bsp_batch_size_above_queue_clamped",
+      "kind": "export",
+      "requirement": "R8",
+      "note": "A18 (D1 ruling 'Batch size above queue size'): OTEL_BSP_MAX_EXPORT_BATCH_SIZE above OTEL_BSP_MAX_QUEUE_SIZE warns once naming both variables and the queue size is used; setup never fails (the Python SDK raised ValueError) and traces are still exported.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "http://{receiver}:4317",
+        "OTEL_BSP_MAX_QUEUE_SIZE": "10",
+        "OTEL_BSP_MAX_EXPORT_BATCH_SIZE": "50"
+      },
+      "code": {},
+      "expect": {
+        "error": {
+          "absent": true
+        },
+        "helper_log": {
+          "all": [
+            {
+              "regex": "OTEL_BSP_MAX_EXPORT_BATCH_SIZE"
+            },
+            {
+              "regex": "OTEL_BSP_MAX_QUEUE_SIZE"
+            }
+          ]
+        },
+        "received": {
+          "traces": {
+            "proto": "grpc",
+            "port": 4317
+          }
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "config.blrp_batch_size_above_queue_clamped",
+      "kind": "export",
+      "requirement": "R8",
+      "note": "A18 (D1 ruling 'Batch size above queue size'), BLRP twin: OTEL_BLRP_MAX_EXPORT_BATCH_SIZE above OTEL_BLRP_MAX_QUEUE_SIZE warns once naming both variables and the queue size is used; setup never fails and logs are still exported.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "http://{receiver}:4317",
+        "OTEL_BLRP_MAX_QUEUE_SIZE": "10",
+        "OTEL_BLRP_MAX_EXPORT_BATCH_SIZE": "50"
+      },
+      "code": {},
+      "expect": {
+        "error": {
+          "absent": true
+        },
+        "helper_log": {
+          "all": [
+            {
+              "regex": "OTEL_BLRP_MAX_EXPORT_BATCH_SIZE"
+            },
+            {
+              "regex": "OTEL_BLRP_MAX_QUEUE_SIZE"
+            }
+          ]
+        },
+        "received": {
+          "logs": {
+            "proto": "grpc",
+            "port": 4317
+          }
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "pass"
       }
     }
   ]
