@@ -515,9 +515,13 @@ your code registers on `prometheus_client.REGISTRY`.
 | `console` | SDK console exporter (stdout) |
 | `none` | metrics off |
 
-`TelemetryOptions(metric_exporters=[...])` wins over the variable (in code,
-`["otlp"]` without an endpoint raises). `OTEL_METRIC_EXPORT_INTERVAL` /
-`export_interval_ms` sets the push interval (default 30000 ms).
+`TelemetryOptions(metric_exporters=[...])` wins over the variable and over the
+deprecated `OTEL_HELPER_DISABLED_SIGNALS` (in code, `["otlp"]` without an
+endpoint, an unknown value — `logging` included, an alias in the variable only
+— or `none` with other values raises; duplicates are dropped, so
+`["none", "none"]` disables metrics). `OTEL_METRIC_EXPORT_INTERVAL` /
+`export_interval_ms` sets the push interval (default 30000 ms): the variable
+takes ASCII digits with an optional `+` (any number of digits; leading zeros ignored), > 0, else warned and 30 000; above 2 147 483 647 clamped with a warning; `export_interval_ms` outside [1, 2 147 483 647] raises.
 
 ### Multi-worker servers
 
@@ -668,11 +672,11 @@ sets the CA; with a plaintext endpoint it is warned and ignored.
 | `insecure` | `bool \| None = None` | Plaintext for a schemeless code endpoint |
 | `export_timeout_ms` | `int \| None = None` | Export timeout (ms) |
 | `compression` | `str \| None = None` | `gzip` or `none` |
-| `metric_exporters` | `list[str] \| tuple \| None = None` | `otlp`, `prometheus`, `console`, `none` |
-| `export_interval_ms` | `int \| None = None` | Metric export interval (default 30000) |
+| `metric_exporters` | `list[str] \| tuple \| None = None` | `otlp`, `prometheus`, `console`, `none` (trimmed, lowercased, de-duplicated) |
+| `export_interval_ms` | `int \| None = None` | Metric export interval in [1, 2 147 483 647] ms (default 30000) |
 | `prometheus_metrics_port` | `int \| None = None` (→ env, then 9464) | Standalone `/metrics` port; `0` disables it |
 | `disabled_metrics` | `list[str] \| tuple \| None = None` (→ env, then none; `[]` = none, beats env) | Wildcard instrument names to drop |
-| `disabled_signals` | `list[str] \| tuple \| None = None` (→ env, then none; `[]` beats env) | `traces`, `metrics`, `logs` (prefer `OTEL_*_EXPORTER=none`) |
+| `disabled_signals` | `list[str] \| tuple \| None = None` (→ env, then none; `[]` beats env) | `traces`, `metrics`, `logs`, trimmed, lowercased, de-duplicated (prefer `OTEL_*_EXPORTER=none`) |
 | `sample_ratio` | `float \| None = None` | Any code value (1.0 included) → `parentbased_traceidratio`, beating `OTEL_TRACES_SAMPLER`; `None` → env, then `parentbased_always_on` |
 | `health_paths` | `list[str] \| None = None` | HTTP health paths; `None` = `DEFAULT_HEALTH_PATHS`, `[]` = none |
 | `debug_level` | `bool \| int \| None = None` (→ env, then off; `False` beats env; strings fail) | Debug mode ([§8](#8-debug-mode)) |
@@ -686,6 +690,14 @@ set in code** (`None` if unset), so copying the object with
 for those fields — **except `service_name` and `environment`**, which stay as
 resolved and then count as code values; read effective values from the read-only `options.resolved` view (e.g.
 `options.resolved.sample_ratio`, `options.resolved.prometheus_metrics_port`).
+`options.resolved.metric_exporters` is the **configured** list (code, else
+`OTEL_METRICS_EXPORTER`; `None` when inferred from the endpoint): with
+`OTEL_METRICS_EXPORTER=none` it shows `['none']`. Node's
+`Resolved.metricExporters` and the parity snapshot of every language show the
+**effective** list instead (`[]` there, and also when metrics or the SDK are
+disabled); Go exposes no public equivalent. It is not what runs: the effective exporters are `options.resolved_metric_exporters()`, and
+none run when `options.is_signal_enabled("metrics")` is false or
+`OTEL_SDK_DISABLED=true`.
 `service_name` is `None` when nothing configured one, and `environment` is
 `None` when unset or a plain `str` for values outside LOCAL/DEV/HML/PRD (code
 reading `options.environment.value` must handle both).

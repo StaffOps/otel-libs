@@ -100,6 +100,7 @@ const CODE_KEYS = {
   debug: 'debug',
   resource_attributes: 'resourceAttributes',
   health_paths: 'healthPaths',
+  disabled_signals: 'disabledSignals',
 };
 
 /** Maps a case's `code` object to setup() options; an unmapped key is an adapter error. */

@@ -6,13 +6,16 @@
  * (R8). This module covers the identity rows (task B3), the OTLP endpoint,
  * protocol and TLS-setting rows (task B4a, `otlp.ts`), the OTLP headers,
  * timeout and compression rows and the batch/limit settings (task B4b,
- * `otlp-settings.ts`, `sdk-settings.ts`); later tasks add theirs.
+ * `otlp-settings.ts`, `sdk-settings.ts`), the exporter lists,
+ * `OTEL_SDK_DISABLED` and the metric export interval (task B4c,
+ * `signals.ts`); later tasks add theirs.
  */
 import { randomUUID } from 'node:crypto';
 import { report, reportOnce, type DiagnosticValue } from './diagnostics';
 import { envBool, envValue, trimWS, type Warn } from './env';
 import { checkCodeOtlp, resolveOtlp, type OtlpHeaders, type OtlpPlan, type Reporter } from './otlp';
 import { resolveSdkSettings, type SdkSettings } from './sdk-settings';
+import { checkCodeSignals, resolveSignals, type MetricExporterName, type SpanLogExporterName } from './signals';
 import { defaultLogLevel, knownEnvironment, LOG_LEVELS, type LogLevel } from './log-level';
 import { parseResourceAttributes } from './resource-attributes';
 import type { SpanProcessor } from '@opentelemetry/sdk-trace';
@@ -26,6 +29,9 @@ export const ENV_SAMPLE_RATIO = 'OTEL_HELPER_SAMPLE_RATIO';
 export const ENV_DISABLED_SIGNALS = 'OTEL_HELPER_DISABLED_SIGNALS';
 export const ENV_EXTRA_INSTRUMENTATION = 'OTEL_HELPER_EXTRA_INSTRUMENTATION';
 export const ENV_NODE_RESOURCE_DETECTORS = 'OTEL_NODE_RESOURCE_DETECTORS';
+export const ENV_CONFIG_FILE = 'OTEL_CONFIG_FILE';
+/** Deprecated name of `OTEL_CONFIG_FILE`, warned the same way (contract D1 row "OTEL_CONFIG_FILE"). */
+export const ENV_EXPERIMENTAL_CONFIG_FILE = 'OTEL_EXPERIMENTAL_CONFIG_FILE';
 
 export const ATTR_SERVICE_NAME = 'service.name';
 export const ATTR_ENVIRONMENT = 'deployment.environment.name';
@@ -41,7 +47,8 @@ const BUILTIN_DETECTORS: ReadonlySet<string> = new Set(['env', 'serviceinstance'
  * `setup()` options set in code (design API table). A key left `undefined` is
  * not set and reads the environment. Task B3 implements the identity,
  * log-level and diagnostics options, task B4a the OTLP endpoint, protocol and
- * `insecure` options, task B4b `exportTimeoutMs` and `compression`; the other documented options land with their tasks and
+ * `insecure` options, task B4b `exportTimeoutMs` and `compression`, task B4c
+ * `metricExporters`, `exportIntervalMs` and `disabledSignals`; the other documented options land with their tasks and
  * are rejected as unknown until then. Pass a plain object (or
  * a null-prototype one); class instances are rejected. `setup()` reads each
  * property once.
@@ -88,6 +95,19 @@ export interface SetupOptions {
   readonly exportTimeoutMs?: number | undefined;
   /** OTLP compression of every signal: `gzip` or `none` (case-insensitive); an empty string is not set. */
   readonly compression?: string | undefined;
+  /**
+   * Metric exporters: `otlp`, `prometheus`, `console` (case-insensitive); `[]`
+   * or `['none']` disables metrics. Wins over `OTEL_METRICS_EXPORTER`. `otlp`
+   * without a metrics endpoint, an unknown value or `none` with other values throw.
+   */
+  readonly metricExporters?: readonly string[] | undefined;
+  /** Metric export interval in milliseconds (an integer in [1, 2^31-1]); wins over `OTEL_METRIC_EXPORT_INTERVAL`. */
+  readonly exportIntervalMs?: number | undefined;
+  /**
+   * Signals to disable (`traces`, `metrics`, `logs`); wins over the deprecated
+   * `OTEL_HELPER_DISABLED_SIGNALS`, `[]` included. Prefer `OTEL_<SIGNAL>_EXPORTER=none`.
+   */
+  readonly disabledSignals?: readonly string[] | undefined;
   /** Test/advanced: extra span processors, added after the helper's own (design D-JS7). */
   readonly spanProcessors?: readonly SpanProcessor[] | undefined;
 }
@@ -107,8 +127,24 @@ export interface Resolved {
   readonly debug: boolean;
   /** `minimumLogLevel` option, else `defaultLogLevel(environment, debug)` (R4). */
   readonly logLevel: LogLevel;
-  /** OTLP endpoint per signal (R1, R2, D1); `undefined` = no OTLP exporter for that signal. */
+  /**
+   * OTLP endpoint per signal (R1, R2, D1); `undefined` = no OTLP exporter for
+   * that signal. Used only by a signal whose exporter list holds `otlp`.
+   */
   readonly otlp: OtlpPlan;
+  /** `OTEL_SDK_DISABLED=true`: no providers and no exporters; the context manager is still installed. */
+  readonly sdkDisabled: boolean;
+  /** Effective trace exporters (`OTEL_TRACES_EXPORTER`, default `otlp`); `[]` = none. */
+  readonly tracesExporters: readonly SpanLogExporterName[];
+  /**
+   * Effective metric exporters (`metricExporters` > `OTEL_METRICS_EXPORTER` >
+   * `otlp` with a metrics endpoint, else `prometheus`); `[]` = none.
+   */
+  readonly metricExporters: readonly MetricExporterName[];
+  /** Effective log exporters (`OTEL_LOGS_EXPORTER`, default `otlp`); `[]` = none. */
+  readonly logsExporters: readonly SpanLogExporterName[];
+  /** Metric export interval in milliseconds (`exportIntervalMs` > `OTEL_METRIC_EXPORT_INTERVAL` > 30 000). */
+  readonly metricExportIntervalMs: number;
 }
 
 /** Resolver output: the public view plus what the providers are built from. */
@@ -120,6 +156,8 @@ export interface Plan {
   readonly otlpHeaders: OtlpHeaders;
   /** Batch processor settings and limits the SDK 3.0 no longer reads (spec JS2). */
   readonly sdk: SdkSettings;
+  /** Where {@link Resolved.metricExportIntervalMs} came from (option, env variable or `default`). */
+  readonly intervalSource: string;
 }
 
 const OPTION_KEYS: ReadonlySet<string> = new Set([
@@ -137,6 +175,9 @@ const OPTION_KEYS: ReadonlySet<string> = new Set([
   'insecure',
   'exportTimeoutMs',
   'compression',
+  'metricExporters',
+  'exportIntervalMs',
+  'disabledSignals',
   'spanProcessors',
 ]);
 
@@ -214,6 +255,7 @@ export function validateOptions(options: unknown): SetupOptions {
     fail('exportTimeoutMs', `must be a number, got ${typeName(o.exportTimeoutMs)}`);
   }
   checkCodeOtlp(o);
+  Object.assign(o, checkCodeSignals(o));
   const level = o.minimumLogLevel;
   if (level !== undefined && !LOG_LEVELS.includes(level as LogLevel)) {
     const shown = typeof level === 'string' ? JSON.stringify(level) : typeName(level);
@@ -260,6 +302,15 @@ function warnDeprecatedEnv(): void {
       { variable: ENV_NODE_RESOURCE_DETECTORS },
     );
   }
+  for (const variable of [ENV_CONFIG_FILE, ENV_EXPERIMENTAL_CONFIG_FILE]) {
+    if (envValue(variable) === undefined) continue;
+    // Contract D1 row "OTEL_CONFIG_FILE" (A19): not supported; the name only, never the path.
+    reportOnce(
+      `unused:${variable}`,
+      `${variable} is not supported by the Node.js helper and is ignored; configure it with environment variables or setup() options`,
+      { variable },
+    );
+  }
   if (envValue(ENV_EXTRA_INSTRUMENTATION) !== undefined) {
     reportOnce(
       `unused:${ENV_EXTRA_INSTRUMENTATION}`,
@@ -295,7 +346,9 @@ function envResourceAttributes(warn: boolean): Readonly<Record<string, string>> 
  * (`unknown_service:<argv0>`). Warnings go to the diagnostics sink; `quiet`
  * (an inactive copy, design D-JS10) drops the per-setup identity and resource
  * warnings — the copy installs nothing they would describe — and keeps the
- * once-per-process deprecations.
+ * once-per-process deprecations. Throws a `TypeError` when the code
+ * `metricExporters` holds `otlp` and metrics have no endpoint (R2: known only
+ * once the environment is read).
  */
 export function resolvePlan(options: SetupOptions, defaultServiceName: string, quiet = false): Plan {
   warnDeprecatedEnv();
@@ -353,10 +406,23 @@ export function resolvePlan(options: SetupOptions, defaultServiceName: string, q
 
   const reporter = quiet ? SILENT_REPORTER : newReporter();
   const { plan: otlp, headers: otlpHeaders } = resolveOtlp(options, reporter);
+  const signals = resolveSignals(options, otlp, reporter.warn);
   const sdk = resolveSdkSettings(reporter.warn);
 
-  const resolved: Resolved = Object.freeze({ serviceName, environment, serviceInstanceId, debug, logLevel, otlp });
-  return { resolved, resourceAttributes: Object.freeze(layer), otlpHeaders, sdk };
+  const resolved: Resolved = Object.freeze({
+    serviceName,
+    environment,
+    serviceInstanceId,
+    debug,
+    logLevel,
+    otlp,
+    sdkDisabled: signals.sdkDisabled,
+    tracesExporters: signals.tracesExporters,
+    metricExporters: signals.metricExporters,
+    logsExporters: signals.logsExporters,
+    metricExportIntervalMs: signals.metricExportIntervalMs,
+  });
+  return { resolved, resourceAttributes: Object.freeze(layer), otlpHeaders, sdk, intervalSource: signals.intervalSource };
 }
 
 const SILENT_REPORTER: Reporter = Object.freeze({ warn: () => undefined, info: () => undefined });

@@ -539,7 +539,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B4c-exporter-lists"
+        "nodejs": "pass"
       }
     },
     {
@@ -561,7 +561,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B4c-exporter-lists"
+        "nodejs": "pass"
       }
     },
     {
@@ -583,7 +583,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B4c-exporter-lists"
+        "nodejs": "pass"
       }
     },
     {
@@ -608,7 +608,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B4c-exporter-lists"
+        "nodejs": "pass"
       }
     },
     {
@@ -632,7 +632,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B4c-exporter-lists"
+        "nodejs": "pass"
       }
     },
     {
@@ -657,7 +657,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B4c-exporter-lists"
+        "nodejs": "pass"
       }
     },
     {
@@ -679,7 +679,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B4c-exporter-lists"
+        "nodejs": "pass"
       }
     },
     {
@@ -697,7 +697,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B4c-export-interval"
+        "nodejs": "pass"
       }
     },
     {
@@ -716,7 +716,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B4c-export-interval"
+        "nodejs": "pass"
       }
     },
     {
@@ -736,7 +736,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B4c-export-interval"
+        "nodejs": "pass"
       }
     },
     {
@@ -759,7 +759,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B4c-export-interval"
+        "nodejs": "pass"
       }
     },
     {
@@ -1139,7 +1139,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B4c-sdk-disabled"
+        "nodejs": "pass"
       }
     },
     {
@@ -2580,7 +2580,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B4c-exporter-lists"
+        "nodejs": "pass"
       }
     },
     {
@@ -2605,7 +2605,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B4c-exporter-lists"
+        "nodejs": "pass"
       }
     },
     {
@@ -2630,7 +2630,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B4c-exporter-lists"
+        "nodejs": "pass"
       }
     },
     {
@@ -2657,7 +2657,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B4c-exporter-lists"
+        "nodejs": "pass"
       }
     },
     {
@@ -2685,7 +2685,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B4c-exporter-lists"
+        "nodejs": "pass"
       }
     },
     {
@@ -2710,7 +2710,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B4c-exporter-lists"
+        "nodejs": "pass"
       }
     },
     {
@@ -2737,7 +2737,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B4c-exporter-lists"
+        "nodejs": "pass"
       }
     },
     {
@@ -2765,7 +2765,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B4c-exporter-lists"
+        "nodejs": "pass"
       }
     },
     {
@@ -2790,7 +2790,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B4c-exporter-lists"
+        "nodejs": "pass"
       }
     },
     {
@@ -2820,7 +2820,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B4c-sdk-disabled"
+        "nodejs": "pass"
       }
     },
     {
@@ -5001,7 +5001,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B4c-sdk-disabled"
+        "nodejs": "pass"
       }
     },
     {
@@ -8213,6 +8213,364 @@
         "python": "pass",
         "dotnet": "xfail:phase-c",
         "nodejs": "pass"
+      }
+    },
+    {
+      "id": "config.disabled_signals_standard_var_wins",
+      "kind": "export",
+      "requirement": "D1",
+      "note": "A19 (D1 row 'Signal on/off'): the deprecated OTEL_HELPER_DISABLED_SIGNALS does not disable a signal whose OTEL_<SIGNAL>_EXPORTER is set; the deprecation is still warned.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "http://{receiver}:4317",
+        "OTEL_HELPER_DISABLED_SIGNALS": "traces",
+        "OTEL_TRACES_EXPORTER": "otlp"
+      },
+      "code": {},
+      "expect": {
+        "received": {
+          "traces": {}
+        },
+        "warning": "OTEL_HELPER_DISABLED_SIGNALS"
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "config.disabled_signals_unknown_warns",
+      "kind": "resolve",
+      "requirement": "R8",
+      "note": "A19 (D1 row 'Signal on/off'): an unknown OTEL_HELPER_DISABLED_SIGNALS entry warns once, echoing the entry.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_HELPER_DISABLED_SIGNALS": "profiles"
+      },
+      "code": {},
+      "expect": {
+        "error": {
+          "absent": true
+        },
+        "warning": "profiles",
+        "warning_count": {
+          "profiles": 1
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "config.code_exporter_logging_fails",
+      "kind": "resolve",
+      "requirement": "R8",
+      "note": "A19 (D1 row 'Exporter alias logging'): 'logging' is a deprecated alias of 'console' in the environment only; in code it is an unknown exporter and fails fast.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc"
+      },
+      "code": {
+        "metric_exporters": [
+          "logging"
+        ]
+      },
+      "expect": {
+        "error": "logging"
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "metrics.interval_env_underscore_invalid",
+      "kind": "resolve",
+      "requirement": "R8",
+      "note": "A19 (D1 row 'Metric export interval'): ASCII digits with an optional '+' only; '5_000' (accepted by Python int()) warns and uses 30000.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_METRIC_EXPORT_INTERVAL": "5_000"
+      },
+      "code": {},
+      "expect": {
+        "error": {
+          "absent": true
+        },
+        "metric_export_interval_ms": 30000,
+        "warning": "OTEL_METRIC_EXPORT_INTERVAL"
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "metrics.interval_env_above_max_clamped",
+      "kind": "resolve",
+      "requirement": "R8",
+      "note": "A19 (D1 row 'Metric export interval'): above 2147483647 ms the interval is clamped with a warning.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_METRIC_EXPORT_INTERVAL": "3000000000"
+      },
+      "code": {},
+      "expect": {
+        "error": {
+          "absent": true
+        },
+        "metric_export_interval_ms": 2147483647,
+        "warning": "OTEL_METRIC_EXPORT_INTERVAL"
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "config.code_interval_above_max_fails",
+      "kind": "resolve",
+      "requirement": "R8",
+      "note": "A19 (D1 row 'Metric export interval'): a code interval outside [1, 2147483647] ms fails fast in every language.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc"
+      },
+      "code": {
+        "export_interval_ms": 2147483648
+      },
+      "expect": {
+        "error": "2147483647"
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "config.config_file_warns",
+      "kind": "resolve",
+      "requirement": "R8",
+      "note": "A19 (D1 row 'OTEL_CONFIG_FILE'): declarative configuration is not supported; set, it warns once naming the variable only, never the path.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_CONFIG_FILE": "/etc/parity-config-path/otel.yaml"
+      },
+      "code": {},
+      "expect": {
+        "error": {
+          "absent": true
+        },
+        "warning": "OTEL_CONFIG_FILE",
+        "log": {
+          "not_contains": "parity-config-path"
+        },
+        "resource": {
+          "service.name": "parity-svc"
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "metrics.interval_env_long_digits_clamped",
+      "kind": "resolve",
+      "requirement": "R8",
+      "note": "A19 (D1 row 'Metric export interval', the A19 fix round, 2026-10-29): any number of digits; 5000 nines clamp to 2147483647 with a warning (Python int() raised above 4300 digits).",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_METRIC_EXPORT_INTERVAL": "99999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999999"
+      },
+      "code": {},
+      "expect": {
+        "error": {
+          "absent": true
+        },
+        "metric_export_interval_ms": 2147483647,
+        "warning": "OTEL_METRIC_EXPORT_INTERVAL"
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "config.disabled_signals_unknown_only_standard_var_unset",
+      "kind": "resolve",
+      "requirement": "R8",
+      "note": "A19 (D1 row 'Deprecated OTEL_HELPER_DISABLED_SIGNALS', the A19 fix round, 2026-10-29): a standard variable with only unknown entries counts as unset, so the deprecated variable still disables the signal; the unknown entry warns.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_HELPER_DISABLED_SIGNALS": "metrics",
+        "OTEL_METRICS_EXPORTER": "bogus"
+      },
+      "code": {},
+      "expect": {
+        "error": {
+          "absent": true
+        },
+        "metric_exporters": [],
+        "warning": "bogus"
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "config.disabled_signals_code_metric_exporters",
+      "kind": "resolve",
+      "requirement": "D1",
+      "note": "A19 (D1 row 'Deprecated OTEL_HELPER_DISABLED_SIGNALS', the A19 fix round, 2026-10-29): code metric exporters win for metrics over the deprecated variable (principle 6).",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_HELPER_DISABLED_SIGNALS": "metrics"
+      },
+      "code": {
+        "metric_exporters": [
+          "console"
+        ]
+      },
+      "expect": {
+        "error": {
+          "absent": true
+        },
+        "metric_exporters": [
+          "console"
+        ]
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "config.experimental_config_file_warns",
+      "kind": "resolve",
+      "requirement": "R8",
+      "note": "A19 (D1 row 'OTEL_CONFIG_FILE', the A19 fix round, 2026-10-29): OTEL_EXPERIMENTAL_CONFIG_FILE, the deprecated name, warns once naming the variable only.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPERIMENTAL_CONFIG_FILE": "/etc/parity-config-path/otel.yaml"
+      },
+      "code": {},
+      "expect": {
+        "error": {
+          "absent": true
+        },
+        "warning": "OTEL_EXPERIMENTAL_CONFIG_FILE",
+        "log": {
+          "not_contains": "parity-config-path"
+        },
+        "resource": {
+          "service.name": "parity-svc"
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "config.code_disabled_signals_trimmed",
+      "kind": "export",
+      "requirement": "D1",
+      "note": "A19 (D1 row 'Deprecated OTEL_HELPER_DISABLED_SIGNALS', the A19 fix round, 2026-10-29): code disabled signals are trimmed, lowercased and de-duplicated.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "http://{receiver}:4317"
+      },
+      "code": {
+        "disabled_signals": [
+          " Traces ",
+          "traces"
+        ]
+      },
+      "expect": {
+        "received": {
+          "traces": {
+            "absent": true
+          },
+          "metrics": {}
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "config.code_metric_exporters_none_duplicated",
+      "kind": "resolve",
+      "requirement": "R8",
+      "note": "A19 (D1 row 'Exporter alias logging', the A19 fix round, 2026-10-29): code metric exporters are de-duplicated after normalization; ['none','none'] disables metrics.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc"
+      },
+      "code": {
+        "metric_exporters": [
+          "none",
+          "none"
+        ]
+      },
+      "expect": {
+        "error": {
+          "absent": true
+        },
+        "metric_exporters": []
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "propagation.sdk_disabled_propagators_kept",
+      "kind": "propagation",
+      "requirement": "D1",
+      "note": "A19 (the A19 fix round, 2026-10-29): OTEL_SDK_DISABLED=true keeps the propagators: the no-op span has no valid context (no traceparent), baggage is still injected.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_SDK_DISABLED": "true"
+      },
+      "code": {},
+      "expect": {
+        "headers": [
+          "baggage"
+        ]
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:B5-propagators"
       }
     }
   ]

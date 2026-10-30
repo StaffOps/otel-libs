@@ -47,13 +47,19 @@ const (
 	EnvTracesSamplerArg     = "OTEL_TRACES_SAMPLER_ARG"
 	EnvOtlpProtocol         = "OTEL_EXPORTER_OTLP_PROTOCOL"
 	EnvSDKDisabled          = "OTEL_SDK_DISABLED"
-	EnvPropagators          = "OTEL_PROPAGATORS"
+	EnvConfigFile           = "OTEL_CONFIG_FILE"
+	// EnvExperimentalConfigFile is the deprecated name of OTEL_CONFIG_FILE.
+	EnvExperimentalConfigFile = "OTEL_EXPERIMENTAL_CONFIG_FILE"
+	EnvPropagators            = "OTEL_PROPAGATORS"
 )
 
 const (
 	defaultExportIntervalMs = 30_000
-	defaultOtlpGRPCPort     = "4317"
-	defaultOtlpHTTPPort     = "4318"
+	// maxExportIntervalMs bounds the metric export interval (design D1 row
+	// "Metric export interval", A19): the Node.js timer limit, 2^31-1 ms.
+	maxExportIntervalMs = 2_147_483_647
+	defaultOtlpGRPCPort = "4317"
+	defaultOtlpHTTPPort = "4318"
 )
 
 // OTLP wire protocol values. "http/json" is a valid spec value but not
@@ -188,23 +194,37 @@ func (o *Options) resolveFromEnv() {
 
 	if o.ExportIntervalMs == 0 && !o.exportIntervalSet {
 		if v := trimWS(os.Getenv(EnvMetricExportInterval)); v != "" {
-			if ms, err := strconv.Atoi(v); err == nil && ms > 0 {
-				o.ExportIntervalMs = ms
-			} else {
-				warnEnv("invalid metric export interval (positive integer milliseconds)", EnvMetricExportInterval, v, strconv.Itoa(defaultExportIntervalMs))
-			}
+			o.ExportIntervalMs = parseExportInterval(v)
 		}
 	}
 	if o.ExportIntervalMs == 0 && !o.exportIntervalSet {
 		o.ExportIntervalMs = defaultExportIntervalMs
 	}
 
-	if len(o.DisabledSignals) == 0 && !o.disabledSignalsSet {
+	if o.disabledSignalsSet {
+		// Trimmed, lowercased, de-duplicated (design D1 row "Deprecated
+		// OTEL_HELPER_DISABLED_SIGNALS", A19); validate() rejects unknown ones.
+		normalized := make([]string, 0, len(o.DisabledSignals))
+		for _, sig := range o.DisabledSignals {
+			normalized = append(normalized, strings.ToLower(trimWS(sig)))
+		}
+		o.DisabledSignals = dedupe(normalized)
+	} else if len(o.DisabledSignals) == 0 {
+		seen := map[string]bool{}
 		for _, s := range splitList(os.Getenv(EnvDisabledSignals), true) {
-			if containsStr(allSignals, s) {
-				o.DisabledSignals = append(o.DisabledSignals, s)
-			} else {
+			if seen[s] {
+				continue
+			}
+			seen[s] = true
+			switch {
+			case !containsStr(allSignals, s):
 				warnEnv("unknown signal, ignored", EnvDisabledSignals, s, "traces, metrics, logs")
+			case o.exportersChosen(s):
+				// The standard variable (or, for metrics, the code option) of
+				// that signal wins (design D1 row "Deprecated
+				// OTEL_HELPER_DISABLED_SIGNALS", A19).
+			default:
+				o.DisabledSignals = append(o.DisabledSignals, s)
 			}
 		}
 	}
@@ -241,9 +261,71 @@ func (o *Options) warnDeprecatedEnv() {
 			warnDeprecated(d.variable, d.replacement)
 		}
 	}
+	for _, v := range []string{EnvConfigFile, EnvExperimentalConfigFile} {
+		if trimWS(os.Getenv(v)) != "" {
+			// Declarative configuration is not supported (design D1 row
+			// "OTEL_CONFIG_FILE", A19); the name only, never the path.
+			warnUnsupported(v, "otelhelper: "+v+" is not supported by the helper and is ignored; configure it with environment variables or options")
+		}
+	}
 	if trimWS(os.Getenv(EnvExtraInstrumentation)) != "" {
 		warnUnused(EnvExtraInstrumentation, "import the ext/otelsql, ext/otelredis or ext/otelaws module instead")
 	}
+}
+
+// exportersChosen reports whether the exporters of a signal were chosen by
+// its standard variable — set only when it parsed to at least one valid
+// entry, "none" included — or, for metrics, by WithMetricExporters (design
+// D1 row "Deprecated OTEL_HELPER_DISABLED_SIGNALS", A19).
+func (o *Options) exportersChosen(signal string) bool {
+	switch signal {
+	case signalTraces:
+		return o.tracesExporters != nil
+	case signalLogs:
+		return o.logsExporters != nil
+	default:
+		return o.codeMetricExporters || o.metricsEnvExportersSet
+	}
+}
+
+func dedupe(list []string) []string {
+	out := []string{}
+	for _, s := range list {
+		if !containsStr(out, s) {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// parseExportInterval parses OTEL_METRIC_EXPORT_INTERVAL (already trimmed;
+// design D1 row "Metric export interval", A19): ASCII decimal digits with an
+// optional "+", > 0, else a warning and the default; above 2^31-1 ms
+// clamped with a warning.
+func parseExportInterval(v string) int {
+	digits := strings.TrimPrefix(v, "+")
+	ok := digits != ""
+	for i := 0; i < len(digits); i++ {
+		if digits[i] < '0' || digits[i] > '9' {
+			ok = false
+			break
+		}
+	}
+	trimmed := strings.TrimLeft(digits, "0")
+	if !ok || trimmed == "" {
+		warnEnv("invalid metric export interval (positive integer milliseconds)", EnvMetricExportInterval, v, strconv.Itoa(defaultExportIntervalMs))
+		return defaultExportIntervalMs
+	}
+	if len(trimmed) > 10 {
+		warnEnv("metric export interval above 2147483647 ms; clamped", EnvMetricExportInterval, v, strconv.Itoa(maxExportIntervalMs))
+		return maxExportIntervalMs
+	}
+	ms, _ := strconv.ParseInt(trimmed, 10, 64) // at most 10 digits: fits
+	if ms > maxExportIntervalMs {
+		warnEnv("metric export interval above 2147483647 ms; clamped", EnvMetricExportInterval, v, strconv.Itoa(maxExportIntervalMs))
+		return maxExportIntervalMs
+	}
+	return int(ms)
 }
 
 func splitList(v string, lower bool) []string {
@@ -365,6 +447,10 @@ func normalizeExporters(raw, variable string, allowed []string, strict bool) (li
 		case v == "none":
 			hasNone = true
 			continue
+		case v == "logging" && strict:
+			// Code: an unknown exporter (design D1 row "Exporter alias logging", A19).
+			problems = append(problems, fmt.Sprintf("unknown metric exporter %q in %s; valid values: %s, none", v, variable, strings.Join(allowed, ", ")))
+			continue
 		case v == "logging":
 			warnEnv(`deprecated exporter value "logging"; use "console"`, variable, v, "console")
 			v = "console"
@@ -422,6 +508,7 @@ func (o *Options) resolveMetricExporters() {
 		return
 	}
 	list := parseExporterEnv(EnvMetricsExporter, "otlp", "prometheus", "console")
+	o.metricsEnvExportersSet = list != nil
 	if containsStr(list, "otlp") && !o.export(signalMetrics).configured {
 		warnEnv(`"otlp" requires an OTLP endpoint (OTEL_EXPORTER_OTLP_ENDPOINT or OTEL_EXPORTER_OTLP_METRICS_ENDPOINT); ignored`,
 			EnvMetricsExporter, "otlp", "endpoint-based inference")
@@ -510,8 +597,9 @@ func (o *Options) validate() error {
 		// [1 ms, 24 h], the env clamp range (D1 ruling "Code export timeout bound", A18).
 		errs = append(errs, fmt.Errorf("WithExportTimeout: timeout must be in [1, %d] ms, got %d", maxExportTimeoutMs, o.ExportTimeoutMs))
 	}
-	if (o.exportIntervalSet && o.ExportIntervalMs <= 0) || o.ExportIntervalMs < 0 {
-		errs = append(errs, fmt.Errorf("WithExportInterval: interval must be > 0 ms, got %d", o.ExportIntervalMs))
+	if (o.exportIntervalSet && o.ExportIntervalMs <= 0) || o.ExportIntervalMs < 0 || o.ExportIntervalMs > maxExportIntervalMs {
+		// [1, 2^31-1] ms (design D1 row "Metric export interval", A19).
+		errs = append(errs, fmt.Errorf("WithExportInterval: interval must be in [1, %d] ms, got %d", maxExportIntervalMs, o.ExportIntervalMs))
 	}
 	if o.sampleRatioSet && (math.IsNaN(o.SampleRatio) || o.SampleRatio < 0 || o.SampleRatio > 1) {
 		errs = append(errs, fmt.Errorf("WithSampleRatio: sample_ratio must be in [0, 1], got %v", o.SampleRatio))

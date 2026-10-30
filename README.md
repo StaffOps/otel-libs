@@ -160,9 +160,10 @@ rulings are in [design D1](specs/config-contract-v0.3/design.md).
 | Variable | Default | Behavior |
 |----------|---------|----------|
 | `OTEL_SDK_DISABLED` | `false` | `true` → no providers, exporters, `/metrics` listener or log handlers; propagators still installed |
-| `OTEL_TRACES_EXPORTER`, `OTEL_LOGS_EXPORTER` | `otlp` when configured | `otlp`, `console`, `none` (or a list); `logging` = deprecated `console` |
+| `OTEL_TRACES_EXPORTER`, `OTEL_LOGS_EXPORTER` | `otlp` when configured | `otlp`, `console`, `none` (or a list); `logging` = deprecated `console` (env only: in code `logging` is an unknown exporter and fails). Wins over `OTEL_HELPER_DISABLED_SIGNALS` for its signal |
 | `OTEL_METRICS_EXPORTER` | OTLP if an endpoint is configured, else `prometheus` | `otlp`, `prometheus`, `otlp,prometheus`, `console`, `none`. Env `otlp` without an endpoint warns and falls back |
-| `OTEL_METRIC_EXPORT_INTERVAL` | `30000` | Milliseconds (helper default 30 s; SDK default 60 s) |
+| `OTEL_METRIC_EXPORT_INTERVAL` | `30000` | Milliseconds (helper default 30 s; SDK default 60 s): ASCII digits with an optional `+` (any length), > 0, else warned and the default; above 2 147 483 647 clamped with a warning. A code interval outside [1, 2 147 483 647] fails |
+| `OTEL_CONFIG_FILE`, `OTEL_EXPERIMENTAL_CONFIG_FILE` | _(unset)_ | Declarative configuration is **not supported**: set, it is ignored with one warning per process naming the variable (never the path); `OTEL_EXPERIMENTAL_CONFIG_FILE` is the deprecated name |
 | `OTEL_TRACES_SAMPLER` / `OTEL_TRACES_SAMPLER_ARG` | `parentbased_always_on` | The six spec samplers (case-insensitive). Unknown names warn and use the default |
 | `OTEL_PROPAGATORS` | `tracecontext,baggage` | Supported: `tracecontext`, `baggage`, `none`. Others (`b3`, `jaeger`, `xray`, …) are warned and skipped |
 | `OTEL_SEMCONV_STABILITY_OPT_IN` | Python: `http,database/dup` | Python sets this default before instrumenting (stable HTTP semconv, both DB keys); a user value wins. Go instrumentations emit stable HTTP semconv natively |
@@ -175,7 +176,7 @@ rulings are in [design D1](specs/config-contract-v0.3/design.md).
 | `OTEL_HELPER_METRICS_PORT` | `9464` | Standalone Prometheus `/metrics` listener port; `0` disables the listener (the mountable handler keeps working) |
 | `OTEL_HELPER_DISABLED_METRICS` | _(unset)_ | Wildcard patterns of metric names to drop (all exporters) |
 | `OTEL_HELPER_SAMPLE_RATIO` | `1.0` | **Deprecated** → `OTEL_TRACES_SAMPLER=parentbased_traceidratio` + `OTEL_TRACES_SAMPLER_ARG`. Used only while `OTEL_TRACES_SAMPLER` is unset; builds `ParentBased(TraceIdRatioBased(x))` |
-| `OTEL_HELPER_DISABLED_SIGNALS` | _(unset)_ | **Deprecated** → `OTEL_{TRACES,METRICS,LOGS}_EXPORTER=none` |
+| `OTEL_HELPER_DISABLED_SIGNALS` | _(unset)_ | **Deprecated** → `OTEL_{TRACES,METRICS,LOGS}_EXPORTER=none`. A signal whose `OTEL_<SIGNAL>_EXPORTER` holds a valid entry (`none` included; only unknown entries count as unset) is not disabled by it, nor are metrics when code sets the metric exporters; unknown entries warn once |
 | `OTEL_HELPER_EXTRA_INSTRUMENTATION` | Python: `SQL` | **Go: removed** (no effect, warns). **Python: deprecated** — call `staffops_otel_helper.ext.instrument_sql()` / `instrument_redis()` / `instrument_aws()` before `setup_telemetry()` |
 
 Health checks are configured in code, not env: by default server spans for
@@ -211,7 +212,7 @@ lightweight.
 ## Cross-language parity
 
 Parity is enforced, not promised. [`parity/cases.json`](parity/cases.json) is a
-hand-maintained, language-neutral fixture (281 cases: 187 after A13, 17 added by the Node B3 review, 6 by A16, 40 by Node B4a and its rulings, 16 by A17, 2 by Node B4b, 13 by A18)
+hand-maintained, language-neutral fixture (295 cases: 187 after A13, 17 added by the Node B3 review, 6 by A16, 40 by Node B4a and its rulings, 16 by A17, 2 by Node B4b, 13 by A18, 14 by A19 and its fix round)
 that every language's test suite runs — config resolution, wire-level export
 against a fake OTLP receiver, sampling, propagation, health exclusion, logging
 and `/metrics` status

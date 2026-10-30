@@ -85,7 +85,8 @@ def _options(code: dict):
     direct = {"service_name", "otel_endpoint", "otlp_protocol", "metric_exporters",
               "sample_ratio", "export_interval_ms", "resource_attributes",
               "traces_endpoint", "metrics_endpoint", "logs_endpoint",
-              "insecure", "compression", "export_timeout_ms", "health_paths"}
+              "insecure", "compression", "export_timeout_ms", "health_paths",
+              "disabled_signals"}
     kwargs = {}
     unsupported = []
     for key, value in sorted(code.items()):
@@ -157,7 +158,9 @@ def kind_resolve(case: dict) -> dict:
     opts, snap = _setup(case)
     if opts is not None:
         snap["resource"] = _resource_snapshot()
-        snap["metric_exporters"] = list(opts.resolved_metric_exporters())
+        # The effective list (parity/README.md): [] when metrics or the SDK are disabled.
+        enabled = not opts.sdk_disabled and opts.is_signal_enabled("metrics")
+        snap["metric_exporters"] = list(opts.resolved_metric_exporters()) if enabled else []
         snap["metric_export_interval_ms"] = opts.resolved.export_interval_ms
         level = logging.getLevelName(get_default_log_level(opts.environment, opts.resolved.debug_level))
         snap["log_level"] = "WARN" if level == "WARNING" else level

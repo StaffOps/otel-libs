@@ -95,17 +95,17 @@ document the env fallbacks (rejected: R8 leak, rejected headers on the wire).
 | timeout (plain-decimal ms, clamp [1 ms, 24 h]) | H | |
 | effective deadline: BSP/BLRP `exportTimeoutMillis` = explicitly set `OTEL_BSP_EXPORT_TIMEOUT` / `OTEL_BLRP_EXPORT_TIMEOUT`, else the resolved OTLP timeout; metric reader timeout = min(timeout, interval) + warning when capped | H | *Corrected 2026-10-29 (A18, D1 row "Export deadline"): the resolved OTLP timeout is the single deadline of BSP, BLRP and reader; `OTEL_BSP/BLRP/METRIC_EXPORT_TIMEOUT` warn and are not honored. The earlier note "Go always overrides BSP env, Python lets the SDK read it" was wrong: Go passed it only when a timeout was set, and the Python batch processors ignore their timeout. The reader cap stays a Node difference (D-JS14); its warning names the timeout's source (`exportTimeoutMs` or the env variable)* |
 | compression (case-insensitive, default gzip) | H | |
-| `OTEL_{TRACES,METRICS,LOGS}_EXPORTER` (`none` semantics, `console`, `prometheus`, `logging`→console, env otlp w/o endpoint warns / code fails) | H | |
+| `OTEL_{TRACES,METRICS,LOGS}_EXPORTER` (`none` semantics, `console`, `prometheus`, `logging`→console, env otlp w/o endpoint warns / code fails) | H | *B4c (2026-10-29): `signals.ts`; the console exporters are the SDK ones (`ConsoleSpanExporter`, `ConsoleMetricExporter`, `ConsoleLogRecordExporter`) behind batch processors / a periodic reader, as in Go and Python; `prometheus` is resolved into `Resolved.metricExporters`, its reader and listener are B7. `OTEL_HELPER_DISABLED_SIGNALS` maps to `none` for each listed signal unless that signal's `OTEL_<SIGNAL>_EXPORTER` is set (contract D1 rows "Signal on/off" and "Deprecated `OTEL_HELPER_DISABLED_SIGNALS`", A19). Code `metricExporters` rejects `logging` (contract D1 row "Exporter alias `logging`", A19)* |
 | sampler (six names, trimmed, case-insensitive, plain-decimal arg, code ratio wins) | H | |
-| propagators (lowercase, b3 warned, `none`) | H | |
-| `OTEL_SDK_DISABLED` (boolean rules; propagators + context manager kept) | H | |
-| `OTEL_METRIC_EXPORT_INTERVAL` (default 30 000) | H | |
+| propagators (lowercase, b3 warned, `none`) | H | *Propagators: B5 (2026-10-29). They must be installed under `OTEL_SDK_DISABLED=true` too (case `propagation.sdk_disabled_propagators_kept`, Node `skip:B5-propagators`)* |
+| `OTEL_SDK_DISABLED` (boolean rules; propagators + context manager kept) | H | *B4c: identity is still resolved and warned; no provider, exporter or resource is built, so the API no-op providers stay; `Resolved.sdkDisabled`, all exporter lists `[]`* |
+| `OTEL_METRIC_EXPORT_INTERVAL` (default 30 000) | H | *B4c: contract D1 row "Metric export interval" (A19, 2026-10-29): `^\+?[0-9]+$` after trimming, > 0, clamp and code bound 2^31-1 ms* |
 | `OTEL_SEMCONV_STABILITY_OPT_IN` | H | D-JS9 |
 | `OTEL_BSP_*`, `OTEL_BLRP_*`, limits | H | spec defaults. *A18: a value-length limit of 0 is invalid (warn, next level); a batch size above the queue size warns and uses the queue size* |
 | `OTEL_METRICS_EXEMPLAR_FILTER` | gap | not exported by sdk-metrics 3.0 |
 | code values: set-in-code wins whatever the value; out-of-range / contradicting URL fail fast | H | |
 | deprecations D8 (`SERVICE_NAME`, `ENVIRONMENT`, `OTEL_HELPER_SAMPLE_RATIO`, `OTEL_HELPER_DISABLED_SIGNALS`, schemeless http/protobuf; `OTEL_HELPER_EXTRA_INSTRUMENTATION` accepted, no effect, warned — as Go G9) | H | |
-| `OTEL_LOG_LEVEL`, `OTEL_CONFIG_FILE` | H | Node-only rows |
+| `OTEL_LOG_LEVEL`, `OTEL_CONFIG_FILE` | H | Node-only rows. *Corrected 2026-10-29 (A19): `OTEL_CONFIG_FILE` is now a contract row (design D1 "`OTEL_CONFIG_FILE`"), warned in every language; `OTEL_LOG_LEVEL` stays Node-only* |
 
 ### D-JS4 — Resource
 **Choice**: helper-resolved identity attributes + `telemetry.sdk.*`
@@ -361,7 +361,10 @@ cluster/pm2 are Node's prefork model (not `skip:no-prefork-model`).
 |---|---|
 | gRPC RPC metrics absent (`grpc.health_*_counted_in_metrics`) | `skip:no-upstream-rpc-metrics` (as Python) |
 | Busy `/metrics` port doesn't fail sync setup | recorded; loud error |
-| Metric reader timeout capped at the interval | recorded; warning |
+| Metric reader timeout capped at the interval | recorded; warning. *Amended 2026-10-29 (B4c): with a configurable interval the cap also applies when only the interval is short (e.g. `OTEL_METRIC_EXPORT_INTERVAL=5000` with the 10 000 ms default timeout); the warning then names the interval's source (`OTEL_METRIC_EXPORT_INTERVAL` or `exportIntervalMs`), otherwise the timeout's source plus `interval=<source>`. Unit-tested in `test/signals.test.cjs`*. *Amended 2026-10-29 (A19 fix round): a very short interval makes OTLP metric exports time out (the deadline is the interval); when the cap makes the reader timeout shorter than 1000 ms the helper warns once more, naming the interval's source* |
+| ~~Metric export interval bounded by the Node timer limit (2^31-1 ms): an env value above it is clamped with a warning, a code `exportIntervalMs` above it throws (B4c, 2026-10-29)~~ | *Moved 2026-10-29 to the contract (design D1 row "Metric export interval", A19): every language clamps and bounds the interval the same way; no longer a Node difference* |
+| Console metric reader timeout = min(30 000, interval) (B4c, 2026-10-29) | recorded; Go and Python leave the console reader at their SDK default timeout. Unit-tested in `test/signals.test.cjs` |
+| The DiagLogger is still installed under `OTEL_SDK_DISABLED=true` (B4c, 2026-10-29) | recorded; Go and Python have no equivalent (their SDK diagnostics go to their own loggers) |
 | `withMaskedEnv` hides the helper-owned OTLP variables from `process.env` for the synchronous construction; a `worker_threads` worker started with `env: SHARE_ENV` shares `process.env` and would see them missing during that window (B4b review, 2026-10-29) | recorded; setup runs before workers in practice. No fixture case |
 | `OTEL_METRICS_EXEMPLAR_FILTER` not honored | recorded gap |
 | `http/dup` / old HTTP semconv not available | recorded gap |

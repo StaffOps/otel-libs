@@ -104,13 +104,14 @@ back to the generic one, then to the default.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `OTEL_TRACES_EXPORTER` / `OTEL_LOGS_EXPORTER` | `otlp` | Comma list of `otlp`, `console` (compact JSON on stdout), `none`. `logging` = deprecated `console` (warned); `none` in a list wins (warned) |
+| `OTEL_TRACES_EXPORTER` / `OTEL_LOGS_EXPORTER` | `otlp` | Comma list of `otlp`, `console` (compact JSON on stdout), `none`. `logging` = deprecated `console` (warned; in code it is an unknown exporter); `none` in a list wins (warned). Set to a valid entry, it wins over `OTEL_HELPER_DISABLED_SIGNALS` for its signal |
 | `OTEL_METRICS_EXPORTER` | _(inferred)_ | `otlp`, `prometheus`, `console`, `none` or a list (`otlp,prometheus`). Unset: `otlp` when a metrics endpoint is configured, else `prometheus`. `otlp` without an endpoint is warned and dropped |
-| `OTEL_METRIC_EXPORT_INTERVAL` | `30000` | Periodic export interval in ms (helper default; the SDK's is 60000) |
+| `OTEL_METRIC_EXPORT_INTERVAL` | `30000` | Periodic export interval in ms (helper default; the SDK's is 60000): ASCII digits with an optional `+` (any number of digits; leading zeros ignored), > 0, else warned and 30 000; above 2 147 483 647 clamped with a warning |
 | `OTEL_METRICS_EXEMPLAR_FILTER` | SDK `trace_based` | Read by the SDK; the helper never sets it |
 | `OTEL_TRACES_SAMPLER` / `OTEL_TRACES_SAMPLER_ARG` | `parentbased_always_on` | The six spec samplers (case-insensitive); unknown or unsupported names warn and use the default. `_ARG` is a plain decimal in [0, 1] |
 | `OTEL_PROPAGATORS` | `tracecontext,baggage` | `tracecontext`, `baggage`, `none`. `b3`, `b3multi`, `jaeger`, `xray`, `ottrace` are warned and skipped |
-| `OTEL_SDK_DISABLED` | `false` | `true` installs no-op providers (no exporters, no `/metrics` listener); propagation still works |
+| `OTEL_SDK_DISABLED` | `false` | `true` installs no-op providers (no exporters, no `/metrics` listener) and logs one INFO line; propagation still works |
+| `OTEL_CONFIG_FILE` / `OTEL_EXPERIMENTAL_CONFIG_FILE` | _(unset)_ | Declarative configuration is **not supported**: ignored with one warning per process naming the variable (never the path) |
 | `OTEL_SEMCONV_STABILITY_OPT_IN` | _(unset)_ | Read by contrib instrumentations: `rpc/dup` or `rpc/old` (otelgrpc metrics), `database` / `database/dup` (`ext/otelsql`) |
 
 ### Helper variables
@@ -121,7 +122,7 @@ back to the generic one, then to the default.
 | `OTEL_HELPER_METRICS_PORT` | `9464` | Port of the standalone Prometheus `/metrics` listener; `0` = no listener (mount `MetricsHandler()` yourself) |
 | `OTEL_HELPER_DISABLED_METRICS` | _(unset)_ | Comma list of `path.Match` patterns (`http.server.*`); matching instruments are dropped from every exporter |
 | `OTEL_HELPER_SAMPLE_RATIO` | _(unset)_ | **Deprecated** (warns once): ratio in [0, 1] → `ParentBased(TraceIDRatioBased(x))`, only while `OTEL_TRACES_SAMPLER` is unset. Use `OTEL_TRACES_SAMPLER=parentbased_traceidratio` + `_ARG` |
-| `OTEL_HELPER_DISABLED_SIGNALS` | _(unset)_ | **Deprecated** (warns once): `traces`, `metrics`, `logs`. Use `OTEL_<SIGNAL>_EXPORTER=none` |
+| `OTEL_HELPER_DISABLED_SIGNALS` | _(unset)_ | **Deprecated** (warns once): `traces`, `metrics`, `logs`. Use `OTEL_<SIGNAL>_EXPORTER=none`. Ignored for a signal whose `OTEL_<SIGNAL>_EXPORTER` holds a valid entry, and for metrics when `WithMetricExporters` is used; unknown entries warn once |
 | `OTEL_HELPER_EXTRA_INSTRUMENTATION` | _(unset)_ | **Removed** in Go 0.3.0: no effect, warns once when set. Import an [`ext/*` module](#opt-in-extensions-ext) instead |
 
 Deprecated variables keep working until 1.0 and warn even when the standard
@@ -147,8 +148,8 @@ Options passed to `Setup` win over every environment variable.
 | `WithInsecure(bool)` | Plaintext/TLS for **schemeless** endpoints; contradicting a code URL's scheme fails `Setup` |
 | `WithCompression(c)` | `CompressionGzip` (default) or `CompressionNone`, every signal |
 | `WithExportTimeout(ms)` | Export timeout for every signal (> 0) |
-| `WithMetricExporters(names...)` | `otlp`, `prometheus`, `console`, `none`; `otlp` without an endpoint fails `Setup` |
-| `WithExportInterval(ms)` | Metric export interval (> 0) |
+| `WithMetricExporters(names...)` | `otlp`, `prometheus`, `console`, `none` (trimmed, case-insensitive, duplicates dropped); `otlp` without an endpoint, an unknown value (`logging` included) or `none` with others fails `Setup` |
+| `WithExportInterval(ms)` | Metric export interval in [1, 2 147 483 647] ms |
 | `WithPrometheusMetricsPort(port)` | Standalone `/metrics` port in [0, 65535] |
 | `WithoutMetricsListener()` | No standalone listener; mount `MetricsHandler()` on your mux |
 | `WithDisabledMetrics(patterns)` | Drop instruments matching `path.Match` patterns; `nil` = use env, `[]string{}` = none (beats env) |

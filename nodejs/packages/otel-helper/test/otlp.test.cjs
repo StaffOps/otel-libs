@@ -540,9 +540,12 @@ test('R8 code: only the endpoint each signal uses is checked; a schemeless code 
   assert.equal(fresh({}, { otelEndpoint: 'collector:4317', insecure: false }).traces.url, 'https://collector:4317');
 });
 
-test('Resolved keeps its B3 fields and adds otlp; the inactive-copy path stays silent', () => {
+test('Resolved keeps its B3 fields and adds otlp (B4a) and the signal selection (B4c)', () => {
   const resolved = helper.setup({ otelEndpoint: 'http://c:4317' });
-  assert.deepEqual(Object.keys(resolved).sort(), ['debug', 'environment', 'logLevel', 'otlp', 'serviceInstanceId', 'serviceName']);
+  assert.deepEqual(Object.keys(resolved).sort(), [
+    'debug', 'environment', 'logLevel', 'logsExporters', 'metricExportIntervalMs', 'metricExporters', 'otlp', 'sdkDisabled',
+    'serviceInstanceId', 'serviceName', 'tracesExporters',
+  ]);
   assert.ok(Object.isFrozen(resolved));
 });
 
@@ -571,7 +574,8 @@ test('globals: a registry of another @opentelemetry/api version is foreign — r
       const helper = require('@staffops/otel-helper');
       const testing = require('@staffops/otel-helper/testing');
       const lines = [];
-      testing.setDiagnosticSink((l) => lines.push(l));
+      // The B7 pending report (prometheus) is not what this test is about; remove with B7.
+      testing.setDiagnosticSink((l) => { if (!l.includes('not implemented yet in Node')) lines.push(l); });
       helper.setup({ serviceName: 'svc', environment: 'DEV' });
       console.log(JSON.stringify({ lines, keys: Object.keys(globalThis[key]).filter((k) => k !== 'version').concat('version').sort() }));
     `);
@@ -609,7 +613,8 @@ test('globals: a registration the API refuses anyway is reported (context manage
     }
     globalThis[key] = reg;
     const lines = [];
-    require('@staffops/otel-helper/testing').setDiagnosticSink((l, m) => { if (m.origin === 'helper') lines.push(l); });
+    // The B7 pending report (prometheus, INFO) is not what this test is about; remove with B7.
+    require('@staffops/otel-helper/testing').setDiagnosticSink((l, m) => { if (m.origin === 'helper' && !l.includes('not implemented yet in Node')) lines.push(l); });
     require('@staffops/otel-helper').setup({ serviceName: 'svc', environment: 'DEV', installDiagLogger: false });
     console.log(JSON.stringify(lines));
   `);

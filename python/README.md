@@ -129,10 +129,11 @@ metrics use the Prometheus fallback and logs stay local.
 
 | Variable | Default | Notes |
 |---|---|---|
-| `OTEL_SDK_DISABLED` | `false` | `true` installs propagators only: no providers, exporters, `/metrics` listener or log handlers |
-| `OTEL_TRACES_EXPORTER` / `OTEL_LOGS_EXPORTER` | `otlp` | `otlp`, `console`, `none` or a list (`otlp,console`). `logging` is a deprecated alias of `console` |
+| `OTEL_SDK_DISABLED` | `false` | `true` installs propagators only (one INFO line): no providers, exporters, `/metrics` listener or log handlers |
+| `OTEL_CONFIG_FILE` / `OTEL_EXPERIMENTAL_CONFIG_FILE` | _(unset)_ | Declarative configuration is **not supported**: ignored with one warning per process naming the variable (never the path) |
+| `OTEL_TRACES_EXPORTER` / `OTEL_LOGS_EXPORTER` | `otlp` | `otlp`, `console`, `none` or a list (`otlp,console`). `logging` is a deprecated alias of `console` (variables only: in `metric_exporters` it raises) |
 | `OTEL_METRICS_EXPORTER` | _(inferred)_ | `otlp`, `prometheus`, `console`, a list, `none`. Unset: `otlp` when a metrics endpoint is configured, else `prometheus` |
-| `OTEL_METRIC_EXPORT_INTERVAL` | `30000` | Milliseconds (the SDK default is 60000) |
+| `OTEL_METRIC_EXPORT_INTERVAL` | `30000` | Milliseconds (the SDK default is 60000): ASCII digits with an optional `+` (any number of digits; leading zeros ignored), > 0, else warned and 30 000; above 2 147 483 647 clamped with a warning |
 | `OTEL_TRACES_SAMPLER` / `OTEL_TRACES_SAMPLER_ARG` | `parentbased_always_on` | Spec names, case-insensitive. Unknown name → warning + default; invalid `_ARG` → warning + 1.0 |
 | `OTEL_PROPAGATORS` | `tracecontext,baggage` | `tracecontext`, `baggage`, `none`. Other values are warned and skipped (needs the import order above) |
 | `OTEL_SEMCONV_STABILITY_OPT_IN` | `http,database/dup` | Set by the helper when unset, before any instrumentation: stable HTTP metrics/attributes and both DB attribute generations. Your value wins (`http/dup` = both HTTP generations) |
@@ -146,7 +147,7 @@ metrics use the Prometheus fallback and logs stay local.
 | `OTEL_HELPER_METRICS_PORT` | `9464` | Standalone Prometheus `/metrics` listener; `0` disables it (serve `metrics_app()` from the app instead: `app.add_route("/metrics", metrics_app())`) |
 | `OTEL_HELPER_DISABLED_METRICS` | _(unset)_ | Comma list of wildcard instrument names dropped from every exporter |
 | `OTEL_HELPER_SAMPLE_RATIO` | `1.0` | **Deprecated** → `OTEL_TRACES_SAMPLER=parentbased_traceidratio` + `OTEL_TRACES_SAMPLER_ARG`. Used only while `OTEL_TRACES_SAMPLER` is unset |
-| `OTEL_HELPER_DISABLED_SIGNALS` | _(unset)_ | **Deprecated** → `OTEL_{TRACES,METRICS,LOGS}_EXPORTER=none` (which win per signal) |
+| `OTEL_HELPER_DISABLED_SIGNALS` | _(unset)_ | **Deprecated** → `OTEL_{TRACES,METRICS,LOGS}_EXPORTER=none`. A standard variable with a valid entry wins for its signal, and `metric_exporters` wins for metrics; unknown entries warn once |
 | `OTEL_HELPER_EXTRA_INSTRUMENTATION` | `SQL` | **Deprecated** → call `staffops_otel_helper.ext.*` before setup. Still effective; warns whenever set (also when empty, which turns the `SQL` default off) |
 
 Deprecated variables warn once per process, naming the replacement (never the

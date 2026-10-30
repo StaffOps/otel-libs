@@ -522,6 +522,19 @@ func codeOptions(code map[string]any, recv *fakeReceiver) ([]Option, []string) {
 			} else {
 				bad()
 			}
+		case "disabled_signals":
+			items, ok := v.([]any)
+			list := []string{}
+			for _, e := range items {
+				s, isStr := e.(string)
+				ok = ok && isStr
+				list = append(list, s)
+			}
+			if ok {
+				opts = append(opts, WithDisabledSignals(list))
+			} else {
+				bad()
+			}
 		case "health_paths":
 			items, ok := v.([]any)
 			list := []string{}
@@ -604,9 +617,12 @@ func runResolve(opts []Option) map[string]any {
 	if o == nil {
 		return map[string]any{"adapter_error": "Setup succeeded but recorded no installed options"}
 	}
+	// The effective list (parity/README.md): [] when metrics or the SDK are disabled.
 	exporters := []any{}
-	for _, e := range o.resolvedMetricExporters() {
-		exporters = append(exporters, e)
+	if !o.sdkDisabled && o.IsSignalEnabled("metrics") {
+		for _, e := range o.resolvedMetricExporters() {
+			exporters = append(exporters, e)
+		}
 	}
 	snap["metric_exporters"] = exporters
 	snap["metric_export_interval_ms"] = float64(o.metricIntervalMs)

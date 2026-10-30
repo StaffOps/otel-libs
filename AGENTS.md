@@ -70,13 +70,14 @@ resolution rules: design D1. Summary of what differs between the two contracts:
 | `OTEL_EXPORTER_OTLP[_<SIGNAL>]_PROTOCOL` | `grpc` / `http/protobuf`, port-4318 inference; `http/json` env → warned, ignored | Same values; `http/json` fails validation |
 | `OTEL_EXPORTER_OTLP[_<SIGNAL>]_INSECURE` | Schemeless only; conflict → scheme wins, warned | Schemeless only |
 | `_HEADERS` / `_TIMEOUT` / `_COMPRESSION` | Helper-parsed (ms, clamped; gzip default) | Headers via SDK; timeout fixed by `ExportTimeoutMs` (10 s); compression not set by the helper |
-| `OTEL_{TRACES,METRICS,LOGS}_EXPORTER` | `otlp`, `console`, `none` (+ `prometheus` for metrics) | `OTEL_METRICS_EXPORTER` only (`otlp`, `prometheus`, `none`) |
+| `OTEL_{TRACES,METRICS,LOGS}_EXPORTER` | `otlp`, `console`, `none` (+ `prometheus` for metrics); `logging` = warned alias of `console` in env only — code `logging` fails (A19) | `OTEL_METRICS_EXPORTER` only (`otlp`, `prometheus`, `none`) |
 | `OTEL_TRACES_SAMPLER` / `_ARG` | Helper-parsed; default `parentbased_always_on` | SDK, only when no code sampler; default bare AlwaysOn |
 | `OTEL_PROPAGATORS` | `tracecontext`, `baggage`, `none`; others warned | Not read (W3C fixed) |
-| `OTEL_SDK_DISABLED` | No-op providers, propagators kept | SDK |
-| `OTEL_METRIC_EXPORT_INTERVAL` | `30000` | `30000` |
+| `OTEL_SDK_DISABLED` | No-op providers, propagators kept, one INFO line | SDK |
+| `OTEL_METRIC_EXPORT_INTERVAL` | `30000`; `^\+?[0-9]+$` (any length), > 0, clamped at 2 147 483 647; code outside [1, 2 147 483 647] fails (A19) | `30000` |
+| `OTEL_CONFIG_FILE`, `OTEL_EXPERIMENTAL_CONFIG_FILE` | Not supported: warned once per process (name only), ignored (A19) | Not read |
 | `OTEL_HELPER_DEBUG_LEVEL` | `debug=true` on entry spans (no or remote parent) | `debug=true` attribute on entry spans (no in-process parent, so also spans continuing a remote trace) + `debug=true` prepended to the propagated tracestate |
-| `OTEL_HELPER_SAMPLE_RATIO`, `OTEL_HELPER_DISABLED_SIGNALS` | Deprecated, warned once → standard vars | Supported |
+| `OTEL_HELPER_SAMPLE_RATIO`, `OTEL_HELPER_DISABLED_SIGNALS` | Deprecated, warned once → standard vars. A set `OTEL_<SIGNAL>_EXPORTER` (a valid entry, `none` included) — and code metric exporters, for metrics — wins over `OTEL_HELPER_DISABLED_SIGNALS`; its unknown entries warn once (A19) | Supported |
 | `OTEL_HELPER_EXTRA_INSTRUMENTATION` | Go: removed (warns). Python: deprecated, default `SQL` | Read but no effect |
 | `OTEL_HELPER_DISABLED_METRICS`, `OTEL_HELPER_METRICS_PORT` | Supported (`9464`, `0` = no listener) | Supported |
 

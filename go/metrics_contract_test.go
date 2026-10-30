@@ -171,7 +171,7 @@ func Test_Exporters_NoneCombinedCode_FailsValidation(t *testing.T) {
 	}
 }
 
-func Test_Exporters_LoggingIsConsole(t *testing.T) {
+func Test_Exporters_LoggingAlias(t *testing.T) {
 	logs := captureDiag(t)
 	t.Setenv(EnvMetricsExporter, "logging")
 	o := resolvedOptions(t, WithServiceName("svc"))
@@ -181,13 +181,11 @@ func Test_Exporters_LoggingIsConsole(t *testing.T) {
 	if !strings.Contains(logs.String(), "logging") {
 		t.Errorf("no deprecation warning for logging: %q", logs.String())
 	}
-	// Same in code (deprecated value, not invalid).
+	// In code "logging" is an unknown exporter (design D1 row "Exporter alias
+	// logging", A19).
 	o = resolvedOptions(t, WithServiceName("svc"), WithMetricExporters("logging"))
-	if err := o.validate(); err != nil {
-		t.Fatalf("validate() = %v", err)
-	}
-	if got := o.resolvedMetricExporters(); !reflect.DeepEqual(got, []string{"console"}) {
-		t.Errorf("code: resolvedMetricExporters() = %v, want [console]", got)
+	if err := o.validate(); err == nil || !strings.Contains(err.Error(), `unknown metric exporter "logging"`) {
+		t.Fatalf("validate() = %v, want unknown metric exporter \"logging\"", err)
 	}
 }
 

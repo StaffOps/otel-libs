@@ -158,6 +158,23 @@ Runtime and operations:
     (and the `OTEL_BLRP_*` pair) warns naming both and uses the queue size
     (the span processor used to clamp silently to min(512, queue)).
 
+21. **BREAKING — exporter lists, disabled signals, interval (design D1 rows
+    of 2026-10-29, A19).** `OTEL_HELPER_DISABLED_SIGNALS` no longer disables
+    a signal whose `OTEL_<SIGNAL>_EXPORTER` is set: if you set both, remove
+    the deprecated variable and use `OTEL_<SIGNAL>_EXPORTER=none`.
+    A standard variable counts only when it holds a valid entry (`none`
+    included; only unknown entries = unset), and `WithMetricExporters` also
+    wins for metrics. `WithMetricExporters("logging")` now **fails `Setup`**:
+    use `"console"` (`logging` stays a warned alias in the `OTEL_*_EXPORTER`
+    variables only). `WithDisabledSignals` entries are trimmed, lowercased
+    and de-duplicated (`" Traces "` used to validate and disable nothing).
+    `WithExportInterval` outside [1, 2 147 483 647] ms fails `Setup`, and an
+    `OTEL_METRIC_EXPORT_INTERVAL` above 2 147 483 647 is clamped with a
+    warning (beyond int64 it used to fall back to 30 000). `OTEL_CONFIG_FILE`
+    and `OTEL_EXPERIMENTAL_CONFIG_FILE` are not supported: they are now
+    warned once and ignored. Env values echoed in warnings are cut to 64
+    characters; `OTEL_SDK_DISABLED=true` logs one INFO line.
+
 ### Migration guide 0.2 → 0.3 — Python
 
 **First: the package name changed** ([ADR-011](https://github.com/StaffOps/otel-libs/blob/main/specs/decisions/ADR-011-owner-prefixed-package-names.md)).
@@ -339,6 +356,24 @@ Telemetry and runtime:
     (and the `OTEL_BLRP_*` pair) warns naming both and uses the queue size
     instead of failing setup.
 
+22. **BREAKING — interval grammar and bound (design D1 rows of 2026-10-29,
+    A19).** `OTEL_METRIC_EXPORT_INTERVAL` must be ASCII digits with an
+    optional `+`: `5_000` and non-ASCII digits, which `int()` accepted, now
+    warn and use 30 000; a value above 2 147 483 647 is clamped with a
+    warning; any number of digits is accepted (it used to fall back to
+    30 000). `export_interval_ms` above 2 147 483 647
+    **raises `ValueError`**. Unknown `OTEL_HELPER_DISABLED_SIGNALS` entries
+    now warn (they were dropped silently). A standard `OTEL_<SIGNAL>_EXPORTER`
+    now wins over `OTEL_HELPER_DISABLED_SIGNALS` only when it holds a valid
+    entry (`OTEL_TRACES_EXPORTER=bogus` no longer re-enables traces), and
+    `metric_exporters` wins for metrics. `metric_exporters` and
+    `disabled_signals` are de-duplicated after normalization:
+    `["none", "none"]` disables metrics instead of raising.
+    `OTEL_CONFIG_FILE` and `OTEL_EXPERIMENTAL_CONFIG_FILE` are not supported:
+    they are now warned once and ignored. Env values echoed in warnings are
+    cut to 64 characters. `options.resolved.metric_exporters` is the
+    configured list, not the effective one (see the HOW-TO).
+
 ### Collector / platform prerequisites (before rolling 0.3.0 out)
 
 Owned outside this repo (design D11); each item blocks the rollout, not the rc:
@@ -409,6 +444,39 @@ after the upgrade.
 
 ### Go — detailed changes
 
+- **BREAKING — A19 rulings from the Node B4c work (design D1 rows of
+  2026-10-29: "Deprecated `OTEL_HELPER_DISABLED_SIGNALS`", "Exporter alias
+  `logging`", "Metric export interval", "`OTEL_CONFIG_FILE`"; migration item
+  21).** An `OTEL_HELPER_DISABLED_SIGNALS` entry is skipped when that
+  signal's `OTEL_<SIGNAL>_EXPORTER` is set (non-blank). `normalizeExporters`
+  rejects `logging` in code (`WithMetricExporters`) as an unknown exporter.
+  `OTEL_METRIC_EXPORT_INTERVAL` is parsed by `parseExportInterval`
+  (`^\+?[0-9]+$`, > 0, clamped at 2 147 483 647 with a warning, any number of
+  digits); `WithExportInterval` is bounded to [1, 2 147 483 647].
+  `OTEL_CONFIG_FILE` warns once per process naming the variable only. Seven
+  new cases (288 at the time) pass in Go, Python and Node:
+  `config.disabled_signals_standard_var_wins`,
+  `config.disabled_signals_unknown_warns`,
+  `config.code_exporter_logging_fails`,
+  `metrics.interval_env_underscore_invalid`,
+  `metrics.interval_env_above_max_clamped`,
+  `config.code_interval_above_max_fails`, `config.config_file_warns`.
+  **Fix round (observability + dev refutation, code-review; BREAKING):** the
+  standard variable counts as set only with a valid entry, and
+  `WithMetricExporters` beats `OTEL_HELPER_DISABLED_SIGNALS` for metrics;
+  `WithDisabledSignals` entries are trimmed, lowercased and de-duplicated
+  (`IsSignalEnabled` and `validate` disagreed); a repeated unknown entry
+  warns once (`seen` set); `OTEL_EXPERIMENTAL_CONFIG_FILE` is warned like
+  `OTEL_CONFIG_FILE` (`warnUnsupported`); `warnEnv` truncates echoed values to
+  64 code points; `OTEL_SDK_DISABLED=true` logs the INFO line Python logs; the
+  parity adapter reports the effective `metric_exporters` and maps
+  `disabled_signals`. Seven more cases (295 in total; the last is Node
+  `skip:B5-propagators`): `metrics.interval_env_long_digits_clamped`,
+  `config.disabled_signals_unknown_only_standard_var_unset`,
+  `config.disabled_signals_code_metric_exporters`,
+  `config.experimental_config_file_warns`, `config.code_disabled_signals_trimmed`,
+  `config.code_metric_exporters_none_duplicated`,
+  `propagation.sdk_disabled_propagators_kept`.
 - **BREAKING — A18 rulings from the Node B4b review (design D1 rows of
   2026-10-29: "TLS files", "Export deadline", "Code export timeout bound",
   "Header bytes", "Value-length limits"; migration item 20).**
@@ -749,6 +817,25 @@ Behavior changes, with migration notes:
 
 ### Python — detailed changes
 
+- **BREAKING — A19 rulings from the Node B4c work (design D1 rows of
+  2026-10-29; migration item 22).** `OTEL_METRIC_EXPORT_INTERVAL` is checked
+  against `^\+?[0-9]+$` before `int()` (no `_`, no non-ASCII digits) and
+  clamped at 2 147 483 647 with a warning; `export_interval_ms` above it
+  raises `ValueError`. Unknown `OTEL_HELPER_DISABLED_SIGNALS` entries warn
+  once. `OTEL_CONFIG_FILE` warns once per process naming the variable only.
+  The standard variable already won over `OTEL_HELPER_DISABLED_SIGNALS`, and
+  a code `logging` metric exporter already failed. Same seven new cases.
+  **Fix round (BREAKING):** `_resolve_export_interval` accepts any number of
+  digits (the unreleased A19 draft raised above 4300 digits in `int()`): the
+  `+` and leading zeros are dropped and more than 10 significant digits
+  clamp, as in Go. The
+  standard variable counts as set only with a valid entry, and
+  `metric_exporters` wins for metrics; code `metric_exporters` and
+  `disabled_signals` are de-duplicated after normalization (`["none",
+  "none"]` disables metrics instead of raising); `OTEL_EXPERIMENTAL_CONFIG_FILE`
+  warns like `OTEL_CONFIG_FILE`; `_warn_once` truncates echoed string values
+  to 64 code points; the parity driver reports the effective
+  `metric_exporters` and maps `disabled_signals`. Same seven fix-round cases.
 - **BREAKING — A18 rulings from the Node B4b review (design D1 rows of
   2026-10-29; migration item 21).** Every OTLP signal gets an explicit
   `timeout` (10 s by default), which is also the `export_timeout_millis` of
@@ -1543,6 +1630,49 @@ Unsupported instrumentation versions, task A10 (P18):
   total): `config.attribute_value_length_limit_zero_signal_wins`,
   `config.bsp_batch_size_above_queue_clamped`,
   `config.blrp_batch_size_above_queue_clamped`.
+- **Node.js exporter lists, console exporters, `OTEL_SDK_DISABLED`,
+  `OTEL_CONFIG_FILE` and the metric export interval (Phase B, task B4c; not
+  released).** `OTEL_TRACES_EXPORTER`, `OTEL_METRICS_EXPORTER` and
+  `OTEL_LOGS_EXPORTER` are parsed as in Go and Python: comma-separated,
+  trimmed, case-insensitive, duplicates dropped; `logging` is the deprecated
+  spelling of `console` (warned); unknown values warn and are dropped; `none`
+  with other values warns and disables the signal; nothing valid left = the
+  default (`otlp` for traces and logs; for metrics `otlp` with a metrics
+  endpoint, else `prometheus` — its `/metrics` reader is task B7). An env
+  `otlp` metric exporter without an endpoint warns and is dropped; the new
+  code option `metricExporters` fails fast on `otlp` without an endpoint, an
+  unknown value (`logging` included) or `none` with other values. `console`
+  uses the SDK console exporters (stdout) behind a batch processor or a
+  periodic reader. `OTEL_SDK_DISABLED=true` builds no provider, exporter or
+  resource (the API no-op providers stay) and still installs the context
+  manager; an unparseable value warns and reads as `false`.
+  `OTEL_HELPER_DISABLED_SIGNALS` (deprecated) maps to `none` for each listed
+  signal unless that signal's `OTEL_<SIGNAL>_EXPORTER` is set; unknown entries
+  warn; new code option `disabledSignals` wins over it (`[]` included).
+  `OTEL_METRIC_EXPORT_INTERVAL` (positive integer ms, default 30 000; garbage
+  and 0 warn and use the default; above 2^31-1 ms clamped with a warning) and
+  the new option `exportIntervalMs` (integer in [1, 2^31-1]) set the interval
+  of every periodic reader. The OTLP metric reader's timeout stays the OTLP
+  timeout capped at the interval; the warning now names the source of the cap
+  (the interval's when only the interval is short, else the timeout's plus
+  `interval=<source>`). `OTEL_CONFIG_FILE` is warned once per process (name
+  only) and ignored. `Resolved` gains `sdkDisabled`, `tracesExporters`,
+  `metricExporters`, `logsExporters` and `metricExportIntervalMs`. The 23
+  `nodejs: skip:B4c-…` cases pass on Node 22.15.0/24/26. Its open items became
+  contract task A19 (design D1 rows of 2026-10-29: the standard variable wins
+  over `OTEL_HELPER_DISABLED_SIGNALS`, `logging` fails in code, the interval
+  grammar `^\+?[0-9]+$` with the 2 147 483 647 ms clamp and code bound,
+  `OTEL_CONFIG_FILE` warned in every language), implemented in Go and Python
+  in the same change; the seven A19 cases pass in Node too. **Fix round:** a
+  standard variable counts as set only with a valid entry and code
+  `metricExporters` beats `OTEL_HELPER_DISABLED_SIGNALS` for metrics;
+  `OTEL_EXPERIMENTAL_CONFIG_FILE` is warned like `OTEL_CONFIG_FILE`;
+  `OTEL_SDK_DISABLED=true` logs the contract INFO line; a resolved
+  `prometheus` metric exporter is reported once at INFO ("not implemented
+  yet in Node", until B7); the interval clamp warning reads "above 2147483647
+  ms; clamped"; a reader timeout capped below 1000 ms warns; the parity
+  driver maps `disabled_signals`. The six fix-round cases that Node can run
+  pass; `propagation.sdk_disabled_propagators_kept` is `skip:B5-propagators`.
 - **Go test hygiene:** `captureDiag` (`go/config_contract_test.go`) no longer
   prints slog timestamps, which made `TestDeprecatedEnvWarnsNamingReplacement`
   (`go/deprecation_test.go`) flaky.

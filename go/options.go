@@ -79,16 +79,18 @@ type Options struct {
 	metricsPortSet     bool
 
 	// Resolution results (filled by resolveFromEnv / lazily).
-	identityResolved       bool
-	sampleRatioFromEnv     bool              // SampleRatio came from OTEL_HELPER_SAMPLE_RATIO
-	envResource            map[string]string // OTEL_RESOURCE_ATTRIBUTES as the helper parsed it
-	envResourceEcho        bool              // the SDK's own parse of it would echo items (quietResourceEnvEcho)
-	serviceInstanceID      string
-	sdkDisabled            bool
-	exports                map[string]*signalExport
-	tracesExporters        []string
-	logsExporters          []string
-	codeMetricExporters    bool
+	identityResolved    bool
+	sampleRatioFromEnv  bool              // SampleRatio came from OTEL_HELPER_SAMPLE_RATIO
+	envResource         map[string]string // OTEL_RESOURCE_ATTRIBUTES as the helper parsed it
+	envResourceEcho     bool              // the SDK's own parse of it would echo items (quietResourceEnvEcho)
+	serviceInstanceID   string
+	sdkDisabled         bool
+	exports             map[string]*signalExport
+	tracesExporters     []string
+	logsExporters       []string
+	codeMetricExporters bool
+	// metricsEnvExportersSet: OTEL_METRICS_EXPORTER parsed to a valid entry.
+	metricsEnvExportersSet bool
 	metricExportersInvalid []string
 	// metricIntervalMs is the interval Setup gave the periodic readers
 	// (parity seam: read through installedOptions, set only in Setup).
@@ -206,8 +208,11 @@ func WithPrometheusMetricsPort(port int) Option {
 }
 
 // WithMetricExporters selects the active metric exporters ("otlp",
-// "prometheus", "console", "none"), overriding OTEL_METRICS_EXPORTER and the
-// legacy endpoint inference.
+// "prometheus", "console", "none"; trimmed, case-insensitive, duplicates
+// dropped), overriding OTEL_METRICS_EXPORTER, the endpoint-based default and
+// the deprecated OTEL_HELPER_DISABLED_SIGNALS for metrics. An unknown value
+// ("logging" included: it is an alias in the environment only), "none" with
+// other values, or "otlp" without a metrics endpoint fails Setup.
 func WithMetricExporters(exporters ...string) Option {
 	return func(o *Options) {
 		o.MetricExporters = exporters
@@ -218,7 +223,8 @@ func WithMetricExporters(exporters ...string) Option {
 }
 
 // WithExportInterval sets the metric export interval in milliseconds,
-// overriding OTEL_METRIC_EXPORT_INTERVAL.
+// overriding OTEL_METRIC_EXPORT_INTERVAL. A value outside [1, 2147483647]
+// fails Setup (design D1 row "Metric export interval").
 func WithExportInterval(ms int) Option {
 	return func(o *Options) { o.ExportIntervalMs = ms; o.exportIntervalSet = true }
 }

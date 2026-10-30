@@ -161,7 +161,9 @@ func Setup(ctx context.Context, opts ...Option) (Shutdown, error) {
 	p := newPipeline()
 	if options.sdkDisabled {
 		// OTEL_SDK_DISABLED=true: no-op providers for every signal; context
-		// propagation keeps working.
+		// propagation keeps working. The INFO line is the same in every
+		// language (design D1 row "OTEL_SDK_DISABLED INFO", A19).
+		diagLogger.Info("otelhelper: OTEL_SDK_DISABLED=true: telemetry disabled, only propagators installed")
 		otel.SetTracerProvider(nooptrace.NewTracerProvider())
 		otel.SetMeterProvider(noopmetric.NewMeterProvider())
 		global.SetLoggerProvider(nooplog.NewLoggerProvider())

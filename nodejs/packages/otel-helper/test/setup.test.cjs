@@ -330,7 +330,10 @@ test('lifecycle (B3 subset): a hung provider while a socket is open rejects at t
 
 test('lifecycle (B3 subset): fire-and-forget shutdown of a healthy setup exits promptly and cleanly', () => {
   const started = Date.now();
-  const res = runCjs("const h = require('@staffops/otel-helper'); h.setup({ serviceName: 'svc', environment: 'DEV' }); h.shutdown();");
+  // OTEL_METRICS_EXPORTER=none: no B7 pending report (prometheus) on stderr; remove with B7.
+  const res = runCjs("const h = require('@staffops/otel-helper'); h.setup({ serviceName: 'svc', environment: 'DEV' }); h.shutdown();", {
+    env: { OTEL_METRICS_EXPORTER: 'none' },
+  });
   assert.equal(res.status, 0, res.stderr);
   assert.equal(res.stdout, '');
   assert.equal(res.stderr, '');
@@ -408,7 +411,8 @@ test('lifecycle (B3 subset): foreign global TracerProvider / context manager: se
     helper.setup({ serviceName: 'svc', environment: 'DEV' });
     // Exactly the helper's two warnings: no API duplicate-registration error
     // (with its stack trace) forwarded from diag.
-    assert.deepEqual(records.map((r) => [r.origin, r.level, r.line]), [
+    // The B7 pending report (prometheus, INFO) is left out; remove the filter with B7.
+    assert.deepEqual(records.filter((r) => !r.line.includes('not implemented yet in Node')).map((r) => [r.origin, r.level, r.line]), [
       ['helper', 'warn', 'otelhelper: a global context manager is already registered; the helper keeps it'],
       ['helper', 'warn', 'otelhelper: a global TracerProvider is already registered; the helper does not replace it and its traces are inactive signal=traces'],
     ]);

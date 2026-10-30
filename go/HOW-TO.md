@@ -482,9 +482,10 @@ return an error naming the option.
 | Other resource attributes | `WithResourceAttributes` > `OTEL_RESOURCE_ATTRIBUTES`; `telemetry.sdk.*` always the SDK's (a code value warns once, naming the key); an empty code key fails `Setup`; schema URL `https://opentelemetry.io/schemas/1.43.0` |
 | `OTEL_RESOURCE_ATTRIBUTES` parsing | Helper-owned: blank items ignored, split at the first `=`, values percent-decoded then trimmed; an item without `=`, with an empty or non-UTF-8 key, or a bad `%` escape is warned **by position only**, once per process. The SDK's own re-parse is kept from echoing items through `otel.Handle`. **Limitation:** the Go SDK providers still merge their own parse under the helper's resource, so a blank `deployment.environment.name=` comes back as `""` and a key with surrounding Unicode whitespace appears twice ([known gaps](https://github.com/StaffOps/otel-libs/blob/main/README.md#known-emitted-telemetry-gaps)) |
 | Sampler | Code ratio (`WithSampleRatio`, any value incl. 1.0) > `OTEL_TRACES_SAMPLER`/`_ARG` > `OTEL_HELPER_SAMPLE_RATIO` (only while `OTEL_TRACES_SAMPLER` is unset) > `parentbased_always_on`; health-drop wrapper on top |
-| Signals on/off | `OTEL_SDK_DISABLED=true` (no-op everything) / `OTEL_<SIGNAL>_EXPORTER=none` > `OTEL_HELPER_DISABLED_SIGNALS` |
-| Metric exporters | Code > `OTEL_METRICS_EXPORTER` > inference (`otlp` if a metrics endpoint is configured, else `prometheus`). Env `otlp` without an endpoint warns and is dropped; code `otlp` without one fails `Setup` |
-| Export interval | Code > `OTEL_METRIC_EXPORT_INTERVAL` (positive integer ms) > 30 000 |
+| Signals on/off | `OTEL_SDK_DISABLED=true` (no-op everything, one INFO line) / `OTEL_<SIGNAL>_EXPORTER` > `OTEL_HELPER_DISABLED_SIGNALS` (deprecated). A set standard variable — at least one valid entry, `none` included — keeps its signal out of the deprecated variable, and so does `WithMetricExporters` for metrics; unknown entries warn once. `WithDisabledSignals` entries are trimmed, lowercased and de-duplicated |
+| Metric exporters | Code > `OTEL_METRICS_EXPORTER` > inference (`otlp` if a metrics endpoint is configured, else `prometheus`). Env `otlp` without an endpoint warns and is dropped; code `otlp` without one fails `Setup`. `logging` is a warned alias of `console` in the variables only: in code it fails `Setup` |
+| Export interval | Code (`WithExportInterval`, [1, 2 147 483 647] ms, else `Setup` fails) > `OTEL_METRIC_EXPORT_INTERVAL` (ASCII digits with an optional `+` (any number of digits; leading zeros ignored), > 0, else warned and 30 000; above 2 147 483 647 clamped with a warning) > 30 000 |
+| `OTEL_CONFIG_FILE`, `OTEL_EXPERIMENTAL_CONFIG_FILE` | Not supported: warned once per process (variable name only) and ignored |
 | Propagators | `OTEL_PROPAGATORS` (trimmed, lowercased): `tracecontext`, `baggage`, `none`; others warned and skipped; nothing supported left → default `tracecontext,baggage` |
 
 The helper never calls `os.Setenv`.
@@ -574,8 +575,10 @@ With no metrics endpoint, metrics are served on `:9464/metrics`
 | `console` | Periodic JSON on stdout (debugging) |
 | `none` | Metrics disabled |
 
-`WithMetricExporters(...)` wins over the variable (and fails `Setup` for `otlp`
-without an endpoint).
+`WithMetricExporters(...)` wins over the variable and over the deprecated
+`OTEL_HELPER_DISABLED_SIGNALS` (and fails `Setup` for `otlp` without an
+endpoint, an unknown value — `logging` included, an alias in the variables
+only — or `none` with other values; duplicates are dropped).
 
 ### Mounting `/metrics` on your own mux
 
@@ -608,8 +611,9 @@ than on OTLP, filter at the scraper (`metric_relabel_configs`, vmagent relabel).
 ## 14. Metrics export interval
 
 Every 30 s by default (the SDK's is 60 s): `WithExportInterval(ms)` >
-`OTEL_METRIC_EXPORT_INTERVAL` (ms) > 30 000. It applies to the periodic readers
-(OTLP, console); `/metrics` is collected at scrape time.
+`OTEL_METRIC_EXPORT_INTERVAL` (ms) > 30 000. The variable takes ASCII digits with an optional `+` (any number of digits; leading zeros ignored), > 0, else warned and 30 000; above 2 147 483 647 clamped with a warning;
+`WithExportInterval` outside [1, 2 147 483 647] fails `Setup`. It applies to
+the periodic readers (OTLP, console); `/metrics` is collected at scrape time.
 
 ---
 

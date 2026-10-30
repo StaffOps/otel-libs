@@ -65,6 +65,8 @@ ENV_TRACES_SAMPLER = "OTEL_TRACES_SAMPLER"
 ENV_TRACES_SAMPLER_ARG = "OTEL_TRACES_SAMPLER_ARG"
 ENV_OTLP_PROTOCOL = "OTEL_EXPORTER_OTLP_PROTOCOL"
 ENV_SDK_DISABLED = "OTEL_SDK_DISABLED"
+ENV_CONFIG_FILE = "OTEL_CONFIG_FILE"
+ENV_EXPERIMENTAL_CONFIG_FILE = "OTEL_EXPERIMENTAL_CONFIG_FILE"  # deprecated name of OTEL_CONFIG_FILE
 ENV_RESOURCE_ATTRIBUTES = "OTEL_RESOURCE_ATTRIBUTES"
 ENV_RESOURCE_DETECTORS = "OTEL_EXPERIMENTAL_RESOURCE_DETECTORS"
 
@@ -93,6 +95,18 @@ _HEADER_KEY_RE = re.compile(r"^[A-Za-z0-9._-]+$")
 # A "%" not followed by two hex digits (headers, OTEL_RESOURCE_ATTRIBUTES, endpoint paths).
 _BAD_ESCAPE_RE = re.compile(r"%(?![0-9A-Fa-f]{2})")
 _PRINTABLE_ASCII_RE = re.compile(r"^[\x20-\x7e]*$")
+# D1 row "Metric export interval" (A19): ASCII digits, optional "+"; bound 2^31-1 ms.
+_INTERVAL_RE = re.compile(r"\+?[0-9]+")
+# More significant digits than this cannot fit in 2^31-1 (and int() refuses > 4300 digits).
+_MAX_INTERVAL_DIGITS = 10
+# D1 row "Echoed values are truncated" (A19): Go maxEchoedValue, Node MAX_ECHOED_VALUE.
+_MAX_ECHOED_VALUE = 64
+
+
+def _truncate(value: str) -> str:
+    """``value`` cut to 64 code points plus an ellipsis when longer."""
+    return value if len(value) <= _MAX_ECHOED_VALUE else value[:_MAX_ECHOED_VALUE] + "\u2026"
+_MAX_EXPORT_INTERVAL_MS = 2_147_483_647
 _MAX_CODE_TIMEOUT_MS = 86_400_000  # D1 ruling "Code export timeout bound" (A18): the env clamp range
 #: Export-timeout variables the helper does not honor (D1 ruling "Export deadline", A18).
 IGNORED_TIMEOUT_VARS = ("OTEL_BSP_EXPORT_TIMEOUT", "OTEL_BLRP_EXPORT_TIMEOUT", "OTEL_METRIC_EXPORT_TIMEOUT")
@@ -214,6 +228,12 @@ def _warn_deprecated_env() -> None:
             warn_once_per_process(_log, f"deprecated:{var}",
                                   "[OtelHelper] %s is deprecated and will be removed in 1.0; use %s.",
                                   var, replacement)
+    for var in (ENV_CONFIG_FILE, ENV_EXPERIMENTAL_CONFIG_FILE):
+        if _env(var) is not None:
+            # D1 row "OTEL_CONFIG_FILE" (A19): not supported; the name only, never the path.
+            warn_once_per_process(_log, f"unused:{var}",
+                                  "[OtelHelper] %s is not supported by the helper and is ignored; configure it "
+                                  "with environment variables or options.", var)
 
 
 # "<scheme>://<rest>": the only URL form an endpoint may take (D1 ruling: RFC 3986).
@@ -692,7 +712,8 @@ class TelemetryOptions:
         if key in self._warned:
             return
         self._warned.add(key)
-        _log.warning(msg, *args)
+        # Echoed values are truncated (D1 row "Echoed values are truncated", A19).
+        _log.warning(msg, *(_truncate(a) if isinstance(a, str) else a for a in args))
 
     def _info_once(self, key: str, msg: str, *args: object) -> None:
         if key not in self._warned:
@@ -761,6 +782,8 @@ class TelemetryOptions:
                 fail(option, "must be greater than 0")
             if option == "export_timeout_ms" and value > _MAX_CODE_TIMEOUT_MS:
                 fail(option, f"must be in [1, {_MAX_CODE_TIMEOUT_MS}] ms, got {value}")
+            if option == "export_interval_ms" and value > _MAX_EXPORT_INTERVAL_MS:
+                fail(option, f"must be in [1, {_MAX_EXPORT_INTERVAL_MS}] ms, got {value}")
         if self.debug_level is not None:
             # bool or int (truthiness, as before 0.3); a string such as "false" would read as true.
             if not isinstance(self.debug_level, int):
@@ -998,20 +1021,37 @@ class TelemetryOptions:
                 if parsed is not None:
                     self._span_log_exporters[signal] = parsed
         if self.disabled_signals is not None:
-            self._effective["disabled_signals"] = list(self.disabled_signals)
+            # Trimmed, lowercased, de-duplicated (D1 row "Deprecated OTEL_HELPER_DISABLED_SIGNALS", A19).
+            self._effective["disabled_signals"] = list(dict.fromkeys(
+                s.strip(TRIM_CHARS).lower() for s in self.disabled_signals))
         else:
             self._effective["disabled_signals"] = []
             env_disabled = os.getenv(ENV_DISABLED_SIGNALS)
             if env_disabled:
-                standard = {s for s in SIGNALS if _env(f"OTEL_{s.upper()}_EXPORTER") is not None}
-                self._effective["disabled_signals"] = [
-                    s.strip(TRIM_CHARS).lower() for s in env_disabled.split(",")
-                    if s.strip(TRIM_CHARS) and s.strip(TRIM_CHARS).lower() not in standard
-                ]
+                # A standard variable wins only when it parsed to a valid entry ("none" included);
+                # for metrics the code option wins too (D1 row, A19).
+                standard = {s for s in ("traces", "logs") if s in self._span_log_exporters}
+                raw_metrics = _env(ENV_METRICS_EXPORTER)
+                if self.metric_exporters is not None or (raw_metrics is not None and self._parse_exporter_list(
+                        ENV_METRICS_EXPORTER, raw_metrics, _VALID_METRIC_EXPORTERS) is not None):
+                    standard.add("metrics")
+                disabled: list[str] = []
+                for token in (t.strip(TRIM_CHARS).lower() for t in env_disabled.split(",")):
+                    if not token:
+                        continue
+                    if token not in SIGNALS:
+                        # D1 row "Signal on/off" (A19): unknown entries warn once.
+                        self._warn_once(f"{ENV_DISABLED_SIGNALS}:{token}", "[OtelHelper] %s: unknown signal %r "
+                                        "ignored. Valid values: %s.", ENV_DISABLED_SIGNALS, token, ", ".join(SIGNALS))
+                    elif token not in standard and token not in disabled:
+                        disabled.append(token)
+                self._effective["disabled_signals"] = disabled
 
     def _resolve_metric_exporters(self) -> None:
         if self.metric_exporters is not None:
-            self.metric_exporters = [e.strip(TRIM_CHARS).lower() for e in self.metric_exporters if e.strip(TRIM_CHARS)]
+            # Normalized and de-duplicated: ["none", "none"] disables metrics (D1 row, A19).
+            self.metric_exporters = list(dict.fromkeys(
+                e.strip(TRIM_CHARS).lower() for e in self.metric_exporters if e.strip(TRIM_CHARS)))
             self._effective["metric_exporters"] = list(self.metric_exporters)
             return
         self._effective["metric_exporters"] = None
@@ -1035,15 +1075,24 @@ class TelemetryOptions:
         self._effective["export_interval_ms"] = _DEFAULT_EXPORT_INTERVAL_MS
         raw = _env(ENV_METRIC_EXPORT_INTERVAL)
         if raw is not None:
-            try:
-                value = int(raw)
-                if value <= 0:
-                    raise ValueError
-                self._effective["export_interval_ms"] = value
-            except ValueError:
+            # D1 row "Metric export interval" (A19): int() alone also accepted "5_000" and non-ASCII
+            # digits, and raises above 4300 digits. Significant digits only, as Go does.
+            digits = raw[1:] if raw.startswith("+") else raw
+            significant = digits.lstrip("0") if _INTERVAL_RE.fullmatch(raw) else ""
+            if len(significant) > _MAX_INTERVAL_DIGITS:
+                value = _MAX_EXPORT_INTERVAL_MS + 1
+            else:
+                value = int(significant) if significant else 0
+            if value <= 0:
                 self._warn_once(ENV_METRIC_EXPORT_INTERVAL, "[OtelHelper] %s=%r is not a positive integer "
                                 "(milliseconds); using %d.", ENV_METRIC_EXPORT_INTERVAL, raw,
                                 _DEFAULT_EXPORT_INTERVAL_MS)
+            elif value > _MAX_EXPORT_INTERVAL_MS:
+                self._warn_once(ENV_METRIC_EXPORT_INTERVAL, "[OtelHelper] %s=%r is above %d ms; clamped.",
+                                ENV_METRIC_EXPORT_INTERVAL, raw, _MAX_EXPORT_INTERVAL_MS)
+                self._effective["export_interval_ms"] = _MAX_EXPORT_INTERVAL_MS
+            else:
+                self._effective["export_interval_ms"] = value
 
     # ── OTLP per-signal resolution ────────────────────────────────────────
 
