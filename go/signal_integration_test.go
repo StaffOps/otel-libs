@@ -524,7 +524,7 @@ func Test_NewLogger_WithEndpoint_DoesNotWriteRawJSONToStdout(t *testing.T) {
 	opts := &Options{
 		ServiceName:     "test-svc",
 		Environment:     LOCAL,
-		OtelEndpoint:    "127.0.0.1:0", // unreachable but non-empty — just needs to be set
+		OtelEndpoint:    "127.0.0.1:1", // unreachable but non-empty (port 0 is invalid, D1 ruling)
 		ExportTimeoutMs: 10_000,
 		Insecure:        true,
 	}

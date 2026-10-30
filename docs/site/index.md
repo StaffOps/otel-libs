@@ -213,7 +213,7 @@ lightweight.
 ## Cross-language parity
 
 Parity is enforced, not promised. [`parity/cases.json`](https://github.com/StaffOps/otel-libs/blob/main/parity/cases.json) is a
-hand-maintained, language-neutral fixture (250 cases: 187 after A13, 17 added by the Node B3 review, 6 by A16, 40 by Node B4a and its rulings)
+hand-maintained, language-neutral fixture (266 cases: 187 after A13, 17 added by the Node B3 review, 6 by A16, 40 by Node B4a and its rulings, 16 by A17)
 that every language's test suite runs — config resolution, wire-level export
 against a fake OTLP receiver, sampling, propagation, health exclusion, logging
 and `/metrics` status
@@ -231,6 +231,8 @@ always identical:
 |------|-----|
 | Python gRPC | Spans carry the legacy `rpc.system`, `rpc.service`, `rpc.method` and `rpc.grpc.status_code` attributes, and no RPC metrics are emitted (upstream `opentelemetry-instrumentation-grpc`). Go emits the current RPC semconv and `rpc.server.call.duration` / `rpc.client.call.duration` |
 | Go resource from `OTEL_RESOURCE_ATTRIBUTES` | The Go SDK providers parse the variable again under the helper's resource (`WithResource` merges `resource.Environment()`): a blank `deployment.environment.name=` comes back as `""` instead of being absent, and a key with surrounding Unicode whitespace (e.g. U+00A0) is emitted twice, verbatim and trimmed. Python and Node.js emit only the helper's parse. Workaround: don't set blank values; use ASCII keys ([design D1](https://github.com/StaffOps/otel-libs/blob/main/specs/config-contract-v0.3/design.md)) |
+| Go OTLP/HTTP endpoint path escapes | The Go exporters send the decoded path: `/a%2Fb` reaches the Collector as `/a/b` (`WithEndpointURL` keeps `url.URL.Path`). The helper warns once per variable. Python and Node.js send the path as written ([design D1](https://github.com/StaffOps/otel-libs/blob/main/specs/config-contract-v0.3/design.md), "Go: path escapes decoded") |
+| Python IDN hosts | Python validates IDN labels by IDNA 2008 (`idna` package), so it rejects some hosts Go and Node.js accept — emoji, `_` next to non-ASCII text, labels over 63 characters, hyphens in the third and fourth position — as `<unparseable URL>` (empty labels and hosts over 253 characters are invalid in every language) ([design D1](https://github.com/StaffOps/otel-libs/blob/main/specs/config-contract-v0.3/design.md), "IDN hosts: Python residual divergence") |
 | .NET | Still on the 0.2.x contract and instrumentation set until Phase C ([differences](#net-02x-differences)) |
 
 ## Collector and platform prerequisites

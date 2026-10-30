@@ -6,7 +6,7 @@
 // generated at startup and written to $OUT/ca.pem. Defaults bind only the
 // parity case addresses (127.0.0.2, 127.0.0.3:4317 TLS, [::1]:24318), so
 // unrelated exporters dialing localhost:4317 are refused. Each request is
-// recorded (destination IP, port, protocol, TLS, path, content/grpc encoding,
+// recorded (destination IP, port, protocol, TLS, path and raw path, content/grpc encoding,
 // grpc-timeout, x-parity-* headers). ADMIN serves GET /requests (JSON) and
 // DELETE /requests (reset). Payloads are drained, never decoded.
 //
@@ -46,6 +46,10 @@ type rec struct {
 	Host     string            `json:"host"`
 	Port     string            `json:"port"`
 	Path     string            `json:"path"`
+	// RawPath is the path as sent, escapes kept (net/url EscapedPath: the
+	// request's RawPath when it differs from Path's default encoding), so a
+	// case can assert that "/a%2Fb" was not decoded to "/a/b".
+	RawPath  string            `json:"raw_path"`
 	Bytes    int               `json:"bytes"`
 	Encoding string            `json:"encoding"`
 	Timeout  string            `json:"timeout,omitempty"` // raw grpc-timeout header (gRPC only)
@@ -132,13 +136,13 @@ func handler(g *grpc.Server, isTLS bool) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		addr, port, _ := net.SplitHostPort(r.Context().Value(http.LocalAddrContextKey).(net.Addr).String())
 		if r.ProtoMajor == 2 && strings.HasPrefix(r.Header.Get("Content-Type"), "application/grpc") {
-			add(rec{Addr: addr, Proto: "grpc", TLS: isTLS, Host: r.Host, Port: port, Path: r.URL.Path,
+			add(rec{Addr: addr, Proto: "grpc", TLS: isTLS, Host: r.Host, Port: port, Path: r.URL.Path, RawPath: r.URL.EscapedPath(),
 				Encoding: r.Header.Get("Grpc-Encoding"), Timeout: r.Header.Get("Grpc-Timeout"), Headers: parityHeaders(r.Header)})
 			g.ServeHTTP(w, r)
 			return
 		}
 		b, _ := io.ReadAll(http.MaxBytesReader(w, r.Body, maxBody))
-		add(rec{Addr: addr, Proto: "http", TLS: isTLS, Host: r.Host, Port: port, Path: r.URL.Path, Bytes: len(b),
+		add(rec{Addr: addr, Proto: "http", TLS: isTLS, Host: r.Host, Port: port, Path: r.URL.Path, RawPath: r.URL.EscapedPath(), Bytes: len(b),
 			Encoding: r.Header.Get("Content-Encoding"), Headers: parityHeaders(r.Header)})
 		w.Header().Set("Content-Type", "application/x-protobuf")
 		w.WriteHeader(http.StatusOK) // empty body == empty Export*ServiceResponse

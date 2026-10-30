@@ -19,6 +19,9 @@ dependencies = [
     "opentelemetry-exporter-otlp-proto-http>=1.42,<1.46",
     "opentelemetry-exporter-prometheus>=0.63b0,<0.67b0",
     "prometheus-client>=0.20.0",
+    # Endpoint IDN hosts: UTS #46 non-transitional + IDNA 2008 (design D1 IDN row, task A17).
+    # 3.7 is the first release without CVE-2024-3651 (quadratic encode).
+    "idna>=3.7,<4",
     # Always-on instrumentations (web/HTTP frameworks + runtime metrics + the
     # stdlib logging bridge). SQL/Redis/AWS live in the optional extras below.
     "opentelemetry-instrumentation-fastapi>=0.63b0,<0.67b0",

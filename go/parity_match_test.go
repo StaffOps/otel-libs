@@ -47,7 +47,7 @@ var inputSchema = map[string][]string{
 
 var (
 	receivedSignals = map[string]bool{"traces": true, "metrics": true, "logs": true}
-	recordFields    = map[string]bool{"proto": true, "tls": true, "port": true, "path": true, "encoding": true, "headers": true, "timeout_ms": true, "absent": true}
+	recordFields    = map[string]bool{"proto": true, "tls": true, "port": true, "path": true, "raw_path": true, "encoding": true, "headers": true, "timeout_ms": true, "absent": true}
 	matcherKeys     = map[string]bool{"prefix": true, "regex": true, "absent": true, "not_contains": true, "all": true, "lte": true, "gte": true}
 	validStatus     = regexp.MustCompile(`^(pass|xfail:[A-Za-z0-9.-]+|skip:[A-Za-z0-9._-]+)$`)
 )

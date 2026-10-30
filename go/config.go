@@ -5,8 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"net"
-	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -550,32 +548,12 @@ func (o *Options) validate() error {
 	return errors.Join(errs...)
 }
 
-// endpointPort returns the port of an endpoint, schemeless or URL ("" if none).
-func endpointPort(raw string) string {
-	s := trimWS(raw)
-	if !strings.Contains(s, "://") {
-		s = "scheme://" + s
-	}
-	u, err := url.Parse(s)
-	if err != nil {
-		return ""
-	}
-	return u.Port()
-}
-
 // defaultPortFor returns the IANA OTLP port of a protocol.
 func defaultPortFor(protocol string) string {
 	if protocol == ProtocolHTTP {
 		return defaultOtlpHTTPPort
 	}
 	return defaultOtlpGRPCPort
-}
-
-// joinHostDefaultPort sets port on u when it has none (brackets IPv6).
-func joinHostDefaultPort(u *url.URL, port string) {
-	if u.Port() == "" {
-		u.Host = net.JoinHostPort(u.Hostname(), port)
-	}
 }
 
 // isASCII reports whether s has only ASCII bytes (health paths are matched

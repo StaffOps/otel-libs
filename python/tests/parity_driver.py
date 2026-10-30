@@ -212,7 +212,7 @@ def kind_export(case: dict) -> dict:
             continue
         received[_signal_of(rec["proto"], rec["path"])].append({
             "proto": rec["proto"], "tls": rec["tls"], "port": int(rec["port"]), "path": rec["path"],
-            "encoding": rec.get("encoding", ""), "headers": rec.get("headers") or {},
+            "raw_path": rec.get("raw_path", ""), "encoding": rec.get("encoding", ""), "headers": rec.get("headers") or {},
             **({"timeout_ms": ms} if (ms := _grpc_timeout_ms(rec.get("timeout", ""))) is not None else {}),
         })
     snap["received"] = received

@@ -101,6 +101,7 @@ docker compose -f testing/docker-compose.yml --profile e2e stop collector
 | File | Covers |
 |------|--------|
 | `config_contract_test.go` | 0.3.0 resolution contract: service name / environment precedence, `service.instance.id`, per-signal "OTLP configured", endpoint shims, TLS conflicts, timeout / compression / header parsing, env warnings vs code errors, redaction |
+| `endpoint_parse_test.go` | A17 endpoint rulings: RFC 3986 split, port range and leading zeros, host characters, IDN punycode, `<unparseable URL>` rendering, `@` in the path (name-only warning), empty query/fragment |
 | `otlp_protocol_test.go` | Protocol selection (code > per-signal > generic env > port-4318 inference > grpc) for every signal |
 | `options_test.go`, `coverage_test.go` | `With*` options, validation errors naming the option |
 | `sampler_test.go` | Sampler precedence (code ratio > `OTEL_TRACES_SAMPLER`/`_ARG` > `OTEL_HELPER_SAMPLE_RATIO` > `parentbased_always_on`), unknown/unsupported names, `_ARG` grammar |

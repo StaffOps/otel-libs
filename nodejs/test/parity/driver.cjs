@@ -250,6 +250,7 @@ async function kindExport(c) {
       tls: rec.tls,
       port: Number(rec.port),
       path: rec.path,
+      raw_path: rec.raw_path ?? '',
       encoding: rec.encoding ?? '',
       headers: rec.headers ?? {},
     };

@@ -49,6 +49,9 @@ type endpointInput struct {
 	insecureVar                             string
 }
 
+// endpointWarning is one configuration warning. With value and using both
+// empty only the variable is printed (the value may hold credentials, e.g. an
+// '@' in the path).
 type endpointWarning struct{ msg, variable, value, using string }
 
 type endpointResult struct {
@@ -66,97 +69,150 @@ var (
 	errEndpointUnsupported = errors.New("unsupported endpoint scheme")
 )
 
+const msgUnsupportedScheme = "unsupported endpoint scheme (use http:// or https://)"
+
 // resolveEndpoint resolves one endpoint value (design D1.b–c, D1 edge-case
-// rulings): schemeless host:port, portless gRPC URLs, INSECURE/scheme
-// conflicts, userinfo/query stripping, generic → "/v1/<signal>" for HTTP.
-// The result is always passed explicitly (Go endpoint ownership).
+// rulings): RFC 3986 split, schemeless host:port, portless gRPC URLs,
+// INSECURE/scheme conflicts, userinfo/query stripping, generic →
+// "/v1/<signal>" for HTTP. The result is always passed explicitly (Go
+// endpoint ownership).
 func resolveEndpoint(in endpointInput) (endpointResult, error) {
 	var res endpointResult
 	fail := func(envErr error, msg string) (endpointResult, error) {
-		if in.fromCode {
-			return res, fmt.Errorf("%s: %s %q", in.variable, msg, redactURL(in.raw))
-		}
+		// An invalid value is never rendered, not even partly (D1 ruling,
+		// 2026-10-29); an unsupported scheme parsed, so its redacted form is shown.
+		shown := unparseableURL
 		using := "next configured endpoint, else none"
 		if errors.Is(envErr, errEndpointUnsupported) {
-			using = "no OTLP exporter for this signal"
+			shown, using = redactEndpoint(in.raw, in.protocol), "no OTLP exporter for this signal"
 		}
-		res.warnings = append(res.warnings, endpointWarning{msg + "; ignored", in.variable, redactURL(in.raw), using})
+		if in.fromCode {
+			return res, fmt.Errorf("%s: %s %q", in.variable, msg, shown)
+		}
+		res.warnings = append(res.warnings, endpointWarning{msg: msg + "; ignored", variable: in.variable, value: shown, using: using})
 		return res, envErr
 	}
+	// Before parsing: a control character is unparseable, also in an opaque
+	// value (D1 ruling); Python's urlsplit would silently strip \t\r\n.
 	if strings.IndexFunc(in.raw, isControl) >= 0 {
-		// Python's urlsplit silently strips \t\r\n: reject before parsing so
-		// both languages treat it as unparseable (D1 edge-case rulings).
 		return fail(errEndpointInvalid, "endpoint contains a control character")
 	}
-	var u *url.URL
-	if !strings.Contains(in.raw, "://") && opaqueScheme.MatchString(in.raw) {
-		// "unix:/path", "ftp:/x": a scheme, not a host named "unix".
-		return fail(errEndpointUnsupported, "unsupported endpoint scheme (use http:// or https://)")
+	// WHATWG reads '\' as '/' and would split the authority elsewhere (D1 ruling: RFC 3986).
+	if strings.Contains(in.raw, `\`) {
+		return fail(errEndpointInvalid, "endpoint contains a backslash")
 	}
-	if !strings.Contains(in.raw, "://") {
-		// Schemeless host:port: legal for gRPC per spec, but Go's url.Parse
-		// rejects it and the exporter silently dials localhost:4317.
+	schemeless := !strings.Contains(in.raw, "://")
+	if schemeless && opaqueScheme.MatchString(in.raw) {
+		// "unix:/path", "ftp:/x": a scheme, not a host named "unix".
+		return fail(errEndpointUnsupported, msgUnsupportedScheme)
+	}
+	if schemeless && strings.HasPrefix(in.raw, "/") {
+		return fail(errEndpointInvalid, "invalid endpoint")
+	}
+	text := in.raw
+	if schemeless {
+		// Schemeless host:port: legal for gRPC per spec; https:// unless INSECURE=true (R1).
 		scheme := "https"
 		if in.insecureSet && in.insecure {
 			scheme = "http"
 		}
-		parsed, err := url.Parse(scheme + "://" + in.raw)
-		if err != nil || parsed.Hostname() == "" {
-			return fail(errEndpointInvalid, "invalid endpoint")
+		text = scheme + "://" + in.raw
+	}
+	sp, ok := rfcSplit(text)
+	if !ok {
+		return fail(errEndpointInvalid, "invalid endpoint")
+	}
+	if sp.scheme != "http" && sp.scheme != "https" {
+		return fail(errEndpointUnsupported, msgUnsupportedScheme)
+	}
+	host, zoneID, ok := checkHost(sp.host)
+	if !ok {
+		if zoneID {
+			return fail(errEndpointInvalid, "IPv6 zone ids are not supported in endpoint URLs")
 		}
-		joinHostDefaultPort(parsed, defaultPortFor(in.protocol))
-		u = parsed
-		if in.protocol == ProtocolHTTP {
+		return fail(errEndpointInvalid, "invalid endpoint")
+	}
+	if in.protocol == ProtocolHTTP {
+		// The Go OTLP/HTTP exporters url.Parse the endpoint and would fall back
+		// to their default endpoint on an invalid escape: reject it loudly.
+		decoded, err := url.PathUnescape(sp.path)
+		if err != nil {
+			return fail(errEndpointInvalid, "endpoint path has an invalid percent-escape")
+		}
+		if strings.Contains(sp.path, "%") && (&url.URL{Path: decoded}).EscapedPath() != sp.path {
+			// WithEndpointURL keeps url.URL.Path, not RawPath: "/a%2Fb" is sent
+			// as "/a/b" (D1 note "Go: path escapes decoded", A17). Name only.
 			res.warnings = append(res.warnings, endpointWarning{
-				msgSchemelessHTTPDeprecated, in.variable, redactURL(in.raw), redactURL(parsed.String())})
+				msg: "endpoint path has percent-escapes the Go OTLP/HTTP exporter sends decoded", variable: in.variable})
+		}
+	}
+	port := sp.port
+	hostWith := func(p string) string {
+		if p == "" {
+			return host
+		}
+		return host + ":" + p
+	}
+	// shownURL renders the resolved endpoint for a diagnostic: the scheme only
+	// when the path or query holds an '@' (D1 ruling, A17 final round: the
+	// "host:port" may then be "user:password-prefix", R8).
+	shownURL := func(rest string) string {
+		if pathHasAt(sp) {
+			return sp.scheme + "://"
+		}
+		return sp.scheme + "://" + rest
+	}
+	shown := redactEndpoint(in.raw, in.protocol)
+	if schemeless {
+		if port == "" {
+			port = defaultPortFor(in.protocol)
+		}
+		if in.protocol == ProtocolHTTP {
+			res.warnings = append(res.warnings, endpointWarning{msg: msgSchemelessHTTPDeprecated, variable: in.variable,
+				value: shown, using: shownURL(hostWith(port) + sp.path)})
 		}
 	} else {
-		parsed, err := url.Parse(in.raw)
-		if err != nil {
-			return fail(errEndpointInvalid, "invalid endpoint")
-		}
-		scheme := strings.ToLower(parsed.Scheme)
-		if scheme != "http" && scheme != "https" {
-			return fail(errEndpointUnsupported, "unsupported endpoint scheme (use http:// or https://)")
-		}
-		if parsed.Hostname() == "" {
-			return fail(errEndpointInvalid, "invalid endpoint")
-		}
-		parsed.Scheme = scheme
-		u = parsed
-		if in.insecureSet && in.insecure != (scheme == "http") {
+		if in.insecureSet && in.insecure != (sp.scheme == "http") {
 			if in.fromCode && in.insecureFromCode {
-				return res, fmt.Errorf("WithInsecure: insecure=%v contradicts the %s:// scheme of %s", in.insecure, scheme, in.variable)
+				return res, fmt.Errorf("WithInsecure: insecure=%v contradicts the %s:// scheme of %s", in.insecure, sp.scheme, in.variable)
 			}
 			res.warnings = append(res.warnings, endpointWarning{
-				"INSECURE setting contradicts the endpoint scheme; the scheme wins",
-				in.insecureVar, strconv.FormatBool(in.insecure), scheme + "://"})
+				msg:      "INSECURE setting contradicts the endpoint scheme; the scheme wins",
+				variable: in.insecureVar, value: strconv.FormatBool(in.insecure), using: sp.scheme + "://"})
 		}
-		if in.protocol == ProtocolGRPC && u.Port() == "" {
+		if in.protocol == ProtocolGRPC && port == "" {
 			// gRPC has no scheme-default port: the SDK would dial 443 (D1.b).
-			joinHostDefaultPort(u, defaultOtlpGRPCPort)
+			port = defaultOtlpGRPCPort
 			res.warnings = append(res.warnings, endpointWarning{
-				"gRPC endpoint has no port; using 4317 — set an explicit port (e.g. :4317, or :443 behind an ingress)",
-				in.variable, redactURL(in.raw), redactURL(u.String())})
+				msg:      "gRPC endpoint has no port; using 4317 — set an explicit port (e.g. :4317, or :443 behind an ingress)",
+				variable: in.variable, value: shown, using: shownURL(hostWith(port))})
 		}
 	}
-	if u.User != nil || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" {
-		// Not supported in any endpoint: the helper takes ownership of the URL
-		// so neither the SDK nor its error messages ever see them (R8).
-		res.warnings = append(res.warnings, endpointWarning{
-			"endpoint userinfo/query is not supported and was removed; put credentials in OTEL_EXPORTER_OTLP_HEADERS",
-			in.variable, redactURL(in.raw), redactURL(u.String())})
-	}
-	res.scheme = u.Scheme
-	out := url.URL{Scheme: u.Scheme, Host: u.Host}
+	path := ""
 	if in.protocol == ProtocolHTTP {
+		// Escapes kept as written in the resolved URL (D1 ruling "Percent-encoding
+		// in the endpoint path"); see the open item on the SDK's re-encoding.
 		if in.perSignal {
-			out.Path = u.Path
+			path = sp.path
 		} else {
-			out.Path = strings.TrimRight(u.Path, "/") + "/v1/" + in.signal
+			path = strings.TrimRight(sp.path, "/") + "/v1/" + in.signal
 		}
 	}
-	res.explicitURL = out.String()
+	res.scheme = sp.scheme
+	res.explicitURL = sp.scheme + "://" + hostWith(port) + path
+	if sp.userinfo || sp.hasQuery || sp.hasFragment {
+		// Not supported in any endpoint: the helper takes ownership of the URL
+		// so neither the SDK nor its error messages ever see them (R8). An empty
+		// '?' or '#' counts too (D1 ruling, 2026-10-29).
+		res.warnings = append(res.warnings, endpointWarning{
+			msg:      "endpoint userinfo/query is not supported and was removed; put credentials in OTEL_EXPORTER_OTLP_HEADERS",
+			variable: in.variable, value: shown, using: shownURL(hostWith(port) + path)})
+	}
+	if pathHasAt(sp) {
+		// Used as parsed; the variable only, the value may hold the credentials (D1 ruling).
+		res.warnings = append(res.warnings, endpointWarning{
+			msg: "endpoint path contains '@' — misplaced credentials?", variable: in.variable})
+	}
 	return res, nil
 }
 
@@ -191,6 +247,10 @@ func (o *Options) warnOnce(w endpointWarning) {
 		return
 	}
 	o.warned[key] = true
+	if w.value == "" && w.using == "" {
+		diagLogger.Warn("otelhelper: "+w.msg, "variable", w.variable)
+		return
+	}
 	warnEnv(w.msg, w.variable, w.value, w.using)
 }
 
@@ -201,7 +261,7 @@ func (o *Options) envBoolOnce(key string) (value, set bool) {
 		return false, false
 	}
 	if v := strings.ToLower(raw); v != "true" && v != "false" {
-		o.warnOnce(endpointWarning{"unparseable boolean", key, raw, "false"})
+		o.warnOnce(endpointWarning{msg: "unparseable boolean", variable: key, value: raw, using: "false"})
 	}
 	return strings.EqualFold(raw, "true"), true
 }
@@ -323,7 +383,7 @@ func (o *Options) resolveCompression(signal string) string {
 		case CompressionGzip, CompressionNone:
 			return v
 		default:
-			o.warnOnce(endpointWarning{"unsupported compression (gzip or none)", key, raw, "next level, else gzip"})
+			o.warnOnce(endpointWarning{msg: "unsupported compression (gzip or none)", variable: key, value: raw, using: "next level, else gzip"})
 		}
 	}
 	return CompressionGzip
@@ -357,16 +417,16 @@ func (o *Options) resolveTimeout(signal string) time.Duration {
 		anySet = true
 		ms, err := strconv.ParseFloat(raw, 64)
 		if !decimalMs.MatchString(raw) || err != nil || ms <= 0 {
-			o.warnOnce(endpointWarning{"invalid timeout (positive decimal milliseconds)", key, raw, "next level, else 10000"})
+			o.warnOnce(endpointWarning{msg: "invalid timeout (positive decimal milliseconds)", variable: key, value: raw, using: "next level, else 10000"})
 			continue
 		}
 		// Compare in float before converting: 1e30 ms overflows Duration.
 		switch {
 		case ms > float64(maxOtlpTimeout/time.Millisecond):
-			o.warnOnce(endpointWarning{"timeout above 24 h; clamped", key, raw, "86400000"})
+			o.warnOnce(endpointWarning{msg: "timeout above 24 h; clamped", variable: key, value: raw, using: "86400000"})
 			return maxOtlpTimeout
 		case ms < 1:
-			o.warnOnce(endpointWarning{"timeout below 1 ms; clamped", key, raw, "1"})
+			o.warnOnce(endpointWarning{msg: "timeout below 1 ms; clamped", variable: key, value: raw, using: "1"})
 			return minOtlpTimeout
 		}
 		return time.Duration(ms * float64(time.Millisecond))
@@ -390,10 +450,10 @@ func (o *Options) resolveHeaders(signal string) map[string]string {
 		}
 		headers, skipped, literal := parseHeaders(raw)
 		for _, pos := range skipped {
-			o.warnOnce(endpointWarning{"malformed header item skipped", key, "item #" + strconv.Itoa(pos), "remaining headers"})
+			o.warnOnce(endpointWarning{msg: "malformed header item skipped", variable: key, value: "item #" + strconv.Itoa(pos), using: "remaining headers"})
 		}
 		for _, pos := range literal {
-			o.warnOnce(endpointWarning{"invalid percent-escape in header value; kept literally", key, "item #" + strconv.Itoa(pos), "literal value"})
+			o.warnOnce(endpointWarning{msg: "invalid percent-escape in header value; kept literally", variable: key, value: "item #" + strconv.Itoa(pos), using: "literal value"})
 		}
 		if len(headers) > 0 {
 			return headers
@@ -464,9 +524,9 @@ func (o *Options) signalProtocol(signal, endpoint string) string {
 		case ProtocolGRPC, ProtocolHTTP:
 			return v
 		case "http/json":
-			o.warnOnce(endpointWarning{"OTLP protocol http/json is not supported by the Go exporters; ignored", key, v, "port inference, else grpc"})
+			o.warnOnce(endpointWarning{msg: "OTLP protocol http/json is not supported by the Go exporters; ignored", variable: key, value: v, using: "port inference, else grpc"})
 		default:
-			o.warnOnce(endpointWarning{"unknown OTLP protocol; ignored", key, v, "port inference, else grpc"})
+			o.warnOnce(endpointWarning{msg: "unknown OTLP protocol; ignored", variable: key, value: v, using: "port inference, else grpc"})
 		}
 	}
 	if endpointPort(endpoint) == defaultOtlpHTTPPort {

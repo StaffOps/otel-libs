@@ -18,14 +18,17 @@ userinfo/query strings.
 
 from __future__ import annotations
 
+import ipaddress
 import logging
 import math
 import os
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Literal
+from typing import Literal, cast
 import re
-from urllib.parse import SplitResult, unquote, unquote_to_bytes, urlsplit, urlunsplit
+from urllib.parse import unquote, unquote_to_bytes
+
+import idna
 
 from staffops_otel_helper._diag import warn_once_per_process
 
@@ -86,6 +89,7 @@ _MIN_TIMEOUT_MS = 1.0
 _MAX_TIMEOUT_MS = 24 * 3600 * 1000.0
 _DECIMAL_RE = re.compile(r"^[0-9]+(\.[0-9]+)?$")  # plain decimal ms: no sign/exponent/hex/bare dot
 _HEADER_KEY_RE = re.compile(r"^[A-Za-z0-9._-]+$")
+# A "%" not followed by two hex digits (headers, OTEL_RESOURCE_ATTRIBUTES, endpoint paths).
 _BAD_ESCAPE_RE = re.compile(r"%(?![0-9A-Fa-f]{2})")
 UNPARSEABLE_URL = "<unparseable URL>"
 _OPAQUE_SCHEME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*:/")
@@ -109,8 +113,6 @@ def _env(name: str) -> str | None:
     return value.strip(TRIM_CHARS)
 
 
-_BAD_PERCENT_RE = re.compile(r"%(?![0-9A-Fa-f]{2})")
-
 
 def _non_blank(value: object) -> str | None:
     """A string trimmed with the contract set, or None when it is not a string or is blank."""
@@ -121,7 +123,7 @@ def _non_blank(value: object) -> str | None:
 
 def _percent_decode(value: str) -> str | None:
     """Strict percent-decoding (``decodeURIComponent``); None on a bad escape or non-UTF-8 result."""
-    if _BAD_PERCENT_RE.search(value):
+    if _BAD_ESCAPE_RE.search(value):
         return None
     try:
         return unquote_to_bytes(value).decode("utf-8")
@@ -207,31 +209,197 @@ def _warn_deprecated_env() -> None:
                                   var, replacement)
 
 
-def _split(raw: str) -> SplitResult:
-    """urlsplit that also understands schemeless ``host[:port][/path]`` (raises ValueError)."""
-    return urlsplit(raw if "://" in raw else f"//{raw}")
+# "<scheme>://<rest>": the only URL form an endpoint may take (D1 ruling: RFC 3986).
+_HIER_URL_RE = re.compile(r"^([A-Za-z][A-Za-z0-9+.-]*)://(.*)$", re.S)
+_DIGITS_RE = re.compile(r"[0-9]+")
+# RFC 3986 reg-name characters (unreserved / sub-delims); pct-encoded is rejected (host-characters ruling).
+_REG_NAME_RE = re.compile(r"^[A-Za-z0-9\-._~!$&'()*+,;=]+$")
+_MAX_PORT = 65535
+_HEX_NUMBER_RE = re.compile(r"0[xX][0-9A-Fa-f]*")
+_OCTET = r"(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])"
+_CANONICAL_IPV4_RE = re.compile(rf"{_OCTET}(\.{_OCTET}){{3}}")
+# Shown for a schemeless endpoint whose path or query holds an "@" (D1 ruling, A17 final round), in every language.
+SCHEMELESS_AT_RENDERING = "<schemeless endpoint>"
 
 
-def redact_url(raw: str) -> str:
-    """Endpoint text safe for diagnostics: no userinfo, query or fragment.
+@dataclass(frozen=True)
+class _RfcEndpoint:
+    """An endpoint split by RFC 3986 (D1 ruling, 2026-10-29); nothing decoded.
 
-    Works on the raw text, not on a parse: a password may contain ``/``, ``?`` or
-    ``#``, which end the authority for ``urlsplit``. Everything up to the last
-    ``@`` is dropped (over-redacting a path that contains ``@`` is acceptable).
+    The authority ends only at ``/``, ``?`` or ``#``; userinfo is cut at its last
+    ``@``. ``host`` is as written (IPv6 in brackets, may be empty); ``port`` is
+    numeric (leading zeros compare numerically); ``path`` keeps escapes verbatim;
+    ``query``/``fragment`` are None when absent and "" when empty.
     """
-    try:
-        _split(raw)
-    except ValueError:
+
+    scheme: str
+    userinfo: bool
+    host: str
+    port: int | None
+    port_text: str  # as written ("" when none)
+    path: str
+    query: str | None
+    fragment: str | None
+
+
+def _rfc_split(text: str) -> _RfcEndpoint | None:
+    """Split ``scheme://…``; None when the authority is malformed (brackets, a second ``:``, port not 1-65535)."""
+    m = _HIER_URL_RE.match(text)
+    if m is None:
+        return None
+    rest = m.group(2)
+    end = min((i for i in (rest.find(c) for c in "/?#") if i >= 0), default=len(rest))
+    authority, after = rest[:end], rest[end:]
+    after, sep, fragment_text = after.partition("#")
+    fragment = fragment_text if sep else None
+    after, sep, query_text = after.partition("?")
+    query = query_text if sep else None
+    at = authority.rfind("@")
+    host_port = authority[at + 1:]
+    port_text: str | None = None
+    if host_port.startswith("["):
+        close = host_port.find("]")
+        if close < 0:
+            return None
+        host, tail = host_port[:close + 1], host_port[close + 1:]
+        if tail:
+            if not tail.startswith(":"):
+                return None
+            port_text = tail[1:]
+    else:
+        host, sep, port_text = host_port.partition(":")
+    port = None
+    # An empty port ("h:") is the scheme default, as RFC 3986 allows.
+    if port_text:
+        if not _DIGITS_RE.fullmatch(port_text):
+            return None
+        # Compared numerically (leading zeros ignored, as in Go); never int() a long
+        # string (Python refuses more than 4300 digits).
+        digits = port_text.lstrip("0")
+        if not digits or len(digits) > 5:
+            return None
+        port = int(digits)
+        if port > _MAX_PORT:
+            return None
+    return _RfcEndpoint(m.group(1).lower(), at >= 0, host, port, port_text or "", after, query, fragment)
+
+
+def _ends_in_number(host: str) -> bool:
+    """WHATWG "ends in a number": the last label (a trailing empty one ignored) is digits or hex (0x...)."""
+    labels = host.split(".")
+    if len(labels) > 1 and labels[-1] == "":
+        labels.pop()
+    last = labels[-1]
+    return bool(last) and (bool(_DIGITS_RE.fullmatch(last)) or bool(_HEX_NUMBER_RE.fullmatch(last)))
+
+
+def _check_host(host: str) -> tuple[str | None, bool]:
+    """Validated host of an http(s) endpoint, as dialed and rendered, and whether it held a zone id.
+
+    D1 rulings "Host characters", IDN hosts and "One host rule" (2026-10-29):
+    an empty host, a space, a ``%`` (percent-encoded byte or unescaped IPv6 zone
+    id) or a host that fails IDNA conversion is invalid (None); a non-ASCII host
+    is punycoded (UTS #46 non-transitional). The ASCII result must be an IPv6
+    literal or an RFC 3986 reg-name, and a host that ends in a number must be a
+    canonical dotted-quad IPv4 address. Hosts are lowercased.
+    """
+    if not host or " " in host:
+        return None, False
+    if "%" in host:
+        return None, host.startswith("[")
+    if host.startswith("["):
+        try:
+            ipaddress.IPv6Address(host[1:-1])
+        except ValueError:
+            return None, False
+        return host.lower(), False
+    if not host.isascii():
+        try:
+            # UTS #46 non-transitional mapping, then IDNA 2008 validation: stricter than
+            # WHATWG/Go for some labels (D1 row "IDN hosts: Python residual divergence").
+            host = idna.encode(host, uts46=True, transitional=False).decode("ascii")
+        except (idna.IDNAError, UnicodeError):
+            return None, False
+        # Also checked explicitly (Go and Node do the same): no empty label, <= 253 characters.
+        trimmed = host.removesuffix(".")
+        if not trimmed or len(trimmed) > 253 or "" in trimmed.split("."):
+            return None, False
+    if not _REG_NAME_RE.match(host):
+        return None, False
+    # One trailing "." is allowed on a dotted quad ("10.0.0.1."), as for a domain.
+    if _ends_in_number(host) and not _CANONICAL_IPV4_RE.fullmatch(host.removesuffix(".")):
+        return None, False
+    return host.lower(), False
+
+
+def _has_at(text: str) -> bool:
+    """An ``@``, raw or percent-encoded (``%40``)."""
+    return "@" in text or "%40" in text.lower()
+
+
+def _path_has_at(sp: _RfcEndpoint) -> bool:
+    """An ``@`` (or ``%40``) in the path or query: misplaced credentials (D1 ruling: warned, used as parsed)."""
+    return _has_at(sp.path) or _has_at(sp.query or "")
+
+
+def _endpoint_port(raw: str) -> int | None:
+    """Port of an endpoint, schemeless or URL (None if none or unparseable), for the 4318 inference."""
+    if _has_control(raw) or "\\" in raw:
+        return None
+    sp = _rfc_split(raw if "://" in raw else f"scheme://{raw}")
+    return None if sp is None else sp.port
+
+
+def redact_url(raw: str, protocol: str | None = None) -> str:
+    """Endpoint text safe for diagnostics: scheme, host, port and path only.
+
+    No userinfo, query or fragment; split exactly as the resolver splits it
+    (RFC 3986). When the path or query holds an ``@`` (or ``%40``) only
+    ``<scheme>://`` is shown (``<schemeless endpoint>`` for a schemeless value);
+    an opaque value renders as its scheme only. Anything the resolver would
+    reject for ``protocol`` (with http/protobuf, an invalid path escape too)
+    renders as ``<unparseable URL>`` (R8, D1 rulings).
+    """
+    s = raw.strip(TRIM_CHARS)
+    if not s or _has_control(s) or "\\" in s:
         return UNPARSEABLE_URL
-    scheme, sep, rest = raw.partition("://")
-    if not sep:
-        scheme, rest = "", raw
-    if "@" in rest:
-        rest = rest.rsplit("@", 1)[1]
-    rest = re.split(r"[?#]", rest, maxsplit=1)[0]
-    if not rest or _has_control(rest):
+    schemeless = "://" not in s
+    if schemeless and _OPAQUE_SCHEME_RE.match(s):
+        # "unix:/path": no authority, and the rest may hold credentials (D1 ruling, A17).
+        return f"{s.split(':', 1)[0].lower()}:"
+    if schemeless and s.startswith("/"):
         return UNPARSEABLE_URL
-    return f"{scheme}://{rest}" if sep else rest
+    sp = _rfc_split(f"https://{s}" if schemeless else s)
+    if sp is None:
+        return UNPARSEABLE_URL
+    host: str | None = sp.host
+    if sp.scheme in ("http", "https"):
+        host, _ = _check_host(sp.host)
+        if host is None:
+            return UNPARSEABLE_URL
+    if protocol == PROTOCOL_HTTP and _BAD_ESCAPE_RE.search(sp.path):
+        return UNPARSEABLE_URL
+    if _path_has_at(sp):
+        return SCHEMELESS_AT_RENDERING if schemeless else f"{sp.scheme}://"
+    host_port = host if sp.port is None else f"{host}:{sp.port}"
+    return f"{host_port}{sp.path}" if schemeless else f"{sp.scheme}://{host_port}{sp.path}"
+
+
+@dataclass(frozen=True)
+class _Endpoint:
+    """A usable endpoint value: ``scheme`` None when schemeless; ``host`` normalized (brackets kept)."""
+
+    scheme: str | None
+    host: str
+    port: int | None
+    path: str
+    userinfo: bool
+    query: str | None
+    fragment: str | None
+    # The host or port is spelled differently from the raw value (IDN, leading zeros):
+    # the helper passes the URL explicitly so the SDK never reads the raw spelling.
+    rewritten: bool
+    at_in_path: bool
 
 
 def _parse_environment(value: str) -> DeploymentEnvironment | str:
@@ -559,12 +727,15 @@ class TelemetryOptions:
                 fail("environment", "must be a DeploymentEnvironment or a non-empty string")
         for option in ("otel_endpoint", "traces_endpoint", "metrics_endpoint", "logs_endpoint"):
             check_str(option, getattr(self, option), allow_none=False)
+        # An empty string is not set (A13 ruling; D1 row of 2026-10-29): env, then default apply.
         check_str("otlp_protocol", self.otlp_protocol)
-        if self.otlp_protocol is not None and self.otlp_protocol.strip(TRIM_CHARS).lower() not in _VALID_OTLP_PROTOCOLS:
+        if _non_blank(self.otlp_protocol) is not None \
+                and self.otlp_protocol.strip(TRIM_CHARS).lower() not in _VALID_OTLP_PROTOCOLS:
             fail("otlp_protocol", f"has unknown OTLP protocol '{self.otlp_protocol}' "
                  f"(Unknown OTLP protocol; valid values: {', '.join(_VALID_OTLP_PROTOCOLS)})")
         check_str("compression", self.compression)
-        if self.compression is not None and self.compression.strip(TRIM_CHARS).lower() not in _VALID_COMPRESSIONS:
+        if _non_blank(self.compression) is not None \
+                and self.compression.strip(TRIM_CHARS).lower() not in _VALID_COMPRESSIONS:
             fail("compression", f"'{self.compression}' is not supported (valid: {', '.join(_VALID_COMPRESSIONS)})")
         if self.insecure is not None and not isinstance(self.insecure, bool):
             fail("insecure", f"must be a bool, got {type(self.insecure).__name__}")
@@ -877,8 +1048,8 @@ class TelemetryOptions:
         return out
 
     def _protocol_for(self, signal: str, raw: str, warn: bool = True) -> str:
-        if self.otlp_protocol is not None:
-            return self.otlp_protocol.strip(TRIM_CHARS).lower()
+        if (code := _non_blank(self.otlp_protocol)) is not None:
+            return code.lower()
         for var in (_signal_var("PROTOCOL", signal), ENV_OTLP_PROTOCOL):
             value = _env(var)
             if value is None:
@@ -888,81 +1059,86 @@ class TelemetryOptions:
             if warn:
                 self._warn_once(f"proto:{var}", "[OtelHelper] %s=%r is not a supported OTLP protocol "
                                 "(valid: %s); ignoring it.", var, value, ", ".join(_VALID_OTLP_PROTOCOLS))
-        try:
-            port = _split(raw).port
-        except ValueError:
-            port = None
-        if port == _DEFAULT_OTLP_HTTP_PORT:
+        if _endpoint_port(raw) == _DEFAULT_OTLP_HTTP_PORT:
             if warn:
                 self._info_once("proto:4318", "[OtelHelper] OTLP protocol inferred as http/protobuf "
                                 "from port 4318; set %s to override.", ENV_OTLP_PROTOCOL)
             return PROTOCOL_HTTP
         return PROTOCOL_GRPC
 
-    def _parse_endpoint(self, raw: str, source: str, name: str) -> tuple[SplitResult, int | None] | str:
-        """Parse and check an endpoint.
+    def _parse_endpoint(self, raw: str, source: str, name: str, protocol: str) -> _Endpoint | str:
+        """Parse and check an endpoint (RFC 3986 split, D1 edge-case rulings).
 
         Code errors raise. Env errors warn and return ``"invalid"`` (unparseable:
         fall back to the next level) or ``"unsupported"`` (a non-http(s) scheme:
-        the signal is not configured, per the D1 edge-case rulings).
+        the signal is not configured). An invalid value is never rendered, not
+        even partly: always ``<unparseable URL>`` (D1 ruling, 2026-10-29).
         """
-        why = ""
-        kind = "invalid"
-        if "://" not in raw and _OPAQUE_SCHEME_RE.match(raw):
-            # "unix:/tmp/x", "collector:/v1/traces": a scheme without "//", not host[:port].
-            scheme_text = raw.split(":", 1)[0].lower()
-            self._warn_once(f"endpoint:{name}", "[OtelHelper] %s is not a valid endpoint (unsupported scheme "
-                            "%s:); no OTLP exporter for it.", name, scheme_text)
+        def fail(kind: str, why: str) -> str:
+            shown = UNPARSEABLE_URL if kind == "invalid" else redact_url(raw, protocol)
             if source == "code":
-                raise ValueError(f"[OtelHelper] {name} is not a valid endpoint: unsupported scheme {scheme_text}:.")
-            return "unsupported"
-        try:
-            if _has_control(raw):  # urlsplit would silently strip \t\r\n
-                raise ValueError
-            parts = _split(raw)
-            port = parts.port
-        except ValueError:
-            parts, port = None, None
-            why = "unparseable"
-        if parts is not None:
-            scheme = parts.scheme.lower() if "://" in raw else None
-            if scheme not in (None, "http", "https"):
-                why, kind = f"unsupported scheme {scheme}://", "unsupported"
-            elif not parts.hostname:
-                why = "expected http(s)://host[:port] or host:port"
-        if not why:
-            return parts, port
-        shown = UNPARSEABLE_URL if parts is None else redact_url(raw)
-        if source == "code":
-            raise ValueError(f"[OtelHelper] {name} '{shown}' is not a valid endpoint: {why}.")
-        self._warn_once(f"endpoint:{name}", "[OtelHelper] %s=%s is not a valid endpoint (%s); %s.",
-                        name, shown, why,
-                        "no OTLP exporter for it" if kind == "unsupported" else "ignoring it")
-        return kind
+                raise ValueError(f"[OtelHelper] {name} '{shown}' is not a valid endpoint: {why}.")
+            self._warn_once(f"endpoint:{name}", "[OtelHelper] %s=%s is not a valid endpoint (%s); %s.",
+                            name, shown, why, "no OTLP exporter for it" if kind == "unsupported" else "ignoring it")
+            return kind
+
+        # Before parsing: a control character is unparseable, also in an opaque value
+        # (D1 ruling); urlsplit-style parsers would silently strip \t\r\n.
+        if _has_control(raw):
+            return fail("invalid", "it contains a control character")
+        # WHATWG reads "\\" as "/" and would split the authority elsewhere (D1 ruling: RFC 3986).
+        if "\\" in raw:
+            return fail("invalid", "it contains a backslash")
+        schemeless = "://" not in raw
+        if schemeless and _OPAQUE_SCHEME_RE.match(raw):
+            # "unix:/tmp/x", "collector:/v1/traces": a scheme without "//", not host[:port].
+            return fail("unsupported", f"unsupported scheme {raw.split(':', 1)[0].lower()}:")
+        if schemeless and raw.startswith("/"):
+            return fail("invalid", "expected http(s)://host[:port] or host:port")
+        sp = _rfc_split(f"https://{raw}" if schemeless else raw)
+        if sp is None:
+            return fail("invalid", "unparseable")
+        if sp.scheme not in ("http", "https"):
+            return fail("unsupported", f"unsupported scheme {sp.scheme}://")
+        host, zone_id = _check_host(sp.host)
+        if host is None:
+            return fail("invalid", "IPv6 zone ids are not supported in endpoint URLs" if zone_id
+                        else "expected http(s)://host[:port] or host:port")
+        if protocol == PROTOCOL_HTTP and _BAD_ESCAPE_RE.search(sp.path):
+            # requests would re-quote every escape of the path once one is invalid (D1 ruling, A17).
+            return fail("invalid", "the path has an invalid percent-escape")
+        rewritten = host != sp.host.lower() or (sp.port is not None and sp.port_text != str(sp.port))
+        return _Endpoint(scheme=None if schemeless else sp.scheme, host=host, port=sp.port, path=sp.path,
+                         userinfo=sp.userinfo, query=sp.query, fragment=sp.fragment,
+                         rewritten=rewritten, at_in_path=_path_has_at(sp))
 
     def _resolve_signal(self, signal: str) -> SignalExport | None:
+        # Read INSECURE first: an unparseable value warns even when no endpoint is
+        # configured (D1 ruling, 2026-10-29; principle 8).
+        insecure, insecure_name = self._insecure_setting(signal)
         chosen = None
         fell_back = False
         for raw, per_signal, source, name in self._endpoint_candidates(signal):
-            parsed = self._parse_endpoint(raw, source, name)
+            parsed = self._parse_endpoint(raw, source, name, self._protocol_for(signal, raw, warn=False))
             if parsed == "unsupported":
                 return None
             if parsed == "invalid":
                 fell_back = True
                 continue
-            chosen = (raw, per_signal, source, name, *parsed)
+            chosen = (raw, per_signal, source, name, parsed)
             break
         if chosen is None:
             return None
-        raw, per_signal, source, name, parts, port = chosen
+        raw, per_signal, source, name, parsed_ep = chosen
+        ep = cast(_Endpoint, parsed_ep)  # "invalid" / "unsupported" were handled in the loop
         protocol = self._protocol_for(signal, raw)
-        schemeless = "://" not in raw
-        scheme = None if schemeless else parts.scheme.lower()
+        shown = redact_url(raw, protocol)
+        port = ep.port
+        scheme = ep.scheme
 
-        insecure, insecure_name = self._insecure_setting(signal)
         # After skipping an invalid per-signal value the SDK would still read it: own the URL.
-        explicit = source == "code" or fell_back or (source == "env" and os.environ.get(name) != raw)
-        if schemeless:
+        explicit = source == "code" or fell_back or ep.rewritten or (source == "env" and os.environ.get(name) != raw)
+        if scheme is None:
             scheme = "http" if insecure else "https"
             port = port or (_DEFAULT_OTLP_HTTP_PORT if protocol == PROTOCOL_HTTP else _DEFAULT_OTLP_PORT)
             explicit = True
@@ -970,56 +1146,56 @@ class TelemetryOptions:
                 # Deprecation (D8): once per process, same wording as Go.
                 warn_once_per_process(_log, f"deprecated:schemeless:{name}", "[OtelHelper] %s=%s: schemeless "
                                       "endpoint is deprecated for http/protobuf and will be removed in 1.0; "
-                                      "use a URL (http:// or https://).", name, redact_url(raw))
+                                      "use a URL (http:// or https://).", name, shown)
         else:
             if port is None and protocol == PROTOCOL_GRPC:
                 self._warn_once(f"port:{name}", "[OtelHelper] %s=%s has no port; gRPC has no scheme "
                                 "default port, using %d. Set an explicit port.",
-                                name, redact_url(raw), _DEFAULT_OTLP_PORT)
+                                name, shown, _DEFAULT_OTLP_PORT)
                 port = _DEFAULT_OTLP_PORT
                 explicit = True
             if insecure is not None and insecure != (scheme == "http"):
                 if insecure_name == "insecure" and source == "code":
                     raise ValueError(f"[OtelHelper] insecure={insecure} contradicts the {scheme} scheme of "
-                                     f"{name} '{redact_url(raw)}'.")
-                self._warn_once(f"tls:{insecure_name}:{redact_url(raw)}", "[OtelHelper] %s=%s contradicts the "
+                                     f"{name} '{shown}'.")
+                self._warn_once(f"tls:{insecure_name}:{shown}", "[OtelHelper] %s=%s contradicts the "
                                 "%s scheme of %s; the scheme wins (%s).", insecure_name,
-                                str(insecure).lower(), scheme, redact_url(raw),
+                                str(insecure).lower(), scheme, shown,
                                 "plaintext" if scheme == "http" else "TLS")
                 explicit = True
 
-        if parts.username is not None or parts.password is not None or parts.query or parts.fragment:
+        if ep.userinfo or ep.query is not None or ep.fragment is not None:
+            # An empty "?" or "#" counts too (D1 ruling, 2026-10-29).
             self._warn_once(f"userinfo:{name}", "[OtelHelper] %s: URL userinfo, query and fragment are not "
                             "supported and were removed (%s); put credentials in OTEL_EXPORTER_OTLP_HEADERS.",
-                            name, redact_url(raw))
+                            name, shown)
             explicit = True
 
-        if protocol == PROTOCOL_HTTP and "%" in parts.hostname:
-            self._warn_once(f"zone:{name}", "[OtelHelper] %s: IPv6 zone ids are not supported by the "
-                            "Python OTLP/HTTP exporter (urllib3); use gRPC or an address without a zone.", name)
+        if ep.at_in_path:
+            # Used as parsed; the name only, the value may hold the credentials (D1 ruling).
+            self._warn_once(f"at:{name}", "[OtelHelper] %s: endpoint path contains '@' — misplaced "
+                            "credentials?", name)
 
         if scheme == "http":
             tls_vars = [v for suffix in ("CERTIFICATE", "CLIENT_CERTIFICATE", "CLIENT_KEY")
                         for v in (_signal_var(suffix, signal), f"OTEL_EXPORTER_OTLP_{suffix}")
                         if _env(v) is not None]
             if tls_vars:
-                self._warn_once(f"cert:{','.join(tls_vars)}:{redact_url(raw)}", "[OtelHelper] %s set but the "
+                self._warn_once(f"cert:{','.join(tls_vars)}:{shown}", "[OtelHelper] %s set but the "
                                 "endpoint %s is plaintext (http); TLS files are not used.",
-                                ", ".join(tls_vars), redact_url(raw))
+                                ", ".join(tls_vars), shown)
                 if protocol == PROTOCOL_GRPC:
                     explicit = True  # pass insecure=True so the SDK doesn't load the files
 
         kwargs: dict[str, object] = {}
         if explicit:
-            host = f"[{parts.hostname}]" if ":" in parts.hostname else parts.hostname
-            netloc = f"{host}:{port}" if port else host
+            netloc = f"{ep.host}:{port}" if port else ep.host
             if protocol == PROTOCOL_HTTP:
-                path = parts.path if per_signal else f"{parts.path.rstrip('/')}/v1/{signal}"
-                kwargs["endpoint"] = urlunsplit((scheme, netloc, path, "", ""))
+                # Escapes kept verbatim, never decoded (D1 ruling "Percent-encoding in the endpoint path").
+                path = ep.path if per_signal else f"{ep.path.rstrip('/')}/v1/{signal}"
+                kwargs["endpoint"] = f"{scheme}://{netloc}{path}"
             else:
-                # gRPC targets take the raw zone id: [fe80::1%25eth0] -> [fe80::1%eth0].
-                grpc_host = f"[{unquote(parts.hostname)}]" if ":" in parts.hostname else parts.hostname
-                kwargs["endpoint"] = urlunsplit((scheme, f"{grpc_host}:{port}" if port else grpc_host, "", "", ""))
+                kwargs["endpoint"] = f"{scheme}://{netloc}"
                 kwargs["insecure"] = scheme == "http"
 
         masked: list[str] = []
@@ -1118,8 +1294,8 @@ class TelemetryOptions:
         return result
 
     def _compression_for(self, signal: str) -> str:
-        if self.compression is not None:
-            return self.compression.strip(TRIM_CHARS).lower()
+        if (code := _non_blank(self.compression)) is not None:
+            return code.lower()
         for var in (_signal_var("COMPRESSION", signal), "OTEL_EXPORTER_OTLP_COMPRESSION"):
             raw = _env(var)
             if raw is None:

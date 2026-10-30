@@ -68,10 +68,11 @@ class TestCodeEndpoints:
         assert _plan(otel_endpoint="https://c:4317").kwargs["insecure"] is False
         assert _plan(otel_endpoint="http://c:4317").kwargs["insecure"] is True
 
-    def test_ipv6_zone_unquoted_for_grpc_only(self):
-        assert _plan(otel_endpoint="http://[fe80::1%25lo]:4317").kwargs["endpoint"] == "http://[fe80::1%lo]:4317"
-        plan = _plan(otel_endpoint="http://[fe80::1%25lo]:4318", otlp_protocol="http/protobuf")
-        assert plan.kwargs["endpoint"] == "http://[fe80::1%25lo]:4318/v1/traces"
+    @pytest.mark.parametrize("endpoint", ["http://[fe80::1%25lo]:4317", "http://[fe80::1%lo]:4318"])
+    def test_ipv6_zone_id_invalid(self, endpoint):
+        # D1 ruling "Host characters" (2026-10-29, task A17): a zone id makes the endpoint invalid.
+        with pytest.raises(ValueError, match="zone ids"):
+            _plan(otel_endpoint=endpoint)
 
     @pytest.mark.parametrize("bad", ["http://c\tx:4317", "http://c:43\t17", "http://c:4318/v1\n/x", "http://c\x7f:4317"])
     def test_control_char_inside_endpoint_falls_back(self, bad, caplog):
@@ -81,11 +82,6 @@ class TestCodeEndpoints:
             plan = _plan()
         assert plan.kwargs["endpoint"] == "http://good:4317"
         assert "<unparseable URL>" in caplog.text
-
-    def test_http_zone_id_warns(self, caplog):
-        with caplog.at_level(logging.WARNING, logger="staffops_otel_helper"):
-            _plan(otel_endpoint="http://[fe80::1%25lo]:4318", otlp_protocol="http/protobuf")
-        assert "zone" in caplog.text
 
     def test_env_whitespace_trimmed_and_owned(self):
         os.environ["OTEL_EXPORTER_OTLP_ENDPOINT"] = " http://c:4318\n"

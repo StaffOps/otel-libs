@@ -56,7 +56,7 @@ _INPUT_SCHEMA = {
     "grpc_server": {"method"},
 }
 _SIGNALS = {"traces", "metrics", "logs"}
-_RECORD_FIELDS = {"proto", "tls", "port", "path", "encoding", "headers", "timeout_ms", "absent"}
+_RECORD_FIELDS = {"proto", "tls", "port", "path", "raw_path", "encoding", "headers", "timeout_ms", "absent"}
 _MATCHER_KEYS = {"prefix", "regex", "absent", "not_contains", "all", "lte", "gte"}
 _STATUS_RE = re.compile(r"^(pass|xfail:[A-Za-z0-9.-]+|skip:[A-Za-z0-9._-]+)$")
 

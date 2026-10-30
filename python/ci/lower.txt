@@ -16,6 +16,8 @@ opentelemetry-instrumentation-logging==0.63b0
 opentelemetry-instrumentation-botocore==0.63b0
 opentelemetry-instrumentation-redis==0.63b0
 opentelemetry-instrumentation-sqlalchemy==0.63b0
+# Direct core dependency (pyproject, design D1 IDN row): 3.7 is the floor (CVE-2024-3651 fix).
+idna==3.7
 # Test-only dev dependency (pyproject [dev]), oldest allowed:
 sqlalchemy==2.0.31
 # Transitive floors that matter for the lower leg:

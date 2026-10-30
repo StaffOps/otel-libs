@@ -128,6 +128,17 @@ Runtime and operations:
     (`%20x%09` → `x`); `telemetry.sdk.*` set there or in code are ignored (a
     code value warns once). An empty key in `WithResourceAttributes` now
     **fails `Setup`**. The identity warnings are written once per process.
+19. **BREAKING — endpoint hosts, ports and paths (design D1 rows of
+    2026-10-29, A17).** Write the host as a canonical dotted quad or a DNS
+    name: `127.1`, `0x7f.0.0.1`, `2130706433`, `01.2.3.4` and `1.2.3.256` are
+    now **invalid** (env: warned as `<unparseable URL>`, the next endpoint
+    applies; code: ``Setup` fails`). Port `0` is invalid. An invalid `%` escape in an
+    http/protobuf path (`/%zz`) is invalid. Hosts are lowercased and non-ASCII
+    hosts punycoded (UTS #46 non-transitional: `straße.de` →
+    `xn--strae-oqa.de`). **Kubernetes:** a namespace made only of digits makes a
+    short name end in a number — `collector.2024` is invalid; use the FQDN
+    (`collector.2024.svc.cluster.local`) or `collector.2024.svc`. With an `@`
+    in the path or query, diagnostics show only `<scheme>://`.
 
 ### Migration guide 0.2 → 0.3 — Python
 
@@ -224,7 +235,8 @@ Configuration:
     | `c:4317` | _(unset)_ | TLS | TLS (`https://`) |
 
 11. **Endpoints:** absolute env URLs are left to the SDK — path prefixes kept,
-    HTTP without a port → 443/80, IPv6 literals work, per-signal variables
+    HTTP without a port → 443/80, IPv6 literals work, except zone ids, which
+    are invalid (item 20), per-signal variables
     honored (per-signal endpoints are used as-is). Credentials and header rules
     are the same as Go (item 8 above).
 12. **Sampler is ParentBased:** a child of a remote `traceparent` with
@@ -277,6 +289,18 @@ Telemetry and runtime:
     survives a fork on SDK ≥ 1.45 (the SDK replaced it before). The identity
     and parse warnings are written once per process (they were once per
     options object).
+20. **BREAKING — endpoint hosts, ports and paths (design D1 rows of
+    2026-10-29, A17).** Write the host as a canonical dotted quad or a DNS
+    name: `127.1`, `0x7f.0.0.1`, `2130706433`, `01.2.3.4` and `1.2.3.256` are
+    now **invalid** (env: warned as `<unparseable URL>`, the next endpoint
+    applies; code: ``ValueError``). Port `0` is invalid. An invalid `%` escape in an
+    http/protobuf path (`/%zz`) is invalid. Hosts are lowercased and non-ASCII
+    hosts punycoded (UTS #46 non-transitional: `straße.de` →
+    `xn--strae-oqa.de`). **Kubernetes:** a namespace made only of digits makes a
+    short name end in a number — `collector.2024` is invalid; use the FQDN
+    (`collector.2024.svc.cluster.local`) or `collector.2024.svc`. With an `@`
+    in the path or query, diagnostics show only `<scheme>://`. IPv6 zone ids (`[fe80::1%eth0]`)
+    are invalid too (they used to work over gRPC).
 
 ### Collector / platform prerequisites (before rolling 0.3.0 out)
 
@@ -348,6 +372,38 @@ after the upgrade.
 
 ### Go — detailed changes
 
+- **BREAKING — endpoint rulings from the Node B4a review (design D1 rows of
+  2026-10-29, task A17; migration item 19).** Endpoints are split by RFC 3986 (the helper's own
+  parser, not `url.Parse`): a port outside 1–65535 — port `0` included — is
+  invalid; leading-zero ports compare numerically (`:04318` now selects
+  http/protobuf by the 4318 inference); a backslash anywhere, an empty
+  authority (`http:///x`) or a schemeless value starting with `/` (`//h:4317`)
+  is invalid. Every invalid value is shown as `<unparseable URL>` in warnings
+  and `Setup` errors, never as a host-less rendering such as `http://:4317`.
+  Non-ASCII hosts are converted to punycode (UTS #46 as WHATWG URL runs it,
+  `golang.org/x/net/idna` — already in the module graph, now a direct
+  requirement); a host failing IDNA is invalid. An empty fragment (`#`) is
+  removed with the userinfo/query warning. An `@` in the path or query warns
+  "endpoint path contains '@' — misplaced credentials?" naming the variable
+  only, and diagnostics no longer print a path or query holding an `@` (they
+  did: R8, `redaction.credentials_in_path_never_echoed`). **Known Go
+  limitation:** the OTLP/HTTP exporters decode the endpoint path
+  (`WithEndpointURL` keeps `url.URL.Path`), so `/a%2Fb` is sent as `/a/b`;
+  the helper now warns once per variable ("endpoint path has percent-escapes
+  the Go OTLP/HTTP exporter sends decoded", variable name only) and
+  `export.http_path_escape_verbatim` is `skip:no-upstream-go-http-raw-path`.
+  Refutation round (same task): hosts are lowercased; an ASCII host must be
+  an RFC 3986 reg-name or an IP literal, and a host ending in a number must be
+  a canonical dotted quad (`127.1`, `0x7f.0.0.1`, `2130706433`, `1.2.3.256`
+  are invalid); an invalid `%` escape in an http/protobuf path is invalid in
+  every language (the exporter would fall back to its default endpoint); an
+  opaque value renders as `unix:` only; `%40` in a path counts as `@`. Final review round: with an `@` (or `%40`) in the path or query every
+  diagnostic shows only `<scheme>://` (`<schemeless endpoint>` for a schemeless
+  value) — `http://user:1234/x@host` used to show `http://user:1234`; a
+  non-ASCII host with an empty label or over 253 characters after punycode is
+  invalid; a dotted quad with one trailing `.` (`10.0.0.1.`) is accepted; an
+  http/protobuf value with an invalid path escape renders as
+  `<unparseable URL>`.
 - **Fix — identity and `OTEL_RESOURCE_ATTRIBUTES` rulings (design D1 rows of
   2026-10-29, task A16).** `WithServiceName` / `WithEnvironment` now beat the
   same key in `WithResourceAttributes` in the emitted resource, not only in
@@ -634,6 +690,44 @@ Behavior changes, with migration notes:
 
 ### Python — detailed changes
 
+- **BREAKING — endpoint rulings from the Node B4a review (design D1 rows of
+  2026-10-29, task A17; migration item 20): zone ids, non-canonical IPv4 and
+  non-reg-name hosts, port 0, invalid path escapes.** Endpoints are split by RFC 3986 instead of
+  `urlsplit`: a backslash anywhere (also in userinfo, where it used to leak
+  the password into diagnostics — `redaction.password_with_backslash`), an
+  empty host (`http://:4317`, `http:///x`, `//h:4317`), port `0`, a space, a
+  percent-encoded byte or an **IPv6 zone id** in the host make the value
+  invalid — zone ids used to work over gRPC; they now fall back (env) or
+  raise (code). Invalid values are always shown as `<unparseable URL>`. A
+  control character beats an opaque scheme (`unix:/x\x7f` is invalid, not
+  "unsupported"). Non-ASCII hosts are punycoded with UTS #46 non-transitional
+  processing via the `idna` package; a host failing it is invalid. An empty `?` or `#` is removed with the
+  userinfo/query warning; an `@` in the path or query warns "endpoint path
+  contains '@' — misplaced credentials?" naming the variable only. An
+  unparseable `OTEL_EXPORTER_OTLP[_<SIGNAL>]_INSECURE` now warns even when no
+  endpoint is configured. An empty code `otlp_protocol` or `compression`
+  (`""`) is "not set" instead of raising `ValueError`. Valid path escapes are
+  kept verbatim on the wire (`/a%2Fb`); an invalid one (`/%zz`) in an
+  http/protobuf path is invalid (warn and fall back / raise) — `requests`
+  would otherwise double-encode every escape of the URL. Refutation round
+  (same task): a port of any length is parsed (leading zeros stripped; more
+  than 4300 digits used to raise `ValueError` out of the resolver); IDN hosts
+  use UTS #46 non-transitional with IDNA 2008 validation (`straße.de` →
+  `xn--strae-oqa.de`, ZWJ/ZWNJ invalid; emoji and some `_` / long labels Go and
+  Node accept are invalid — README gaps); an ASCII host must be an RFC 3986
+  reg-name or an IP literal, and a host ending in a number a canonical dotted
+  quad (`127.1`, `1.2.3.256` invalid); an opaque value renders as `unix:` only;
+  `%40` in a path counts as `@`. Final review round: with an `@` (or `%40`) in the path or query every
+  diagnostic shows only `<scheme>://` (`<schemeless endpoint>` for a schemeless
+  value) — `http://user:1234/x@host` used to show `http://user:1234`; a
+  non-ASCII host with an empty label or over 253 characters after punycode is
+  invalid; a dotted quad with one trailing `.` (`10.0.0.1.`) is accepted; an
+  http/protobuf value with an invalid path escape renders as
+  `<unparseable URL>`.
+- **New core dependency `idna>=3.7,<4`** (BSD-3-Clause; 3.7 fixes
+  CVE-2024-3651) for UTS #46 host conversion (design D1 IDN row, A17). It was
+  already installed through `requests`; it is now declared. Lower CI leg pins
+  `idna==3.7`.
 - **BREAKING — identity and resource rulings (design D1 rows of 2026-10-29,
   task A16; migration item 19).** `service_name=` / `environment=` beat the
   same key in `resource_attributes` in the emitted resource, not only in the
@@ -1198,6 +1292,25 @@ Unsupported instrumentation versions, task A10 (P18):
   ignored and warned once, identity and parse warnings once per process, and
   `__proto__` kept as an ordinary key up to the SDK resource. Two D-JS14 rows
   removed (`telemetry.sdk.*` direction, per-setup warning cadence).
+- **Node.js endpoint rulings of the A17 refutation (not released).** The host
+  is checked by the contract's one host rule instead of being compared with
+  WHATWG `URL` output: RFC 3986 reg-name bytes (`a{b`, `"h"` invalid), a host
+  ending in a number must be a canonical dotted quad (`127.1` no longer becomes
+  `127.0.0.1`; it is invalid), IPv6 kept as written and lowercased
+  (`[::ffff:127.0.0.1]` no longer becomes `[::ffff:7f00:1]`); WHATWG
+  `domainToASCII` is used for non-ASCII hosts only. An invalid `%` escape in an
+  http/protobuf path is invalid (`checkCodeOtlp` now uses the resolved
+  protocol). An opaque value renders as `unix:` only; `%40` in a path counts as
+  `@`. D-JS14 host-normalization row superseded. Final review round: `domainToASCII` runs on the
+  host plus a guard label, so its WHATWG IPv4 parsing no longer turns fullwidth
+  `１２７.１` (or `２１３０７０６４３３`, `０１.２.３.４`) into a valid address — the
+  one host rule rejects them as in Go and Python. Final review round: with an `@` (or `%40`) in the path or query every
+  diagnostic shows only `<scheme>://` (`<schemeless endpoint>` for a schemeless
+  value) — `http://user:1234/x@host` used to show `http://user:1234`; a
+  non-ASCII host with an empty label or over 253 characters after punycode is
+  invalid; a dotted quad with one trailing `.` (`10.0.0.1.`) is accepted; an
+  http/protobuf value with an invalid path escape renders as
+  `<unparseable URL>`.
 - **Node.js OTLP endpoint, protocol and TLS-setting resolution (Phase B, task
   B4a; not released).** `setup()` accepts `otelEndpoint`, `tracesEndpoint`,
   `metricsEndpoint`, `logsEndpoint`, `otlpProtocol` and `insecure`, and
@@ -1256,6 +1369,27 @@ Unsupported instrumentation versions, task A10 (P18):
   (env + code) and IDN rulings — hosts punycoded, a host failing IDNA invalid
   (`endpoint.idn_host_punycoded`, `endpoint.idna_failure_invalid` + code
   variant) — Go and Python `xfail:A17`.
+- **Endpoint rulings in Go and Python (task A17).** No fixture status says
+  `xfail:A17` any more: 48 statuses flipped to `pass` on 35 cases (Go 19,
+  Python 29). New case `export.http_path_escape_verbatim`: the generic
+  endpoint path `/a%2Fb` must reach the receiver as `/a%2Fb/v1/<signal>` —
+  Python `pass`, Go `skip:no-upstream-go-http-raw-path` (exporter decodes the
+  path), Node `skip:B4b-otlp-endpoint`. Nine more from the refutation round
+  (260 in total), `pass` in Go, Python and Node: `endpoint.port_long_digits`,
+  `endpoint.idn_deviation_char`, `endpoint.idn_zwj_invalid`,
+  `endpoint.http_path_invalid_escape` + `config.code_http_path_invalid_escape_fails`,
+  `endpoint.ipv4_shorthand_invalid`, `endpoint.ipv4_octet_out_of_range_invalid`,
+  `endpoint.host_non_regname_invalid`, `redaction.opaque_scheme_renders_scheme_only`. Final review round (266 in
+  total): `endpoint.ipv4_fullwidth_shorthand_invalid` and
+  `redaction.at_in_path_numeric_password_prefix` (`pass` everywhere), and the
+  wire-level twins `export.ipv4_shorthand_falls_back`,
+  `export.ipv4_octet_out_of_range_falls_back`,
+  `export.host_non_regname_falls_back`,
+  `export.ipv4_fullwidth_shorthand_falls_back` (Go/Python `pass`, Node
+  `skip:B4b-otlp-endpoint`), which assert that traces reach the generic
+  endpoint. `testing/fakeotlp` records the
+  path as sent (`raw_path`, `net/url` `EscapedPath`), and the three parity
+  runners expose it as a record field.
 - **Go test hygiene:** `captureDiag` (`go/config_contract_test.go`) no longer
   prints slog timestamps, which made `TestDeprecatedEnvWarnsNamingReplacement`
   (`go/deprecation_test.go`) flaky.

@@ -1442,6 +1442,46 @@
       }
     },
     {
+      "id": "export.http_path_escape_verbatim",
+      "kind": "export",
+      "requirement": "R1/D1 edge-case rulings (2026-10-29, Node B4a refutation)",
+      "note": "Percent-encoding in the endpoint path is kept verbatim, never decoded (D1 ruling): the generic endpoint path /a%2Fb is sent as /a%2Fb/v1/<signal>, not /a/b/v1/<signal>. raw_path is the path as sent (fakeotlp records it). Go: the OTLP/HTTP exporters send url.URL.Path (decoded), see the D1 note \"Go: path escapes decoded\". Node: unit-tested until B4b.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "http://{receiver}:4318/a%2Fb",
+        "OTEL_EXPORTER_OTLP_PROTOCOL": "http/protobuf"
+      },
+      "code": {},
+      "expect": {
+        "received": {
+          "traces": {
+            "proto": "http",
+            "port": 4318,
+            "tls": false,
+            "raw_path": "/a%2Fb/v1/traces"
+          },
+          "metrics": {
+            "proto": "http",
+            "port": 4318,
+            "tls": false,
+            "raw_path": "/a%2Fb/v1/metrics"
+          },
+          "logs": {
+            "proto": "http",
+            "port": 4318,
+            "tls": false,
+            "raw_path": "/a%2Fb/v1/logs"
+          }
+        }
+      },
+      "status": {
+        "go": "skip:no-upstream-go-http-raw-path",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:B4b-otlp-endpoint"
+      }
+    },
+    {
       "id": "export.grpc_https_url_without_port_4317_tls",
       "kind": "export",
       "requirement": "R1/D1.b",
@@ -5299,7 +5339,7 @@
       },
       "status": {
         "go": "pass",
-        "python": "xfail:A17",
+        "python": "pass",
         "dotnet": "xfail:phase-c",
         "nodejs": "pass"
       }
@@ -5319,7 +5359,7 @@
       },
       "status": {
         "go": "pass",
-        "python": "xfail:A17",
+        "python": "pass",
         "dotnet": "xfail:phase-c",
         "nodejs": "pass"
       }
@@ -5352,7 +5392,7 @@
       },
       "status": {
         "go": "pass",
-        "python": "xfail:A17",
+        "python": "pass",
         "dotnet": "xfail:phase-c",
         "nodejs": "pass"
       }
@@ -5373,7 +5413,7 @@
       },
       "status": {
         "go": "pass",
-        "python": "xfail:A17",
+        "python": "pass",
         "dotnet": "xfail:phase-c",
         "nodejs": "pass"
       }
@@ -5397,7 +5437,7 @@
       },
       "status": {
         "go": "pass",
-        "python": "xfail:A17",
+        "python": "pass",
         "dotnet": "xfail:phase-c",
         "nodejs": "pass"
       }
@@ -5421,7 +5461,7 @@
       },
       "status": {
         "go": "pass",
-        "python": "xfail:A17",
+        "python": "pass",
         "dotnet": "xfail:phase-c",
         "nodejs": "skip:B4b-otlp-compression"
       }
@@ -5449,7 +5489,7 @@
         }
       },
       "status": {
-        "go": "xfail:A17",
+        "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
         "nodejs": "pass"
@@ -5478,8 +5518,8 @@
         }
       },
       "status": {
-        "go": "xfail:A17",
-        "python": "xfail:A17",
+        "go": "pass",
+        "python": "pass",
         "dotnet": "xfail:phase-c",
         "nodejs": "pass"
       }
@@ -5501,7 +5541,7 @@
         }
       },
       "status": {
-        "go": "xfail:A17",
+        "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
         "nodejs": "pass"
@@ -5533,8 +5573,8 @@
         }
       },
       "status": {
-        "go": "xfail:A17",
-        "python": "xfail:A17",
+        "go": "pass",
+        "python": "pass",
         "dotnet": "xfail:phase-c",
         "nodejs": "pass"
       }
@@ -5565,7 +5605,7 @@
         }
       },
       "status": {
-        "go": "xfail:A17",
+        "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
         "nodejs": "pass"
@@ -5598,8 +5638,8 @@
         }
       },
       "status": {
-        "go": "xfail:A17",
-        "python": "xfail:A17",
+        "go": "pass",
+        "python": "pass",
         "dotnet": "xfail:phase-c",
         "nodejs": "pass"
       }
@@ -5635,7 +5675,7 @@
       },
       "status": {
         "go": "pass",
-        "python": "xfail:A17",
+        "python": "pass",
         "dotnet": "xfail:phase-c",
         "nodejs": "pass"
       }
@@ -5665,7 +5705,7 @@
       },
       "status": {
         "go": "pass",
-        "python": "xfail:A17",
+        "python": "pass",
         "dotnet": "xfail:phase-c",
         "nodejs": "pass"
       }
@@ -5697,8 +5737,8 @@
         }
       },
       "status": {
-        "go": "xfail:A17",
-        "python": "xfail:A17",
+        "go": "pass",
+        "python": "pass",
         "dotnet": "xfail:phase-c",
         "nodejs": "pass"
       }
@@ -5757,8 +5797,8 @@
         }
       },
       "status": {
-        "go": "xfail:A17",
-        "python": "xfail:A17",
+        "go": "pass",
+        "python": "pass",
         "dotnet": "xfail:phase-c",
         "nodejs": "pass"
       }
@@ -5804,7 +5844,7 @@
         "warning": "http/protobuf"
       },
       "status": {
-        "go": "xfail:A17",
+        "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
         "nodejs": "pass"
@@ -5825,7 +5865,7 @@
         "warning": "http/protobuf"
       },
       "status": {
-        "go": "xfail:A17",
+        "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
         "nodejs": "pass"
@@ -5859,7 +5899,7 @@
       },
       "status": {
         "go": "pass",
-        "python": "xfail:A17",
+        "python": "pass",
         "dotnet": "xfail:phase-c",
         "nodejs": "pass"
       }
@@ -5886,7 +5926,7 @@
       },
       "status": {
         "go": "pass",
-        "python": "xfail:A17",
+        "python": "pass",
         "dotnet": "xfail:phase-c",
         "nodejs": "pass"
       }
@@ -5919,7 +5959,7 @@
       },
       "status": {
         "go": "pass",
-        "python": "xfail:A17",
+        "python": "pass",
         "dotnet": "xfail:phase-c",
         "nodejs": "pass"
       }
@@ -5946,7 +5986,7 @@
       },
       "status": {
         "go": "pass",
-        "python": "xfail:A17",
+        "python": "pass",
         "dotnet": "xfail:phase-c",
         "nodejs": "pass"
       }
@@ -5979,7 +6019,7 @@
       },
       "status": {
         "go": "pass",
-        "python": "xfail:A17",
+        "python": "pass",
         "dotnet": "xfail:phase-c",
         "nodejs": "pass"
       }
@@ -6006,7 +6046,7 @@
       },
       "status": {
         "go": "pass",
-        "python": "xfail:A17",
+        "python": "pass",
         "dotnet": "xfail:phase-c",
         "nodejs": "pass"
       }
@@ -6038,7 +6078,7 @@
       },
       "status": {
         "go": "pass",
-        "python": "xfail:A17",
+        "python": "pass",
         "dotnet": "xfail:phase-c",
         "nodejs": "pass"
       }
@@ -6069,8 +6109,8 @@
         }
       },
       "status": {
-        "go": "xfail:A17",
-        "python": "xfail:A17",
+        "go": "pass",
+        "python": "pass",
         "dotnet": "xfail:phase-c",
         "nodejs": "pass"
       }
@@ -6096,7 +6136,7 @@
       },
       "status": {
         "go": "pass",
-        "python": "xfail:A17",
+        "python": "pass",
         "dotnet": "xfail:phase-c",
         "nodejs": "pass"
       }
@@ -6131,8 +6171,8 @@
         }
       },
       "status": {
-        "go": "xfail:A17",
-        "python": "xfail:A17",
+        "go": "pass",
+        "python": "pass",
         "dotnet": "xfail:phase-c",
         "nodejs": "pass"
       }
@@ -6165,8 +6205,8 @@
         }
       },
       "status": {
-        "go": "xfail:A17",
-        "python": "xfail:A17",
+        "go": "pass",
+        "python": "pass",
         "dotnet": "xfail:phase-c",
         "nodejs": "pass"
       }
@@ -6247,7 +6287,7 @@
         }
       },
       "status": {
-        "go": "xfail:A17",
+        "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
         "nodejs": "pass"
@@ -6280,8 +6320,8 @@
         }
       },
       "status": {
-        "go": "xfail:A17",
-        "python": "xfail:A17",
+        "go": "pass",
+        "python": "pass",
         "dotnet": "xfail:phase-c",
         "nodejs": "pass"
       }
@@ -6303,8 +6343,8 @@
         }
       },
       "status": {
-        "go": "xfail:A17",
-        "python": "xfail:A17",
+        "go": "pass",
+        "python": "pass",
         "dotnet": "xfail:phase-c",
         "nodejs": "pass"
       }
@@ -6335,8 +6375,8 @@
         }
       },
       "status": {
-        "go": "xfail:A17",
-        "python": "xfail:A17",
+        "go": "pass",
+        "python": "pass",
         "dotnet": "xfail:phase-c",
         "nodejs": "pass"
       }
@@ -6368,8 +6408,8 @@
         }
       },
       "status": {
-        "go": "xfail:A17",
-        "python": "xfail:A17",
+        "go": "pass",
+        "python": "pass",
         "dotnet": "xfail:phase-c",
         "nodejs": "pass"
       }
@@ -6391,8 +6431,525 @@
         }
       },
       "status": {
-        "go": "xfail:A17",
-        "python": "xfail:A17",
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "endpoint.port_long_digits",
+      "kind": "resolve",
+      "requirement": "R1/R8/D1 edge-case rulings (2026-10-29, A17 refutation)",
+      "note": "A port with thousands of leading zeros compares numerically (00\u202604318 = 4318, so the port-4318 inference applies) and never crashes the parser (Python int() refuses > 4300 digits).",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "http://collector:000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000004318"
+      },
+      "code": {},
+      "expect": {
+        "error": {
+          "absent": true
+        },
+        "warning": "http/protobuf"
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "endpoint.idn_deviation_char",
+      "kind": "resolve",
+      "requirement": "R1/R8/D1 edge-case rulings (2026-10-29, A17 refutation)",
+      "note": "UTS #46 non-transitional: a deviation character is kept (stra\u00dfe.de -> xn--strae-oqa.de, not strasse.de). Portless gRPC so the warning renders the host, as in endpoint.idn_host_punycoded.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "http://stra\u00dfe.de"
+      },
+      "code": {},
+      "expect": {
+        "error": {
+          "absent": true
+        },
+        "helper_log": {
+          "all": [
+            {
+              "regex": "explicit port"
+            },
+            {
+              "regex": "xn--strae-oqa\\.de"
+            }
+          ]
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "endpoint.idn_zwj_invalid",
+      "kind": "resolve",
+      "requirement": "R1/R8/D1 edge-case rulings (2026-10-29, A17 refutation)",
+      "note": "A zero-width joiner outside its CONTEXTJ context fails IDNA: invalid. Env: warn <unparseable URL>, fall back to the generic endpoint.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "http://collector:4317",
+        "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT": "http://a\u200db.example:4317"
+      },
+      "code": {},
+      "expect": {
+        "error": {
+          "absent": true
+        },
+        "helper_log": {
+          "all": [
+            {
+              "regex": "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"
+            },
+            {
+              "regex": "<unparseable URL>"
+            }
+          ]
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "endpoint.http_path_invalid_escape",
+      "kind": "resolve",
+      "requirement": "R1/R8/D1 edge-case rulings (2026-10-29, A17 refutation)",
+      "note": "An invalid %-escape in an http/protobuf path is invalid in every language (the Go exporters would fall back to their default endpoint; Python requests re-quotes every escape). Env: warn <unparseable URL>, fall back.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "http://collector:4318",
+        "OTEL_EXPORTER_OTLP_PROTOCOL": "http/protobuf",
+        "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT": "http://collector:4318/%zz"
+      },
+      "code": {},
+      "expect": {
+        "error": {
+          "absent": true
+        },
+        "helper_log": {
+          "all": [
+            {
+              "regex": "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"
+            },
+            {
+              "regex": "<unparseable URL>"
+            }
+          ]
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "config.code_http_path_invalid_escape_fails",
+      "kind": "resolve",
+      "requirement": "R1/R8/D1 edge-case rulings (2026-10-29, A17 refutation)",
+      "note": "Code variant of the invalid path escape ruling: fail fast naming the option.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc"
+      },
+      "code": {
+        "traces_endpoint": "http://collector:4318/%zz",
+        "otlp_protocol": "http/protobuf"
+      },
+      "expect": {
+        "error": {
+          "regex": "(traces_endpoint|tracesEndpoint|WithTracesEndpoint)"
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "endpoint.ipv4_shorthand_invalid",
+      "kind": "resolve",
+      "requirement": "R1/R8/D1 edge-case rulings (2026-10-29, A17 refutation)",
+      "note": "One host rule: a host that ends in a number must be a canonical dotted quad; 127.1 (WHATWG: 127.0.0.1, Go/Python: a DNS name) is invalid.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "http://collector:4317",
+        "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT": "http://127.1:4317"
+      },
+      "code": {},
+      "expect": {
+        "error": {
+          "absent": true
+        },
+        "helper_log": {
+          "all": [
+            {
+              "regex": "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"
+            },
+            {
+              "regex": "<unparseable URL>"
+            }
+          ]
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "endpoint.ipv4_octet_out_of_range_invalid",
+      "kind": "resolve",
+      "requirement": "R1/R8/D1 edge-case rulings (2026-10-29, A17 refutation)",
+      "note": "One host rule: an octet above 255 is invalid.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "http://collector:4317",
+        "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT": "http://1.2.3.256:4317"
+      },
+      "code": {},
+      "expect": {
+        "error": {
+          "absent": true
+        },
+        "helper_log": {
+          "all": [
+            {
+              "regex": "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"
+            },
+            {
+              "regex": "<unparseable URL>"
+            }
+          ]
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "endpoint.host_non_regname_invalid",
+      "kind": "resolve",
+      "requirement": "R1/R8/D1 edge-case rulings (2026-10-29, A17 refutation)",
+      "note": "One host rule: an ASCII host must be an RFC 3986 reg-name ('{' is not one; WHATWG accepts it).",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "http://collector:4317",
+        "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT": "http://a{b:4317"
+      },
+      "code": {},
+      "expect": {
+        "error": {
+          "absent": true
+        },
+        "helper_log": {
+          "all": [
+            {
+              "regex": "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"
+            },
+            {
+              "regex": "<unparseable URL>"
+            }
+          ]
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "redaction.opaque_scheme_renders_scheme_only",
+      "kind": "resolve",
+      "requirement": "R1/R8/D1 edge-case rulings (2026-10-29, A17 refutation)",
+      "note": "An opaque value renders as '<scheme>:' only: the text after the scheme may hold credentials.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT": "unix:/parity-path@parity-sock"
+      },
+      "code": {},
+      "expect": {
+        "error": {
+          "absent": true
+        },
+        "helper_log": {
+          "all": [
+            {
+              "regex": "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"
+            },
+            {
+              "regex": "unix:"
+            },
+            {
+              "not_contains": "parity-path"
+            },
+            {
+              "not_contains": "parity-sock"
+            }
+          ]
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "endpoint.ipv4_fullwidth_shorthand_invalid",
+      "kind": "resolve",
+      "requirement": "R1/R8/D1 edge-case rulings (2026-10-29, A17 final review round)",
+      "note": "Fullwidth digits map to ASCII under UTS #46 (127.1), so the one host rule makes the value invalid; WHATWG domainToASCII would also parse it as IPv4 127.0.0.1 (Node guards against that). Env: warn <unparseable URL>, fall back to the generic endpoint.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "http://collector:4317",
+        "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT": "http://\uff11\uff12\uff17.\uff11:4317"
+      },
+      "code": {},
+      "expect": {
+        "error": {
+          "absent": true
+        },
+        "helper_log": {
+          "all": [
+            {
+              "regex": "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"
+            },
+            {
+              "regex": "<unparseable URL>"
+            }
+          ]
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "export.ipv4_shorthand_falls_back",
+      "kind": "export",
+      "requirement": "R1/R8/D1 edge-case rulings (2026-10-29, A17 final review round)",
+      "note": "Wire-level twin of endpoint.ipv4_shorthand_invalid: the invalid per-signal value falls back, so traces reach the generic endpoint (gRPC 4317).",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "http://{receiver}:4317",
+        "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT": "http://127.1:4317"
+      },
+      "code": {},
+      "expect": {
+        "error": {
+          "absent": true
+        },
+        "helper_log": {
+          "all": [
+            {
+              "regex": "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"
+            },
+            {
+              "regex": "<unparseable URL>"
+            }
+          ]
+        },
+        "received": {
+          "traces": {
+            "proto": "grpc",
+            "port": 4317,
+            "tls": false
+          }
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:B4b-otlp-endpoint"
+      }
+    },
+    {
+      "id": "export.ipv4_octet_out_of_range_falls_back",
+      "kind": "export",
+      "requirement": "R1/R8/D1 edge-case rulings (2026-10-29, A17 final review round)",
+      "note": "Wire-level twin of endpoint.ipv4_octet_out_of_range_invalid: the invalid per-signal value falls back, so traces reach the generic endpoint (gRPC 4317).",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "http://{receiver}:4317",
+        "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT": "http://1.2.3.256:4317"
+      },
+      "code": {},
+      "expect": {
+        "error": {
+          "absent": true
+        },
+        "helper_log": {
+          "all": [
+            {
+              "regex": "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"
+            },
+            {
+              "regex": "<unparseable URL>"
+            }
+          ]
+        },
+        "received": {
+          "traces": {
+            "proto": "grpc",
+            "port": 4317,
+            "tls": false
+          }
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:B4b-otlp-endpoint"
+      }
+    },
+    {
+      "id": "export.host_non_regname_falls_back",
+      "kind": "export",
+      "requirement": "R1/R8/D1 edge-case rulings (2026-10-29, A17 final review round)",
+      "note": "Wire-level twin of endpoint.host_non_regname_invalid: the invalid per-signal value falls back, so traces reach the generic endpoint (gRPC 4317).",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "http://{receiver}:4317",
+        "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT": "http://a{b:4317"
+      },
+      "code": {},
+      "expect": {
+        "error": {
+          "absent": true
+        },
+        "helper_log": {
+          "all": [
+            {
+              "regex": "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"
+            },
+            {
+              "regex": "<unparseable URL>"
+            }
+          ]
+        },
+        "received": {
+          "traces": {
+            "proto": "grpc",
+            "port": 4317,
+            "tls": false
+          }
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:B4b-otlp-endpoint"
+      }
+    },
+    {
+      "id": "export.ipv4_fullwidth_shorthand_falls_back",
+      "kind": "export",
+      "requirement": "R1/R8/D1 edge-case rulings (2026-10-29, A17 final review round)",
+      "note": "Wire-level twin of endpoint.ipv4_fullwidth_shorthand_invalid: the invalid per-signal value falls back, so traces reach the generic endpoint (gRPC 4317).",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "http://{receiver}:4317",
+        "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT": "http://\uff11\uff12\uff17.\uff11:4317"
+      },
+      "code": {},
+      "expect": {
+        "error": {
+          "absent": true
+        },
+        "helper_log": {
+          "all": [
+            {
+              "regex": "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"
+            },
+            {
+              "regex": "<unparseable URL>"
+            }
+          ]
+        },
+        "received": {
+          "traces": {
+            "proto": "grpc",
+            "port": 4317,
+            "tls": false
+          }
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:B4b-otlp-endpoint"
+      }
+    },
+    {
+      "id": "redaction.at_in_path_numeric_password_prefix",
+      "kind": "resolve",
+      "requirement": "R1/R8/D1 edge-case rulings (2026-10-29, A17 final review round)",
+      "note": "With an '@' in the path, 'host:port' may be 'user:password-prefix' (http://user:1234/rest@host): every diagnostic renders only '<scheme>://'.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "http://parityadmin:1234/parity-rest@collector?x"
+      },
+      "code": {},
+      "expect": {
+        "error": {
+          "absent": true
+        },
+        "helper_log": {
+          "all": [
+            {
+              "regex": "OTEL_EXPORTER_OTLP_ENDPOINT"
+            },
+            {
+              "regex": "misplaced credentials"
+            },
+            {
+              "not_contains": "parityadmin"
+            },
+            {
+              "not_contains": "1234"
+            },
+            {
+              "not_contains": "parity-rest"
+            }
+          ]
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
         "dotnet": "xfail:phase-c",
         "nodejs": "pass"
       }

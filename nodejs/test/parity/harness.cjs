@@ -41,7 +41,7 @@ const INPUT_SCHEMA = {
   grpc_server: ['method'],
 };
 const SIGNALS = new Set(['traces', 'metrics', 'logs']);
-const RECORD_FIELDS = new Set(['proto', 'tls', 'port', 'path', 'encoding', 'headers', 'timeout_ms', 'absent']);
+const RECORD_FIELDS = new Set(['proto', 'tls', 'port', 'path', 'raw_path', 'encoding', 'headers', 'timeout_ms', 'absent']);
 const MATCHER_KEYS = new Set(['prefix', 'regex', 'absent', 'not_contains', 'all', 'lte', 'gte']);
 const STATUS_RE = /^(pass|xfail:[A-Za-z0-9.-]+|skip:[A-Za-z0-9._-]+)$/;
 

@@ -35,7 +35,7 @@ suite runs every case. **`cases.json` is hand-maintained**: edit it directly
 | Kind | `input` | Does | Snapshot fields (`expect` keys) |
 |---|---|---|---|
 | `resolve` | — | Setup, read what it installed | `resource` (all attributes of the installed resource), `metric_exporters`, `metric_export_interval_ms`, `log_level` |
-| `export` | — | Setup, emit one span + counter + log, shut down, read the receiver | `received{traces,metrics,logs}` → records `{proto, tls, port, path, encoding, headers, timeout_ms}` (`timeout_ms` from the gRPC `grpc-timeout` header) |
+| `export` | — | Setup, emit one span + counter + log, shut down, read the receiver | `received{traces,metrics,logs}` → records `{proto, tls, port, path, raw_path, encoding, headers, timeout_ms}` (`path` decoded, `raw_path` as sent with escapes kept; `timeout_ms` from the gRPC `grpc-timeout` header) |
 | `sampler` | `scenario`: `root`, `remote_sampled`, `remote_unsampled`, `remote_sampled_debug_tracestate`, `remote_sampled_debug_baggage`, `local_child_of_root`, `local_child_of_remote_unsampled` | Start one span | `sampled`, `attributes` |
 | `propagation` | — | Inject inside a span with baggage `parity=1` | `headers` (sorted names) |
 | `http_server` | `requests`, `traceparent`, `child_span` | Serve the requests through the helper's HTTP server instrumentation; optionally the handler starts `handler-child` | `server_spans`, `handler_child_spans`, `requests_counted` (HTTP server duration `_count` from the helper's `/metrics`) |

@@ -285,9 +285,9 @@ test('D1 ruling: leading-zero ports compare numerically (4318 inference, numeric
   assert.equal(fresh({}, { otelEndpoint: 'collector:004318', insecure: true }).metrics.url, 'http://collector:4318/v1/metrics');
 });
 
-test('D1 ruling: path escapes are kept verbatim, never decoded or rejected', () => {
-  const otlp = plan({ OTEL_EXPORTER_OTLP_PROTOCOL: 'http/protobuf', OTEL_EXPORTER_OTLP_ENDPOINT: 'http://c:4318/a%2Fb/%zz', OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: 'http://c:4318/x%2Fy/../%7e' });
-  assert.equal(otlp.metrics.url, 'http://c:4318/a%2Fb/%zz/v1/metrics');
+test('D1 ruling: valid path escapes are kept verbatim, never decoded (an invalid one: A17 test below)', () => {
+  const otlp = plan({ OTEL_EXPORTER_OTLP_PROTOCOL: 'http/protobuf', OTEL_EXPORTER_OTLP_ENDPOINT: 'http://c:4318/a%2Fb/%41', OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: 'http://c:4318/x%2Fy/../%7e' });
+  assert.equal(otlp.metrics.url, 'http://c:4318/a%2Fb/%41/v1/metrics');
   assert.equal(otlp.traces.url, 'http://c:4318/x%2Fy/../%7e');
   assert.deepEqual(warnings(), []);
 });
@@ -324,11 +324,47 @@ test("D1 ruling: an '@' in the path or query warns naming the variable only; the
   assert.ok(!lines().join('\n').includes('s3cret'));
 });
 
-test('D-JS14: WHATWG host normalizations remain (lowercase, punycode, IPv4 shorthand, IPv4-mapped IPv6)', () => {
+test('D1 one host rule (A17): lowercase, punycode, RFC reg-name bytes, canonical IPv4 only, IPv6 as written', () => {
   assert.equal(fresh({ OTEL_EXPORTER_OTLP_ENDPOINT: 'http://COLLECTOR.Example:4317' }).traces.grpcTarget, 'collector.example:4317');
   assert.equal(fresh({ OTEL_EXPORTER_OTLP_ENDPOINT: 'http://bücher.example:4317' }).traces.grpcTarget, 'xn--bcher-kva.example:4317');
-  assert.equal(fresh({ OTEL_EXPORTER_OTLP_ENDPOINT: 'http://127.1:4317' }).traces.grpcTarget, '127.0.0.1:4317');
-  assert.equal(fresh({ OTEL_EXPORTER_OTLP_ENDPOINT: 'http://[::ffff:127.0.0.1]:4317' }).traces.grpcTarget, '[::ffff:7f00:1]:4317');
+  assert.equal(fresh({ OTEL_EXPORTER_OTLP_ENDPOINT: 'http://straße.de:4317' }).traces.grpcTarget, 'xn--strae-oqa.de:4317');
+  assert.equal(fresh({ OTEL_EXPORTER_OTLP_ENDPOINT: 'http://[::FFFF:127.0.0.1]:4317' }).traces.grpcTarget, '[::ffff:127.0.0.1]:4317');
+  assert.equal(fresh({ OTEL_EXPORTER_OTLP_ENDPOINT: 'http://10.0.0.255:4317' }).traces.grpcTarget, '10.0.0.255:4317');
+  assert.equal(fresh({ OTEL_EXPORTER_OTLP_ENDPOINT: 'http://host.1a:4317' }).traces.grpcTarget, 'host.1a:4317');
+  assert.equal(fresh({ OTEL_EXPORTER_OTLP_ENDPOINT: 'http://10.0.0.1.:4317' }).traces.grpcTarget, '10.0.0.1.:4317');
+  assert.equal(fresh({ OTEL_EXPORTER_OTLP_ENDPOINT: 'http://bücher.de.:4317' }).traces.grpcTarget, 'xn--bcher-kva.de.:4317');
+  assert.equal(fresh({ OTEL_EXPORTER_OTLP_ENDPOINT: 'http://bücher.de\u3002:4317' }).traces.grpcTarget, 'xn--bcher-kva.de.:4317');
+  // R8 (A17 final round): with an '@' in the path no rendering shows the host or port.
+  fresh({ OTEL_EXPORTER_OTLP_ENDPOINT: 'http://admin:1234/rest@collector?x' });
+  assert.ok(warnings().length >= 2);
+  for (const line of lines()) assert.ok(!line.includes('admin') && !line.includes('1234'), line);
+  for (const host of ['127.1', '0x7f.0.0.1', 'h.0x', '2130706433', '1.2.3.256', '1.2.3.4.5', '01.2.3.4', 'a{b',
+    '\uff11\uff12\uff17.\uff11', '\uff12\uff11\uff13\uff10\uff17\uff10\uff16\uff14\uff13\uff13', '\uff10\uff11.\uff12.\uff13.\uff14',
+    'b\u00fc..de', `${['a', 'b', 'c', 'd'].map((c) => c.repeat(62)).join('.')}.b\u00fc`, '"h"', 'h{', 'a\u200db.example', '[nothost]']) {
+    const otlp = fresh({ OTEL_EXPORTER_OTLP_ENDPOINT: 'http://generic:4317', OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: `http://${host}:4317` });
+    assert.equal(otlp.traces.grpcTarget, 'generic:4317', host);
+    assert.equal(redactURL(`http://${host}:4317`), UNPARSEABLE_URL, host);
+  }
+});
+
+test('D1 ruling (A17): an invalid path escape is invalid for http/protobuf only; long ports compare numerically', () => {
+  let otlp = fresh({ OTEL_EXPORTER_OTLP_ENDPOINT: 'http://generic:4318', OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: 'http://h:4318/%zz' });
+  assert.equal(otlp.traces.url, 'http://generic:4318/v1/traces');
+  assert.ok(warnings().some((l) => l.includes('invalid percent-escape') && l.includes('value="<unparseable URL>"')));
+  otlp = fresh({ OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: 'http://h:4317/%zz' });
+  assert.equal(otlp.traces.grpcTarget, 'h:4317');
+  assert.throws(() => fresh({}, { tracesEndpoint: 'http://h:4318/%zz', otlpProtocol: 'http/protobuf' }), /tracesEndpoint endpoint path has an invalid percent-escape/);
+  assert.doesNotThrow(() => fresh({}, { tracesEndpoint: 'http://h:4317/%zz' }));
+  assert.equal(fresh({ OTEL_EXPORTER_OTLP_ENDPOINT: `http://h:${'0'.repeat(5000)}4318` }).traces.protocol, 'http/protobuf');
+  assert.equal(redactURL(`http://h:${'9'.repeat(5000)}`), UNPARSEABLE_URL);
+  fresh({ OTEL_EXPORTER_OTLP_ENDPOINT: 'http://h:4317/s3cret%40c' });
+  assert.ok(warnings().some((l) => l.includes('misplaced credentials')));
+  assert.ok(!lines().join('\n').includes('s3cret'));
+  assert.equal(redactURL('http://h:4317/a%40b'), 'http://');
+  assert.equal(redactURL('http://h:4318/%zz'), 'http://h:4318/%zz');
+  assert.equal(redactURL('http://h:4318/%zz', 'http/protobuf'), UNPARSEABLE_URL);
+  assert.equal(redactURL('http://h:4318/%zz', 'grpc'), 'http://h:4318/%zz');
+  assert.equal(redactURL('Collector:/v1/traces'), 'collector:');
 });
 
 test('truncateValue cuts by code point (a surrogate pair is never split)', () => {
@@ -597,10 +633,11 @@ test('R8 credentials placed in the path never reach a diagnostic or an error', (
   for (const value of ['ftp://user/s3cret@x', 'unix:/u:s3cret@s', 'http://user/s3cret@c\\x']) {
     assert.throws(() => fresh({}, { otelEndpoint: value }), (e) => e instanceof TypeError && !e.message.includes('s3cret'), value);
   }
-  assert.equal(redactURL('http://user/s3cret@c'), 'http://user');
-  assert.equal(redactURL('http://h:1/p?k=s3cret@x'), 'http://h:1');
-  assert.equal(redactURL('unix:/u:s3cret@s'), 's');
-  assert.equal(redactURL('ftp://user/s3cret@x'), 'ftp://user');
+  assert.equal(redactURL('http://user/s3cret@c'), 'http://');
+  assert.equal(redactURL('http://h:1/p?k=s3cret@x'), 'http://');
+  assert.equal(redactURL('unix:/u:s3cret@s'), 'unix:');
+  assert.equal(redactURL('ftp://user/s3cret@x'), 'ftp://');
+  assert.equal(redactURL('user:123/s3cret@c'), '<schemeless endpoint>');
 });
 
 test('D1 ruling (IDN): hosts are punycoded; a host that fails IDNA processing is invalid', () => {

@@ -2,12 +2,15 @@
  * OTLP endpoint, protocol and TLS-setting resolution (task B4a; design D-JS3
  * ownership table; contract R1, R2, R8, design D1, D1.a–D1.c and the D1
  * edge-case rulings). Pure resolution: exporters are built from the result in
- * task B4b. Endpoints are split by RFC 3986 (D1 ruling, 2026-10-29) and only
- * then checked against WHATWG `URL`, which normalizes the host (lowercase,
- * punycode, IPv4 shorthand — design D-JS14). The rows follow the contract D1
+ * task B4b. Endpoints are split by RFC 3986 and the host is checked by the
+ * contract's one host rule (D1 rulings, 2026-10-29), the same rule as Go and
+ * Python. WHATWG is only used for IDNA (`domainToASCII`, non-ASCII hosts),
+ * behind a guard label so its IPv4 parsing never runs. The rows follow the contract D1
  * table; the Go helper (`go/endpoint.go`) is the closest reference, with the
  * differences the D1 rows dated 2026-10-29 record (task A17).
  */
+import { isIPv6 } from 'node:net';
+import { domainToASCII } from 'node:url';
 import { reportOnce, truncateValue, type DiagnosticValue } from './diagnostics';
 import { envBool, envValue, hasControl, trimWS, type Warn } from './env';
 
@@ -157,7 +160,8 @@ function rfcSplit(text: string): RfcEndpoint | undefined {
   // An empty port (`h:`) is the scheme default, as RFC 3986 allows.
   if (portText !== undefined && portText !== '') {
     if (!DIGITS.test(portText)) return undefined;
-    // Leading zeros compare numerically (D1 ruling, 2026-10-29).
+    // Leading zeros compare numerically (D1 ruling, 2026-10-29); a long digit
+    // string is Infinity, i.e. out of range.
     const n = Number(portText);
     if (n < 1 || n > MAX_PORT) return undefined;
     port = String(n);
@@ -167,51 +171,100 @@ function rfcSplit(text: string): RfcEndpoint | undefined {
 
 type HostCheck = { readonly ok: true; readonly hostname: string } | { readonly ok: false; readonly zoneId: boolean };
 
-/**
- * Validates the host of an http(s) endpoint and returns WHATWG's spelling of
- * it. A zone id, a space or a percent-encoded byte is invalid (D1 ruling "Host
- * characters"). WHATWG must see the same host and port as the RFC split, so
- * the two parsers can never disagree about where the authority ends.
- */
-function checkHost(text: string, sp: RfcEndpoint): HostCheck {
-  if (sp.host === '' || sp.host.includes(' ')) return { ok: false, zoneId: false };
-  if (sp.host.includes('%')) return { ok: false, zoneId: sp.host.startsWith('[') };
-  try {
-    const whole = new URL(text);
-    const alone = new URL(`${sp.scheme}://${sp.host}`);
-    // WHATWG drops a scheme-default port (`http://h:80` → port ''), so only a
-    // port it reports is compared.
-    if (whole.hostname !== alone.hostname || (whole.port !== '' && whole.port !== sp.port)) return { ok: false, zoneId: false };
-    return { ok: true, hostname: whole.hostname };
-  } catch {
-    return { ok: false, zoneId: false };
-  }
+// RFC 3986 reg-name (unreserved / sub-delims); pct-encoded is rejected by the host-characters ruling.
+const REG_NAME = /^[A-Za-z0-9\-._~!$&'()*+,;=]+$/;
+const HEX_NUMBER = /^0[xX][0-9A-Fa-f]*$/;
+const OCTET = '(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])';
+const CANONICAL_IPV4 = new RegExp(`^${OCTET}(\\.${OCTET}){3}$`);
+// eslint-disable-next-line no-control-regex
+const NON_ASCII = /[^\x00-\x7f]/;
+
+/** WHATWG "ends in a number": the last label (a trailing empty one ignored) is digits or hex (0x…). */
+function endsInNumber(host: string): boolean {
+  const labels = host.split('.');
+  if (labels.length > 1 && labels[labels.length - 1] === '') labels.pop();
+  const last = labels[labels.length - 1] ?? '';
+  return last !== '' && (DIGITS.test(last) || HEX_NUMBER.test(last));
 }
 
 /**
- * The path as it may appear in a diagnostic: '' when the path or query holds
- * an `@` (credentials put in the wrong place must never be echoed, R8).
+ * UTS #46 ToASCII of a non-ASCII host via WHATWG `domainToASCII`, which also
+ * runs WHATWG IPv4 parsing on its result: a guard label (`.x`) keeps that from
+ * turning fullwidth `１２７.１` into `127.0.0.1` (A17 final round), so the one
+ * host rule sees `127.1` as Go and Python do. `undefined` on an IDNA failure,
+ * an empty label or more than 253 characters (what Python's idna enforces).
  */
-function diagnosticPath(path: string, query: string | undefined): string {
-  return `${path}${query ?? ''}`.includes('@') ? '' : path;
+function toASCII(host: string): string | undefined {
+  const dot = host.endsWith('.') || host.endsWith('\u3002') || host.endsWith('\uff0e') || host.endsWith('\uff61');
+  const bare = dot ? host.slice(0, -1) : host;
+  const guarded = domainToASCII(`${bare}.x`);
+  if (!guarded.endsWith('.x')) return undefined;
+  const ascii = guarded.slice(0, -2);
+  if (ascii === '' || ascii.length > 253 || ascii.split('.').includes('')) return undefined;
+  return dot ? `${ascii}.` : ascii;
 }
+
+/**
+ * Validates the host of an http(s) endpoint and returns the spelling that is
+ * dialed and rendered (D1 rulings "Host characters", IDN hosts and "One host
+ * rule", 2026-10-29): an empty host, a space, a `%` (percent-encoded byte or
+ * zone id) or a host that fails IDNA is invalid; a non-ASCII host is punycoded
+ * (WHATWG `domainToASCII`, UTS #46 non-transitional). The ASCII result must be
+ * an IPv6 literal or an RFC 3986 reg-name, and a host that ends in a number a
+ * canonical dotted quad. Lowercased.
+ */
+function checkHost(sp: RfcEndpoint): HostCheck {
+  let host = sp.host;
+  if (host === '' || host.includes(' ')) return { ok: false, zoneId: false };
+  if (host.includes('%')) return { ok: false, zoneId: host.startsWith('[') };
+  if (host.startsWith('[')) {
+    const inner = host.slice(1, -1);
+    return isIPv6(inner) ? { ok: true, hostname: host.toLowerCase() } : { ok: false, zoneId: false };
+  }
+  if (NON_ASCII.test(host)) {
+    const ascii = toASCII(host);
+    if (ascii === undefined) return { ok: false, zoneId: false };
+    host = ascii;
+  }
+  // One trailing '.' is allowed on a dotted quad ("10.0.0.1."), as for a domain.
+  if (!REG_NAME.test(host) || (endsInNumber(host) && !CANONICAL_IPV4.test(host.replace(/\.$/, '')))) return { ok: false, zoneId: false };
+  return { ok: true, hostname: host.toLowerCase() };
+}
+
+/** An '@', raw or percent-encoded (`%40`). */
+function hasAt(text: string): boolean {
+  return text.includes('@') || text.toLowerCase().includes('%40');
+}
+
+/** An '@' (or `%40`) in the path or query: misplaced credentials (D1 ruling: warned, used as parsed). */
+function pathHasAt(sp: RfcEndpoint): boolean {
+  return hasAt(sp.path) || hasAt(sp.query ?? '');
+}
+
+
+// An invalid escape in an http/protobuf path (D1 ruling, A17: invalid in every language).
+const BAD_PATH_ESCAPE = /%(?![0-9A-Fa-f]{2})/;
+
+/** Shown for a schemeless endpoint whose path or query holds an '@' (D1 ruling, A17 final round), in every language. */
+export const SCHEMELESS_AT_RENDERING = '<schemeless endpoint>';
 
 /**
  * Endpoint text safe for diagnostics: scheme, host, port and path only (no
  * userinfo, query or fragment; no path either when it holds an `@`), split
- * exactly as the resolver splits it;
- * {@link UNPARSEABLE_URL} for anything it would reject (D1 rulings).
+ * exactly as the resolver splits it; an opaque value (`unix:/…`) renders as its
+ * scheme only; {@link UNPARSEABLE_URL} for anything the split or the host check
+ * rejects for `protocol` (D1 rulings; with http/protobuf an invalid path
+ * escape too). When the path or query holds an `@` (or `%40`) only
+ * `<scheme>://` is shown ({@link SCHEMELESS_AT_RENDERING} for a schemeless
+ * value): the host and port may then be a user name and a password prefix.
  */
-export function redactURL(raw: string): string {
+export function redactURL(raw: string, protocol?: OtlpProtocol): string {
   const s = trimWS(raw);
   if (s === '' || hasControl(s) || s.includes('\\')) return UNPARSEABLE_URL;
   const schemeless = !s.includes('://');
   if (schemeless && OPAQUE_SCHEME.test(s)) {
-    // "unix:/path": no authority. Cut before the last '@' (as Go and Python do
-    // for values without "://") and at '?' / '#'.
-    const at = s.lastIndexOf('@');
-    const cut = (at >= 0 ? s.slice(at + 1) : s).split(/[?#]/, 1)[0] ?? '';
-    return cut === '' ? UNPARSEABLE_URL : cut;
+    // "unix:/path": no authority, and the rest may hold credentials (D1 ruling, A17).
+    return `${(s.split(':', 1)[0] ?? '').toLowerCase()}:`;
   }
   if (schemeless && s.startsWith('/')) return UNPARSEABLE_URL;
   const text = schemeless ? `https://${s}` : s;
@@ -219,13 +272,14 @@ export function redactURL(raw: string): string {
   if (sp === undefined) return UNPARSEABLE_URL;
   let host = sp.host;
   if (sp.scheme === 'http' || sp.scheme === 'https') {
-    const checked = checkHost(text, sp);
+    const checked = checkHost(sp);
     if (!checked.ok) return UNPARSEABLE_URL;
     host = checked.hostname;
   }
+  if (protocol === PROTOCOL_HTTP && BAD_PATH_ESCAPE.test(sp.path)) return UNPARSEABLE_URL;
+  if (pathHasAt(sp)) return schemeless ? SCHEMELESS_AT_RENDERING : `${sp.scheme}://`;
   const hostPort = sp.port === '' ? host : `${host}:${sp.port}`;
-  const path = diagnosticPath(sp.path, sp.query);
-  return schemeless ? `${hostPort}${path}` : `${sp.scheme}://${hostPort}${path}`;
+  return schemeless ? `${hostPort}${sp.path}` : `${sp.scheme}://${hostPort}${sp.path}`;
 }
 
 /** Effective INSECURE setting of one signal. */
@@ -280,11 +334,11 @@ function resolveEndpoint(
   const fail = (kind: 'invalid' | 'unsupported', message: string): Parsed => {
     // An invalid value is never rendered, not even partly (D1 ruling, 2026-10-29); an
     // unsupported scheme parsed, so its redacted form is shown.
-    const shown = kind === 'invalid' ? UNPARSEABLE_URL : redactURL(src.raw);
-    if (src.fromCode) throw new TypeError(`setup(): ${src.variable} ${message}: ${JSON.stringify(shown)}`);
+    const failShown = kind === 'invalid' ? UNPARSEABLE_URL : redactURL(src.raw, protocol);
+    if (src.fromCode) throw new TypeError(`setup(): ${src.variable} ${message}: ${JSON.stringify(failShown)}`);
     rep.warn(`${message}; ignored`, {
       variable: src.variable,
-      value: shown,
+      value: failShown,
       using: kind === 'unsupported' ? 'no OTLP exporter for this signal' : 'next configured endpoint, else none',
     });
     return { kind };
@@ -303,20 +357,25 @@ function resolveEndpoint(
   if (sp === undefined) return fail('invalid', 'invalid endpoint');
   const scheme = sp.scheme;
   if (scheme !== 'http' && scheme !== 'https') return fail('unsupported', MSG_UNSUPPORTED);
-  const checked = checkHost(text, sp);
+  const checked = checkHost(sp);
   if (!checked.ok) {
     return fail('invalid', checked.zoneId ? 'IPv6 zone ids are not supported in endpoint URLs' : 'invalid endpoint');
   }
+  // The Go and Python exporters cannot send it as written (D1 ruling, A17).
+  if (protocol === PROTOCOL_HTTP && BAD_PATH_ESCAPE.test(sp.path)) return fail('invalid', 'endpoint path has an invalid percent-escape');
   let port = sp.port;
   const hostWith = (p: string): string => (p === '' ? checked.hostname : `${checked.hostname}:${p}`);
+  // The scheme only when the path or query holds an '@' (R8, A17 final round).
+  const shownURL = (rest: string): string => (pathHasAt(sp) ? `${scheme}://` : `${scheme}://${rest}`);
+  const shown = redactURL(raw, protocol);
   if (schemeless) {
     if (port === '') port = protocol === PROTOCOL_HTTP ? DEFAULT_HTTP_PORT : DEFAULT_GRPC_PORT;
     if (protocol === PROTOCOL_HTTP) {
       // Deprecation (D8): once per process, also from an inactive copy.
       reportOnce(`deprecated:schemeless:${src.variable}`, MSG_SCHEMELESS_HTTP, {
         variable: src.variable,
-        value: redactURL(raw),
-        using: `${scheme}://${hostWith(port)}${diagnosticPath(sp.path, sp.query)}`,
+        value: shown,
+        using: shownURL(`${hostWith(port)}${sp.path}`),
       });
     }
   } else {
@@ -335,8 +394,8 @@ function resolveEndpoint(
       port = DEFAULT_GRPC_PORT;
       rep.warn('gRPC endpoint has no port; using 4317 — set an explicit port (e.g. :4317, or :443 behind an ingress)', {
         variable: src.variable,
-        value: redactURL(raw),
-        using: `${scheme}://${hostWith(port)}`,
+        value: shown,
+        using: shownURL(hostWith(port)),
       });
     }
   }
@@ -352,12 +411,11 @@ function resolveEndpoint(
     // An empty '?' or '#' counts too (D1 ruling, 2026-10-29).
     rep.warn('endpoint userinfo/query is not supported and was removed; put credentials in OTEL_EXPORTER_OTLP_HEADERS', {
       variable: src.variable,
-      value: redactURL(raw),
-      // The URL without its path when the path or query holds an '@' (R8).
-      using: diagnosticPath(sp.path, sp.query) === sp.path ? resolvedUrl : `${scheme}://${host}`,
+      value: shown,
+      using: shownURL(`${host}${path}`),
     });
   }
-  if (`${sp.path}${sp.query ?? ''}`.includes('@')) {
+  if (pathHasAt(sp)) {
     // Used as parsed; the variable only, the value may hold the credentials (D1 ruling).
     rep.warn("endpoint path contains '@' — misplaced credentials?", { variable: src.variable });
   }
@@ -501,7 +559,7 @@ export function checkCodeOtlp(code: OtlpCodeOptions): void {
     code.insecure === undefined ? undefined : { value: code.insecure, variable: 'insecure', fromCode: true };
   for (const signal of SIGNALS) {
     const src = sourcesFor(signal, code).find((s) => s.fromCode && s.raw !== '');
-    // The protocol does not change whether a code value is usable.
-    if (src !== undefined) resolveEndpoint(src, signal, PROTOCOL_GRPC, insecure, SILENT);
+    // The protocol decides whether an invalid path escape is fatal (http/protobuf only).
+    if (src !== undefined) resolveEndpoint(src, signal, protocolFor(signal, src.raw, code, SILENT).protocol, insecure, SILENT);
   }
 }

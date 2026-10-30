@@ -589,10 +589,37 @@ and passes them to the exporters explicitly. Certificates
   credentials in `OTEL_EXPORTER_OTLP_HEADERS`, e.g.
   `Authorization=Basic%20<base64>`.
 - `unix://`, `ftp://` or `scheme:/path` values leave the signal unconfigured.
-- An unparseable value (including a control character inside the URL) is shown
-  as `<unparseable URL>` and falls back. Surrounding whitespace is trimmed.
-- IPv6 literals work (`http://[::1]:4318`). Zone ids work over gRPC only; over
-  `http/protobuf` urllib3 cannot resolve them (warned).
+- Values are split by RFC 3986 (the authority ends at `/`, `?` or `#`). An
+  unparseable value is always shown as `<unparseable URL>` (never partly) and
+  falls back; in code it raises. Unparseable: a control character or a
+  backslash anywhere, an empty host (`http://:4317`, `http:///x`, `//h:4317`),
+  a port outside 1–65535 (port `0` included), a space, `%` or IPv6 zone id in
+  the host, a host byte outside the RFC 3986 reg-name set (`a{b`), a host
+  ending in a number that is not a canonical dotted quad (`127.1`,
+  `1.2.3.256`), a non-ASCII host that fails IDNA, and — for `http/protobuf` —
+  an invalid `%` escape in the path (`/%zz`). Surrounding whitespace is trimmed.
+- Hosts are lowercased; non-ASCII hosts are converted to punycode with UTS #46
+  non-transitional processing and IDNA 2008 validation (the `idna` package):
+  `bücher.de` → `xn--bcher-kva.de`, `straße.de` → `xn--strae-oqa.de`. IDNA 2008
+  rejects some hosts Go and Node.js accept (emoji, `_` next to non-ASCII text,
+  labels over 63 characters). Ports compare numerically, whatever their length
+  (`04318` = 4318). Valid path escapes are kept verbatim (`/a%2Fb` is sent as
+  `/a%2Fb`).
+- An empty `?` or `#` is removed with the userinfo/query warning. An `@` (or
+  `%40`) in the path or query is warned ("misplaced credentials?", variable name
+  only) and the endpoint is used as written; diagnostics never show such a
+  path. An opaque value (`unix:/…`) is shown as its scheme only (`unix:`).
+- IPv6 literals work (`http://[::1]:4318`); zone ids (`[fe80::1%eth0]`) are
+  invalid.
+- Kubernetes: a host that ends in a number must be a canonical dotted quad, so
+  a short name in an all-digit namespace (`collector.2024`) is **invalid** —
+  use the FQDN (`collector.2024.svc.cluster.local`) or `collector.2024.svc`.
+  One trailing `.` is fine (`10.0.0.1.`).
+- With an `@` (or `%40`) in the path or query, diagnostics show only
+  `<scheme>://` (`<schemeless endpoint>` for a schemeless value).
+- An unparseable `OTEL_EXPORTER_OTLP[_<SIGNAL>]_INSECURE` warns even when no
+  endpoint is configured. An empty code `otlp_protocol` or `compression` is
+  "not set": the environment, then the default, applies.
 
 ### Protocol
 

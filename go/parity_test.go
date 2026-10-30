@@ -620,6 +620,7 @@ type wireRecord struct {
 	TLS      bool              `json:"tls"`
 	Port     string            `json:"port"`
 	Path     string            `json:"path"`
+	RawPath  string            `json:"raw_path"`
 	Encoding string            `json:"encoding"`
 	Timeout  string            `json:"timeout"`
 	Headers  map[string]string `json:"headers"`
@@ -672,7 +673,7 @@ func runExport(t *testing.T, opts []Option, recv *fakeReceiver) map[string]any {
 		for k, v := range r.Headers {
 			hdrs[k] = v
 		}
-		m := map[string]any{"proto": r.Proto, "tls": r.TLS, "port": float64(port), "path": r.Path, "encoding": r.Encoding, "headers": hdrs}
+		m := map[string]any{"proto": r.Proto, "tls": r.TLS, "port": float64(port), "path": r.Path, "raw_path": r.RawPath, "encoding": r.Encoding, "headers": hdrs}
 		if ms, ok := grpcTimeoutMs(r.Timeout); ok {
 			m["timeout_ms"] = ms
 		}

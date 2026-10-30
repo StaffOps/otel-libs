@@ -101,6 +101,7 @@ The custom-signals example runs against the same Collector; see
 |---|---|
 | `test_config.py` | resolution contract (design D1): service name and environment precedence, env values that warn and fall back, `OTEL_*_EXPORTER`, per-signal "OTLP configured", protocol precedence, code validation, URL redaction |
 | `test_shims.py` | what the helper passes to the SDK exporters: absolute vs code endpoints, schemeless, portless gRPC, TLS conflicts, timeout ms → s, gzip default, headers, semconv default, `OTEL_PROPAGATORS`, `service.instance.id`, diagnostics channel |
+| `test_endpoint_a17.py` | A17 endpoint rulings: RFC 3986 split, port range and leading zeros, host characters and zone ids, IDN punycode, `<unparseable URL>` rendering, `@` in the path, empty query/fragment, INSECURE without an endpoint, empty code `otlp_protocol` / `compression` |
 | `test_sampler_precedence.py` | sampler precedence and decisions (ADR-002) |
 | `test_health_a7.py` | health sampler, `health_paths`, `instrument_fastapi`, sync gRPC, client exclusion |
 | `test_logging_a5.py` | handler selection, stdout JSON fallback, stderr diagnostics, uvicorn loggers, duplicate handler removal, level rules |
