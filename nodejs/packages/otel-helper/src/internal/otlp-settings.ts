@@ -10,7 +10,7 @@
  * only (R8).
  */
 import { truncateValue } from './diagnostics';
-import { trimWS, type Warn } from './env';
+import { asciiLower, PLAIN_DECIMAL, trimWS, type Warn } from './env';
 
 /** The three OTLP signals. */
 export type Signal = 'traces' | 'metrics' | 'logs';
@@ -31,8 +31,6 @@ export const MIN_TIMEOUT_MS = 1;
 /** 24 h: the clamp of the contract, and below `setTimeout`'s 2^31-1 ms limit. */
 export const MAX_TIMEOUT_MS = 86_400_000;
 
-// Plain decimal milliseconds: no sign, exponent, hex, underscore or bare dot (D1 ruling).
-const DECIMAL_MS = /^[0-9]+(\.[0-9]+)?$/;
 // The intersection of HTTP tokens and gRPC metadata keys (D1 ruling).
 const HEADER_KEY = /^[A-Za-z0-9._-]+$/;
 const BAD_ESCAPE = /%(?![0-9A-Fa-f]{2})/;
@@ -150,7 +148,7 @@ export function resolveTimeout(signal: Signal, codeMs: number | undefined, warn:
     const raw = trimWS(process.env[variable] ?? '');
     if (raw === '') continue;
     const ms = Number(raw);
-    if (!DECIMAL_MS.test(raw) || !Number.isFinite(ms) || ms <= 0) {
+    if (!PLAIN_DECIMAL.test(raw) || !Number.isFinite(ms) || ms <= 0) {
       warn('invalid timeout (positive decimal milliseconds)', { variable, value: truncateValue(raw), using: 'next level, else 10000' });
       continue;
     }
@@ -170,7 +168,7 @@ export function resolveTimeout(signal: Signal, codeMs: number | undefined, warn:
 /** Normalized code compression; `undefined` when not set (an empty string is not set, D1 ruling). */
 export function codeCompression(value: string | undefined): string | undefined {
   if (value === undefined) return undefined;
-  const c = trimWS(value).toLowerCase();
+  const c = asciiLower(trimWS(value));
   return c === '' ? undefined : c;
 }
 
@@ -186,7 +184,7 @@ export function resolveCompression(signal: Signal, code: string | undefined, war
   for (const variable of [otlpEnv(signal, 'COMPRESSION'), otlpEnv(undefined, 'COMPRESSION')]) {
     const raw = trimWS(process.env[variable] ?? '');
     if (raw === '') continue;
-    const value = raw.toLowerCase();
+    const value = asciiLower(raw);
     if ((COMPRESSIONS as readonly string[]).includes(value)) return value as OtlpCompression;
     warn('unsupported compression (gzip or none)', { variable, value: truncateValue(raw), using: 'next level, else gzip' });
   }

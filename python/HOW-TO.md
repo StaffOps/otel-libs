@@ -400,6 +400,12 @@ Or in code (any `sample_ratio`, 1.0 included, builds `ParentBased(TraceIdRatioBa
 setup_telemetry(TelemetryOptions(sample_ratio=0.5))
 ```
 
+With services in several languages, use `parentbased_traceidratio`, not bare
+`traceidratio`: the SDKs (Node.js and .NET in particular) derive the
+ratio decision from the trace id differently, so
+bare ratio decisions are not consistent across one trace; the parent-based
+sampler lets the root service decide for the whole trace.
+
 - Sampler names are the spec names, case-insensitive. `jaeger_remote`,
   `parentbased_jaeger_remote` and `xray` are not supported by the helper
   (warned, default used).

@@ -229,7 +229,7 @@ func TestHealthSamplerDescription(t *testing.T) {
 }
 
 func TestNormalizeHealthPath(t *testing.T) {
-	for in, want := range map[string]string{"/": "/", "/A/": "/a", "/a//?q": "/a", "/a#f": "/a", "": ""} {
+	for in, want := range map[string]string{"/": "/", "/A/": "/a", "/a//?q": "/a", "/a#f": "/a", "": "", "/KUBE": "/kube", "/\u212Aube": "/\u212Aube"} {
 		if got := normalizeHealthPath(in); got != want {
 			t.Errorf("normalizeHealthPath(%q) = %q, want %q", in, got, want)
 		}

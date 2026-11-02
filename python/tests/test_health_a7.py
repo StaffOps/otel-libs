@@ -385,3 +385,14 @@ class TestGrpcClientAndExcludedServices:
     def test_sync_client_health_not_traced(self):
         spans = TestSyncGrpc()._exercise("/grpc.health.v1.Health/Check")
         assert list(spans) == []
+
+
+def test_a20_health_path_folds_ascii_only():
+    # A20 (design D1 row "ASCII case folding"): U+212A (Kelvin sign) is not "k".
+    from staffops_otel_helper.tracing import normalize_health_path
+
+    assert normalize_health_path("/KUBE") == "/kube"
+    assert normalize_health_path("/\u212aube") == "/\u212aube"
+    custom = HealthCheckSampler(ALWAYS_ON, ["/kube"])
+    assert custom._is_health("GET", {"url.path": "/KUBE"})
+    assert not custom._is_health("GET", {"url.path": "/\u212aube"})

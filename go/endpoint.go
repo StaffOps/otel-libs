@@ -265,10 +265,10 @@ func (o *Options) envBoolOnce(key string) (value, set bool) {
 	if raw == "" {
 		return false, false
 	}
-	if v := strings.ToLower(raw); v != "true" && v != "false" {
+	if v := asciiLower(raw); v != "true" && v != "false" {
 		o.warnOnce(endpointWarning{msg: "unparseable boolean", variable: key, value: raw, using: "false"})
 	}
-	return strings.EqualFold(raw, "true"), true
+	return asciiLower(raw) == "true", true
 }
 
 // export returns (and caches) the OTLP decision for a signal.
@@ -378,7 +378,7 @@ func (o *Options) resolveExport(signal string) (*signalExport, error) {
 // case-insensitive gzip/none; anything else warns and falls back to the next
 // level.
 func (o *Options) resolveCompression(signal string) string {
-	if c := strings.ToLower(trimWS(o.Compression)); c != "" {
+	if c := asciiLower(trimWS(o.Compression)); c != "" {
 		return c // validated in validate()
 	}
 	for _, key := range []string{otlpEnv(signal, "COMPRESSION"), otlpEnv("", "COMPRESSION")} {
@@ -386,7 +386,7 @@ func (o *Options) resolveCompression(signal string) string {
 		if raw == "" {
 			continue
 		}
-		switch v := strings.ToLower(raw); v {
+		switch v := asciiLower(raw); v {
 		case CompressionGzip, CompressionNone:
 			return v
 		default:
@@ -518,14 +518,14 @@ func parseHeaders(raw string) (headers map[string]string, skipped, literal []int
 // port-4318 inference on that signal's endpoint (D1.a) > grpc. An invalid code
 // value is rejected by validate(); invalid env values warn and are skipped.
 func (o *Options) signalProtocol(signal, endpoint string) string {
-	if p := strings.ToLower(trimWS(o.OtlpProtocol)); p != "" {
+	if p := asciiLower(trimWS(o.OtlpProtocol)); p != "" {
 		if p == ProtocolHTTP {
 			return ProtocolHTTP
 		}
 		return ProtocolGRPC
 	}
 	for _, key := range []string{otlpEnv(signal, "PROTOCOL"), EnvOtlpProtocol} {
-		v := strings.ToLower(trimWS(os.Getenv(key)))
+		v := asciiLower(trimWS(os.Getenv(key)))
 		switch v {
 		case "":
 			continue

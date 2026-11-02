@@ -470,11 +470,23 @@ class TestValidationRound:
         os.environ["SERVICE_NAME"] = "legacy"
         assert _resolved()._resource_overrides["service.name"] == "legacy"
 
-    def test_env_ratio_clamped_with_warning(self, caplog):
+    def test_env_ratio_out_of_range_warned_and_ignored(self, caplog):
+        # A20 (design D1 row "Deprecated sample ratio"): not clamped; the default sampler applies.
         os.environ["OTEL_HELPER_SAMPLE_RATIO"] = "2"
         with caplog.at_level(logging.WARNING, logger="staffops_otel_helper"):
-            assert _resolved(service_name="s").resolved.sample_ratio == 1.0
-        assert "outside [0, 1]" in caplog.text
+            resolved = _resolved(service_name="s").resolved
+        assert resolved.sample_ratio == 1.0 and resolved.sample_ratio_set is False
+        assert "sample ratio is not a number in [0, 1]; using=parentbased_always_on" in caplog.text
+
+    def test_a20_ascii_case_folding_of_env_enums(self, caplog):
+        # A20 (design D1 row "ASCII case folding"): only A-Z fold; U+212A (Kelvin) is not "k".
+        from staffops_otel_helper.config import ascii_lower, ascii_upper
+
+        assert ascii_lower("PARENTBASED_TRACE\u0130DRATIO") == "parentbased_trace\u0130dratio"
+        assert ascii_upper("prd\u0131") == "PRD\u0131"
+        assert ascii_lower("\u212a") == "\u212a"
+        os.environ["OTEL_SDK_DISABLED"] = "TRUE"
+        assert _resolved(service_name="s").sdk_disabled is True
 
     def test_env_ratio_nan_ignored(self, caplog):
         os.environ["OTEL_HELPER_SAMPLE_RATIO"] = "nan"

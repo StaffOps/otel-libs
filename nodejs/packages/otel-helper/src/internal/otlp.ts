@@ -13,7 +13,7 @@
 import { isIPv6 } from 'node:net';
 import { domainToASCII } from 'node:url';
 import { reportOnce, truncateValue, type DiagnosticValue } from './diagnostics';
-import { envBool, envValue, hasControl, trimWS, type Warn } from './env';
+import { asciiLower, envBool, envValue, hasControl, trimWS, type Warn } from './env';
 import {
   checkCodeSettings,
   otlpEnv,
@@ -463,7 +463,7 @@ interface ProtocolChoice {
 /** Normalized code protocol, `undefined` when not set (an empty string is not set, D1 ruling). */
 function codeProtocol(code: OtlpCodeOptions): OtlpProtocol | undefined {
   if (code.otlpProtocol === undefined) return undefined;
-  const p = trimWS(code.otlpProtocol).toLowerCase();
+  const p = asciiLower(trimWS(code.otlpProtocol));
   return p === '' ? undefined : (p as OtlpProtocol);
 }
 
@@ -477,7 +477,8 @@ function protocolFor(signal: Signal, raw: string, code: OtlpCodeOptions, rep: Re
   const fromCode = codeProtocol(code);
   if (fromCode !== undefined) return { protocol: fromCode, inferred: false };
   for (const variable of [otlpEnv(signal, 'PROTOCOL'), ENV_PROTOCOL]) {
-    const value = envValue(variable)?.toLowerCase();
+    const env = envValue(variable);
+    const value = env === undefined ? undefined : asciiLower(env);
     if (value === undefined) continue;
     if (PROTOCOLS.includes(value)) return { protocol: value as OtlpProtocol, inferred: false };
     const message =

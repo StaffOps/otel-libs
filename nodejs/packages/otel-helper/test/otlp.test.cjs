@@ -540,11 +540,11 @@ test('R8 code: only the endpoint each signal uses is checked; a schemeless code 
   assert.equal(fresh({}, { otelEndpoint: 'collector:4317', insecure: false }).traces.url, 'https://collector:4317');
 });
 
-test('Resolved keeps its B3 fields and adds otlp (B4a) and the signal selection (B4c)', () => {
+test('Resolved keeps its B3 fields and adds otlp (B4a), the signal selection (B4c) and the sampler/propagators/health paths (B5)', () => {
   const resolved = helper.setup({ otelEndpoint: 'http://c:4317' });
   assert.deepEqual(Object.keys(resolved).sort(), [
-    'debug', 'environment', 'logLevel', 'logsExporters', 'metricExportIntervalMs', 'metricExporters', 'otlp', 'sdkDisabled',
-    'serviceInstanceId', 'serviceName', 'tracesExporters',
+    'debug', 'environment', 'healthPaths', 'logLevel', 'logsExporters', 'metricExportIntervalMs', 'metricExporters', 'otlp',
+    'propagators', 'sampler', 'sdkDisabled', 'serviceInstanceId', 'serviceName', 'tracesExporters',
   ]);
   assert.ok(Object.isFrozen(resolved));
 });
@@ -598,7 +598,7 @@ test('globals: a registry of another @opentelemetry/api version is foreign — r
     helper.setup({ serviceName: 'svc', environment: 'DEV' });
     console.log(JSON.stringify(Object.keys(globalThis[key]).sort()));
   `);
-  assert.deepEqual(lastJson(res), ['context', 'diag', 'logs', 'metrics', 'trace', 'version']);
+  assert.deepEqual(lastJson(res), ['context', 'diag', 'logs', 'metrics', 'propagation', 'trace', 'version']);
 });
 
 test('globals: a registration the API refuses anyway is reported (context manager, Tracer/Meter/LoggerProvider)', () => {

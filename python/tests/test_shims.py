@@ -559,6 +559,30 @@ class TestPropagators:
             assert self._names() == ["TraceContextTextMapPropagator"]
         assert "OTEL_PROPAGATORS" in caplog.text and "'b3'" in caplog.text and "'xray'" in caplog.text
 
+    def test_a20_every_token_scanned_and_none_combined_warned(self, caplog):
+        # A20 (design D1 row "Propagator diagnostics"): no early return at "none".
+        os.environ["OTEL_PROPAGATORS"] = "tracecontext,none,b3"
+        with caplog.at_level(logging.WARNING, logger="staffops_otel_helper"):
+            assert self._names() == []
+        assert "propagator not supported by the Python helper, ignored: variable=OTEL_PROPAGATORS value='b3' " \
+            "using=none" in caplog.text
+        assert '"none" combined with other propagators; propagation disabled' in caplog.text
+
+    def test_a20_per_token_warnings_name_the_effective_list(self, caplog):
+        os.environ["OTEL_PROPAGATORS"] = "foo,baggage,b3"
+        with caplog.at_level(logging.WARNING, logger="staffops_otel_helper"):
+            assert self._names() == ["W3CBaggagePropagator"]
+        lines = [r.getMessage() for r in caplog.records]
+        assert any("unknown propagator, ignored" in m and "value='foo' using=baggage" in m for m in lines)
+        assert any("not supported" in m and "value='b3' using=baggage" in m for m in lines)
+        assert len(lines) == 2
+
+    def test_a20_ascii_case_folding(self, caplog):
+        os.environ["OTEL_PROPAGATORS"] = "BAGGAGE,tracecontext\u212a"
+        with caplog.at_level(logging.WARNING, logger="staffops_otel_helper"):
+            assert self._names() == ["W3CBaggagePropagator"]
+        assert "unknown propagator" in caplog.text
+
     def test_only_unsupported_keeps_the_default(self):
         os.environ["OTEL_PROPAGATORS"] = "jaeger"
         assert self._names() == ["TraceContextTextMapPropagator", "W3CBaggagePropagator"]

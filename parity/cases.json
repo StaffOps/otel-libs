@@ -2841,7 +2841,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B5-sampler"
+        "nodejs": "pass"
       }
     },
     {
@@ -2862,7 +2862,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B5-sampler"
+        "nodejs": "pass"
       }
     },
     {
@@ -2883,7 +2883,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B5-sampler"
+        "nodejs": "pass"
       }
     },
     {
@@ -2904,7 +2904,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B5-sampler"
+        "nodejs": "pass"
       }
     },
     {
@@ -2925,7 +2925,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B5-sampler"
+        "nodejs": "pass"
       }
     },
     {
@@ -2947,7 +2947,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B5-sampler"
+        "nodejs": "pass"
       }
     },
     {
@@ -2969,7 +2969,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B5-sampler"
+        "nodejs": "pass"
       }
     },
     {
@@ -2992,7 +2992,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B5-sampler"
+        "nodejs": "pass"
       }
     },
     {
@@ -3015,7 +3015,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B5-sampler"
+        "nodejs": "pass"
       }
     },
     {
@@ -3040,7 +3040,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B5-sampler"
+        "nodejs": "pass"
       }
     },
     {
@@ -3062,7 +3062,59 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B5-sampler"
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "sampler.a20_sample_ratio_alias_out_of_range_ignored",
+      "kind": "sampler",
+      "requirement": "R6/D1 Deprecated sample ratio (A20)",
+      "note": "A20 (2026-10-30): an out-of-range OTEL_HELPER_SAMPLE_RATIO is warned and ignored (not clamped), with one message in every language.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_HELPER_SAMPLE_RATIO": "2"
+      },
+      "code": {},
+      "input": {
+        "scenario": "root"
+      },
+      "expect": {
+        "sampled": true,
+        "warning": [
+          "sample ratio is not a number in [0, 1]",
+          "using=parentbased_always_on"
+        ]
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "sampler.a20_non_ascii_name_falls_back",
+      "kind": "sampler",
+      "requirement": "R6/D1 ASCII case folding (A20)",
+      "note": "A20 (2026-10-30): env enum values fold ASCII only; U+0130 is not 'i', so the name is unknown: warned, default sampler (with ARG=0 an accepted traceidratio would drop the root).",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_TRACES_SAMPLER": "PARENTBASED_TRACE\u0130DRATIO",
+        "OTEL_TRACES_SAMPLER_ARG": "0"
+      },
+      "code": {},
+      "input": {
+        "scenario": "root"
+      },
+      "expect": {
+        "sampled": true,
+        "warning": "OTEL_TRACES_SAMPLER"
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "pass"
       }
     },
     {
@@ -3086,7 +3138,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B5-debug-marker"
+        "nodejs": "pass"
       }
     },
     {
@@ -3110,7 +3162,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B5-debug-marker"
+        "nodejs": "pass"
       }
     },
     {
@@ -3136,7 +3188,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B5-debug-marker"
+        "nodejs": "pass"
       }
     },
     {
@@ -3161,7 +3213,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B5-debug-marker"
+        "nodejs": "pass"
       }
     },
     {
@@ -3186,7 +3238,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B5-debug-marker"
+        "nodejs": "pass"
       }
     },
     {
@@ -3207,7 +3259,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B5-propagators"
+        "nodejs": "pass"
       }
     },
     {
@@ -3228,7 +3280,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B5-propagators"
+        "nodejs": "pass"
       }
     },
     {
@@ -3794,7 +3846,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B5-propagators"
+        "nodejs": "pass"
       }
     },
     {
@@ -4856,14 +4908,17 @@
         "sample_ratio": 1.5
       },
       "expect": {
-        "error": "sample_ratio"
+        "error": {
+          "regex": "(sample_ratio|sampleRatio).*1\\.5"
+        }
       },
       "status": {
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B5-sampler"
-      }
+        "nodejs": "pass"
+      },
+      "note": "R8: the error names the option in each language's spelling (Go/Python sample_ratio, Node sampleRatio) and the value (A20 fix round, 2026-10-30)."
     },
     {
       "id": "propagation.env_mixed_case",
@@ -4888,7 +4943,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B5-propagators"
+        "nodejs": "pass"
       }
     },
     {
@@ -4914,7 +4969,107 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B5-propagators"
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "propagation.env_none_disables",
+      "kind": "propagation",
+      "requirement": "R8/D1 propagators row",
+      "note": "B5 (2026-10-30): OTEL_PROPAGATORS=none installs a propagator that injects nothing.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_PROPAGATORS": "none"
+      },
+      "code": {},
+      "expect": {
+        "error": {
+          "absent": true
+        },
+        "headers": []
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "propagation.a20_none_combined_warns_each_token",
+      "kind": "propagation",
+      "requirement": "R8/D1 Propagator diagnostics (A20)",
+      "note": "A20 (2026-10-30): every token is scanned; \"none\" with other values warns and wins, and each other skipped token still warns.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_PROPAGATORS": "tracecontext,none,b3"
+      },
+      "code": {},
+      "expect": {
+        "headers": [],
+        "warning": [
+          "combined with other propagators; propagation disabled",
+          "propagator not supported"
+        ]
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "propagation.a20_per_token_warnings",
+      "kind": "propagation",
+      "requirement": "R8/D1 Propagator diagnostics (A20)",
+      "note": "A20 (2026-10-30): one warning per skipped token, split into \"not supported\" (spec values the helper does not link) and \"unknown\".",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_PROPAGATORS": "b3,bogus"
+      },
+      "code": {},
+      "expect": {
+        "headers": [
+          "baggage",
+          "traceparent"
+        ],
+        "warning_count": {
+          "propagator not supported": 1,
+          "unknown propagator, ignored": 1
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "propagation.a20_warning_names_effective_list",
+      "kind": "propagation",
+      "requirement": "R8/D1 Propagator diagnostics (A20)",
+      "note": "A20 (2026-10-30): the using field names the effective list, computed after parsing.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_PROPAGATORS": "foo,baggage"
+      },
+      "code": {},
+      "expect": {
+        "headers": [
+          "baggage"
+        ],
+        "warning": [
+          "unknown propagator, ignored",
+          "using=baggage"
+        ]
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "pass"
       }
     },
     {
@@ -7534,7 +7689,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B5-sampler"
+        "nodejs": "pass"
       }
     },
     {
@@ -7559,7 +7714,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B5-sampler"
+        "nodejs": "pass"
       }
     },
     {
@@ -7584,7 +7739,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B5-sampler"
+        "nodejs": "pass"
       }
     },
     {
@@ -8570,7 +8725,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B5-propagators"
+        "nodejs": "pass"
       }
     }
   ]

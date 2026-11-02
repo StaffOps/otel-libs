@@ -68,13 +68,13 @@ func newHealthSampler(inner sdktrace.Sampler, paths []string) sdktrace.Sampler {
 	return healthSampler{inner: inner, paths: healthPathSet(paths)}
 }
 
-// normalizeHealthPath strips the query, lowercases and drops trailing slashes
+// normalizeHealthPath strips the query, lowercases A-Z and drops trailing slashes
 // ("/" stays "/"), so "/Health/?x=1" matches "/health".
 func normalizeHealthPath(p string) string {
 	if i := strings.IndexAny(p, "?#"); i >= 0 {
 		p = p[:i]
 	}
-	p = strings.ToLower(p)
+	p = asciiLower(p) // ASCII only (design D1 row "ASCII case folding", A20)
 	for len(p) > 1 && strings.HasSuffix(p, "/") {
 		p = p[:len(p)-1]
 	}

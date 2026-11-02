@@ -25,7 +25,7 @@ from opentelemetry.sdk.resources import Resource
 
 from staffops_otel_helper import _console
 from staffops_otel_helper._exporters import build_otlp_exporter
-from staffops_otel_helper.config import TelemetryOptions, _env, get_default_log_level
+from staffops_otel_helper.config import TelemetryOptions, _env, ascii_lower, get_default_log_level
 
 # Upstream variable (opentelemetry-instrumentation-logging): code.file.path,
 # code.function.name and code.line.number on every record. Default false, as upstream.
@@ -118,7 +118,7 @@ def build_logging(resource: Resource, options: TelemetryOptions):
 
             provider.add_log_record_processor(BatchLogRecordProcessor(ConsoleLogRecordExporter(),
                                                                       **options.batch_size_override("OTEL_BLRP")))
-        code_attributes = (_env(ENV_LOG_CODE_ATTRIBUTES) or "").lower() == "true"
+        code_attributes = ascii_lower(_env(ENV_LOG_CODE_ATTRIBUTES) or "") == "true"
         handler = HelperLogHandler(level, provider, code_attributes)
     except BaseException:
         provider.shutdown()

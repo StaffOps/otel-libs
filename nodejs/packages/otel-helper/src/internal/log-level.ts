@@ -1,7 +1,7 @@
 /**
  * Deployment environment and the log level it implies (contract R4, ADR-003).
  */
-import { trimWS } from './env';
+import { asciiUpper, trimWS } from './env';
 
 /**
  * The four behavior-switching values of `deployment.environment.name`. Any
@@ -20,7 +20,7 @@ const KNOWN: ReadonlySet<string> = new Set<DeploymentEnvironment>(['LOCAL', 'DEV
 /** The known environment `value` names (trimmed, case-insensitive), else `undefined`. */
 export function knownEnvironment(value: string | undefined): DeploymentEnvironment | undefined {
   if (value === undefined) return undefined;
-  const upper = trimWS(value).toUpperCase();
+  const upper = asciiUpper(trimWS(value));
   return KNOWN.has(upper) ? (upper as DeploymentEnvironment) : undefined;
 }
 

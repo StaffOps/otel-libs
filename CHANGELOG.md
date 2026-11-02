@@ -174,6 +174,13 @@ Runtime and operations:
     and `OTEL_EXPERIMENTAL_CONFIG_FILE` are not supported: they are now
     warned once and ignored. Env values echoed in warnings are cut to 64
     characters; `OTEL_SDK_DISABLED=true` logs one INFO line.
+22. **BREAKING — ASCII-only case folding (design D1 row "ASCII case
+    folding" of 2026-10-30, A20).** Env enum values (sampler and exporter
+    names, propagators, OTLP protocol, compression, booleans, known
+    environments) are compared ASCII case-insensitively. A non-ASCII
+    look-alike such as `PARENTBASED_TRACEİDRATIO` (U+0130), which
+    `strings.ToLower` used to accept silently, now warns and falls back to
+    the default: spell these values in ASCII.
 
 ### Migration guide 0.2 → 0.3 — Python
 
@@ -443,6 +450,18 @@ by Operation" panel groups by `span_name` and shows the new Go HTTP span names
 after the upgrade.
 
 ### Go — detailed changes
+
+- **BREAKING (narrow) — A20 rulings from the Node B5 review (design D1 rows of
+  2026-10-30: "Propagator diagnostics", "Deprecated sample ratio", "ASCII case
+  folding").** Environment enum values (sampler, exporter and propagator
+  names, OTLP protocol, compression, booleans, known environments) fold ASCII
+  only: `asciiLower`/`asciiUpper` replace `strings.ToLower`, `ToUpper` and
+  `EqualFold`, so a non-ASCII spelling such as `PARENTBASED_TRACEİDRATIO`
+  (U+0130) or `falſe` (U+017F) is now unknown and warned instead of accepted
+  silently; health-path matching folds ASCII only too (`/KUBE` no longer matches `/kube`). Diagnostics only: `OTEL_PROPAGATORS` warnings name the effective
+  list as `using` (`foo,baggage` → `using=baggage`) and `none` with an
+  unsupported token also warns; an invalid `OTEL_HELPER_SAMPLE_RATIO` warns
+  with `using=parentbased_always_on` (was `1.0`; same sampler).
 
 - **BREAKING — A19 rulings from the Node B4c work (design D1 rows of
   2026-10-29: "Deprecated `OTEL_HELPER_DISABLED_SIGNALS`", "Exporter alias
@@ -816,6 +835,21 @@ Behavior changes, with migration notes:
   (Apache-2.0). `aws-sdk-go-v2` v1.47.1 → v1.47.5.
 
 ### Python — detailed changes
+
+- **A20 rulings from the Node B5 review (design D1 rows of 2026-10-30).**
+  `OTEL_HELPER_SAMPLE_RATIO` that is not a plain decimal in [0, 1] (`2`,
+  `nan`) is warned `sample ratio is not a number in [0, 1];
+  using=parentbased_always_on` and ignored instead of clamped (the sampler is
+  the same: not breaking). `OTEL_PROPAGATORS`: every token is scanned (no
+  early return at `none`), one warning per skipped token — `propagator not
+  supported by the Python helper, ignored` for `b3`/`b3multi`/`jaeger`/`xray`/
+  `ottrace`, else `unknown propagator, ignored` — with `variable`, `value` and
+  `using` (the effective list), and `none` with other values warns `"none"
+  combined with other propagators; propagation disabled`; the combined
+  "unsupported propagator(s)" line is gone. Env enum values fold ASCII only
+  (`ascii_lower`/`ascii_upper`: `str.lower()` maps U+212A to `k`,
+  `str.upper()` U+0131 to `I`), also for health-path matching and the
+  `OTEL_SEMCONV_STABILITY_OPT_IN` token check.
 
 - **BREAKING — A19 rulings from the Node B4c work (design D1 rows of
   2026-10-29; migration item 22).** `OTEL_METRIC_EXPORT_INTERVAL` is checked
@@ -1673,6 +1707,64 @@ Unsupported instrumentation versions, task A10 (P18):
   ms; clamped"; a reader timeout capped below 1000 ms warns; the parity
   driver maps `disabled_signals`. The six fix-round cases that Node can run
   pass; `propagation.sdk_disabled_propagators_kept` is `skip:B5-propagators`.
+- **Node.js sampler, health sampler, propagators and debug marker (Phase B,
+  task B5; not released).** The helper parses `OTEL_TRACES_SAMPLER` /
+  `OTEL_TRACES_SAMPLER_ARG` itself, as Go and Python do: the six spec names
+  (trimmed, case-insensitive), default `parentbased_always_on`; an unknown
+  name, or `jaeger_remote`/`parentbased_jaeger_remote`/`xray` ("unsupported by
+  this helper"), warns and uses the default; `_ARG` is a plain decimal in
+  [0, 1] (no sign, exponent, hex or NaN), else warned and 1.0. The deprecated
+  `OTEL_HELPER_SAMPLE_RATIO` selects `parentbased_traceidratio` only while
+  `OTEL_TRACES_SAMPLER` is unset; an invalid value warns and is ignored. New
+  code option `sampleRatio` (a number in [0, 1], any value — 1 included —
+  wins over both variables; anything else throws). A health sampler wraps the
+  whole resolved sampler, outside ParentBased (design D-JS7, as Go): SERVER
+  spans with no or a remote parent whose `url.path` (else `http.target`) is a
+  health path — exact, case-insensitive, trailing slash and query ignored — or
+  whose span name is the instrumentation's name of a `grpc.health.v1.Health`
+  method (see the fix round below), and CLIENT spans of that service with any
+  parent, are not recorded, keeping the parent's tracestate. It decides from
+  the span name and start attributes only, so task B6 just feeds it. New
+  option `healthPaths` (ASCII, starts with `/`, no query, fragment or comma;
+  `[]` traces every HTTP path). `OTEL_PROPAGATORS`: `tracecontext`,
+  `baggage`, `none` (trimmed, case-insensitive, empty tokens and duplicates
+  dropped); `b3`/`b3multi`/`jaeger`/`xray`/`ottrace` and unknown values warn
+  and are skipped; nothing supported left = the W3C default; `none` with other
+  values warns and disables propagation. The propagator is installed also
+  under `OTEL_SDK_DISABLED=true` (whose INFO line loses its "until task B5"
+  note); a propagator registered by someone else is kept and reported. Debug
+  mode (`debug` / `OTEL_HELPER_DEBUG_LEVEL`) adds `debug="true"` to spans with
+  no or a remote parent, never from inbound tracestate or baggage. `Resolved`
+  gains `sampler`, `propagators` and `healthPaths`. The 26 `nodejs:
+  skip:B5-…` cases pass; `config.code_sample_ratio_out_of_range_fails` now
+  matches the option name by regex (`[Ss]ample_?[Rr]atio`: Go/Python
+  `sample_ratio`, Node `sampleRatio`); new case
+  `propagation.env_none_disables` (296 in total) passes in Go, Python and
+  Node. The HTTP/gRPC health cases stay `skip:B6-…` (they need the
+  instrumentations). **Fix round (2026-10-30):** gRPC health spans are matched
+  by span name only, in the instrumentation's form
+  `grpc.grpc.health.v1.Health/<method>` — instrumentation-grpc sets `rpc.*`
+  after start, so the `rpc.method` branch is gone, and a user service in
+  package `health.v1` (`grpc.health.v1.Health/<method>`) is kept;
+  `isGrpcHealthMethod` handles full-method values for B6. A propagator
+  registered before `setup()` is kept and reported as `...; the helper keeps
+  it and OTEL_PROPAGATORS is not applied` (Go and Python replace it: design
+  D-JS14); re-setup releases only the helper's own propagator instance; under
+  `OTEL_SDK_DISABLED=true` the sampler variables are not read and the INFO
+  line says `the helper installed no propagator` when none was installed.
+  `healthPaths` errors name `item #N`. Shared `PLAIN_DECIMAL`, `typeName`,
+  `asciiLower`/`asciiUpper` in `env.ts` (also used by health-path
+  normalization). Contract task A20 (same change, Go
+  and Python too): per-token propagator warnings with `using` = the
+  effective list, `none` with other values warned, one ignored-alias message
+  for `OTEL_HELPER_SAMPLE_RATIO`, ASCII-only case folding of env enum values;
+  `config.code_sample_ratio_out_of_range_fails` now expects
+  `(sample_ratio|sampleRatio).*1\.5`; five new cases (301 in total) pass in
+  Go, Python and Node: `propagation.a20_none_combined_warns_each_token`,
+  `propagation.a20_per_token_warnings`,
+  `propagation.a20_warning_names_effective_list`,
+  `sampler.a20_sample_ratio_alias_out_of_range_ignored`,
+  `sampler.a20_non_ascii_name_falls_back`.
 - **Go test hygiene:** `captureDiag` (`go/config_contract_test.go`) no longer
   prints slog timestamps, which made `TestDeprecatedEnvWarnsNamingReplacement`
   (`go/deprecation_test.go`) flaky.

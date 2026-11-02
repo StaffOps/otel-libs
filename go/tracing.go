@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"strings"
 
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
@@ -99,7 +98,7 @@ func buildSampler(opts *Options) sdktrace.Sampler {
 	if raw == "" {
 		return sdktrace.ParentBased(sdktrace.AlwaysSample())
 	}
-	switch name := strings.ToLower(raw); name {
+	switch name := asciiLower(raw); name {
 	case "always_on":
 		return sdktrace.AlwaysSample()
 	case "always_off":

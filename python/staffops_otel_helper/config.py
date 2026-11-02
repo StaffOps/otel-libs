@@ -39,6 +39,22 @@ _log = logging.getLogger("staffops_otel_helper.config")
 # whitespace, which str.strip() would also remove.
 TRIM_CHARS = " \t\n\r\v\f"
 
+_ASCII_LOWER = str.maketrans("ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz")
+_ASCII_UPPER = str.maketrans("abcdefghijklmnopqrstuvwxyz", "ABCDEFGHIJKLMNOPQRSTUVWXYZ")
+
+
+def ascii_lower(value: str) -> str:
+    """Lowercase A-Z only: env enum values are ASCII case-insensitive (design D1 row "ASCII case folding", A20).
+
+    ``str.lower()`` maps U+212A (Kelvin) to ``k``, which would accept a non-ASCII spelling silently.
+    """
+    return value.translate(_ASCII_LOWER)
+
+
+def ascii_upper(value: str) -> str:
+    """Uppercase a-z only (see :func:`ascii_lower`; ``str.upper()`` maps U+0131 to ``I``)."""
+    return value.translate(_ASCII_UPPER)
+
 
 class DeploymentEnvironment(Enum):
     LOCAL = "LOCAL"
@@ -433,7 +449,7 @@ def _parse_environment(value: str) -> DeploymentEnvironment | str:
     """Known values (case-insensitive) map to the enum; anything else is kept verbatim (ADR-003)."""
     stripped = value.strip(TRIM_CHARS)
     try:
-        return DeploymentEnvironment(stripped.upper())
+        return DeploymentEnvironment(ascii_upper(stripped))
     except ValueError:
         return stripped
 
@@ -657,7 +673,7 @@ class TelemetryOptions:
         if self._value("debug_level"):
             return True
         extra = self._value("extra_instrumentation")
-        return name.upper() in [x.strip(TRIM_CHARS).upper() for x in extra.split(",") if x.strip(TRIM_CHARS)]
+        return ascii_upper(name) in [ascii_upper(x.strip(TRIM_CHARS)) for x in extra.split(",") if x.strip(TRIM_CHARS)]
 
     def is_signal_enabled(self, signal: str) -> bool:
         """Check if a signal (traces, metrics, logs) is enabled.
@@ -665,8 +681,8 @@ class TelemetryOptions:
         False also for a signal setup turned off itself (design D13: traces and
         metrics after setup → shutdown → setup in one process).
         """
-        signal = signal.lower()
-        return signal not in self._setup_disabled and signal not in [s.lower() for s in self._value("disabled_signals")]
+        signal = ascii_lower(signal)
+        return signal not in self._setup_disabled and signal not in [ascii_lower(s) for s in self._value("disabled_signals")]
 
     @property
     def sdk_disabled(self) -> bool:
@@ -725,7 +741,7 @@ class TelemetryOptions:
         raw = _env(name)
         if raw is None:
             return None
-        low = raw.lower()
+        low = ascii_lower(raw)
         if low not in ("true", "false"):
             self._warn_once(f"bool:{name}", "[OtelHelper] %s=%r is not a boolean (true/false); "
                             "treating it as false.", name, raw)
@@ -763,12 +779,12 @@ class TelemetryOptions:
         # An empty string is not set (A13 ruling; D1 row of 2026-10-29): env, then default apply.
         check_str("otlp_protocol", self.otlp_protocol)
         if _non_blank(self.otlp_protocol) is not None \
-                and self.otlp_protocol.strip(TRIM_CHARS).lower() not in _VALID_OTLP_PROTOCOLS:
+                and ascii_lower(self.otlp_protocol.strip(TRIM_CHARS)) not in _VALID_OTLP_PROTOCOLS:
             fail("otlp_protocol", f"has unknown OTLP protocol '{self.otlp_protocol}' "
                  f"(Unknown OTLP protocol; valid values: {', '.join(_VALID_OTLP_PROTOCOLS)})")
         check_str("compression", self.compression)
         if _non_blank(self.compression) is not None \
-                and self.compression.strip(TRIM_CHARS).lower() not in _VALID_COMPRESSIONS:
+                and ascii_lower(self.compression.strip(TRIM_CHARS)) not in _VALID_COMPRESSIONS:
             fail("compression", f"'{self.compression}' is not supported (valid: {', '.join(_VALID_COMPRESSIONS)})")
         if self.insecure is not None and not isinstance(self.insecure, bool):
             fail("insecure", f"must be a bool, got {type(self.insecure).__name__}")
@@ -801,10 +817,10 @@ class TelemetryOptions:
             if not isinstance(self.disabled_signals, (list, tuple)) or not all(
                     isinstance(s, str) for s in self.disabled_signals):
                 fail("disabled_signals", "must be a list of strings")
-            unknown = [s for s in self.disabled_signals if s.strip(TRIM_CHARS).lower() not in SIGNALS]
+            unknown = [s for s in self.disabled_signals if ascii_lower(s.strip(TRIM_CHARS)) not in SIGNALS]
             if unknown:
                 fail("disabled_signals", f"has unknown signal(s) {unknown} (valid: {', '.join(SIGNALS)})")
-            self.disabled_signals = [s.strip(TRIM_CHARS).lower() for s in self.disabled_signals]
+            self.disabled_signals = [ascii_lower(s.strip(TRIM_CHARS)) for s in self.disabled_signals]
         if self.disabled_metrics is not None:
             if not isinstance(self.disabled_metrics, (list, tuple)) or not all(
                     isinstance(m, str) for m in self.disabled_metrics):
@@ -909,19 +925,20 @@ class TelemetryOptions:
         self._resolved = True
 
     def _resolve_sample_ratio(self) -> None:
+        """Deprecated ``OTEL_HELPER_SAMPLE_RATIO``: a plain decimal in [0, 1], else warned and ignored.
+
+        Same message and fallback in every language (design D1 row "Deprecated sample ratio", A20):
+        an invalid or out-of-range value is not clamped; the default sampler applies.
+        """
         raw = _env(ENV_SAMPLE_RATIO)
         if raw is None:
             return
-        if not _DECIMAL_RE.match(raw):  # plain decimal only (design D3): no sign/exponent/_ /NaN
-            self._warn_once(ENV_SAMPLE_RATIO, "[OtelHelper] %s=%r is not a number; using 1.0.",
-                            ENV_SAMPLE_RATIO, raw)
+        ratio = float(raw) if _DECIMAL_RE.match(raw) else math.nan  # no sign/exponent/_ /NaN (design D3)
+        if math.isnan(ratio) or not 0.0 <= ratio <= 1.0:
+            self._warn_once(ENV_SAMPLE_RATIO, "[OtelHelper] %s=%r: sample ratio is not a number in [0, 1]; "
+                            "using=parentbased_always_on.", ENV_SAMPLE_RATIO, raw)
             return
-        ratio = float(raw)
-        clamped = max(0.0, min(1.0, ratio))
-        if clamped != ratio:
-            self._warn_once(f"{ENV_SAMPLE_RATIO}:range", "[OtelHelper] %s=%r is outside [0, 1]; using %s.",
-                            ENV_SAMPLE_RATIO, raw, clamped)
-        self._effective["sample_ratio"], self._effective["sample_ratio_set"] = clamped, True
+        self._effective["sample_ratio"], self._effective["sample_ratio_set"] = ratio, True
 
     def _parse_env_resource(self) -> dict[str, str]:
         """``OTEL_RESOURCE_ATTRIBUTES`` as the helper parses it; problems warned once per process, by position only."""
@@ -992,7 +1009,7 @@ class TelemetryOptions:
     def _parse_exporter_list(self, var: str, raw: str, valid: tuple[str, ...]) -> list[str] | None:
         """Parse ``OTEL_<SIGNAL>_EXPORTER``; returns None when no valid entry is left."""
         out: list[str] = []
-        for token in (t.strip(TRIM_CHARS).lower() for t in raw.split(",")):
+        for token in (ascii_lower(t.strip(TRIM_CHARS)) for t in raw.split(",")):
             if not token:
                 continue
             if token == "logging" and "console" in valid:
@@ -1023,7 +1040,7 @@ class TelemetryOptions:
         if self.disabled_signals is not None:
             # Trimmed, lowercased, de-duplicated (D1 row "Deprecated OTEL_HELPER_DISABLED_SIGNALS", A19).
             self._effective["disabled_signals"] = list(dict.fromkeys(
-                s.strip(TRIM_CHARS).lower() for s in self.disabled_signals))
+                ascii_lower(s.strip(TRIM_CHARS)) for s in self.disabled_signals))
         else:
             self._effective["disabled_signals"] = []
             env_disabled = os.getenv(ENV_DISABLED_SIGNALS)
@@ -1036,7 +1053,7 @@ class TelemetryOptions:
                         ENV_METRICS_EXPORTER, raw_metrics, _VALID_METRIC_EXPORTERS) is not None):
                     standard.add("metrics")
                 disabled: list[str] = []
-                for token in (t.strip(TRIM_CHARS).lower() for t in env_disabled.split(",")):
+                for token in (ascii_lower(t.strip(TRIM_CHARS)) for t in env_disabled.split(",")):
                     if not token:
                         continue
                     if token not in SIGNALS:
@@ -1051,7 +1068,7 @@ class TelemetryOptions:
         if self.metric_exporters is not None:
             # Normalized and de-duplicated: ["none", "none"] disables metrics (D1 row, A19).
             self.metric_exporters = list(dict.fromkeys(
-                e.strip(TRIM_CHARS).lower() for e in self.metric_exporters if e.strip(TRIM_CHARS)))
+                ascii_lower(e.strip(TRIM_CHARS)) for e in self.metric_exporters if e.strip(TRIM_CHARS)))
             self._effective["metric_exporters"] = list(self.metric_exporters)
             return
         self._effective["metric_exporters"] = None
@@ -1117,13 +1134,13 @@ class TelemetryOptions:
 
     def _protocol_for(self, signal: str, raw: str, warn: bool = True) -> str:
         if (code := _non_blank(self.otlp_protocol)) is not None:
-            return code.lower()
+            return ascii_lower(code)
         for var in (_signal_var("PROTOCOL", signal), ENV_OTLP_PROTOCOL):
             value = _env(var)
             if value is None:
                 continue
-            if value.lower() in _VALID_OTLP_PROTOCOLS:
-                return value.lower()
+            if ascii_lower(value) in _VALID_OTLP_PROTOCOLS:
+                return ascii_lower(value)
             if warn:
                 self._warn_once(f"proto:{var}", "[OtelHelper] %s=%r is not a supported OTLP protocol "
                                 "(valid: %s); ignoring it.", var, value, ", ".join(_VALID_OTLP_PROTOCOLS))
@@ -1368,13 +1385,13 @@ class TelemetryOptions:
 
     def _compression_for(self, signal: str) -> str:
         if (code := _non_blank(self.compression)) is not None:
-            return code.lower()
+            return ascii_lower(code)
         for var in (_signal_var("COMPRESSION", signal), "OTEL_EXPORTER_OTLP_COMPRESSION"):
             raw = _env(var)
             if raw is None:
                 continue
-            if raw.lower() in _VALID_COMPRESSIONS:
-                return raw.lower()
+            if ascii_lower(raw) in _VALID_COMPRESSIONS:
+                return ascii_lower(raw)
             self._warn_once(f"compression:{var}", "[OtelHelper] %s=%r is not a supported compression "
                             "(valid: %s); ignoring it.", var, raw, ", ".join(_VALID_COMPRESSIONS))
         return "gzip"

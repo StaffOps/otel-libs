@@ -929,6 +929,54 @@ func TestParsePropagators(t *testing.T) {
 	}
 }
 
+// A20 (design D1 row "Propagator diagnostics"): every token is scanned, each
+// skipped token warns, and "using" names the effective list.
+func TestParsePropagatorsDiagnosticsA20(t *testing.T) {
+	tests := []struct {
+		value string
+		want  []string
+	}{
+		{"tracecontext,none,b3", []string{`combined with other propagators; propagation disabled`, "value=b3 using=none"}},
+		{"foo,baggage", []string{"unknown propagator, ignored", "value=foo using=baggage"}},
+		{"b3,bogus", []string{"value=b3 using=\"tracecontext, baggage\"", "value=bogus using=\"tracecontext, baggage\""}},
+		{"TRACECONTEXT,BAGGAGE", nil},
+		{"tracecontext,baggag\u0130", []string{"unknown propagator"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.value, func(t *testing.T) {
+			logs := captureDiag(t)
+			parsePropagators(tt.value)
+			for _, w := range tt.want {
+				if !strings.Contains(logs.String(), w) {
+					t.Errorf("warnings %q, want %q", logs.String(), w)
+				}
+			}
+			if tt.want == nil && logs.String() != "" {
+				t.Errorf("unexpected warnings %q", logs.String())
+			}
+		})
+	}
+}
+
+// A20 (design D1 row "ASCII case folding"): only A-Z fold.
+func TestASCIICaseFolding(t *testing.T) {
+	if got := asciiLower("PARENTBASED_TRACE\u0130DRATIO"); got != "parentbased_trace\u0130dratio" {
+		t.Errorf("asciiLower = %q", got)
+	}
+	if got := asciiUpper("prd\u0131"); got != "PRD\u0131" {
+		t.Errorf("asciiUpper = %q", got)
+	}
+	t.Setenv("OTEL_X_BOOL", "fal\u017fe")
+	logs := captureDiag(t)
+	if v, set := envBool("OTEL_X_BOOL"); v || !set || !strings.Contains(logs.String(), "unparseable boolean") {
+		t.Errorf("envBool(fal\u017fe) = %v, %v; logs %q", v, set, logs.String())
+	}
+	o := &Options{DisabledSignals: []string{"trace\u017f"}}
+	if !o.IsSignalEnabled("traces") {
+		t.Error("IsSignalEnabled folded U+017F")
+	}
+}
+
 func countLines(s, sub string) int {
 	n := 0
 	for _, l := range strings.Split(s, "\n") {

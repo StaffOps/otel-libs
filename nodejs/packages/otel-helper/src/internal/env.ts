@@ -26,6 +26,32 @@ export function envValue(name: string): string | undefined {
   return value === '' ? undefined : value;
 }
 
+/**
+ * Lowercases A-Z only. Environment enum values (sampler, exporter and
+ * propagator names, protocol, compression, booleans) are ASCII
+ * case-insensitive in every language (contract design D1 row "ASCII case
+ * folding", A20): `toLowerCase()` maps U+212A (Kelvin) to `k`, and
+ * `toUpperCase()` maps U+0131 to `I`, which would accept a non-ASCII spelling.
+ */
+export function asciiLower(value: string): string {
+  return value.replace(/[A-Z]+/g, (m) => m.toLowerCase());
+}
+
+/** Uppercases a-z only (see {@link asciiLower}). */
+export function asciiUpper(value: string): string {
+  return value.replace(/[a-z]+/g, (m) => m.toUpperCase());
+}
+
+/** Plain decimal: no sign, exponent, hex, underscore, bare dot or NaN spelling (contract D1, D3). */
+export const PLAIN_DECIMAL = /^[0-9]+(\.[0-9]+)?$/;
+
+/** A value's type for an option error (`null` and `array` named as such). */
+export function typeName(value: unknown): string {
+  if (value === null) return 'null';
+  if (Array.isArray(value)) return 'array';
+  return typeof value;
+}
+
 /** Reports one configuration warning (the resolver passes a deduplicating one). */
 export type Warn = (message: string, attrs: Readonly<Record<string, DiagnosticValue>>) => void;
 
@@ -42,7 +68,7 @@ const reportWarning: Warn = (message, attrs) => {
 export function envBool(name: string, warn: Warn = reportWarning): boolean | undefined {
   const value = envValue(name);
   if (value === undefined) return undefined;
-  const lower = value.toLowerCase();
+  const lower = asciiLower(value);
   if (lower === 'true') return true;
   if (lower === 'false') return false;
   warn('unparseable boolean', { variable: name, value: truncateValue(value), using: 'false' });

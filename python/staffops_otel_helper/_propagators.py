@@ -18,29 +18,45 @@ import logging
 import os
 import sys
 
-from staffops_otel_helper.config import TRIM_CHARS
+from staffops_otel_helper.config import TRIM_CHARS, _truncate, ascii_lower
 
 _log = logging.getLogger("staffops_otel_helper.propagators")
 _DEFAULT = ["tracecontext", "baggage"]
 
 ENV_PROPAGATORS = "OTEL_PROPAGATORS"
 SUPPORTED = ("tracecontext", "baggage", "none")
+# Spec values the helper does not link (warned as "not supported", not "unknown").
+_UNSUPPORTED_SPEC = frozenset(["b3", "b3multi", "jaeger", "xray", "ottrace"])
 
 
-def parse(raw: str) -> tuple[list[str], list[str]]:
-    """(supported tokens in order, unsupported tokens); ``none`` clears the list, as in the API."""
+def parse(raw: str) -> tuple[list[str], list[str], bool]:
+    """(linked tokens in order, skipped tokens in order, ``none`` seen).
+
+    Every token is scanned (design D1 row "Propagator diagnostics", A20): tokens
+    are trimmed and ASCII-lowercased; empty tokens and duplicates are dropped.
+    """
     keep: list[str] = []
     skipped: list[str] = []
-    for token in (t.strip(TRIM_CHARS).lower() for t in raw.split(",")):
-        if not token:
+    none = False
+    seen: set[str] = set()
+    for token in (ascii_lower(t.strip(TRIM_CHARS)) for t in raw.split(",")):
+        if not token or token in seen:
             continue
+        seen.add(token)
         if token == "none":
-            return ["none"], skipped
-        if token not in SUPPORTED:
-            skipped.append(token)
-        elif token not in keep:
+            none = True
+        elif token in SUPPORTED:
             keep.append(token)
-    return keep, skipped
+        else:
+            skipped.append(token)
+    return keep, skipped, none
+
+
+def _effective(keep: list[str], none: bool) -> list[str]:
+    """The propagator names the helper installs: ``[]`` for ``none``, the W3C default when nothing is left."""
+    if none:
+        return []
+    return keep or list(_DEFAULT)
 
 
 def import_propagate_safely() -> None:
@@ -56,8 +72,8 @@ def import_propagate_safely() -> None:
     raw = os.environ.get(ENV_PROPAGATORS)
     if raw is None or "opentelemetry.propagate" in sys.modules:
         return
-    keep, _ = parse(raw)
-    canonical = ",".join(keep or _DEFAULT)
+    keep, _, none = parse(raw)
+    canonical = ",".join(_effective(keep, none)) or "none"
     if raw == canonical:
         return
     os.environ[ENV_PROPAGATORS] = canonical
@@ -68,20 +84,29 @@ def import_propagate_safely() -> None:
 
 
 def build_propagator():  # noqa: ANN201 - CompositePropagator
-    """The global propagator: ``OTEL_PROPAGATORS`` (supported entries) > W3C TraceContext + Baggage."""
+    """The global propagator: ``OTEL_PROPAGATORS`` (supported entries) > W3C TraceContext + Baggage.
+
+    One warning per skipped token ("not supported" for spec values the helper does
+    not link, else "unknown"), and one when ``none`` comes with other values; each
+    names the effective list as ``using`` (design D1 row "Propagator diagnostics", A20).
+    """
     from opentelemetry.baggage.propagation import W3CBaggagePropagator
     from opentelemetry.propagators.composite import CompositePropagator
     from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
 
     raw = os.environ.get(ENV_PROPAGATORS, "")
-    tokens = _DEFAULT
+    tokens = list(_DEFAULT)
     if raw.strip(TRIM_CHARS):
-        tokens, skipped = parse(raw)
-        tokens = tokens or _DEFAULT  # only unsupported entries: keep the default
-        if skipped:
-            _log.warning(
-                "[OtelHelper] %s: unsupported propagator(s) %s skipped (supported: %s).",
-                ENV_PROPAGATORS, ", ".join(repr(s) for s in skipped), ", ".join(SUPPORTED),
-            )
+        keep, skipped, none = parse(raw)
+        tokens = _effective(keep, none)
+        using = ", ".join(tokens) or "none"
+        for token in skipped:
+            kind = ("propagator not supported by the Python helper" if token in _UNSUPPORTED_SPEC
+                    else "unknown propagator")
+            _log.warning("[OtelHelper] %s, ignored: variable=%s value=%r using=%s.",
+                         kind, ENV_PROPAGATORS, _truncate(token), using)
+        if none and (keep or skipped):
+            _log.warning('[OtelHelper] "none" combined with other propagators; propagation disabled: '
+                         "variable=%s value=%r using=none.", ENV_PROPAGATORS, _truncate(raw))
     factories = {"tracecontext": TraceContextTextMapPropagator, "baggage": W3CBaggagePropagator}
-    return CompositePropagator([factories[t]() for t in tokens if t in factories])
+    return CompositePropagator([factories[t]() for t in tokens])

@@ -530,7 +530,9 @@ Log with the `*Context` slog calls and the span's `ctx` ([§4](#logs-correlated-
 **Do I need to configure sampling?**
 No. The SDK uses `parentbased_always_on`; tail sampling happens at the
 Collector. For extreme volume use `OTEL_TRACES_SAMPLER=parentbased_traceidratio`
-with `OTEL_TRACES_SAMPLER_ARG`.
+with `OTEL_TRACES_SAMPLER_ARG`. With services in several languages use the
+parent-based form, not bare `traceidratio`: the SDKs (Node.js and .NET in particular) derive the
+ratio decision from the trace id differently, so bare ratio decisions are not consistent across a trace.
 
 **How does propagation work?**
 W3C TraceContext + Baggage, installed globally. HTTP: `NewHTTPTransport` on the

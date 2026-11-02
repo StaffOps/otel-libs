@@ -4,8 +4,9 @@
  * `setup()` identity/resource/log-level resolution and diagnostics (task B3),
  * OTLP endpoint/protocol/TLS-setting resolution (B4a), OTLP exporters for
  * traces, metrics and logs (B4b), exporter lists with the console exporters,
- * `OTEL_SDK_DISABLED` and the metric export interval (B4c); the sampler,
- * `/metrics`, instrumentation and logging land in B5–B9.
+ * `OTEL_SDK_DISABLED` and the metric export interval (B4c), the sampler
+ * (ParentBased, health sampler around it), propagators and the debug marker
+ * (B5); `/metrics`, instrumentation and logging land in B6–B9.
  */
 export { VERSION } from './version';
 export { setup, shutdown } from './internal/setup';
@@ -15,3 +16,4 @@ export type { Resolved, SetupOptions } from './internal/resolve';
 export type { OtlpEndpoint, OtlpPlan, OtlpProtocol, Signal } from './internal/otlp';
 export type { OtlpCompression } from './internal/otlp-settings';
 export type { MetricExporterName, SpanLogExporterName } from './internal/signals';
+export type { PropagatorName, SamplerConfig, SamplerName } from './internal/tracing';

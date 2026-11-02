@@ -8,7 +8,7 @@
 import { formatWithOptions } from 'node:util';
 import { diag, DiagLogLevel, type DiagLogger } from '@opentelemetry/api';
 import { report, truncateValue, type DiagnosticValue } from './diagnostics';
-import { envValue } from './env';
+import { asciiUpper, envValue } from './env';
 import type { DiagnosticLevel } from './key';
 
 export const ENV_LOG_LEVEL = 'OTEL_LOG_LEVEL';
@@ -32,7 +32,7 @@ const LEVELS: Readonly<Record<string, DiagLogLevel>> = {
 export function diagLevelFromEnv(): DiagLogLevel {
   const raw = envValue(ENV_LOG_LEVEL);
   if (raw === undefined) return DiagLogLevel.WARN;
-  const level = LEVELS[raw.toUpperCase()];
+  const level = LEVELS[asciiUpper(raw)];
   if (level !== undefined) return level;
   report('unknown log level', { variable: ENV_LOG_LEVEL, value: truncateValue(raw), using: 'WARN' });
   return DiagLogLevel.WARN;

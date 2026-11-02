@@ -26,6 +26,7 @@ from staffops_otel_helper.config import (
     ENV_TRACES_SAMPLER_ARG,
     TelemetryOptions,
     _env,
+    ascii_lower,
 )
 from staffops_otel_helper.processors import DebugProcessor
 
@@ -77,7 +78,7 @@ def _sampler_from_env() -> Sampler:
     raw = _env(ENV_TRACES_SAMPLER)
     if raw is None:
         return ParentBased(ALWAYS_ON)
-    name = raw.lower()
+    name = ascii_lower(raw)
     if name in _UNSUPPORTED_SAMPLERS:
         _log.warning("[OtelHelper] %s=%r is unsupported by this helper; using parentbased_always_on.",
                      ENV_TRACES_SAMPLER, raw)
@@ -112,10 +113,10 @@ def build_sampler(options: TelemetryOptions) -> Sampler:
 
 
 def normalize_health_path(path: str) -> str:
-    """Strip query/fragment, lowercase, drop trailing slashes ("/" stays "/")."""
+    """Strip query/fragment, lowercase A-Z, drop trailing slashes ("/" stays "/")."""
     for sep in "?#":
         path = path.split(sep, 1)[0]
-    path = path.lower()
+    path = ascii_lower(path)  # ASCII only (design D1 row "ASCII case folding", A20)
     while len(path) > 1 and path.endswith("/"):
         path = path[:-1]
     return path

@@ -8,16 +8,18 @@
  * timeout and compression rows and the batch/limit settings (task B4b,
  * `otlp-settings.ts`, `sdk-settings.ts`), the exporter lists,
  * `OTEL_SDK_DISABLED` and the metric export interval (task B4c,
- * `signals.ts`); later tasks add theirs.
+ * `signals.ts`), the sampler, propagators and health paths (task B5,
+ * `tracing.ts`); later tasks add theirs.
  */
 import { randomUUID } from 'node:crypto';
 import { report, reportOnce, type DiagnosticValue } from './diagnostics';
-import { envBool, envValue, trimWS, type Warn } from './env';
+import { envBool, envValue, trimWS, typeName, type Warn } from './env';
 import { checkCodeOtlp, resolveOtlp, type OtlpHeaders, type OtlpPlan, type Reporter } from './otlp';
 import { resolveSdkSettings, type SdkSettings } from './sdk-settings';
 import { checkCodeSignals, resolveSignals, type MetricExporterName, type SpanLogExporterName } from './signals';
 import { defaultLogLevel, knownEnvironment, LOG_LEVELS, type LogLevel } from './log-level';
 import { parseResourceAttributes } from './resource-attributes';
+import { checkCodeTracing, DEFAULT_HEALTH_PATHS, DEFAULT_SAMPLER, ENV_SAMPLE_RATIO, resolvePropagators, resolveSampler, type PropagatorName, type SamplerConfig } from './tracing';
 import type { SpanProcessor } from '@opentelemetry/sdk-trace';
 
 export const ENV_OTEL_SERVICE_NAME = 'OTEL_SERVICE_NAME';
@@ -25,7 +27,6 @@ export const ENV_RESOURCE_ATTRIBUTES = 'OTEL_RESOURCE_ATTRIBUTES';
 export const ENV_SERVICE_NAME = 'SERVICE_NAME';
 export const ENV_ENVIRONMENT = 'ENVIRONMENT';
 export const ENV_DEBUG_LEVEL = 'OTEL_HELPER_DEBUG_LEVEL';
-export const ENV_SAMPLE_RATIO = 'OTEL_HELPER_SAMPLE_RATIO';
 export const ENV_DISABLED_SIGNALS = 'OTEL_HELPER_DISABLED_SIGNALS';
 export const ENV_EXTRA_INSTRUMENTATION = 'OTEL_HELPER_EXTRA_INSTRUMENTATION';
 export const ENV_NODE_RESOURCE_DETECTORS = 'OTEL_NODE_RESOURCE_DETECTORS';
@@ -48,7 +49,8 @@ const BUILTIN_DETECTORS: ReadonlySet<string> = new Set(['env', 'serviceinstance'
  * not set and reads the environment. Task B3 implements the identity,
  * log-level and diagnostics options, task B4a the OTLP endpoint, protocol and
  * `insecure` options, task B4b `exportTimeoutMs` and `compression`, task B4c
- * `metricExporters`, `exportIntervalMs` and `disabledSignals`; the other documented options land with their tasks and
+ * `metricExporters`, `exportIntervalMs` and `disabledSignals`, task B5
+ * `sampleRatio` and `healthPaths`; the other documented options land with their tasks and
  * are rejected as unknown until then. Pass a plain object (or
  * a null-prototype one); class instances are rejected. `setup()` reads each
  * property once.
@@ -60,7 +62,10 @@ export interface SetupOptions {
   readonly environment?: string | undefined;
   /** Resource attributes; each key wins over the same key in `OTEL_RESOURCE_ATTRIBUTES`. */
   readonly resourceAttributes?: Readonly<Record<string, string>> | undefined;
-  /** Debug mode (`OTEL_HELPER_DEBUG_LEVEL`): log level debug. */
+  /**
+   * Debug mode (`OTEL_HELPER_DEBUG_LEVEL`): log level debug, and `debug="true"`
+   * on the service's entry spans (no parent or a remote one; ADR-006).
+   */
   readonly debug?: boolean | undefined;
   /** Log level of the helper's logger; default `defaultLogLevel(environment, debug)`. */
   readonly minimumLogLevel?: LogLevel | undefined;
@@ -108,6 +113,22 @@ export interface SetupOptions {
    * `OTEL_HELPER_DISABLED_SIGNALS`, `[]` included. Prefer `OTEL_<SIGNAL>_EXPORTER=none`.
    */
   readonly disabledSignals?: readonly string[] | undefined;
+  /**
+   * Head-sampling ratio in [0, 1] for root spans:
+   * `ParentBased(TraceIdRatioBased(sampleRatio))`. Wins over
+   * `OTEL_TRACES_SAMPLER` and the deprecated `OTEL_HELPER_SAMPLE_RATIO`,
+   * whatever the value (1 included).
+   */
+  readonly sampleRatio?: number | undefined;
+  /**
+   * HTTP paths whose server spans are not recorded (the requests still count
+   * in the HTTP server metrics); replaces the default list
+   * (`/health /healthz /ready /readyz /live /livez /ping /metrics`). Matching is
+   * exact and case-insensitive, ignoring a trailing slash and the query. Each
+   * path must be ASCII, start with `/` and carry no query, fragment or comma;
+   * `[]` traces every path. `grpc.health.v1.Health` calls are dropped regardless.
+   */
+  readonly healthPaths?: readonly string[] | undefined;
   /** Test/advanced: extra span processors, added after the helper's own (design D-JS7). */
   readonly spanProcessors?: readonly SpanProcessor[] | undefined;
 }
@@ -145,6 +166,22 @@ export interface Resolved {
   readonly logsExporters: readonly SpanLogExporterName[];
   /** Metric export interval in milliseconds (`exportIntervalMs` > `OTEL_METRIC_EXPORT_INTERVAL` > 30 000). */
   readonly metricExportIntervalMs: number;
+  /**
+   * The sampler (`sampleRatio` > `OTEL_TRACES_SAMPLER`/`_ARG` >
+   * `OTEL_HELPER_SAMPLE_RATIO` > `parentbased_always_on`), wrapped by the
+   * health sampler. Under `OTEL_SDK_DISABLED=true` the sampler variables are
+   * not read and this is the default (no TracerProvider is built).
+   */
+  readonly sampler: SamplerConfig;
+  /**
+   * Propagators (`OTEL_PROPAGATORS` > `tracecontext`, `baggage`); `[]` = `none`:
+   * what the helper installs when it owns the global propagator (also under
+   * `OTEL_SDK_DISABLED=true`). A propagator registered before `setup()` is kept
+   * and this list is not applied (design D-JS14).
+   */
+  readonly propagators: readonly PropagatorName[];
+  /** HTTP health paths whose server spans are dropped (`healthPaths` > the default list). */
+  readonly healthPaths: readonly string[];
 }
 
 /** Resolver output: the public view plus what the providers are built from. */
@@ -178,14 +215,10 @@ const OPTION_KEYS: ReadonlySet<string> = new Set([
   'metricExporters',
   'exportIntervalMs',
   'disabledSignals',
+  'sampleRatio',
+  'healthPaths',
   'spanProcessors',
 ]);
-
-function typeName(value: unknown): string {
-  if (value === null) return 'null';
-  if (Array.isArray(value)) return 'array';
-  return typeof value;
-}
 
 function fail(option: string, why: string): never {
   throw new TypeError(`setup(): ${option} ${why}`);
@@ -255,7 +288,7 @@ export function validateOptions(options: unknown): SetupOptions {
     fail('exportTimeoutMs', `must be a number, got ${typeName(o.exportTimeoutMs)}`);
   }
   checkCodeOtlp(o);
-  Object.assign(o, checkCodeSignals(o));
+  Object.assign(o, checkCodeSignals(o), checkCodeTracing(o));
   const level = o.minimumLogLevel;
   if (level !== undefined && !LOG_LEVELS.includes(level as LogLevel)) {
     const shown = typeof level === 'string' ? JSON.stringify(level) : typeName(level);
@@ -408,6 +441,9 @@ export function resolvePlan(options: SetupOptions, defaultServiceName: string, q
   const { plan: otlp, headers: otlpHeaders } = resolveOtlp(options, reporter);
   const signals = resolveSignals(options, otlp, reporter.warn);
   const sdk = resolveSdkSettings(reporter.warn);
+  // Not read under OTEL_SDK_DISABLED=true (no TracerProvider is built), as in Go and Python.
+  const sampler = signals.sdkDisabled ? DEFAULT_SAMPLER : resolveSampler(options, reporter.warn);
+  const propagators = resolvePropagators(reporter.warn);
 
   const resolved: Resolved = Object.freeze({
     serviceName,
@@ -421,6 +457,9 @@ export function resolvePlan(options: SetupOptions, defaultServiceName: string, q
     metricExporters: signals.metricExporters,
     logsExporters: signals.logsExporters,
     metricExportIntervalMs: signals.metricExportIntervalMs,
+    sampler,
+    propagators,
+    healthPaths: options.healthPaths ?? DEFAULT_HEALTH_PATHS,
   });
   return { resolved, resourceAttributes: Object.freeze(layer), otlpHeaders, sdk, intervalSource: signals.intervalSource };
 }

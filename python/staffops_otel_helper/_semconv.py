@@ -15,7 +15,7 @@ from __future__ import annotations
 import logging
 import os
 
-from staffops_otel_helper.config import TRIM_CHARS
+from staffops_otel_helper.config import TRIM_CHARS, ascii_lower
 
 _log = logging.getLogger("staffops_otel_helper.semconv")
 
@@ -50,7 +50,7 @@ def ensure_semconv_default() -> None:
     global _warned
     os.environ.setdefault(ENV_SEMCONV_OPT_IN, DEFAULT_SEMCONV_OPT_IN)
     value = os.environ[ENV_SEMCONV_OPT_IN]
-    tokens = {t.strip(TRIM_CHARS).lower() for t in value.split(",")}
+    tokens = {ascii_lower(t.strip(TRIM_CHARS)) for t in value.split(",")}
     if not tokens & _STABLE_HTTP_TOKENS:
         reason = f"{ENV_SEMCONV_OPT_IN}={value!r} does not include 'http'"
     elif _late_initialized_old_http():

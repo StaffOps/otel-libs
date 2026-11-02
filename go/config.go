@@ -99,6 +99,32 @@ const wsCutset = " \t\n\r\v\f"
 // trimWS trims wsCutset from both ends.
 func trimWS(s string) string { return strings.Trim(s, wsCutset) }
 
+// asciiLower lowercases A-Z only. Env enum values (sampler, exporter and
+// propagator names, protocol, compression, booleans) are ASCII
+// case-insensitive in every language (design D1 row "ASCII case folding",
+// A20): strings.ToLower maps U+0130 to "i" and strings.EqualFold folds U+017F
+// to "s", which would accept a non-ASCII spelling silently.
+func asciiLower(s string) string {
+	b := []byte(s)
+	for i, c := range b {
+		if 'A' <= c && c <= 'Z' {
+			b[i] = c + ('a' - 'A')
+		}
+	}
+	return string(b)
+}
+
+// asciiUpper uppercases a-z only (see asciiLower).
+func asciiUpper(s string) string {
+	b := []byte(s)
+	for i, c := range b {
+		if 'a' <= c && c <= 'z' {
+			b[i] = c - ('a' - 'A')
+		}
+	}
+	return string(b)
+}
+
 // parseRatio accepts a plain decimal in [0, 1] ("0", "0.25", "1.0"): the
 // timeout grammar (decimalMs), so no hex, sign, exponent, underscore,
 // Inf/NaN spelling or non-ASCII digits (design D3).
@@ -116,7 +142,7 @@ func parseRatio(raw string) (float64, bool) {
 // knownEnvironment reports whether s (case-insensitive) is one of the four
 // behavior-switching environments.
 func knownEnvironment(s string) (DeploymentEnvironment, bool) {
-	switch e := DeploymentEnvironment(strings.ToUpper(trimWS(s))); e {
+	switch e := DeploymentEnvironment(asciiUpper(trimWS(s))); e {
 	case LOCAL, DEV, HML, PRD:
 		return e, true
 	}
@@ -131,7 +157,7 @@ func envBool(key string) (value, set bool) {
 	if raw == "" {
 		return false, false
 	}
-	switch strings.ToLower(raw) {
+	switch asciiLower(raw) {
 	case "true":
 		return true, true
 	case "false":
@@ -176,7 +202,7 @@ func (o *Options) resolveFromEnv() {
 				o.SampleRatio = f
 				o.sampleRatioFromEnv = true
 			} else {
-				warnEnv("sample ratio is not a number in [0, 1]", EnvSampleRatio, v, "1.0")
+				warnEnv("sample ratio is not a number in [0, 1]", EnvSampleRatio, v, "parentbased_always_on")
 			}
 		}
 	}
@@ -206,7 +232,7 @@ func (o *Options) resolveFromEnv() {
 		// OTEL_HELPER_DISABLED_SIGNALS", A19); validate() rejects unknown ones.
 		normalized := make([]string, 0, len(o.DisabledSignals))
 		for _, sig := range o.DisabledSignals {
-			normalized = append(normalized, strings.ToLower(trimWS(sig)))
+			normalized = append(normalized, asciiLower(trimWS(sig)))
 		}
 		o.DisabledSignals = dedupe(normalized)
 	} else if len(o.DisabledSignals) == 0 {
@@ -333,7 +359,7 @@ func splitList(v string, lower bool) []string {
 	for _, s := range strings.Split(v, ",") {
 		t := trimWS(s)
 		if lower {
-			t = strings.ToLower(t)
+			t = asciiLower(t)
 		}
 		if t != "" {
 			out = append(out, t)
@@ -440,7 +466,7 @@ func normalizeExporters(raw, variable string, allowed []string, strict bool) (li
 	hasNone := false
 	seen := map[string]bool{}
 	for _, part := range strings.Split(raw, ",") {
-		v := strings.ToLower(trimWS(part))
+		v := asciiLower(trimWS(part))
 		switch {
 		case v == "":
 			continue
@@ -530,6 +556,10 @@ func (o *Options) resolveMetricExporters() {
 // W3C propagators: tracecontext and baggage; "none" disables propagation.
 // Other spec values (b3, jaeger, xray, ottrace) are not linked into the core
 // module and are warned and skipped.
+//
+// Every token is scanned (design D1 row "Propagator diagnostics", A20): each
+// skipped token gets its own warning, and "none" with other values warns too;
+// the warnings name the effective list (computed after parsing) as "using".
 func parsePropagators(raw string) propagation.TextMapPropagator {
 	def := propagation.NewCompositeTextMapPropagator(propagation.TraceContext{}, propagation.Baggage{})
 	raw = trimWS(raw)
@@ -537,10 +567,13 @@ func parsePropagators(raw string) propagation.TextMapPropagator {
 		return def
 	}
 	var props []propagation.TextMapPropagator
+	var names []string
+	type skipped struct{ msg, value string }
+	var skips []skipped
 	none := false
 	seen := map[string]bool{}
 	for _, part := range strings.Split(raw, ",") {
-		v := strings.ToLower(trimWS(part))
+		v := asciiLower(trimWS(part))
 		if v == "" || seen[v] {
 			continue
 		}
@@ -548,18 +581,30 @@ func parsePropagators(raw string) propagation.TextMapPropagator {
 		switch v {
 		case "tracecontext":
 			props = append(props, propagation.TraceContext{})
+			names = append(names, v)
 		case "baggage":
 			props = append(props, propagation.Baggage{})
+			names = append(names, v)
 		case "none":
 			none = true
 		case "b3", "b3multi", "jaeger", "xray", "ottrace":
-			warnEnv("propagator not supported by the Go helper, ignored", EnvPropagators, v, "tracecontext, baggage")
+			skips = append(skips, skipped{"propagator not supported by the Go helper, ignored", v})
 		default:
-			warnEnv("unknown propagator, ignored", EnvPropagators, v, "tracecontext, baggage")
+			skips = append(skips, skipped{"unknown propagator, ignored", v})
 		}
 	}
+	using := strings.Join(names, ", ")
+	switch {
+	case none:
+		using = "none"
+	case len(props) == 0:
+		using = "tracecontext, baggage"
+	}
+	for _, sk := range skips {
+		warnEnv(sk.msg, EnvPropagators, sk.value, using)
+	}
 	if none {
-		if len(props) > 0 {
+		if len(props) > 0 || len(skips) > 0 {
 			warnEnv(`"none" combined with other propagators; propagation disabled`, EnvPropagators, raw, "none")
 		}
 		return propagation.NewCompositeTextMapPropagator()
@@ -609,17 +654,17 @@ func (o *Options) validate() error {
 	}
 	if o.disabledSignalsSet {
 		for _, s := range o.DisabledSignals {
-			if !containsStr(allSignals, strings.ToLower(trimWS(s))) {
+			if !containsStr(allSignals, asciiLower(trimWS(s))) {
 				errs = append(errs, fmt.Errorf("WithDisabledSignals: unknown signal %q; valid values: traces, metrics, logs", s))
 			}
 		}
 	}
-	switch strings.ToLower(trimWS(o.Compression)) {
+	switch asciiLower(trimWS(o.Compression)) {
 	case "", CompressionGzip, CompressionNone:
 	default:
 		errs = append(errs, fmt.Errorf("WithCompression: unknown compression %q; valid values: gzip, none", o.Compression))
 	}
-	if p := strings.ToLower(trimWS(o.OtlpProtocol)); p != "" && p != ProtocolGRPC && p != ProtocolHTTP {
+	if p := asciiLower(trimWS(o.OtlpProtocol)); p != "" && p != ProtocolGRPC && p != ProtocolHTTP {
 		errs = append(errs, fmt.Errorf("WithOtlpProtocol: unknown OTLP protocol %q; valid values: %s, %s", o.OtlpProtocol, ProtocolGRPC, ProtocolHTTP))
 	}
 	for _, p := range o.HealthPaths {

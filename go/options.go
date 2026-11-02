@@ -1,8 +1,6 @@
 package otelhelper
 
 import (
-	"strings"
-
 	"go.opentelemetry.io/otel/propagation"
 )
 
@@ -103,7 +101,7 @@ type Options struct {
 // IsSignalEnabled returns true if the signal is not in DisabledSignals (case-insensitive).
 func (o *Options) IsSignalEnabled(signal string) bool {
 	for _, s := range o.DisabledSignals {
-		if strings.EqualFold(s, signal) {
+		if asciiLower(s) == asciiLower(signal) {
 			return false
 		}
 	}

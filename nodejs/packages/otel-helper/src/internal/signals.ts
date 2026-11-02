@@ -11,7 +11,7 @@
  * so they are echoed (truncated).
  */
 import { truncateValue } from './diagnostics';
-import { envBool, envValue, trimWS, type Warn } from './env';
+import { asciiLower, envBool, envValue, trimWS, typeName, type Warn } from './env';
 import type { OtlpPlan } from './otlp';
 import type { Signal } from './otlp-settings';
 
@@ -84,7 +84,7 @@ export function parseExporterEnv(signal: Signal, warn: Warn): string[] | undefin
   const out: string[] = [];
   let none = false;
   for (const part of raw.split(',')) {
-    let value = trimWS(part).toLowerCase();
+    let value = asciiLower(trimWS(part));
     if (value === '') continue;
     if (value === 'none') {
       none = true;
@@ -106,12 +106,6 @@ export function parseExporterEnv(signal: Signal, warn: Warn): string[] | undefin
     return [];
   }
   return out.length === 0 ? undefined : out;
-}
-
-function typeName(value: unknown): string {
-  if (value === null) return 'null';
-  if (Array.isArray(value)) return 'array';
-  return typeof value;
 }
 
 function stringList(option: string, value: unknown): string[] {
@@ -139,7 +133,7 @@ export function checkCodeSignals(code: Readonly<Record<string, unknown>>): Parti
     const list: string[] = [];
     let none = false;
     for (const item of stringList('metricExporters', code.metricExporters)) {
-      const value = trimWS(item).toLowerCase();
+      const value = asciiLower(trimWS(item));
       if (value === '') continue;
       if (value === 'none') {
         none = true;
@@ -167,7 +161,7 @@ export function checkCodeSignals(code: Readonly<Record<string, unknown>>): Parti
   if (code.disabledSignals !== undefined) {
     const list: Signal[] = [];
     for (const item of stringList('disabledSignals', code.disabledSignals)) {
-      const value = trimWS(item).toLowerCase();
+      const value = asciiLower(trimWS(item));
       if (!(SIGNALS as readonly string[]).includes(value)) {
         throw new TypeError(`setup(): disabledSignals has unknown signal ${JSON.stringify(truncateValue(item))}; valid values: ${SIGNALS.join(', ')}`);
       }
@@ -224,7 +218,7 @@ function disabledSignals(code: SignalCodeOptions, warn: Warn): ReadonlySet<Signa
   const chosen = (signal: Signal): boolean =>
     (signal === 'metrics' && code.metricExporters !== undefined) || parseExporterEnv(signal, silent) !== undefined;
   for (const part of (envValue(ENV_DISABLED_SIGNALS) ?? '').split(',')) {
-    const value = trimWS(part).toLowerCase();
+    const value = asciiLower(trimWS(part));
     if (value === '') continue;
     if (!(SIGNALS as readonly string[]).includes(value)) {
       warn('unknown signal; ignored', { variable: ENV_DISABLED_SIGNALS, value: truncateValue(value), using: SIGNALS.join(', ') });

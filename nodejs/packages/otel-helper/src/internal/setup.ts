@@ -3,12 +3,14 @@
  * builds the resource, the context manager and the DiagLogger; task B4b the
  * OTLP exporters and the three providers (batch span processor, periodic
  * metric reader, batch log record processor); task B4c the exporter lists
- * (console exporters), `OTEL_SDK_DISABLED` and the export interval. The full lifecycle — rollback, foreign globals,
+ * (console exporters), `OTEL_SDK_DISABLED` and the export interval; task B5
+ * the sampler (with the health sampler around it), the propagators and the
+ * debug marker. The full lifecycle — rollback, foreign globals,
  * re-binding instrumentations, the stable forwarding providers of D-JS10 — is
  * task B9; the shape below (one runtime record on the shared state, rebuilt
  * after shutdown) is what it extends.
  */
-import { context, diag, logs, metrics, trace, type Attributes } from '@opentelemetry/api';
+import { context, diag, logs, metrics, propagation, trace, type Attributes, type TextMapPropagator } from '@opentelemetry/api';
 import { AsyncLocalStorageContextManager } from '@opentelemetry/context-async-hooks';
 import { defaultResource, resourceFromAttributes, type Resource } from '@opentelemetry/resources';
 import { BatchLogRecordProcessor, ConsoleLogRecordExporter, LoggerProvider, type LogRecordProcessor } from '@opentelemetry/sdk-logs';
@@ -22,6 +24,7 @@ import type { OtlpEndpoint } from './otlp';
 import type { Signal } from './otlp-settings';
 import { ATTR_SERVICE_NAME, TELEMETRY_SDK_KEYS, resolvePlan, validateOptions, type Plan, type Resolved, type SetupOptions } from './resolve';
 import { getState, setDiagnosticSink, type HelperState } from './state';
+import { buildPropagator, buildSampler, DebugMarkerProcessor, HealthCheckSampler } from './tracing';
 
 /** What one successful `setup()` built. */
 interface Active {
@@ -36,6 +39,8 @@ interface Active {
   readonly ownsMeterProvider: boolean;
   readonly ownsLoggerProvider: boolean;
   readonly contextManager: AsyncLocalStorageContextManager | undefined;
+  /** The propagator the helper registered; `undefined` when it registered none. */
+  readonly propagator: TextMapPropagator | undefined;
   /** Cached result of the first `shutdown()`. */
   shutdown: Promise<void> | undefined;
 }
@@ -300,8 +305,16 @@ function buildProviders(plan: Plan, base: Resource, options: SetupOptions): Prov
     resource,
     tracerProvider: new TracerProvider({
       resource,
+      // Health-check spans are dropped by a wrapper around the whole resolved
+      // sampler, outside ParentBased (contract D5, design D-JS7).
+      sampler: new HealthCheckSampler(buildSampler(plan.resolved.sampler), plan.resolved.healthPaths),
       spanLimits: { ...plan.sdk.spanLimits },
-      spanProcessors: [...pipelines.spanProcessors, ...(options.spanProcessors ?? [])],
+      // The debug marker first, so later processors see the attribute at start (R9).
+      spanProcessors: [
+        ...(plan.resolved.debug ? [new DebugMarkerProcessor()] : []),
+        ...pipelines.spanProcessors,
+        ...(options.spanProcessors ?? []),
+      ],
     }),
     meterProvider: new MeterProvider({ resource, readers: pipelines.metricReaders }),
     loggerProvider: new LoggerProvider({
@@ -383,14 +396,6 @@ export function setup(options?: SetupOptions): Resolved {
     installDiagLogger(ownsDiag);
     rt.diagLogger = registeredGlobal('diag');
   }
-  if (plan.resolved.sdkDisabled) {
-    // The same INFO line in every language (contract D1 row "OTEL_SDK_DISABLED INFO", A19);
-    // the propagators are task B5, so only the context manager is installed until then.
-    report('OTEL_SDK_DISABLED=true: telemetry disabled, only propagators installed (Node: the context manager until task B5)', undefined, {
-      origin: 'helper',
-      level: 'info',
-    });
-  }
   const built = plan.resolved.sdkDisabled ? undefined : buildProviders(plan, base, validated);
   if (rt.active !== undefined) releaseGlobals(rt.active);
   // A global registered by someone else is kept; checking first avoids the
@@ -408,12 +413,35 @@ export function setup(options?: SetupOptions): Resolved {
   } else {
     report('a global context manager is already registered; the helper keeps it');
   }
+  // The propagators are installed under OTEL_SDK_DISABLED=true too (contract
+  // D1 row "OTEL_SDK_DISABLED", case propagation.sdk_disabled_propagators_kept).
+  // A propagator registered first is kept: the 3.0 API refuses a second
+  // registration (Go and Python replace it; design D-JS14).
+  let ownedPropagator: TextMapPropagator | undefined;
+  if (foreignApi === undefined) {
+    if (registeredGlobal('propagation') !== undefined) {
+      report('a global propagator is already registered; the helper keeps it and OTEL_PROPAGATORS is not applied');
+    } else {
+      const propagator = buildPropagator(plan.resolved.propagators);
+      if (propagation.setGlobalPropagator(propagator)) ownedPropagator = propagator;
+      else report('the OpenTelemetry API refused the global propagator; context is not propagated across processes');
+    }
+  }
+  if (plan.resolved.sdkDisabled) {
+    // The same INFO line in every language (contract D1 row "OTEL_SDK_DISABLED INFO", A19),
+    // only when the propagator was installed; Node also keeps its context manager (spec JS1).
+    const message =
+      ownedPropagator === undefined
+        ? 'OTEL_SDK_DISABLED=true: telemetry disabled; the helper installed no propagator'
+        : 'OTEL_SDK_DISABLED=true: telemetry disabled, only propagators installed';
+    report(message, undefined, { origin: 'helper', level: 'info' });
+  }
   let ownsTracerProvider = false;
   let ownsMeterProvider = false;
   let ownsLoggerProvider = false;
   // OTEL_SDK_DISABLED=true: no provider is registered, so the API's no-op
-  // providers stay; the context manager above still propagates in-process
-  // context (spec JS1; the propagators are task B5).
+  // providers stay; the context manager and the propagators above still
+  // propagate context (spec JS1).
   if (foreignApi === undefined && built !== undefined) {
     const { tracerProvider, meterProvider, loggerProvider } = built;
     ownsTracerProvider = registerProvider('trace', 'traces', () => trace.setGlobalTracerProvider(tracerProvider));
@@ -430,6 +458,7 @@ export function setup(options?: SetupOptions): Resolved {
     ownsMeterProvider,
     ownsLoggerProvider,
     contextManager,
+    propagator: ownedPropagator,
     shutdown: undefined,
   };
   return plan.resolved;
@@ -441,6 +470,12 @@ function releaseGlobals(active: Active): void {
   if (active.ownsMeterProvider) metrics.disable();
   if (active.ownsLoggerProvider) logs.disable();
   if (active.contextManager !== undefined) context.disable();
+  if (active.propagator !== undefined) {
+    // Only the helper's own instance: one registered after the helper's was disabled is someone else's.
+    const current = registeredGlobal('propagation');
+    if (current === active.propagator) propagation.disable();
+    else if (current !== undefined) report("the global propagator is no longer the helper's; the helper keeps it");
+  }
 }
 
 interface NamedProvider {
