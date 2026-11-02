@@ -347,6 +347,12 @@ function spanRecorder() {
 
 const SPAN_KIND_SERVER = 1;
 const serverSpans = (exporter) => exporter.getFinishedSpans().filter((s) => s.kind === SPAN_KIND_SERVER).length;
+const STATUS_NAMES = ['UNSET', 'OK', 'ERROR'];
+/** Status code of the first SERVER span ("UNSET", "ERROR", "OK"), or "none" (fixture field server_span_status). */
+function serverSpanStatus(exporter) {
+  const span = exporter.getFinishedSpans().find((s) => s.kind === SPAN_KIND_SERVER);
+  return span === undefined ? 'none' : (STATUS_NAMES[span.status.code] ?? String(span.status.code));
+}
 
 // Calls the helper's mounted handler with in-memory req/res objects: no server
 // and no socket, so instrumentation never sees (or counts) the scrape. The mock
@@ -511,7 +517,10 @@ async function grpcCall(grpc, target) {
       },
     },
   );
-  server.addService({ Ping: method('/parity.v1.Echo/Ping', false) }, { Ping: unary });
+  server.addService(
+    { Ping: method('/parity.v1.Echo/Ping', false), NotFound: method('/parity.v1.Echo/NotFound', false) },
+    { Ping: unary, NotFound: (_call, cb) => cb({ code: grpc.status.NOT_FOUND, message: 'not found' }) },
+  );
   const port = await new Promise((resolve, reject) => {
     server.bindAsync('127.0.0.1:0', grpc.ServerCredentials.createInsecure(), (err, p) => (err ? reject(err) : resolve(p)));
   });
@@ -551,6 +560,7 @@ async function kindGrpcServer(c) {
     captured.push(`grpc call failed: ${err?.message ?? String(err)}`);
   }
   snap.server_spans = serverSpans(exporter);
+  snap.server_span_status = serverSpanStatus(exporter);
   snap.rpcs_counted = await scrapeCount(/^rpc_server(_call)?_duration[a-z_]*_count[{ ]/);
   await shutdown();
   return snap;

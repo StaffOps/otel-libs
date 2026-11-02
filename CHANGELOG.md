@@ -1924,6 +1924,76 @@ Unsupported instrumentation versions, task A10 (P18):
   case `metrics.scrape_colliding_label_values_sorted` (321 in total);
   `export.code_export_timeout_wins_grpc` allows one `grpc-timeout` encoding
   unit (`lte` 2100).
+- **Node.js instrumentation (Phase B, task B6; not released).** `setup()`
+  instruments `node:http`/`node:https` (servers and clients,
+  `@opentelemetry/instrumentation-http`), `fetch`/undici
+  (`-undici`), express (`-express`, middleware layers ignored) and
+  `@grpc/grpc-js` (`-grpc`) — all already dependencies since B1a; no new
+  dependency. Stable HTTP semconv only (`http.server.request.duration` and
+  `http.client.request.duration` in s, scraped as
+  `http_server_request_duration_seconds`; server metrics carry
+  `http.request.method`, `http.response.status_code`, `http.route`,
+  `url.scheme`). Health checks follow contract D5: server spans are dropped by
+  the B5 health sampler (HTTP by `url.path` at span start, gRPC by the span
+  name `grpc.grpc.health.v1.Health/<method>`, CLIENT spans of that service
+  too), never by an instrumentation filter, so health requests stay counted
+  in the HTTP server metrics; HTTP client requests (`node:http` and `fetch`)
+  to a health path get no span and no client metric, as Go
+  `NewHTTPTransport` and Python's `excluded_urls`. Also excluded: the helper's
+  `/metrics` listener (neither traced nor counted, as Go and Python) and the
+  helper's OTLP/HTTP export requests (the SDK suppresses their spans, but
+  instrumentation-http 0.300 still recorded `http.client.request.duration`
+  for each export). The instrumentations are built once per process after
+  the providers are registered, bound to the helper's providers (or to a
+  foreign global one), disabled by `shutdown()` and enabled and re-bound by
+  the next `setup()`; not built under `OTEL_SDK_DISABLED=true` (as Python).
+  gRPC spans carry the legacy `rpc.*` attributes and no RPC metrics are
+  emitted (upstream instrumentation-grpc 0.300; Python has the same two gaps,
+  but gRPC span names differ in all three languages — README gaps). Parity: the 15
+  `nodejs: skip:B6-…` cases pass on Node 22.15.0/24/26 (the `http_server` and
+  `grpc_server` kinds, `metrics.http_server_duration_histogram_name`); no new
+  case (321 before the fix round). New `test/instrumentation.test.cjs` (url.path at start,
+  the gRPC span-name format, two scrapes of the listener leave the HTTP server
+  count unchanged, client exclusions, re-binding, the app's grpc-js patched
+  when the gRPC exporter loaded it first). **Fix round (2026-11-02, after
+  observability, dev and code-review; Node unreleased, so no BREAKING
+  marker):** express and grpc-js required before `setup()` in CommonJS are now
+  instrumented (the first enable re-requires their cached entry; one warning
+  per package for CJS cache hits — *reworded by the dev re-probe, same day:*
+  `<module> was loaded before setup(); apps, routers and clients created
+  before setup() may lack spans or have an incomplete http.route — call
+  setup() in a preload (e.g. --import ./otel.mjs that imports the hooks
+  entry and calls setup()) before the app loads`; not reported for an ESM
+  import with the loader hooks installed), and ESM named imports of `node:http` see
+  the patched functions (`module.syncBuiltinESMExports()`); gRPC SERVER spans
+  are ERROR only for the six semconv codes (NOT_FOUND etc. → UNSET, as Go and
+  Python); `fetch`/undici spans redact userinfo and signature query values in
+  `url.full` and carry no `url.query` (the `node:http` client and Go write
+  none on client spans; *corrected by the dev re-probe, same day*);
+  express `router` layer spans are gone; client health matching reads the
+  pathname of absolute-form (proxied) targets; health paths are
+  percent-decoded (A22); a failed instrumentation build is retried by the
+  next setup; `/testing` `reset()` always disables the instrumentations;
+  `isGrpcHealthMethod` (unused) removed. New D-JS14 rows (HTTP/2, express
+  span shape, HTTP metrics, `error.type`, `http.route`, URL redaction,
+  foreign TracerProvider) and README gaps; `parity/README.md` lists the R10
+  extra attributes. **A22 (contract D1 rows "Percent-encoded health paths"
+  and "gRPC server span status", 2026-11-02):** the Go, Python and Node
+  `grpc_server` drivers serve `/parity.v1.Echo/NotFound` (NOT_FOUND) and
+  report `server_span_status`; two new cases (323 in total),
+  `http.health_percent_encoded_path` and `grpc.server_not_found_status_unset`,
+  `pass` in Go, Python and Node (Go and Python: driver changes only, no
+  library change — both already decode health paths and apply the
+  six-code server rule). **Final review (2026-11-02):** the undici query is
+  kept as written unless a redacted name is present (no `flag` → `flag=`,
+  `%20` → `+`); the gRPC status processor never throws; a package loaded
+  only through a deep path (`express/lib/express.js`) is reported and its
+  main entry re-required. **Dev re-probe (2026-11-02):** the preload warning
+  no longer names `/register` (it does not call `setup()` before B9) and is
+  skipped for ESM imports under the loader hooks; undici client spans drop
+  `url.query`; new D-JS14 rows and README gaps: routers created before
+  `setup()` get a truncated `http.route`, and a gRPC handler that throws
+  synchronously leaves its SERVER span unended (upstream).
 - **Go test hygiene:** `captureDiag` (`go/config_contract_test.go`) no longer
   prints slog timestamps, which made `TestDeprecatedEnvWarnsNamingReplacement`
   (`go/deprecation_test.go`) flaky.

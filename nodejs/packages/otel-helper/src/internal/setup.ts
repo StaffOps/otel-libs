@@ -6,14 +6,15 @@
  * (console exporters), `OTEL_SDK_DISABLED` and the export interval; task B5
  * the sampler (with the health sampler around it), the propagators and the
  * debug marker; task B7 the Prometheus reader, the `/metrics` listener and
- * `metricsHandler()`. The full lifecycle — rollback, foreign globals,
+ * `metricsHandler()`; task B6 the core instrumentations (http, undici,
+ * express, gRPC). The full lifecycle — rollback, foreign globals,
  * re-binding instrumentations, the stable forwarding providers of D-JS10 — is
  * task B9; the shape below (one runtime record on the shared state, rebuilt
  * after shutdown) is what it extends.
  */
 import cluster from 'node:cluster';
 import type * as http from 'node:http';
-import { context, diag, logs, metrics, propagation, trace, type Attributes, type TextMapPropagator } from '@opentelemetry/api';
+import { context, diag, logs, metrics, propagation, trace, type Attributes, type MeterProvider as MeterProviderApi, type TextMapPropagator, type TracerProvider as TracerProviderApi } from '@opentelemetry/api';
 import type { PrometheusExporter } from '@opentelemetry/exporter-prometheus';
 import { AsyncLocalStorageContextManager } from '@opentelemetry/context-async-hooks';
 import { defaultResource, resourceFromAttributes, type Resource } from '@opentelemetry/resources';
@@ -24,12 +25,13 @@ import { clearReportedOnce, report, reportOnce, truncateValue } from './diagnost
 import { installDiagLogger } from './diag-logger';
 import { logExporter, metricExporter, spanExporter, tlsMaterial, withMaskedEnv, type ExporterInput, type FileCache } from './exporters';
 import { foreignRegistry, registeredGlobal } from './globals';
+import { bindProviders, clientExclusions, createInstrumentations, disableInstrumentations, enableInstrumentations, loadedPackages, otlpTargets, type HelperInstrumentations } from './instrumentation';
 import { closeListener, createPrometheusReader, dropPredicate, droppingExporter, ENV_METRICS_PORT, serveMetrics, startListener, type DropPredicate, type ScrapeRequest, type ScrapeResponse, type ScrapeTarget } from './metrics-endpoint';
 import type { OtlpEndpoint } from './otlp';
 import type { Signal } from './otlp-settings';
 import { ATTR_SERVICE_NAME, TELEMETRY_SDK_KEYS, resolvePlan, validateOptions, type Plan, type Resolved, type SetupOptions } from './resolve';
 import { getState, setDiagnosticSink, type HelperState } from './state';
-import { buildPropagator, buildSampler, DebugMarkerProcessor, HealthCheckSampler } from './tracing';
+import { buildPropagator, buildSampler, DebugMarkerProcessor, GrpcServerStatusProcessor, HealthCheckSampler } from './tracing';
 
 /** What one successful `setup()` built. */
 interface Active {
@@ -54,6 +56,8 @@ interface Active {
   readonly listener: http.Server | undefined;
   /** Disabled metrics (A21); `undefined` = none. */
   readonly drop: DropPredicate | undefined;
+  /** Whether this setup enabled the instrumentations (disabled again by `shutdown()`). */
+  readonly instrumented: boolean;
   /** Cached result of the first `shutdown()`. */
   shutdown: Promise<void> | undefined;
 }
@@ -63,6 +67,13 @@ interface Runtime {
   active: Active | undefined;
   /** The `diag` registry entry the helper's DiagLogger produced; `undefined` = not installed. */
   diagLogger: unknown;
+  /**
+   * The core instrumentations, built by the first setup that instruments and
+   * kept for the process: every later setup re-binds them (design D-JS7).
+   * `undefined` = not built yet, or the last build failed (retried by the
+   * next setup; each failure is reported).
+   */
+  instrumentations: HelperInstrumentations | undefined;
 }
 
 const DEFAULT_SHUTDOWN_TIMEOUT_MS = 30_000;
@@ -77,8 +88,57 @@ const SHORT_READER_TIMEOUT_MS = 1000;
 const MAX_TIMER_MS = 2 ** 31 - 1;
 
 function runtimeOf(state: HelperState): Runtime {
-  state.runtime ??= { active: undefined, diagLogger: undefined } satisfies Runtime;
+  state.runtime ??= { active: undefined, diagLogger: undefined, instrumentations: undefined } satisfies Runtime;
   return state.runtime as Runtime;
+}
+
+/**
+ * The process's instrumentations, built on first use. A build failure (a bug,
+ * an incompatible upstream change, a broken API registry) is reported and
+ * this setup runs uninstrumented, never thrown from `setup()` (R8); the next
+ * setup tries again (and reports again if it fails).
+ */
+function instrumentationsOf(rt: Runtime): HelperInstrumentations | undefined {
+  if (rt.instrumentations !== undefined) return rt.instrumentations;
+  try {
+    rt.instrumentations = createInstrumentations();
+  } catch (err) {
+    report('the instrumentations could not be built; http, fetch, express and gRPC are not instrumented', {
+      error: truncateValue(err instanceof Error ? err.message : String(err)),
+    });
+  }
+  return rt.instrumentations;
+}
+
+/**
+ * Binds the instrumentations to these providers and enables them with this
+ * plan's client exclusions (its health paths and its OTLP/HTTP endpoints).
+ * Returns whether they are enabled: a failure is reported, the modules are
+ * unpatched again and the setup carries on (R8).
+ */
+function tryEnableInstrumentations(
+  instrumentations: HelperInstrumentations,
+  plan: Plan,
+  providers: { readonly tracerProvider: TracerProviderApi; readonly meterProvider: MeterProviderApi },
+  loadedBeforeSetup: ReadonlySet<string>,
+): boolean {
+  const { tracesExporters, metricExporters, logsExporters, otlp, healthPaths } = plan.resolved;
+  const targets = otlpTargets(otlp, {
+    traces: tracesExporters.includes('otlp'),
+    metrics: metricExporters.includes('otlp'),
+    logs: logsExporters.includes('otlp'),
+  });
+  try {
+    bindProviders(instrumentations, providers.tracerProvider, providers.meterProvider);
+    enableInstrumentations(instrumentations, clientExclusions(healthPaths, targets), loadedBeforeSetup);
+    return true;
+  } catch (err) {
+    disableInstrumentations(instrumentations);
+    report('the instrumentations could not be enabled; http, fetch, express and gRPC are not instrumented', {
+      error: truncateValue(err instanceof Error ? err.message : String(err)),
+    });
+    return false;
+  }
 }
 
 /**
@@ -305,9 +365,10 @@ interface Providers {
 
 function buildProviders(plan: Plan, base: Resource, options: SetupOptions): Providers {
   const resource = buildResource(base, plan.resourceAttributes);
-  // Instrumentations will be registered before this point (task B6, design
-  // D-JS1). The gRPC exporters load @grpc/grpc-js only when a gRPC signal is
-  // configured; an app loading grpc-js later is patched by the require hooks.
+  // The gRPC exporters load @grpc/grpc-js only when a gRPC signal is
+  // configured, before the instrumentations are enabled; an app loading
+  // grpc-js later is still patched by the require hooks (spike B1c F6,
+  // asserted in test/instrumentation.test.cjs).
   const pipelines = buildPipelines(plan);
   return {
     resource,
@@ -318,7 +379,9 @@ function buildProviders(plan: Plan, base: Resource, options: SetupOptions): Prov
       sampler: new HealthCheckSampler(buildSampler(plan.resolved.sampler), plan.resolved.healthPaths),
       spanLimits: { ...plan.sdk.spanLimits },
       // The debug marker first, so later processors see the attribute at start (R9).
+      // The gRPC status rule before everything else, so later processors see it (A22).
       spanProcessors: [
+        new GrpcServerStatusProcessor(),
         ...(plan.resolved.debug ? [new DebugMarkerProcessor()] : []),
         ...pipelines.spanProcessors,
         ...(options.spanProcessors ?? []),
@@ -405,6 +468,8 @@ export function setup(options?: SetupOptions): Resolved {
     installDiagLogger(ownsDiag);
     rt.diagLogger = registeredGlobal('diag');
   }
+  // Before the exporters load grpc-js: what the app had loaded itself.
+  const loadedBeforeSetup = plan.resolved.sdkDisabled ? new Set<string>() : loadedPackages();
   const built = plan.resolved.sdkDisabled ? undefined : buildProviders(plan, base, validated);
   if (rt.active !== undefined) releaseGlobals(rt.active);
   // A global registered by someone else is kept; checking first avoids the
@@ -457,6 +522,20 @@ export function setup(options?: SetupOptions): Resolved {
     ownsMeterProvider = registerProvider('metrics', 'metrics', () => metrics.setGlobalMeterProvider(meterProvider));
     ownsLoggerProvider = registerProvider('logs', 'logs', () => logs.setGlobalLoggerProvider(loggerProvider));
   }
+  // The instrumentations, after the providers are registered: their
+  // constructors read the API globals (design D-JS1, amended by B6). Not
+  // under OTEL_SDK_DISABLED=true (Python: no instrumentation) nor into a
+  // foreign API registry. Bound to the helper's providers when they are the
+  // globals, else to the global ones (a foreign provider), so instrumentation
+  // spans join the app's own.
+  let instrumented = false;
+  const instrumentations = foreignApi === undefined && built !== undefined ? instrumentationsOf(rt) : undefined;
+  if (instrumentations !== undefined && built !== undefined) {
+    instrumented = tryEnableInstrumentations(instrumentations, plan, {
+      tracerProvider: ownsTracerProvider ? built.tracerProvider : trace.getTracerProvider(),
+      meterProvider: ownsMeterProvider ? built.meterProvider : metrics.getMeterProvider(),
+    }, loadedBeforeSetup);
+  }
   // The listener serves only a reader whose MeterProvider is the global one
   // (a foreign provider's instruments would never reach it: 503 instead).
   const prometheus = built?.prometheus;
@@ -487,6 +566,7 @@ export function setup(options?: SetupOptions): Resolved {
     prometheusInactive: !plan.resolved.metricExporters.includes('prometheus'),
     listener,
     drop: dropPredicate(plan.resolved.disabledMetrics),
+    instrumented,
     shutdown: undefined,
   };
   return plan.resolved;
@@ -584,6 +664,9 @@ async function runShutdown(active: Active, timeoutMs: number): Promise<void> {
       resolve('timeout');
     }, timeoutMs);
   });
+  // Instrumentations off first (Python uninstruments first): no new spans or
+  // measurements reach providers that are shutting down.
+  if (active.instrumented) disableInstrumentations(stateInstrumentations());
   // The listener first (Go): scrapes stop, then the MeterProvider flushes.
   const listenerClosed = closeListener(active.listener);
   // Promise.resolve().then(): a provider that throws synchronously still lands in allSettled.
@@ -607,6 +690,11 @@ async function runShutdown(active: Active, timeoutMs: number): Promise<void> {
   } finally {
     clearTimeout(timer);
   }
+}
+
+function stateInstrumentations(): HelperInstrumentations | undefined {
+  const state = getState();
+  return state === null ? undefined : runtimeOf(state).instrumentations;
 }
 
 /** The resource of the installed TracerProvider (tests only, through `/testing`); `undefined` under `OTEL_SDK_DISABLED=true`. */
@@ -634,6 +722,8 @@ export function resetForTests(): void {
       }
       rt.active = undefined;
     }
+    // Unconditionally: whatever a setup left enabled (B6 review).
+    disableInstrumentations(rt.instrumentations);
     if (helperOwnsDiag(rt)) diag.disable();
     rt.diagLogger = undefined;
   }

@@ -617,12 +617,16 @@ test('globals: a registration the API refuses anyway is reported (context manage
     require('@staffops/otel-helper').setup({ serviceName: 'svc', environment: 'DEV', installDiagLogger: false });
     console.log(JSON.stringify(lines));
   `);
-  assert.deepEqual(lastJson(res), [
+  const lines = lastJson(res);
+  assert.deepEqual(lines.slice(0, 4), [
     'otelhelper: the OpenTelemetry API refused the global context manager; in-process context is not propagated',
     "otelhelper: the OpenTelemetry API refused the global TracerProvider; the helper's traces are inactive signal=traces",
     "otelhelper: the OpenTelemetry API refused the global MeterProvider; the helper's metrics are inactive signal=metrics",
     "otelhelper: the OpenTelemetry API refused the global LoggerProvider; the helper's logs are inactive signal=logs",
   ]);
+  // The instrumentation constructors read the (broken) globals too (B6): reported, setup() still returns.
+  assert.equal(lines.length, 5);
+  assert.match(lines[4], /^otelhelper: the instrumentations could not be built; http, fetch, express and gRPC are not instrumented error=/);
 });
 
 test('R8 credentials placed in the path never reach a diagnostic or an error', () => {

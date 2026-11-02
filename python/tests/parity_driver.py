@@ -302,6 +302,16 @@ def _server_spans(exporter) -> int:
     return sum(1 for s in exporter.get_finished_spans() if s.kind == SpanKind.SERVER)
 
 
+def _server_span_status(exporter) -> str:
+    """Status code of the first SERVER span ("UNSET", "ERROR", "OK"), or "none"."""
+    from opentelemetry.trace import SpanKind
+
+    for s in exporter.get_finished_spans():
+        if s.kind == SpanKind.SERVER:
+            return s.status.status_code.name
+    return "none"
+
+
 def _scrape_response():
     from starlette.testclient import TestClient
 
@@ -372,6 +382,9 @@ async def _grpc_call(method: str) -> None:
     async def watch(request, context):  # noqa: ANN001
         yield serving
 
+    async def not_found(request, context):  # noqa: ANN001
+        await context.abort(grpc.StatusCode.NOT_FOUND, "not found")
+
     server = grpc.aio.server()
     server.add_generic_rpc_handlers((
         grpc.method_handlers_generic_handler("grpc.health.v1.Health", {
@@ -380,6 +393,7 @@ async def _grpc_call(method: str) -> None:
         }),
         grpc.method_handlers_generic_handler("parity.v1.Echo", {
             "Ping": grpc.unary_unary_rpc_method_handler(unary),
+            "NotFound": grpc.unary_unary_rpc_method_handler(not_found),
         }),
     ))
     port = server.add_insecure_port("127.0.0.1:0")
@@ -409,6 +423,7 @@ def kind_grpc_server(case: dict) -> dict:
         snap["call_ok"] = False
         _captured.append(f"grpc call failed: {exc!r}")
     snap["server_spans"] = _server_spans(exporter)
+    snap["server_span_status"] = _server_span_status(exporter)
     snap["rpcs_counted"] = _scrape_count(r"^rpc_server(_call)?_duration[a-z_]*_count[{ ]")
     _flush_and_shutdown()
     return snap

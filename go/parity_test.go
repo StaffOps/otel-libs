@@ -58,9 +58,11 @@ import (
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 	"go.opentelemetry.io/otel/trace"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/health"
 	healthpb "google.golang.org/grpc/health/grpc_health_v1"
+	grpcstatus "google.golang.org/grpc/status"
 	"google.golang.org/grpc/test/bufconn"
 	"google.golang.org/protobuf/types/known/emptypb"
 )
@@ -819,6 +821,17 @@ func countSpans(exp *tracetest.InMemoryExporter, match func(tracetest.SpanStub) 
 
 func isServer(s tracetest.SpanStub) bool { return s.SpanKind == trace.SpanKindServer }
 
+// serverSpanStatus is the status code of the first SERVER span ("UNSET",
+// "ERROR", "OK"), or "none" without one (fixture field server_span_status).
+func serverSpanStatus(exp *tracetest.InMemoryExporter) string {
+	for _, s := range exp.GetSpans() {
+		if isServer(s) {
+			return strings.ToUpper(s.Status.Code.String())
+		}
+	}
+	return "none"
+}
+
 func scrapeText() string {
 	rr := httptest.NewRecorder()
 	MetricsHandler().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/metrics", nil))
@@ -887,10 +900,13 @@ func runGRPCServer(t *testing.T, opts []Option, input map[string]any) map[string
 	lis := bufconn.Listen(1 << 20)
 	srv := grpc.NewServer(
 		GRPCServerOption(),
-		grpc.UnknownServiceHandler(func(_ any, s grpc.ServerStream) error { // "/parity.v1.Echo/Ping"
+		grpc.UnknownServiceHandler(func(_ any, s grpc.ServerStream) error { // "/parity.v1.Echo/Ping", ".../NotFound"
 			var m emptypb.Empty
 			if err := s.RecvMsg(&m); err != nil {
 				return err
+			}
+			if name, _ := grpc.MethodFromServerStream(s); strings.HasSuffix(name, "/NotFound") {
+				return grpcstatus.Error(codes.NotFound, "not found")
 			}
 			return s.SendMsg(&emptypb.Empty{})
 		}),
@@ -923,6 +939,7 @@ func runGRPCServer(t *testing.T, opts []Option, input map[string]any) map[string
 	_ = conn.Close()
 	srv.GracefulStop() // server spans end when handlers return (after cancel for Watch)
 	snap["server_spans"] = countSpans(exp, isServer)
+	snap["server_span_status"] = serverSpanStatus(exp)
 	snap["rpcs_counted"] = scrapeCount(rpcServerCountRe)
 	return snap
 }

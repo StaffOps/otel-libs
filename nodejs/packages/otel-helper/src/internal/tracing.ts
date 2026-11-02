@@ -13,7 +13,7 @@
  * (R8). Sampler and propagator names are never secrets, so they are echoed
  * (truncated).
  */
-import { SpanKind, isSpanContextValid, trace, type Attributes, type Context, type Link, type TextMapPropagator } from '@opentelemetry/api';
+import { SpanKind, SpanStatusCode, isSpanContextValid, trace, type Attributes, type Context, type Link, type TextMapPropagator } from '@opentelemetry/api';
 import { CompositePropagator, W3CBaggagePropagator, W3CTraceContextPropagator } from '@opentelemetry/core';
 import {
   AlwaysOffSampler,
@@ -241,11 +241,30 @@ export function buildPropagator(names: readonly PropagatorName[]): TextMapPropag
   });
 }
 
-/** Strips the query and fragment, lowercases and drops trailing slashes (`/` stays `/`). */
-export function normalizeHealthPath(path: string): string {
+function cutQuery(path: string): string {
   const cut = path.search(/[?#]/);
+  return cut >= 0 ? path.slice(0, cut) : path;
+}
+
+/**
+ * Strips the query and fragment, percent-decodes, lowercases and drops
+ * trailing slashes (`/` stays `/`). Decoding follows Go, whose sampler sees
+ * the decoded `req.URL.Path` (contract design D1 row "Percent-encoded health
+ * paths", A22, 2026-11-02): `/%68ealth` and `/health%2F` are health paths. A
+ * malformed escape keeps the raw path (Go's server rejects such a request).
+ * The decoded path is cut again, as Go's normalization of a decoded `?` does.
+ */
+export function normalizeHealthPath(path: string): string {
+  let p = cutQuery(path);
+  if (p.includes('%')) {
+    try {
+      p = cutQuery(decodeURIComponent(p));
+    } catch {
+      // Malformed escape: matched as written.
+    }
+  }
   // ASCII only (contract design D1 row "ASCII case folding", A20).
-  let p = asciiLower(cut >= 0 ? path.slice(0, cut) : path);
+  p = asciiLower(p);
   while (p.length > 1 && p.endsWith('/')) p = p.slice(0, -1);
   return p;
 }
@@ -262,15 +281,6 @@ const GRPC_HEALTH_SPAN = `grpc.${GRPC_HEALTH_SERVICE}`;
  */
 export function isGrpcHealthSpanName(name: string): boolean {
   return name.startsWith(GRPC_HEALTH_SPAN);
-}
-
-/**
- * Whether a full gRPC method (`/svc/Method` or `svc/Method`, as a client or
- * interceptor sees it) belongs to the `grpc.health.v1.Health` service. For
- * task B6 (client exclusion); the sampler matches span names only.
- */
-export function isGrpcHealthMethod(fullMethod: string): boolean {
-  return (fullMethod.startsWith('/') ? fullMethod.slice(1) : fullMethod).startsWith(GRPC_HEALTH_SERVICE);
 }
 
 const ATTR_URL_PATH = 'url.path';
@@ -349,6 +359,62 @@ export class DebugMarkerProcessor implements SpanProcessor {
 
   onEnd(): void {
     // Nothing to do at end: the attribute is set at start.
+  }
+
+  forceFlush(): Promise<void> {
+    return Promise.resolve();
+  }
+
+  shutdown(): Promise<void> {
+    return Promise.resolve();
+  }
+}
+
+/**
+ * gRPC status codes that make a SERVER span an error (UNKNOWN 2,
+ * DEADLINE_EXCEEDED 4, UNIMPLEMENTED 12, INTERNAL 13, UNAVAILABLE 14,
+ * DATA_LOSS 15): the RPC semconv server rule, as Go otelgrpc
+ * (`serverStatus`) and Python (`_utilities.py`) apply it.
+ */
+const GRPC_SERVER_ERROR_CODES: ReadonlySet<number> = new Set([2, 4, 12, 13, 14, 15]);
+
+/** The writable status of an SDK span in `onEnding` (`setStatus` refuses UNSET). */
+interface MutableStatus {
+  status: { code: SpanStatusCode; message?: string };
+}
+
+/**
+ * Normalizes gRPC SERVER span status before the span ends (contract task
+ * A22, 2026-11-02): instrumentation-grpc 0.300 marks every non-OK status
+ * ERROR, Go and Python only the six codes of {@link GRPC_SERVER_ERROR_CODES}.
+ * A SERVER span with `rpc.system=grpc` and another `rpc.grpc.status_code`
+ * (NOT_FOUND, INVALID_ARGUMENT, …: the client's fault) ends with status
+ * UNSET. Runs in `onEnding`, so every later processor and exporter (the
+ * app's own `spanProcessors` too) sees the same status; an exporter wrapper
+ * would leave those processors with the upstream ERROR. The span's
+ * attributes (`rpc.grpc.status_code`, `grpc.error_*`) are kept.
+ */
+export class GrpcServerStatusProcessor implements SpanProcessor {
+  onStart(): void {
+    // Decided at end, from the status code the instrumentation set.
+  }
+
+  onEnding(span: Span): void {
+    // Runs inside span.end() on the app's RPC path: never throws.
+    try {
+      if (span.kind !== SpanKind.SERVER || span.status.code !== SpanStatusCode.ERROR) return;
+      const attrs = span.attributes;
+      const code = attrs['rpc.grpc.status_code'];
+      if (attrs['rpc.system'] !== 'grpc' || typeof code !== 'number' || GRPC_SERVER_ERROR_CODES.has(code)) return;
+      // Also clears an app's own setStatus(ERROR) on such a span (contract D1 row "gRPC server span status").
+      (span as unknown as MutableStatus).status = { code: SpanStatusCode.UNSET };
+    } catch {
+      // A frozen or exotic span keeps its status.
+    }
+  }
+
+  onEnd(): void {
+    // Nothing to do: the status is fixed in onEnding.
   }
 
   forceFlush(): Promise<void> {

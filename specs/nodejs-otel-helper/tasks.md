@@ -21,7 +21,7 @@ refutation (`observability` + `dev`), `code-review`, CHANGELOG, commit.
 | B4c Exporter lists, console, `OTEL_SDK_DISABLED`, `OTEL_CONFIG_FILE`, interval | B4b | R8, JS2 | ✅ 2026-10-30 (observability + dev refutation and code-review approved after fixes; open items became contract A19) |
 | B5 Sampler (ParentBased, grammar, health wrapper outside it), propagators — installed also under `OTEL_SDK_DISABLED=true` (case `propagation.sdk_disabled_propagators_kept`; added 2026-10-29) — debug marker (`debug="true"` on no/remote parent) | B3 | R6, R7, R9 | ✅ 2026-11-02 (observability + dev refutation and code-review approved after fixes) |
 | B7 `/metrics`: helper listener on `::`, mounted handler status table, unit-suffix adapter (+ fixture assertions on the HTTP histogram name and a counter with a unit, run by the Go and Python suites in the same change), Prometheus fallback; remove the B4c pending INFO report "prometheus metric exporter not implemented yet in Node" and its test filters (`test/otlp.test.cjs`, `test/setup.test.cjs`, `test/signals.test.cjs`; added 2026-10-29) | B4c | D-JS8, ADR-007 | ✅ 2026-11-02 (observability + dev refutation and code-review approved after fixes) |
-| B6 HTTP/undici/express/gRPC instrumentation, health (HTTP + gRPC by name), client exclusions incl. OTLP endpoints, `http_server`/`grpc_server` cases; assert the span-name format `grpc.<service>/<method>` the health sampler matches and `url.path` at span start (B5 fix round, 2026-10-30) | B5, B7 | R7, R10, D-JS7 | ☐ |
+| B6 HTTP/undici/express/gRPC instrumentation, health (HTTP + gRPC by name), client exclusions incl. OTLP endpoints, `http_server`/`grpc_server` cases; assert the span-name format `grpc.<service>/<method>` the health sampler matches and `url.path` at span start (B5 fix round, 2026-10-30) | B5, B7 | R7, R10, D-JS7 | ✅ 2026-11-02 (fix round, final review and dev re-probe applied; full compose suites green on Node 24/22.15.0/26 with export cases, Go, Python 3.13 latest / 3.10 lower) |
 | B8 Logging: helper logger, stdout fallback, console exporter, R4 levels | B4c | JS6, R4 | ☐ |
 | B9 Lifecycle: sync setup, rollback (G1), foreign globals, shutdown deadline, re-setup re-binding, `/testing` reset, register entry; `replaceGlobals` covers the propagator; re-setup releases only the helper's own providers, as B5 does for the propagator (`registeredGlobal(type) === active.<instance>`) (B5 fix round, 2026-10-30) | B6–B8 | JS5, JS7, D-JS10 | ☐ |
 | B9b `cluster` fork kind + multi-worker docs | B9 | JS9, D-JS13 | ☐ |
@@ -32,8 +32,8 @@ refutation (`observability` + `dev`), `code-review`, CHANGELOG, commit.
 | B11a e2e `node-smoke` (+ 13 expectation rows, markers, CI job name) | B10a–d | acceptance | ☐ |
 | B11b Examples api → backend (gRPC, notification.proto, proto-loader, health) → process; Dockerfile + Dockerfile.demo (npm pack tarballs) | B11a | acceptance | ☐ |
 | B11c custom-signals (same names/shape as Go/Python) + EXAMPLES.md | B11b | acceptance | ☐ |
-| B12 Docs: nodejs README/HOW-TO/TESTS; MkDocs nav + `docs/site/nodejs/` symlinks + `docs.yml` paths + `site_description`; root README (matrix, quick start, env table heading, opt-in, gaps, installing); AGENTS.md; CONSUMING (npmjs + GitHub Packages `.npmrc`); release + parity-case skills; `verify.sh` steps; dashboards: none needed (they read .NET example metrics); HOW-TO: with services in several languages use `parentbased_traceidratio`, not bare `traceidratio` (contract D1 row "Bare `traceidratio` across languages", A20); HOW-TO: the ref'd `shutdown()` deadline can keep a process with a hung provider alive up to `timeoutMs` (default 30 s); HOW-TO: await `shutdown()` before calling `setup()` again (a re-setup in the same tick can find the `/metrics` port still bound: EADDRINUSE on the sink; B7, 2026-11-02) | B11c | acceptance | ☐ |
-| B13 Release: CI `node-test` job, `nodejs/v*` tag trigger, `build-lib`/publish `needs`, npm pack, example images, `publish-nodejs-release` (id-token, npmjs + GitHub Packages); exporter-env re-check checklist per SDK bump | B12 + owner claimed `staffops` npm org | JS10 | ☐ |
+| B12 Docs: nodejs README/HOW-TO/TESTS; MkDocs nav + `docs/site/nodejs/` symlinks + `docs.yml` paths + `site_description`; root README (matrix, quick start, env table heading, opt-in, gaps, installing); AGENTS.md; CONSUMING (npmjs + GitHub Packages `.npmrc`); release + parity-case skills; `verify.sh` steps; dashboards: none needed (they read .NET example metrics); HOW-TO: with services in several languages use `parentbased_traceidratio`, not bare `traceidratio` (contract D1 row "Bare `traceidratio` across languages", A20); HOW-TO: the ref'd `shutdown()` deadline can keep a process with a hung provider alive up to `timeoutMs` (default 30 s); HOW-TO: await `shutdown()` before calling `setup()` again (a re-setup in the same tick can find the `/metrics` port still bound: EADDRINUSE on the sink; B7, 2026-11-02); HOW-TO: `node:http2` / h2c servers and clients are not instrumented (no official instrumentation; D-JS14, B6 fix round, 2026-11-02); HOW-TO: require routes modules (express routers, gRPC services and clients) after `setup()` — a router built before it gets a truncated `http.route` or none (D-JS14, B6 dev re-probe L1, 2026-11-02); HOW-TO troubleshooting: an OTLP endpoint answering `Retry-After: 0` makes the upstream retry print Node's `TimeoutNegativeWarning` (B6 fix round, 2026-11-02) | B11c | acceptance | ☐ |
+| B13 Release: CI `node-test` job, `nodejs/v*` tag trigger, `build-lib`/publish `needs`, npm pack, example images, `publish-nodejs-release` (id-token, npmjs + GitHub Packages); exporter-env re-check checklist per SDK bump; SDK bump: `Span.status` writable in `onEnding` (`GrpcServerStatusProcessor`, test "A22 gRPC server status through a real TracerProvider"), InstrumentationBase still enabling in its constructor (B6 final review, 2026-11-02) | B12 + owner claimed `staffops` npm org | JS10 | ☐ |
 | B14 Final validation (refutation + code-review on the whole Node package), Node `0.3.0` rc | B13 | acceptance | ☐ |
 
 **Test-only dependencies approved by the owner (2026-10-29)**: devDependencies
@@ -41,6 +41,26 @@ refutation (`observability` + `dev`), `code-review`, CHANGELOG, commit.
 `pg`, `mysql2`, `redis`, `ioredis`, `@aws-sdk/client-sqs` (B10); `pino`,
 `winston` (B10d); Docker test services `postgres`, `mysql`. None ship in the
 published packages.
+
+**Carried from B6 into B9 (2026-11-02)**: the instrumentations live on the
+shared runtime (`Runtime.instrumentations`, built once per process by the
+first setup that instruments); every setup calls `setTracerProvider` /
+`setMeterProvider` with its own providers and enables them, `shutdown()`
+disables them, `/testing` `reset()` disables them but keeps the instances
+(their require/import hooks stay registered). B9 should: bind the stable
+forwarding providers of D-JS10 instead (then a re-setup needs no re-bind);
+decide whether `replaceGlobals` re-binds instrumentations bound to a foreign
+provider (they hold the API proxy, whose tracer keeps the first delegate it
+resolved); append the `setup({ instrumentations })` extensions of B10 to the
+same holder (enable, bind, disable together); cover a rollback (G1) after the
+instrumentations were enabled; the warning for an **ESM process without the
+loader hooks** (JS5: `import express from 'express'` with no
+`--import @staffops/otel-helper/register` is never patched by
+require-in-the-middle, and the B6 re-require only reaches `require.cache`) —
+name it explicitly (B6 fix round, 2026-11-02); once `/register` calls
+`setup()`, revisit the "loaded before setup()" report text
+(`instrumentation.ts` `enableInstrumentations`) so it can name `/register`
+as the cure again (B6 dev re-probe M1, 2026-11-02).
 
 **Checklist carried from the B3 review (2026-10-29)**:
 - B9: stable forwarding providers (design D-JS10, decided 2026-10-29); flip the

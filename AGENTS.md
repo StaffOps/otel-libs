@@ -87,8 +87,8 @@ resolution rules: design D1. Summary of what differs between the two contracts:
   same propagators (W3C TraceContext + Baggage), same export interval, same
   health-path filtering (Go and Python share one list and semantics since A7 —
   design D5; .NET keeps its 0.2.x filter until Phase C). Emitted attributes
-  are the target, not yet the fact: current gaps (Python gRPC legacy `rpc.*`
-  attributes and no RPC metrics; .NET on 0.2.x) are listed under "Known
+  are the target, not yet the fact: current gaps (Python and Node.js gRPC
+  legacy `rpc.*` attributes and no RPC metrics; .NET on 0.2.x) are listed under "Known
   emitted-telemetry gaps" in [`README.md`](README.md#known-emitted-telemetry-gaps).
 - Parity is enforced by the shared fixture `parity/cases.json` (from `0.3.0`),
   run by every language's test suite. A language that lags marks its cases

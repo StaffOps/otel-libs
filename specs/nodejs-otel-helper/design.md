@@ -49,6 +49,30 @@ when a gRPC signal is configured (they load `@grpc/grpc-js`, so
 therefore not load-bearing for the helper's own grpc-js load; an app that
 loads grpc-js later is patched by the instrumentation's require hooks (spike
 B1c F6) — B6 keeps the assertion.*
+*Amended 2026-11-02 (B6; rewritten in the B6 fix round, same day): the
+instrumentations are built and enabled **after** the providers are
+registered. Their constructors read the API globals (`trace.getTracer`,
+`metrics.getMeter`, `logs.getLogger`), so building them after registration
+means they never resolve a global before the helper has decided ownership;
+the cost is that the gRPC exporters' grpc-js is loaded before the
+instrumentation is enabled. Nothing is lost by that: the first enable
+re-requires the cached main entry of every instrumented package (express,
+`@grpc/grpc-js`), which patches their prototypes in place —
+`test/instrumentation.test.cjs` asserts the app's grpc-js is patched (client
+and server) when only gRPC OTLP export is configured, and is not reported as
+"loaded before setup()" (the helper loaded it). The real trade-off is the
+app's own early loads: in CommonJS, express or grpc-js required before
+`setup()` was silently left uninstrumented by require-in-the-middle (it
+patches on `require`); upstream's `_warnOnPreloadedModules` never fires there
+because it reads `globalThis.require`, undefined in CJS and ESM modules
+(`instrumentation/dist/platform/node/instrumentation.cjs:75-81`). The fix
+round re-requires them and reports once per package. *Reworded 2026-11-02
+(B6 dev re-probe M1): the earlier text told users to use `/register`, which
+does not call `setup()` until B9 and so fired on a correct run; it now reads
+`<module> was loaded before setup(); apps, routers and clients created before setup() may lack spans or have an incomplete http.route — call setup() in a preload (e.g. --import ./otel.mjs that imports the hooks entry and calls setup()) before the app loads`. Not reported when the loader hooks are installed and the
+package was imported through ESM (import-in-the-middle already handed it to
+the instrumentation; Node gives an ESM-loaded CJS `Module` no `parent`); CJS
+cache hits are still reported.*
 **Justification**: ADR-012; 3.0
 registers no context manager (without it no in-process parent link).
 **Trade-offs**: more code than `NodeSDK`. **When wrong / reversal / alternatives**: ADR-012.
@@ -201,6 +225,61 @@ test). **When wrong**: span name format changes. **Reversal**: gRPC server
 interceptor filter. **Alternatives**: `ignoreGrpcMethods` (rejected: drops
 every service's Check/Watch).
 *Implemented 2026-10-30 (B5): `HealthCheckSampler` (`tracing.ts`) decides from the span kind, the parent and what the span carries at start — `url.path`, else `http.target` (instrumentation-http 0.300 never sets it: kept as the Go/Python fallback); gRPC by **span name only**, in the instrumentation's form `grpc.grpc.health.v1.Health/<method>` (*corrected 2026-10-30, B5 fix round: instrumentation-grpc 0.300 sets `rpc.*` after start, with the bare method, so no attribute is matched; a user service in package `health.v1`, span `grpc.health.v1.Health/<method>`, is kept; the `/svc/Method` and `svc/Method` forms are only for a full-method value, `isGrpcHealthMethod`, for B6's client exclusion*) — so B6 only has to make the instrumentations start their spans with those; unit-tested directly in `test/tracing.test.cjs`. HTTP clients are not matched by the sampler (B6 hooks). Option `healthPaths` (Go/Python rule: ASCII, leading `/`, no `?#,`; `[]` = none) and `Resolved.healthPaths`. The debug marker is a span processor placed before the exporters' (R9)*
+*Implemented 2026-11-02 (B6): `instrumentation.ts`. The four instrumentations
+are built once per process (kept on the shared runtime), each constructor's
+self-enable undone at once (not `enabled: false`: instrumentation-undici
+checks `config.enabled` on every request), then bound with
+`setTracerProvider`/`setMeterProvider` — the helper's providers when they are
+the globals, else the global ones (a foreign provider) — and enabled by every
+setup; `shutdown()` disables them (Python uninstruments at shutdown); none
+under `OTEL_SDK_DISABLED=true` (Python: no instrumentation) or a foreign API
+registry. After enabling, `node:http`/`node:https` are required once more so a
+copy the app loaded before `setup()` is patched now. Hooks:
+`ignoreIncomingRequestHook` = `isHelperServer(req.socket.server)` only;
+`ignoreOutgoingRequestHook` and undici `ignoreRequestHook` = a health path
+(D5 normalization) or one of the helper's OTLP/HTTP endpoints (scheme, host,
+port with the scheme default, path; query ignored; only signals exported over
+OTLP). The OTLP filter is needed although the SDK exports under
+`suppressTracing`: instrumentation-http 0.300 records
+`http.client.request.duration` even then (`_closeHttpSpan`). gRPC OTLP needs
+none (http2 is not instrumented by instrumentation-http; instrumentation-grpc
+records no metrics; its spans are suppressed). gRPC client health calls are
+dropped by the sampler (CLIENT spans named `grpc.grpc.health.v1.Health/…`), so
+`isGrpcHealthMethod` is not used by B6. Asserted by tests: `url.path` at span
+start, the gRPC span names `grpc.<service>/<method>` seen by the sampler on
+client and server, two scrapes of the listener leave the HTTP server count
+unchanged. `OTEL_SEMCONV_STABILITY_OPT_IN` (D-JS9) is not parsed by B6 (task
+B10a); instrumentation-http 0.300 is stable-only.*
+*Amended 2026-11-02 (B6 fix round, after observability, dev and
+code-review): (1) the first enable re-requires express / grpc-js loaded
+before `setup()` and reports them (see D-JS1); every enable requires
+`node:http`/`node:https` again and calls `module.syncBuiltinESMExports()`
+(also after disabling), so `import { request } from 'node:http'` taken
+before `setup()` sees the patched function; (2) express ignores the
+`router` layer too (zero-duration `router - <path>` spans; request-handler
+spans kept); (3) undici `startSpanHook` rewrites `url.full` as
+instrumentation-http writes it for `node:http` clients (userinfo
+`REDACTED:REDACTED`, the values of `sig`, `Signature`, `AWSAccessKeyId`,
+`X-Goog-Signature`, `X-Amz-Signature`, `X-Amz-Credential`,
+`X-Amz-Security-Token` redacted) and drops `url.query` (*corrected
+2026-11-02, B6 dev re-probe L3: instrumentation-http writes `url.query` on
+incoming requests only, `utils.cjs:387-390`, and Go writes none, so undici
+client spans no longer carry it*); (4) client health matching reads the
+URL pathname of an absolute-form target (a proxied `path:
+'http://target/healthz'`); (5) health paths are percent-decoded before
+matching (contract D1 row "Percent-encoded health paths", A22); (6) gRPC
+SERVER span status follows the RPC semconv server rule
+(`GrpcServerStatusProcessor`, first span processor, `onEnding`; contract D1
+row "gRPC server span status", A22) — not an exporter wrapper, which would
+leave the app's own `spanProcessors` with the upstream ERROR; (7) a failed
+build is retried by the next setup and reported each time; `/testing`
+`reset()` disables the instrumentations unconditionally. Two behaviors to
+know: a gRPC client health call still injects a `traceparent` (sampled=0)
+— the CLIENT span is dropped by the sampler, not suppressed, as for any
+NOT_RECORD span; and with a **foreign** global TracerProvider the
+instrumentations bind to it, so neither the helper's health sampler nor its
+gRPC status rule applies to their spans (the foreign provider's sampler
+decides).*
 *Amended 2026-10-29 (B2 review): extra span processors (the parity driver's
 in-memory capture) go through the `setup()` option `spanProcessors`
 (test/advanced, never a fixture `code` key), added after the helper's own
@@ -408,6 +487,17 @@ cluster/pm2 are Node's prefork model (not `skip:no-prefork-model`).
 | Difference | Status |
 |---|---|
 | gRPC RPC metrics absent (`grpc.health_*_counted_in_metrics`) | `skip:no-upstream-rpc-metrics` (as Python) |
+| gRPC spans carry the legacy `rpc.system`, `rpc.service`, `rpc.method`, `rpc.grpc.status_code` (instrumentation-grpc 0.300; Go emits the current RPC semconv) (B6, 2026-11-02). *Extended 2026-11-02 (B6 fix round):* span **names** differ in all three languages — Go `pkg.Svc/Method` (semconv `{service}/{method}`), Python `/pkg.Svc/Method`, Node `grpc.pkg.Svc/Method`; Node error spans carry the non-semconv `grpc.error_name` / `grpc.error_message` and no `error.type` | recorded; README "Known emitted-telemetry gaps". Rename deferred to a ruling (contract A22 follow-up (a)); the Node health sampler matches the current Node name. No fixture case asserts gRPC span attributes or names |
+| `node:http2` (and h2c) is not instrumented: instrumentation-http patches `http`/`https` only; no official HTTP/2 instrumentation (B6 fix round, 2026-11-02) | recorded; README gap; B12 HOW-TO item. Go `otelhttp` and Python ASGI see HTTP/2 requests through the same handler |
+| Express spans: one SERVER span named `GET <route>` plus one INTERNAL `request handler - <route>` span per matched handler (middleware and router layers ignored). Go `otelhttp`: the SERVER span only. Python ASGI: the SERVER span plus `http send` / `http receive` INTERNAL spans (B6 fix round, 2026-11-02) | recorded; no case (span counts assert SERVER spans only) |
+| HTTP metrics: Node emits only `http.server.request.duration` and `http.client.request.duration`. Go also emits request/response body sizes; Python emits body sizes and `http.server.active_requests` (B6 fix round, 2026-11-02) | recorded; README gap; contract A22 follow-ups (b), (c) |
+| `error.type` on transport errors: instrumentation-http and -undici write the JS error name (`Error`, `TypeError`), Go the Go error type, Python the exception class name (B6 fix round, 2026-11-02) | recorded; no case |
+| `http.route` only with express (an instrumented router); a plain `node:http` server has none, so span names and the server metric have no route (Go: only with a `ServeMux` pattern; Python: FastAPI routes) (B6 fix round, 2026-11-02) | recorded; README gap |
+| URL redaction: Node `node:http` and `fetch` clients write userinfo as `REDACTED:REDACTED` and redact the values of the signature parameters (`sig`, `Signature`, `AWSAccessKeyId`, `X-Goog-Signature`, `X-Amz-*`) in `url.full`; Node servers redact the same list in `url.query` (other values, e.g. `token`, are kept). Go `otelhttp` v0.72 drops userinfo from `url.full` (`internal/semconv/client.go:113-121`), redacts no query value and writes no server `url.query`. Python: not verified in the fix round (B6 fix round, 2026-11-02). *Amended 2026-11-02 (B6 dev re-probe L3–L5):* no client span carries `url.query` (undici's is dropped, as `node:http` and Go); in `url.full`, `node:http` re-serializes the query through `URLSearchParams` (upstream) while undici keeps it as written unless a name is redacted (`flag` stays `flag`, `%20` stays `%20`) — intentional, the helper rewrites no more than it must; parameter names are matched **case-sensitively** (`SIG` is not redacted), as upstream does | recorded; README gap; Python comparison open |
+| A foreign global TracerProvider: the instrumentations bind to it, so the helper's health sampler and gRPC status rule do not apply to their spans (they keep upstream's ERROR) (B6 fix round, 2026-11-02) | recorded; README gap |
+| Routers or apps created before `setup()`: express wires its route layers when the router is built, so a router or app built before the instrumentation is enabled gives a truncated `http.route` (`GET /api` for `/api/orders/:id`) or none, and may miss request-handler spans; the preload report names this. Routes modules must be required after `setup()` (B6 dev re-probe L1, 2026-11-02) | recorded; the report text (D-JS1); B12 HOW-TO item |
+| A gRPC handler that **throws synchronously** leaves its SERVER span unended (never exported): upstream instrumentation-grpc, reproduced without the helper; Go and Python record the call as UNKNOWN (B6 dev re-probe L2, 2026-11-02) | recorded; README gap; no case (the drivers' "throw" is not equivalent across languages: a Go handler would panic) |
+| The gRPC status rule also clears an app's own `setStatus(ERROR)` on a gRPC SERVER span whose `rpc.grpc.status_code` is not one of the six error codes (B6 final review, 2026-11-02) | recorded; the processor cannot tell who set the status |
 | Busy `/metrics` port doesn't fail sync setup | recorded; loud error |
 | Metric reader timeout capped at the interval | recorded; warning. *Amended 2026-10-29 (B4c): with a configurable interval the cap also applies when only the interval is short (e.g. `OTEL_METRIC_EXPORT_INTERVAL=5000` with the 10 000 ms default timeout); the warning then names the interval's source (`OTEL_METRIC_EXPORT_INTERVAL` or `exportIntervalMs`), otherwise the timeout's source plus `interval=<source>`. Unit-tested in `test/signals.test.cjs`*. *Amended 2026-10-29 (A19 fix round): a very short interval makes OTLP metric exports time out (the deadline is the interval); when the cap makes the reader timeout shorter than 1000 ms the helper warns once more, naming the interval's source* |
 | ~~Metric export interval bounded by the Node timer limit (2^31-1 ms): an env value above it is clamped with a warning, a code `exportIntervalMs` above it throws (B4c, 2026-10-29)~~ | *Moved 2026-10-29 to the contract (design D1 row "Metric export interval", A19): every language clamps and bounds the interval the same way; no longer a Node difference* |

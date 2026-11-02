@@ -254,10 +254,6 @@ test('R7/D-JS7 gRPC health: the instrumentation span name only; SERVER entry spa
   assert.equal(decide(s, { name: 'grpc.x/Y', attributes: attrs }).decision, SamplingDecision.RECORD_AND_SAMPLED);
   assert.equal(tracing.isGrpcHealthSpanName('grpc.grpc.health.v1.Health/Check'), true);
   assert.equal(tracing.isGrpcHealthSpanName('grpc.health.v1.Health/Check'), false);
-  // Full-method forms, for the client exclusion of task B6.
-  assert.equal(tracing.isGrpcHealthMethod('/grpc.health.v1.Health/Check'), true);
-  assert.equal(tracing.isGrpcHealthMethod('grpc.health.v1.Health/Watch'), true);
-  assert.equal(tracing.isGrpcHealthMethod('/health.v1.Health/Check'), false);
 });
 
 test('R7/R9 an invalid parent context counts as no parent (health sampler and debug marker)', () => {

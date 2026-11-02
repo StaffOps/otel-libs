@@ -214,7 +214,7 @@ lightweight.
 ## Cross-language parity
 
 Parity is enforced, not promised. [`parity/cases.json`](https://github.com/StaffOps/otel-libs/blob/main/parity/cases.json) is a
-hand-maintained, language-neutral fixture (321 cases: 187 after A13, 17 added by the Node B3 review, 6 by A16, 40 by Node B4a and its rulings, 16 by A17, 2 by Node B4b, 13 by A18, 14 by A19 and its fix round, 1 by Node B5, 5 by A20, 3 by Node B7, 11 by A21, 6 by the B7/A21 fix rounds)
+hand-maintained, language-neutral fixture (323 cases: 187 after A13, 17 added by the Node B3 review, 6 by A16, 40 by Node B4a and its rulings, 16 by A17, 2 by Node B4b, 13 by A18, 14 by A19 and its fix round, 1 by Node B5, 5 by A20, 3 by Node B7, 11 by A21, 6 by the B7/A21 fix rounds, 2 by A22 from the Node B6 fix round)
 that every language's test suite runs — config resolution, wire-level export
 against a fake OTLP receiver, sampling, propagation, health exclusion, logging
 and `/metrics` status
@@ -230,7 +230,15 @@ always identical:
 
 | Area | Gap |
 |------|-----|
-| Python gRPC | Spans carry the legacy `rpc.system`, `rpc.service`, `rpc.method` and `rpc.grpc.status_code` attributes, and no RPC metrics are emitted (upstream `opentelemetry-instrumentation-grpc`). Go emits the current RPC semconv and `rpc.server.call.duration` / `rpc.client.call.duration` |
+| Python and Node.js gRPC | Spans carry the legacy `rpc.system`, `rpc.service`, `rpc.method` and `rpc.grpc.status_code` attributes, and no RPC metrics are emitted (upstream `opentelemetry-instrumentation-grpc`; `@opentelemetry/instrumentation-grpc` 0.300 in the Node.js helper, which is not released yet). Go emits the current RPC semconv and `rpc.server.call.duration` / `rpc.client.call.duration`. Node.js error spans also carry the non-semconv `grpc.error_name` / `grpc.error_message` and no `error.type` |
+| Node.js gRPC handler that throws synchronously | Its SERVER span is never ended or exported (upstream `@opentelemetry/instrumentation-grpc`); Go and Python record the call with status UNKNOWN. Return errors through the callback or a rejected promise |
+| Node.js routers created before `setup()` | An express app or router built before `setup()` gets a truncated `http.route` (`GET /api`) or none; require routes modules after `setup()` (the helper warns when express or grpc-js was loaded first) |
+| gRPC span names | Different in every language: Go `pkg.Svc/Method` (semconv), Python `/pkg.Svc/Method`, Node.js `grpc.pkg.Svc/Method`. Queries and dashboards on gRPC span names must match all three until a ruling (contract task A22 follow-up) |
+| Node.js HTTP/2 | `node:http2` servers and clients (h2c included) are not instrumented: there is no official HTTP/2 instrumentation |
+| Node.js HTTP metrics | Only `http.server.request.duration` and `http.client.request.duration`. Go also emits request/response body sizes; Python emits body sizes and `http.server.active_requests` |
+| Node.js `http.route` | Only with express; a plain `node:http` server has no route on its spans or its server metric |
+| URL redaction | Node.js clients write userinfo as `REDACTED:REDACTED` (`node:http`; `fetch` rejects URLs with credentials and undici drops userinfo from the origin) and redact signature query values (`sig`, `Signature`, `AWSAccessKeyId`, `X-Goog-Signature`, `X-Amz-*`) in `url.full`; Node.js servers redact the same list in `url.query` and keep other values. Go drops userinfo, redacts no query value and writes no server `url.query`. Don't put secrets in query strings |
+| Node.js with a foreign TracerProvider | When another SDK registered the global TracerProvider first, the instrumentations use it, so the helper's health-check drop and gRPC status rule do not apply to their spans |
 | Go resource from `OTEL_RESOURCE_ATTRIBUTES` | The Go SDK providers parse the variable again under the helper's resource (`WithResource` merges `resource.Environment()`): a blank `deployment.environment.name=` comes back as `""` instead of being absent, and a key with surrounding Unicode whitespace (e.g. U+00A0) is emitted twice, verbatim and trimmed. Python and Node.js emit only the helper's parse. Workaround: don't set blank values; use ASCII keys ([design D1](https://github.com/StaffOps/otel-libs/blob/main/specs/config-contract-v0.3/design.md)) |
 | Go OTLP/HTTP endpoint path escapes | The Go exporters send the decoded path: `/a%2Fb` reaches the Collector as `/a/b` (`WithEndpointURL` keeps `url.URL.Path`). The helper warns once per variable. Python and Node.js send the path as written ([design D1](https://github.com/StaffOps/otel-libs/blob/main/specs/config-contract-v0.3/design.md), "Go: path escapes decoded") |
 | Python IDN hosts | Python validates IDN labels by IDNA 2008 (`idna` package), so it rejects some hosts Go and Node.js accept — emoji, `_` next to non-ASCII text, labels over 63 characters, hyphens in the third and fourth position — as `<unparseable URL>` (empty labels and hosts over 253 characters are invalid in every language) ([design D1](https://github.com/StaffOps/otel-libs/blob/main/specs/config-contract-v0.3/design.md), "IDN hosts: Python residual divergence") |

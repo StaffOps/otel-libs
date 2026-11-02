@@ -571,6 +571,7 @@ test('A21 fix round: a client holding a connection (partial request, keep-alive)
   const script = `
     const h = require('@staffops/otel-helper');
     h.setup({ serviceName: 'svc', environment: 'DEV' });
+    process.stdout.write('ready\\n');
     const http = require('node:http');
     const agent = new http.Agent({ keepAlive: true });
     setTimeout(() => {
@@ -587,8 +588,12 @@ test('A21 fix round: a client holding a connection (partial request, keep-alive)
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   let out = '';
+  // Measured from the end of setup(): module loading and setup (which builds
+  // the instrumentations since B6) are not what this test is about.
+  let readyAt;
   child.stdout.on('data', (d) => {
     out += d;
+    if (readyAt === undefined && out.includes('ready')) readyAt = Date.now();
   });
   // The stalled client: connects once the listener is up and sends half a request.
   let stalled;
@@ -611,7 +616,8 @@ test('A21 fix round: a client holding a connection (partial request, keep-alive)
   });
   const exitedAfter = await new Promise((resolve) => child.on('exit', (code) => resolve({ code, ms: Date.now() - started })));
   assert.equal(exitedAfter.code, 0);
-  assert.ok(exitedAfter.ms < 2_000, `the child exited after ${exitedAfter.ms} ms`);
+  const afterReady = Date.now() - readyAt;
+  assert.ok(afterReady < 2_000, `the child exited ${afterReady} ms after setup() returned (${exitedAfter.ms} ms after spawn)`);
   assert.match(out, /scraped/);
   const closedAfter = await Promise.race([stalledClosed, new Promise((resolve) => setTimeout(() => resolve(Infinity), 6_500))]);
   stalled.destroy();

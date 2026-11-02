@@ -30,7 +30,7 @@ const SCHEMA = {
   sampler: ['sampled', 'attributes'],
   propagation: ['headers'],
   http_server: ['server_spans', 'requests_counted', 'handler_child_spans', 'scrape'],
-  grpc_server: ['server_spans', 'rpcs_counted', 'call_ok'],
+  grpc_server: ['server_spans', 'rpcs_counted', 'call_ok', 'server_span_status'],
   logging: [],
   metrics_scrape: ['scrape', 'scrape_status'],
   metrics_listener: ['listener_statuses'],

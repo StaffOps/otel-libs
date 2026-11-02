@@ -261,7 +261,7 @@ describe('parity harness (matcher and schema are test infrastructure)', () => {
     assert.deepEqual(Object.keys(driverModule.KINDS).sort(), Object.keys(SCHEMA).sort());
     // Every kind is wired, never "unknown kind": kinds whose helper API exists
     // run (no adapter status); the others report the task that adds it.
-    // http_server/grpc_server run since B7 (metricsHandler); their spans and metrics need B6.
+    // http_server/grpc_server run since B7 (metricsHandler); their spans and metrics since B6.
     const runnable = new Set(['resolve', 'sampler', 'propagation', 'fork', 'metrics_scrape', 'metrics_listener', 'http_server', 'grpc_server']);
     for (const kind of Object.keys(SCHEMA)) {
       if (kind === 'export') continue; // needs the receiver; covered by the export check below

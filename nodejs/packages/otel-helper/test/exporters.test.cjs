@@ -573,7 +573,8 @@ function installed() {
   const lp = api.logs.getLoggerProvider();
   const lpDelegate = typeof lp.getDelegate === 'function' ? lp.getDelegate() : lp;
   return {
-    bsp: tp._activeSpanProcessor._spanProcessors[0],
+    // The first processor with an exporter: the gRPC status rule comes first (A22).
+    bsp: tp._activeSpanProcessor._spanProcessors.find((p) => p._exporter !== undefined),
     reader: mp._sharedState.metricCollectors[0]._metricReader,
     blrp: lpDelegate._sharedState.registeredLogRecordProcessors[0],
   };

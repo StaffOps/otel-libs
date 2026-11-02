@@ -3306,7 +3306,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B6-http-instrumentation"
+        "nodejs": "pass"
       }
     },
     {
@@ -3330,7 +3330,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B6-http-instrumentation"
+        "nodejs": "pass"
       }
     },
     {
@@ -3356,7 +3356,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B6-http-instrumentation"
+        "nodejs": "pass"
       }
     },
     {
@@ -3380,7 +3380,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B6-http-instrumentation"
+        "nodejs": "pass"
       }
     },
     {
@@ -3404,7 +3404,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B6-http-instrumentation"
+        "nodejs": "pass"
       }
     },
     {
@@ -3430,7 +3430,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B6-http-instrumentation"
+        "nodejs": "pass"
       }
     },
     {
@@ -3455,7 +3455,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B6-http-instrumentation"
+        "nodejs": "pass"
       }
     },
     {
@@ -3478,7 +3478,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B6-http-instrumentation"
+        "nodejs": "pass"
       }
     },
     {
@@ -3514,7 +3514,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B6-http-instrumentation"
+        "nodejs": "pass"
       }
     },
     {
@@ -3538,7 +3538,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B6-http-instrumentation"
+        "nodejs": "pass"
       }
     },
     {
@@ -3568,7 +3568,33 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "skip:phase-c",
-        "nodejs": "skip:B6-http-instrumentation"
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "http.health_percent_encoded_path",
+      "kind": "http_server",
+      "requirement": "R7",
+      "note": "Health matching uses the percent-decoded path in every language (contract D1 row 'Percent-encoded health paths', A22, 2026-11-02): /%68ealth and /HEALTH%2f are /health (Go matches the decoded req.URL.Path).",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc"
+      },
+      "code": {},
+      "input": {
+        "requests": [
+          "/%68ealth",
+          "/HEALTH%2f"
+        ]
+      },
+      "expect": {
+        "server_spans": 0,
+        "requests_counted": 2
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "pass"
       }
     },
     {
@@ -3590,7 +3616,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B6-grpc-instrumentation"
+        "nodejs": "pass"
       }
     },
     {
@@ -3611,7 +3637,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B6-grpc-instrumentation"
+        "nodejs": "pass"
       }
     },
     {
@@ -3632,7 +3658,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B6-grpc-instrumentation"
+        "nodejs": "pass"
       }
     },
     {
@@ -3697,7 +3723,31 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B6-grpc-instrumentation"
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "grpc.server_not_found_status_unset",
+      "kind": "grpc_server",
+      "requirement": "R10",
+      "note": "RPC semconv server rule (contract D1 row 'gRPC server span status', A22, 2026-11-02): a server span is an error only for UNKNOWN, DEADLINE_EXCEEDED, UNIMPLEMENTED, INTERNAL, UNAVAILABLE, DATA_LOSS; NOT_FOUND leaves it UNSET (Go otelgrpc serverStatus, Python _utilities; Node normalizes instrumentation-grpc's ERROR).",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc"
+      },
+      "code": {},
+      "input": {
+        "method": "/parity.v1.Echo/NotFound"
+      },
+      "expect": {
+        "server_spans": 1,
+        "server_span_status": "UNSET",
+        "call_ok": false
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "pass"
       }
     },
     {

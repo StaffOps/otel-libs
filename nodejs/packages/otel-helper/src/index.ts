@@ -6,8 +6,9 @@
  * traces, metrics and logs (B4b), exporter lists with the console exporters,
  * `OTEL_SDK_DISABLED` and the metric export interval (B4c), the sampler
  * (ParentBased, health sampler around it), propagators and the debug marker
- * (B5), the Prometheus `/metrics` listener and `metricsHandler()` (B7);
- * instrumentation and logging land in B6, B8 and B9.
+ * (B5), the Prometheus `/metrics` listener and `metricsHandler()` (B7), the
+ * http/undici/express/gRPC instrumentation (B6); logging and the full
+ * lifecycle land in B8 and B9.
  */
 export { VERSION } from './version';
 export { metricsHandler, setup, shutdown } from './internal/setup';

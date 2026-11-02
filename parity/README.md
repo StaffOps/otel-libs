@@ -39,7 +39,7 @@ suite runs every case. **`cases.json` is hand-maintained**: edit it directly
 | `sampler` | `scenario`: `root`, `remote_sampled`, `remote_unsampled`, `remote_sampled_debug_tracestate`, `remote_sampled_debug_baggage`, `local_child_of_root`, `local_child_of_remote_unsampled` | Start one span | `sampled`, `attributes` |
 | `propagation` | — | Inject inside a span with baggage `parity=1` | `headers` (sorted names) |
 | `http_server` | `requests`, `traceparent`, `child_span` | Serve the requests through the helper's HTTP server instrumentation; optionally the handler starts `handler-child` | `server_spans`, `handler_child_spans`, `requests_counted` (HTTP server duration `_count` from the helper's `/metrics`), `scrape` (that `/metrics` text; added 2026-11-02, Node B7) |
-| `grpc_server` | `method` | One call on an instrumented server | `server_spans`, `rpcs_counted`, `call_ok` |
+| `grpc_server` | `method` | One call on an instrumented server (`/parity.v1.Echo/NotFound` answers NOT_FOUND; added 2026-11-02, A22) | `server_spans`, `rpcs_counted`, `call_ok`, `server_span_status` (status code of the first SERVER span: `UNSET`, `ERROR`, `OK`, or `none`; added 2026-11-02, A22) |
 | `logging` | — | Emit one WARN record through the helper's logger | (common fields) |
 | `metrics_scrape` | — | Increment `parity.requests` and `parity.payload` (unit `By`, by 5; added 2026-11-02, Node B7), record the Gauge `parity.utilization` (unit `1`, 0.5) and add 1 to the UpDownCounter `parity.inflight` (unit `1`; both A21), scrape the helper's `/metrics` | `scrape`, `scrape_status` (HTTP status of the mounted handler: 503 before/after/failed setup, 200 when Prometheus is deliberately inactive — design "Mounted /metrics handler status") |
 | `metrics_listener` | `requests` (`"METHOD /path"` strings) | Set `OTEL_HELPER_METRICS_PORT` to a free port, set up, send each request to the helper's own listener (added 2026-11-02, A21) | `listener_statuses` (HTTP status per request) |
@@ -237,6 +237,21 @@ diagnostics MUST go through `log`/`slog` from the helper package (Go) or the
 `go/diag_channel_test.go` (AST check of non-test files; `otel.Handle` only
 for the runtime errors on its allow-list). Go helper diagnostics go to the
 package's stderr `diagLogger`, which the Go runner hooks.
+
+## R10 language-specific extra attributes
+
+R10 requires the shared HTTP metric attributes (`http.request.method`,
+`http.response.status_code`, `http.route` when known, `url.scheme` on the
+server) to match, and allows language-specific extras listed here (added
+2026-11-02, Node B6 fix round; observability and dev reviews). The fixture
+matches metric names and counts, never the full label set, so these do not
+fail a case.
+
+| Language | Metric | Extra or missing attributes |
+|---|---|---|
+| Go (`otelhttp` v0.72) | `http.server.request.duration` | Extra `server.address`, `server.port`, `network.protocol.name`; no `error.type` on 5xx |
+| Node.js (`instrumentation-undici` 0.34) | `http.client.request.duration` (fetch / undici) | Extra `url.scheme` (the `node:http` client metric has none) |
+| Node.js | `http.client.request.duration` | `instrumentation-http` and `instrumentation-undici` both register the instrument, under different scopes and with different descriptions; the `/metrics` exposition has one family, so a single `# HELP` text is shown for both (dev review L3) |
 
 ## Not expressible yet (by design, tracked elsewhere)
 
