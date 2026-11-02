@@ -212,7 +212,7 @@ lightweight.
 ## Cross-language parity
 
 Parity is enforced, not promised. [`parity/cases.json`](parity/cases.json) is a
-hand-maintained, language-neutral fixture (323 cases: 187 after A13, 17 added by the Node B3 review, 6 by A16, 40 by Node B4a and its rulings, 16 by A17, 2 by Node B4b, 13 by A18, 14 by A19 and its fix round, 1 by Node B5, 5 by A20, 3 by Node B7, 11 by A21, 6 by the B7/A21 fix rounds, 2 by A22 from the Node B6 fix round)
+hand-maintained, language-neutral fixture (324 cases: 187 after A13, 17 added by the Node B3 review, 6 by A16, 40 by Node B4a and its rulings, 16 by A17, 2 by Node B4b, 13 by A18, 14 by A19 and its fix round, 1 by Node B5, 5 by A20, 3 by Node B7, 11 by A21, 6 by the B7/A21 fix rounds, 2 by A22 from the Node B6 fix round, 1 by A23 from Node B8)
 that every language's test suite runs — config resolution, wire-level export
 against a fake OTLP receiver, sampling, propagation, health exclusion, logging
 and `/metrics` status
@@ -245,6 +245,7 @@ always identical:
 | Go Prometheus names with a unit word, `total` or `ratio` inside | Go's exporter (`otlptranslator`) removes those words wherever they appear in the name: `probe.bytes-sent` in `By` → `probe_bytes_sent_total`, `req.total.count` → `req_count_total`, a Gauge `ratio.load` in `1` → `load_ratio`. Python and Node.js add a suffix only when the name does not already end with it (`probe_bytes_sent_bytes_total`, `req_total_count_total`, `ratio_load_ratio`) ([design D1](specs/config-contract-v0.3/design.md), "Suffix semantics") |
 | Go scrape with an `otel.scope.*` data-point attribute | A data-point attribute named `otel.scope.name` (or `_version`, `_schema_url`) makes Go's `/metrics` fail (`duplicate label names`); Python and Node.js keep the data-point value. Don't use those attribute names |
 | Python disabled-metric patterns and mixed-case names | The Python SDK lower-cases instrument names, so `OTEL_HELPER_DISABLED_METRICS=Orders.*` matches `Orders.Total` in Go and Node.js but nothing in Python (warned once, the pattern is not echoed), and a lower-case `orders.*` drops `Orders.Total` in Python while Go and Node.js keep it (patterns are case-sensitive). Use lower-case instrument names and patterns ([design D1](specs/config-contract-v0.3/design.md), "Disabled-metric patterns") |
+| Stdout log fallback `logger` field | Python and Node.js write the logger name as `logger` in every line of the stdout JSON fallback; Go's `NewLogger` / `NewSlogHandler` take no name, so a Go line has a `logger` field only when the record (or its `With` attributes) carries a top-level `logger` attribute — written once, the last one winning. Pass `"logger", "<name>"` with `With` to get it on every Go line. The other fields — `time` (UTC, `Z`), `level`, `msg`, `exception` — are present everywhere; `exception` holds each language's native text (Go `Error()`, Python traceback, Node.js stack) ([design D1](specs/config-contract-v0.3/design.md), "Stdout fallback fields") |
 | .NET | Still on the 0.2.x contract and instrumentation set until Phase C ([differences](#net-02x-differences)) |
 
 ## Collector and platform prerequisites

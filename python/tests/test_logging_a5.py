@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import subprocess
 import sys
 import textwrap
@@ -166,11 +167,124 @@ class TestNoLogsExporter:
         first = lines[0]
         assert first["msg"] == "W 1" and first["logger"] == "app.orders" and first["order_id"] == "o-1"
         assert set(first) == {"time", "level", "msg", "logger", "order_id"}
-        import re
-
-        assert re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}(Z|[+-]\d\d:\d\d)", first["time"])
-        assert first["time"].endswith("Z")  # the test container runs in UTC
+        assert re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z", first["time"])
         assert "ZeroDivisionError" in lines[2]["exception"] and "Traceback" in lines[2]["exception"]
+
+    def test_stdout_fallback_time_is_utc_whatever_tz(self):
+        # A23 (contract design D1 row "Stdout fallback time zone"): UTC with "Z" even when
+        # the process zone is not UTC; before A23 Python wrote local time with its offset.
+        proc = _run("""
+            import time
+            assert time.localtime(0).tm_gmtoff == -3 * 3600, time.localtime(0)  # the zone really applies
+            from staffops_otel_helper import _console, setup_telemetry
+            print(json.dumps({"epoch": _console._rfc3339_ms(0.0), "ms": _console._rfc3339_ms(1.2349)}), file=sys.stderr)
+            setup_telemetry()
+            logging.getLogger("app").warning("tz-record")
+        """, ENVIRONMENT="DEV", TZ="America/Sao_Paulo")
+        probe = json.loads(proc.stderr.strip().splitlines()[0])
+        assert probe == {"epoch": "1970-01-01T00:00:00.000Z", "ms": "1970-01-01T00:00:01.234Z"}
+        record = json.loads(proc.stdout.strip().splitlines()[-1])
+        assert record["msg"] == "tz-record"
+        assert re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z", record["time"])
+
+    def test_stdout_reserved_extra_keys_skipped(self):
+        # A23 (contract design D1 row "Stdout fallback fields"): an extra named time, level
+        # or logger never replaces the record's own field ("msg" cannot be an extra at all:
+        # the stdlib refuses to overwrite a LogRecord attribute).
+        record = logging.LogRecord("app", logging.WARNING, __file__, 1, "m", None, None)
+        for key, value in {"time": "t", "level": "x", "logger": "lg", "order": "o-1"}.items():
+            setattr(record, key, value)
+        line = _console.JSONFormatter().format(record)
+        entry = json.loads(line)
+        assert entry["level"] == "WARN" and entry["logger"] == "app" and entry["time"] != "t"
+        assert entry["order"] == "o-1"
+        assert all(line.count(f'"{k}":') == 1 for k in ("time", "level", "msg", "logger"))
+
+    def test_stdout_non_finite_floats_are_text(self):
+        # A23 (contract design D1 row "Stdout fallback fields"): json.dumps wrote bare NaN /
+        # Infinity, which is not JSON; the line must parse with a strict parser.
+        record = logging.LogRecord("app", logging.WARNING, __file__, 1, "m", None, None)
+        for key, value in {"nan": float("nan"), "inf": float("inf"), "ninf": float("-inf"), "ok": 1.5,
+                           "nested": {"a": [float("nan"), (float("inf"), 2)]}}.items():
+            setattr(record, key, value)
+        line = _console.JSONFormatter().format(record)
+
+        def strict(token):
+            raise ValueError(f"non-JSON constant {token}")
+
+        entry = json.loads(line, parse_constant=strict)
+        assert (entry["nan"], entry["inf"], entry["ninf"], entry["ok"]) == ("nan", "inf", "-inf", 1.5)
+        assert entry["nested"] == {"a": ["nan", ["inf", 2]]}
+
+    @staticmethod
+    def _one_strict_line(**extras) -> dict:
+        record = logging.LogRecord("app", logging.WARNING, __file__, 1, "m", None, None)
+        for key, value in extras.items():
+            setattr(record, key, value)
+        line = _console.JSONFormatter().format(record)
+        assert "\n" not in line
+
+        def strict(token):
+            raise ValueError(f"non-JSON constant {token}")
+
+        return json.loads(line, parse_constant=strict)
+
+    def test_stdout_cycles_keys_and_depth_give_one_valid_line(self):
+        # A23 fix round (P1): a value json.dumps refuses never costs the record.
+        cyclic_list: list = [1]
+        cyclic_list.append(cyclic_list)
+        cyclic_dict: dict = {"a": 1}
+        cyclic_dict["self"] = cyclic_dict
+        shared = {"v": 1}
+        entry = self._one_strict_line(cl=cyclic_list, cd=cyclic_dict, keys={(1, 2): "t", 3: "i", None: "n", 1.5: "f"},
+                                      pair={"x": shared, "y": shared}, nan=float("nan"))
+        assert entry["cl"] == [1, "[Circular]"]
+        assert entry["cd"] == {"a": 1, "self": "[Circular]"}
+        assert entry["keys"] == {"(1, 2)": "t", "3": "i", "null": "n", "1.5": "f"}  # json's own key rules for int/None/float
+        assert entry["pair"] == {"x": {"v": 1}, "y": {"v": 1}}, "a repeated reference is not a cycle"
+        assert entry["nan"] == "nan"
+
+    def test_stdout_hostile_extras_never_cost_the_record(self):
+        # A23 review: default=_text everywhere and a guarded fallback.
+        class BadStr:
+            def __str__(self):
+                raise RuntimeError("no str")
+
+        class BadItems(dict):
+            def items(self):
+                raise RuntimeError("no items")
+
+        bad_items = BadItems(a=float("nan"))  # forces the fallback; items() then raises in the sanitizer
+        entry = self._one_strict_line(bad=BadStr(), items=bad_items, keys={float("nan"): 1, float("inf"): 2, 1.5: 3},
+                                      ok="kept")
+        assert entry["bad"] == "[unprintable BadStr]"
+        assert entry["items"] == "{'a': nan}"  # third path: the value as text
+        assert entry["keys"] == {"nan": 1, "inf": 2, "1.5": 3}
+        assert entry["ok"] == "kept"
+
+    def test_stdout_deep_values(self):
+        # Depth 900 was encodable before A23 (json's C encoder) and still is, unchanged.
+        deep: list = []
+        node = deep
+        for _ in range(899):
+            child: list = []
+            node.append(child)
+            node = child
+        entry = self._one_strict_line(deep=deep)
+        depth, node = 1, entry["deep"]
+        while node:
+            node = node[0]
+            depth += 1
+        assert depth == 900
+        # Deeper than the interpreter can walk: that attribute as text, the record still one line.
+        deeper: list = []
+        node = deeper
+        for _ in range(100_000):
+            child = []
+            node.append(child)
+            node = child
+        entry = self._one_strict_line(deeper=deeper, ok=1)
+        assert isinstance(entry["deeper"], str) and entry["ok"] == 1
 
     def test_info_helper_diagnostic_reaches_stderr_in_prd(self):
         proc = _run("""

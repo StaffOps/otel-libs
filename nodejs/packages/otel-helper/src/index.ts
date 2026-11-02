@@ -7,12 +7,14 @@
  * `OTEL_SDK_DISABLED` and the metric export interval (B4c), the sampler
  * (ParentBased, health sampler around it), propagators and the debug marker
  * (B5), the Prometheus `/metrics` listener and `metricsHandler()` (B7), the
- * http/undici/express/gRPC instrumentation (B6); logging and the full
- * lifecycle land in B8 and B9.
+ * http/undici/express/gRPC instrumentation (B6), `createLogger()` with the
+ * stdout fallback (B8); the full lifecycle lands in B9.
  */
 export { VERSION } from './version';
 export { metricsHandler, setup, shutdown } from './internal/setup';
 export type { ScrapeRequest, ScrapeResponse } from './internal/metrics-endpoint';
+export { createLogger } from './internal/logging';
+export type { LogAttributes, Logger, LoggerOptions } from './internal/logging';
 export { defaultLogLevel } from './internal/log-level';
 export type { DeploymentEnvironment, LogLevel } from './internal/log-level';
 export type { Resolved, SetupOptions } from './internal/resolve';

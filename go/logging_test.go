@@ -535,3 +535,154 @@ func TestErrorText(t *testing.T) {
 		}
 	}
 }
+
+// inlineValuer resolves to an inline group (G2: resolved before the group check).
+type inlineValuer struct{}
+
+func (inlineValuer) LogValue() slog.Value {
+	return slog.GroupValue(slog.String("msg", "from-valuer"), slog.String("v", "1"))
+}
+
+// A23 (contract design D1 row "Stdout fallback fields"): a top-level attribute
+// named time, level or msg is dropped from the stdout line, the last logger
+// becomes the line's logger field, an error under a reserved key becomes
+// exception; inside a WithGroup the keys nest and are kept.
+func TestStdoutReservedKeysDropped(t *testing.T) {
+	logsTest(t)
+	stop := captureStdout(t)
+	l := NewLogger(DEV, false)
+	l.Warn("m", "msg", "dup", "level", "x", "time", "t", "logger", "lg1", "order", "o-1", "logger", "lg2") // 0
+	l.With("msg", "scoped", "keep", 1).Warn("with-attrs")                                                  // 1
+	l.WithGroup("g").Warn("grouped", "msg", "inner", "logger", "nested")                                   // 2
+	l.Warn("inline", slog.Group("", "level", "x", "k", "v", "logger", "in"))                               // 3
+	l.Warn("inline-empty", slog.Group("", "time", "x"))                                                    // 4
+	l.WithGroup("g2").With("msg", "inner2").Warn("group-with")                                             // 5
+	l.With(slog.Group("", "logger", "x")).Warn("with-inline-logger")                                       // 6
+	l.Warn("valuer", slog.Any("", inlineValuer{}))                                                         // 7
+	l.Warn("err-msg", "msg", errors.New("under msg"))                                                      // 8
+	l.Warn("err-logger", "logger", errors.New("under logger"), "e2", errors.New("second"))                 // 9
+	l.With("logger", "scope").Warn("scope-replaced", "logger", "record")                                   // 10
+	l.With("logger", "scope").WithGroup("g3").Warn("scope-then-group", "logger", "inner")                  // 11
+	l.With("level", errors.New("with-err")).Warn("with-err-reserved")                                      // 12
+	l.Warn("err-msg-with-exception", "exception", "given", "msg", errors.New("dropped"))                   // 13
+	out := stop()
+	lines := strings.Split(strings.TrimSpace(out), "\n")
+	if len(lines) != 14 {
+		t.Fatalf("want 14 lines, got %q", out)
+	}
+	recs := make([]map[string]any, len(lines))
+	for i, line := range lines {
+		if err := json.Unmarshal([]byte(line), &recs[i]); err != nil {
+			t.Fatalf("line %d not JSON: %v (%q)", i, err, line)
+		}
+		if i == 2 || i == 5 || i == 11 {
+			continue // a nested key inside the group object is expected there
+		}
+		for _, k := range []string{"time", "level", "msg", "logger", "exception"} {
+			if n := strings.Count(line, `"`+k+`":`); n > 1 {
+				t.Errorf("line %d: duplicate %s key: %q", i, k, line)
+			}
+		}
+	}
+	checks := []struct {
+		i    int
+		k    string
+		want any
+	}{
+		{0, "msg", "m"}, {0, "level", "WARN"}, {0, "order", "o-1"}, {0, "logger", "lg2"},
+		{1, "msg", "with-attrs"}, {1, "keep", float64(1)},
+		{2, "msg", "grouped"},
+		{3, "level", "WARN"}, {3, "k", "v"}, {3, "logger", "in"},
+		{4, "msg", "inline-empty"},
+		{5, "msg", "group-with"},
+		{6, "msg", "with-inline-logger"}, {6, "logger", "x"},
+		{7, "msg", "valuer"}, {7, "v", "1"},
+		{8, "msg", "err-msg"}, {8, "exception", "under msg"},
+		{9, "exception", "under logger"}, {9, "e2", "second"},
+		{10, "logger", "record"},
+		{11, "logger", "scope"},
+		{12, "level", "WARN"}, {12, "exception", "with-err"},
+		{13, "msg", "err-msg-with-exception"}, {13, "exception", "given"},
+	}
+	for _, c := range checks {
+		if recs[c.i][c.k] != c.want {
+			t.Errorf("line %d %s = %v, want %v (%q)", c.i, c.k, recs[c.i][c.k], c.want, lines[c.i])
+		}
+	}
+	for _, i := range []int{1, 2, 4, 5, 7, 8} {
+		if _, ok := recs[i]["logger"]; ok {
+			t.Errorf("line %d: unexpected logger field (%q)", i, lines[i])
+		}
+	}
+	if _, ok := recs[9]["logger"]; ok {
+		t.Errorf("an error under logger is the exception, not the logger field: %q", lines[9])
+	}
+	if ts, _ := recs[0]["time"].(string); ts == "t" {
+		t.Error("the attribute replaced the record time")
+	}
+	if !strings.HasPrefix(lines[0], `{"time":`) || !strings.Contains(lines[0], `"msg":"m","logger":"lg2"`) {
+		t.Errorf("logger is written before the record's own attributes: %q", lines[0])
+	}
+	if g, _ := recs[2]["g"].(map[string]any); g["msg"] != "inner" || g["logger"] != "nested" {
+		t.Errorf("grouped keys not kept: %q", lines[2])
+	}
+	if g, _ := recs[5]["g2"].(map[string]any); g["msg"] != "inner2" {
+		t.Errorf("grouped WithAttrs msg not kept: %q", lines[5])
+	}
+	if g, _ := recs[11]["g3"].(map[string]any); g["logger"] != "inner" {
+		t.Errorf("a record logger inside a group nests: %q", lines[11])
+	}
+}
+
+// A23 review: an error never becomes the logger field; an exception key inside
+// an inline group counts; an error under a reserved key inside an inline group
+// is renamed (or dropped when an exception exists), never silently lost.
+func TestStdoutReservedErrorsAndInlineExceptions(t *testing.T) {
+	logsTest(t)
+	stop := captureStdout(t)
+	l := NewLogger(DEV, false)
+	l.Warn("exc-then-logger-err", "exception", "given", "logger", errors.New("e-logger"))          // 0
+	l.Warn("two-errors", "e", errors.New("err1"), "logger", errors.New("err2"))                    // 1
+	l.With("exception", "pre").With("logger", errors.New("with-err")).Warn("scope-exception")      // 2
+	l.Warn("inline-exception", slog.Group("", "exception", "inline"), "err", errors.New("x"))      // 3
+	l.Warn("inline-msg-err", slog.Group("", "msg", errors.New("inline-err")))                      // 4
+	l.Warn("inline-msg-err-dropped", "exception", "given", slog.Group("", "msg", errors.New("y"))) // 5
+	l.With(slog.Group("", "level", errors.New("with-inline-err"))).Warn("with-inline")             // 6
+	out := stop()
+	lines := strings.Split(strings.TrimSpace(out), "\n")
+	if len(lines) != 7 {
+		t.Fatalf("want 7 lines, got %q", out)
+	}
+	recs := make([]map[string]any, len(lines))
+	for i, line := range lines {
+		if err := json.Unmarshal([]byte(line), &recs[i]); err != nil {
+			t.Fatalf("line %d not JSON: %v (%q)", i, err, line)
+		}
+		for _, k := range []string{"msg", "logger", "exception", "level"} {
+			if n := strings.Count(line, `"`+k+`":`); n > 1 {
+				t.Errorf("line %d: duplicate %s key: %q", i, k, line)
+			}
+		}
+		if _, ok := recs[i]["logger"]; ok {
+			t.Errorf("line %d: an error must not become the logger field: %q", i, line)
+		}
+	}
+	checks := []struct {
+		i    int
+		k    string
+		want any
+	}{
+		{0, "exception", "given"},
+		{1, "exception", "err1"},
+		{2, "exception", "pre"},
+		{3, "exception", "inline"}, {3, "err", "x"},
+		{4, "msg", "inline-msg-err"}, {4, "exception", "inline-err"},
+		{5, "msg", "inline-msg-err-dropped"}, {5, "exception", "given"},
+		{6, "level", "WARN"}, {6, "exception", "with-inline-err"},
+	}
+	for _, c := range checks {
+		if recs[c.i][c.k] != c.want {
+			t.Errorf("line %d %s = %v, want %v (%q)", c.i, c.k, recs[c.i][c.k], c.want, lines[c.i])
+		}
+	}
+}

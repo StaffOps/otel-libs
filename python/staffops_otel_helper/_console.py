@@ -19,6 +19,7 @@ from __future__ import annotations
 import datetime
 import json
 import logging
+import math
 import sys
 import traceback
 
@@ -52,9 +53,84 @@ def _slog_level(levelno: int) -> str:
 
 
 def _rfc3339_ms(created: float) -> str:
-    """RFC 3339, millisecond precision, ``Z`` for UTC (same as Go's fallback)."""
-    stamp = datetime.datetime.fromtimestamp(created).astimezone().isoformat(timespec="milliseconds")
-    return stamp[:-6] + "Z" if stamp.endswith("+00:00") else stamp
+    """RFC 3339 in UTC, millisecond precision, ``Z`` suffix, whatever the process zone (``TZ``).
+
+    Same as the Go and Node.js fallbacks (contract design D1 row "Stdout fallback time zone", A23).
+    """
+    stamp = datetime.datetime.fromtimestamp(created, tz=datetime.timezone.utc).isoformat(timespec="milliseconds")
+    return stamp[:-6] + "Z"  # isoformat() of an aware UTC datetime ends with "+00:00"
+
+
+_JSON_KEY_TYPES = (str, int, float, bool, type(None))
+
+
+def _json_key(key):
+    """A dict key json encodes: str/int/bool/None and finite floats as they are, anything else ``str(key)``."""
+    if isinstance(key, float):
+        return key if math.isfinite(key) else str(key)
+    return key if isinstance(key, _JSON_KEY_TYPES) else _text(key)
+
+
+def _json_safe(value, ancestors: set):
+    """A JSON-encodable copy of ``value`` (contract design D1 row "Stdout fallback fields", A23).
+
+    Used only when the fast ``json.dumps`` failed: non-finite floats as ``"nan"`` / ``"inf"`` /
+    ``"-inf"``, a cycle as ``"[Circular]"``, dict keys json cannot encode (tuples, objects) as
+    ``str(key)``; ``ancestors`` holds the ids of the containers on the current path (O(1) per level).
+    """
+    if isinstance(value, float):
+        return value if math.isfinite(value) else str(value)
+    if not isinstance(value, (dict, list, tuple)):
+        return value  # json.dumps(default=_text) renders the rest
+    if id(value) in ancestors:
+        return "[Circular]"
+    ancestors.add(id(value))
+    try:
+        if isinstance(value, dict):
+            return {_json_key(k): _json_safe(v, ancestors) for k, v in value.items()}
+        return [_json_safe(v, ancestors) for v in value]
+    finally:
+        ancestors.discard(id(value))
+
+
+def _dump(obj) -> str:
+    return json.dumps(obj, default=_text, ensure_ascii=False, allow_nan=False, separators=(",", ":"))
+
+
+def _dumps(entry: dict) -> str:
+    """One JSON line, compact separators as Go and Node; never bare NaN/Infinity (A23).
+
+    Fast path: the whole entry at once. When that raises, each field is tried on its own and
+    only the failing ones are sanitized (``_json_safe``), then rendered as text; no extra can
+    cost the record.
+    """
+    try:
+        return _dump(entry)
+    except Exception:  # noqa: BLE001 - logging must not raise; the fields are retried below
+        pass
+    out = {}
+    for key, value in entry.items():
+        try:
+            _dump(value)
+            out[key] = value
+            continue
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            safe = _json_safe(value, set())
+            _dump(safe)
+            out[key] = safe
+        except Exception:  # noqa: BLE001 - a hostile container (items() raising, too deep)
+            out[key] = _text(value)
+    return _dump(out)
+
+
+def _text(value) -> str:
+    """``str(value)`` that never raises (a deep or hostile ``__str__``/``__repr__``)."""
+    try:
+        return str(value)
+    except Exception:  # noqa: BLE001 - logging must not raise
+        return f"[unprintable {type(value).__name__}]"
 
 
 class JSONFormatter(logging.Formatter):
@@ -76,7 +152,7 @@ class JSONFormatter(logging.Formatter):
             entry["exception"] = record.exc_text
         if record.stack_info:
             entry["stack"] = record.stack_info
-        return json.dumps(entry, default=str, ensure_ascii=False)
+        return _dumps(entry)
 
 
 class _StdoutHandler(logging.StreamHandler):

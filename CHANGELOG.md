@@ -197,6 +197,18 @@ Runtime and operations:
     `ratio` found inside the name (`req.total.count` → `req_count_total`;
     Python and Node.js write `req_total_count_total`), and a data-point
     attribute named `otel.scope.name` fails the scrape.
+24. **BREAKING (narrow) — stdout log fallback reserved keys (design D1 row
+    "Stdout fallback fields" of 2026-11-02, A23).** With no logs exporter,
+    a top-level attribute named `time`, `level` or `msg` (record or `With`)
+    is no longer written as a second key of the JSON line — it is dropped
+    (slog wrote `{"msg":"m","msg":"dup"}`, which pipelines read as either
+    value); an error under one of those keys becomes `exception` like any
+    other error. A top-level `logger` attribute is written once as the
+    line's `logger` field, before the record's own attributes (after any `With`
+    attributes, which slog writes first), the last one winning (a record
+    attribute over a `With` one). Inside a `WithGroup` nothing changes. If a
+    dashboard or pipeline read such an attribute from Go's stdout lines,
+    rename it (e.g. `msg` → `message_detail`).
 
 ### Migration guide 0.2 → 0.3 — Python
 
@@ -421,6 +433,20 @@ Telemetry and runtime:
     collection answers 500 and is logged; no standalone listener runs when
     another MeterProvider was installed first (the mounted `metrics_app()`
     answers 503); an upper-case disabled-metric pattern is warned once.
+24. **BREAKING — stdout log fallback time in UTC (design D1 row "Stdout
+    fallback time zone" of 2026-11-02, A23).** With no logs exporter, the
+    JSON lines on stdout carry `time` in **UTC with `Z`** whatever the
+    process zone, as Go and Node.js write it. Before, a process with `TZ`
+    set (or a host zone other than UTC) wrote local time with its offset
+    (`2026-11-02T18:00:00.000-03:00`, now `2026-11-02T21:00:00.000Z`).
+    Containers in UTC see no change. If a log pipeline parses `time` with a
+    fixed offset layout or relies on local time, switch it to RFC 3339 in UTC.
+    Non-finite float extras (`NaN`, `inf`) are now written as the strings
+    `"nan"`, `"inf"`, `"-inf"`; before, the line held a bare `NaN`, which
+    strict JSON parsers reject. The line uses compact separators
+    (`{"time":"…","level":"INFO",…}`, no space after `:` and `,`), as Go
+    and Node.js: a parser is unaffected, a grep or regex that expects
+    `"level": "ERROR"` must drop the space (or allow both: `"level": ?"ERROR"`).
 
 ### Collector / platform prerequisites (before rolling 0.3.0 out)
 
@@ -492,6 +518,30 @@ by Operation" panel groups by `span_name` and shows the new Go HTTP span names
 after the upgrade.
 
 ### Go — detailed changes
+
+- **BREAKING (narrow) — A23 stdout fallback rulings from the Node B8 work
+  (design D1 rows of 2026-11-02: "Stdout fallback time zone", "Stdout
+  fallback fields", "OTel log scope name"; migration item 24).** The slog
+  stdout JSON fallback (`NewLogger`, `NewSlogHandler` with no logs exporter)
+  no longer writes a duplicate key: a top-level attribute named `time`,
+  `level` or `msg` is dropped, a top-level `logger` becomes the line's
+  `logger` field (once, before the record's own attributes, the last one winning — record over
+  `With`; an error under `logger` never becomes the field), and an error
+  under any of these keys is renamed to `exception` like any other error,
+  or dropped when an `exception` key already exists (an `exception` key
+  inside an inline `slog.Group("", …)` counts, and reserved-key errors inside
+  inline groups follow the same rule). Record and `With` attributes are covered, members of
+  an inline `slog.Group("", …)` too (a `LogValuer` is resolved first);
+  inside a `WithGroup` they nest and are kept; the OTel bridge path is
+  unchanged. The reserved scan shares the one pass the `exception` rename
+  makes and allocates only when something changes
+  (`BenchmarkStdoutReserved`: 288 B / 4 allocs → 32 B / 2 allocs per record,
+  ~2.2 µs → ~1.6 µs; plain and error records unchanged at 32 B / 2 allocs).
+  Recorded, no change: `exception` holds the `Error()` text, non-JSON values
+  are written as `!ERROR:json: …` text by slog, and the OTel scope is
+  `otel-helper`. Tests: `TestStdoutReservedKeysDropped`, benchmarks in
+  `go/bench_stdout_test.go`; parity case `logging.stdout_time_utc_under_tz`
+  (324 cases) passes in Go unchanged (Go already writes UTC).
 
 - **BREAKING (narrow) — A21 rulings from the Node B7 work (design D1 rows of
   2026-11-02: "Disabled-metric patterns", "Metrics port grammar", "Metrics
@@ -893,6 +943,29 @@ Behavior changes, with migration notes:
   (Apache-2.0). `aws-sdk-go-v2` v1.47.1 → v1.47.5.
 
 ### Python — detailed changes
+
+- **BREAKING — A23 stdout fallback rulings from the Node B8 work (design D1
+  rows of 2026-11-02; migration item 24).** The stdout JSON fallback
+  (`_console.JSONFormatter`): `time` in UTC with `Z` whatever the process
+  zone (`_rfc3339_ms`; it wrote local time with its offset when `TZ` was not
+  UTC); **compact separators** `(",", ":")` as Go and Node.js
+  (`{"time":"…","level":"INFO",…}` instead of `{"time": "…", "level": …}`;
+  the example output in `python/example/README.md` relied on the old
+  spacing and is updated); valid JSON for every value — the fast path is
+  `json.dumps(…, default=_text, allow_nan=False)` (a raising `__str__`
+  gives `[unprintable <type>]`), and only when it raises are the failing
+  fields retried one by one and sanitized: non-finite floats as `"nan"` / `"inf"` / `"-inf"` (`json.dumps`
+  wrote bare `NaN` / `Infinity`), a cycle as `"[Circular]"` (the record used
+  to be dropped with a logging error on stderr), dict keys json cannot
+  encode (tuples, objects, NaN/inf) as `str(key)`, and a value the
+  sanitizer cannot walk (too deep, a dict subclass whose `items()` raises)
+  as its text — no extra can cost the record. New parity case `logging.stdout_time_utc_under_tz`
+  (`TZ=America/Sao_Paulo`; it fails on the old code) and tests in
+  `tests/test_logging_a5.py` (time zone, reserved extras, non-finite floats,
+  cycles, tuple keys, depth 900 still encoded as before, deeper as text).
+  Recorded, no change: extras named `time`, `level` or `logger` are skipped;
+  `exception` keeps the traceback (with `exc_info` it replaces an
+  `exception` extra); the OTel scope is the logger name.
 
 - **BREAKING — A21 rulings from the Node B7 work (design D1 rows of
   2026-11-02).** The helper's Prometheus reader rewrites the unit of Gauges in
@@ -1994,6 +2067,41 @@ Unsupported instrumentation versions, task A10 (P18):
   `url.query`; new D-JS14 rows and README gaps: routers created before
   `setup()` get a truncated `http.route`, and a gRPC handler that throws
   synchronously leaves its SERVER span unended (upstream).
+- **Node.js logging (Phase B, task B8; not released).** New
+  `createLogger({name, level?})` (spec JS6): a frozen logger with
+  `debug`/`info`/`warn`/`error(message, attributes?)` that never throws;
+  invalid options throw a `TypeError` naming the option. Per record it writes
+  through the OpenTelemetry Logs API of the active setup while that setup has
+  a logs exporter (OTLP and/or `OTEL_LOGS_EXPORTER=console`, the SDK console
+  exporter — a debugging format, not line-parseable), else one JSON line on
+  stdout — never both (design D6). Level (R4): the logger's `level`, else
+  the level the last successful `setup()` resolved (`minimumLogLevel`, else
+  `defaultLogLevel(environment, debug)`; `info` before the first setup),
+  read per record, kept after `shutdown()`, applied on both paths. Stdout
+  line, as Go and Python (contract A23 rulings): `time` (RFC 3339, ms, UTC
+  `Z`), `level`, `msg`, `logger`, the attributes, `exception` (stack of the
+  first `Error`, also under a reserved key); attributes named `time`,
+  `level`, `msg`, `logger` are skipped; no trace ids; compact JSON, always
+  valid — NaN/±Infinity, bigint and symbols as text, functions as
+  `[Function: name]`, `Map` as an object, `Set` as an array, cycles as
+  `[Circular]`, nesting past 100 as `<max-depth-exceeded>`, a throwing
+  getter or Proxy trap as `[unreadable …]` (a revoked Proxy or a throwing
+  `getPrototypeOf` as `[unreadable object]`). OTel path: the logger name is
+  the instrumentation scope (as Python), the first `Error` becomes the
+  record exception, the active span correlates the record, and objects,
+  `Map`s, arrays and `Set`s are sent as OTLP maps and arrays (as Go and
+  Python; `Date` and bigint as text; the exception is passed as a plain
+  `{name, message, stack, code}` read through guarded reads). A record whose attributes cannot even
+  be listed is dropped and reported once (`a helper log record could not be
+  written and was dropped`, reason only). With a foreign global
+  LoggerProvider the helper's loggers keep exporting through the helper's
+  own provider, as in Go and Python (both logs registration reports say
+  so). Parity: `logging.console_when_no_exporter`,
+  `logging.console_when_logs_exporter_none` and
+  `logging.stdout_time_utc_under_tz` pass for Node (324 cases). New
+  `test/logging.test.cjs`. The rulings' history is in contract design D1
+  ("Stdout fallback time zone", "Stdout fallback fields", "OTel log scope
+  name") and D-JS6/D-JS14.
 - **Go test hygiene:** `captureDiag` (`go/config_contract_test.go`) no longer
   prints slog timestamps, which made `TestDeprecatedEnvWarnsNamingReplacement`
   (`go/deprecation_test.go`) flaky.

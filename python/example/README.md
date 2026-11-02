@@ -74,17 +74,17 @@ has no httpx; it is harmless.
 docker run --rm -e OTEL_SERVICE_NAME=python-custom-signals python-custom-signals
 ```
 
-Recorded on 2026-10-28, untrimmed:
+Recorded on 2026-10-28, untrimmed (JSON lines re-rendered 2026-11-02 for the A23 compact separators):
 
 ```text
 [OtelHelper] deployment.environment.name is not set (OTEL_RESOURCE_ATTRIBUTES, or the legacy ENVIRONMENT alias): the attribute is omitted and the log level defaults to INFO.
 OTel Prometheus exporter: metrics available at http://0.0.0.0:9464/metrics
 HTTPXClientInstrumentor only instruments "httpx >= 0.18.0", but no installed version was found, so nothing can be instrumented.
 trace_id=2114909b129a5edb226c04c4c6965aaf
-{"time": "2026-10-28T18:41:26.739Z", "level": "INFO", "msg": "order processed", "logger": "custom_signals", "order.id": "ord-1", "order.amount": 42.5}
-{"time": "2026-10-28T18:41:26.760Z", "level": "INFO", "msg": "order processed", "logger": "custom_signals", "order.id": "ord-2", "order.amount": 99.9}
-{"time": "2026-10-28T18:41:26.782Z", "level": "ERROR", "msg": "order failed", "logger": "custom_signals", "order.id": "ord-3", "exception": "Traceback (most recent call last):\n  File \"/app/custom_signals.py\", line 130, in main\n    charge(order)\n  File \"/app/custom_signals.py\", line 81, in charge\n    raise PaymentDeclinedError(\"card declined by issuer\")\nPaymentDeclinedError: card declined by issuer"}
-{"time": "2026-10-28T18:41:26.782Z", "level": "INFO", "msg": "batch finished", "logger": "custom_signals", "batch.size": 3, "orders.failed": 1}
+{"time":"2026-10-28T18:41:26.739Z","level":"INFO","msg":"order processed","logger":"custom_signals","order.id":"ord-1","order.amount":42.5}
+{"time":"2026-10-28T18:41:26.760Z","level":"INFO","msg":"order processed","logger":"custom_signals","order.id":"ord-2","order.amount":99.9}
+{"time":"2026-10-28T18:41:26.782Z","level":"ERROR","msg":"order failed","logger":"custom_signals","order.id":"ord-3","exception":"Traceback (most recent call last):\n  File \"/app/custom_signals.py\", line 130, in main\n    charge(order)\n  File \"/app/custom_signals.py\", line 81, in charge\n    raise PaymentDeclinedError(\"card declined by issuer\")\nPaymentDeclinedError: card declined by issuer"}
+{"time":"2026-10-28T18:41:26.782Z","level":"INFO","msg":"batch finished","logger":"custom_signals","batch.size":3,"orders.failed":1}
 ```
 
 The first three lines are diagnostics (stderr). The JSON lines are the stdout

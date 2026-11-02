@@ -120,7 +120,8 @@ var installedLogLevel slog.LevelVar
 // (DEBUG/INFO/WARN/ERROR), msg, the attributes, and exception for the first
 // error-valued attribute of the record (the shape the Python helper mirrors).
 // Only attributes passed with the record are renamed; error attributes added
-// with WithAttrs keep their key (slog renders them).
+// with WithAttrs keep their key (slog renders them), except under a reserved
+// key (A23, below).
 type switchHandler struct {
 	min     slog.Leveler // minimum level on every path (NewLogger: fixed; NewSlogHandler: installedLogLevel); nil = the destination decides
 	stdout  slog.Handler // JSON handler with ops already applied
@@ -129,6 +130,10 @@ type switchHandler struct {
 	// excInScope: an "exception" key already exists in the scope record
 	// attributes land in (WithAttrs since the last WithGroup) — no rename then.
 	excInScope bool
+	// scopeLogger: the last top-level "logger" attribute added with WithAttrs,
+	// held back from stdout so that a record's own "logger" can replace it (A23).
+	scopeLogger    slog.Value
+	hasScopeLogger bool
 }
 
 func newSwitchHandler(min slog.Leveler, stdout slog.Handler) *switchHandler {
@@ -199,10 +204,203 @@ func (h *switchHandler) Handle(ctx context.Context, r slog.Record) error {
 	if !h.stdout.Enabled(ctx, r.Level) {
 		return nil
 	}
-	if h.excInScope {
-		return h.stdout.Handle(ctx, r)
+	return h.stdout.Handle(ctx, h.stdoutRecord(r))
+}
+
+// reservedStdoutKeys are the stdout line's own fields. A top-level attribute
+// with one of these keys never adds a second field (contract design D1 row
+// "Stdout fallback fields", A23; slog's JSON handler would write a duplicate
+// key): time, level and msg are dropped; the last logger becomes the line's
+// logger field (Python and Node write the logger name there); an error under
+// any of them is renamed to exception like any other error (or dropped when
+// the record already has one).
+var reservedStdoutKeys = map[string]bool{slog.TimeKey: true, slog.LevelKey: true, slog.MessageKey: true, loggerKey: true}
+
+const loggerKey = "logger"
+
+// inGroup reports whether a WithGroup is open: attributes then nest inside the
+// group object and cannot collide with the record's own fields.
+func (h *switchHandler) inGroup() bool {
+	for _, op := range h.ops {
+		if op.group != "" {
+			return true
+		}
 	}
-	return h.stdout.Handle(ctx, withException(r))
+	return false
+}
+
+// inlineGroup reports whether a is a group with an empty key (slog inlines its
+// members), resolving a LogValuer first.
+func inlineGroup(a slog.Attr) (slog.Value, bool) {
+	if a.Key != "" {
+		return slog.Value{}, false
+	}
+	v := a.Value.Resolve()
+	return v, v.Kind() == slog.KindGroup
+}
+
+// hasException reports whether attrs hold an "exception" key at their level,
+// members of inline groups included (they land at the same level).
+func hasException(attrs []slog.Attr) bool {
+	for _, a := range attrs {
+		if a.Key == "exception" {
+			return true
+		}
+		if v, ok := inlineGroup(a); ok && hasException(v.Group()) {
+			return true
+		}
+	}
+	return false
+}
+
+// errorOf returns the error a value holds, resolving it once.
+func errorOf(v slog.Value) (error, bool) {
+	v = v.Resolve()
+	if v.Kind() != slog.KindAny {
+		return nil, false
+	}
+	err, ok := v.Any().(error)
+	return err, ok
+}
+
+// filterReserved applies the reserved-key rule to attributes that land at the
+// top level (WithAttrs before any WithGroup, members of inline groups): time,
+// level and msg are dropped, a non-error logger is taken out and returned (the
+// last one). An error under a reserved key is renamed to exception while
+// *rename is true (then set to false), else dropped; rename nil = drop. out is
+// attrs itself, and changed false, when nothing was removed; it is allocated
+// only on the first change.
+func filterReserved(attrs []slog.Attr, rename *bool) (out []slog.Attr, changed bool, logger slog.Value, hasLogger bool) {
+	for i, a := range attrs {
+		keep, drop, modified := a, false, false
+		if v, ok := inlineGroup(a); ok {
+			inner, innerChanged, lg, innerHas := filterReserved(v.Group(), rename)
+			if innerHas {
+				logger, hasLogger = lg, true
+			}
+			if innerChanged {
+				modified = true
+				if len(inner) == 0 {
+					drop = true
+				} else {
+					keep = slog.Attr{Value: slog.GroupValue(inner...)}
+				}
+			}
+		} else if reservedStdoutKeys[a.Key] {
+			modified = true
+			err, isErr := errorOf(a.Value)
+			switch {
+			case isErr && rename != nil && *rename:
+				keep, *rename = slog.String("exception", errorText(err)), false
+			case isErr:
+				drop = true // an exception already exists
+			case a.Key == loggerKey:
+				logger, hasLogger, drop = a.Value, true, true
+			default:
+				drop = true
+			}
+		}
+		if modified && out == nil {
+			out = append(make([]slog.Attr, 0, len(attrs)), attrs[:i]...)
+		}
+		if out != nil && !drop {
+			out = append(out, keep)
+		}
+	}
+	if out == nil {
+		return attrs, false, logger, hasLogger
+	}
+	return out, true, logger, hasLogger
+}
+
+// stdoutRecord prepares r for the stdout line (A23): the first top-level
+// error-valued attribute becomes exception (its Error() text) unless an
+// exception key exists in the record, its inline groups or the scope; at the
+// top level, the reserved-key rule (time, level, msg dropped; an error under a
+// reserved key renamed to exception, or dropped when one exists; the last
+// non-error logger — the record's, else the scope's — written once, before the
+// record's own attributes). r itself is returned when nothing changes, so the
+// common case allocates nothing. Empty-key attributes are resolved in each
+// pass that inspects them (not cached: a LogValuer is cheap to resolve again
+// and caching would need a per-record buffer).
+func (h *switchHandler) stdoutRecord(r slog.Record) slog.Record {
+	top := !h.inGroup()
+	firstErr, hasExcKey, needTop := -1, false, false
+	logger, hasLogger := h.scopeLogger, top && h.hasScopeLogger
+	i := 0
+	r.Attrs(func(a slog.Attr) bool {
+		switch {
+		case a.Key == "exception":
+			hasExcKey = true
+		case a.Key == "":
+			if v, ok := inlineGroup(a); ok && hasException(v.Group()) {
+				hasExcKey = true
+			}
+			needTop = needTop || top
+		case top && reservedStdoutKeys[a.Key]:
+			needTop = true
+		}
+		if firstErr < 0 && isError(a.Value) {
+			firstErr = i
+		}
+		i++
+		return true
+	})
+	if hasExcKey || h.excInScope {
+		firstErr = -1
+	}
+	if firstErr < 0 && !needTop && !hasLogger {
+		return r
+	}
+	// An error under a reserved key inside an inline group is renamed only
+	// when nothing else becomes the exception.
+	rename := firstErr < 0 && !hasExcKey && !h.excInScope
+	if top {
+		// The logger field is written before the record's own attributes, so
+		// the last logger — inline groups included — is found before the copy.
+		i = 0
+		r.Attrs(func(a slog.Attr) bool {
+			switch {
+			case i == firstErr:
+			case a.Key == loggerKey:
+				if !isError(a.Value) {
+					logger, hasLogger = a.Value, true
+				}
+			case a.Key == "":
+				if _, _, lg, ok := filterReserved([]slog.Attr{a}, nil); ok {
+					logger, hasLogger = lg, true
+				}
+			}
+			i++
+			return true
+		})
+	}
+	out := slog.NewRecord(r.Time, r.Level, r.Message, r.PC)
+	if hasLogger {
+		out.AddAttrs(slog.Attr{Key: loggerKey, Value: logger})
+	}
+	i = 0
+	r.Attrs(func(a slog.Attr) bool {
+		idx := i
+		i++
+		switch {
+		case idx == firstErr:
+			if err, ok := errorOf(a.Value); ok {
+				out.AddAttrs(slog.String("exception", errorText(err)))
+			}
+		case !top:
+			out.AddAttrs(a)
+		case reservedStdoutKeys[a.Key]:
+			// dropped; a logger was written above
+		case a.Key == "":
+			kept, _, _, _ := filterReserved([]slog.Attr{a}, &rename)
+			out.AddAttrs(kept...)
+		default:
+			out.AddAttrs(a)
+		}
+		return true
+	})
+	return out
 }
 
 func isError(v slog.Value) bool {
@@ -212,39 +410,6 @@ func isError(v slog.Value) bool {
 	}
 	_, ok := v.Any().(error)
 	return ok
-}
-
-// withException renames the record's first error-valued attribute to
-// "exception" (its Error() text) for the stdout JSON shape.
-// A record that already carries an "exception" attribute is left unchanged.
-func withException(r slog.Record) slog.Record {
-	found := -1
-	i := 0
-	r.Attrs(func(a slog.Attr) bool {
-		if a.Key == "exception" {
-			found = -1
-			return false
-		}
-		if found < 0 && isError(a.Value) {
-			found = i
-		}
-		i++
-		return true
-	})
-	if found < 0 {
-		return r
-	}
-	out := slog.NewRecord(r.Time, r.Level, r.Message, r.PC)
-	i = 0
-	r.Attrs(func(a slog.Attr) bool {
-		if i == found {
-			a = slog.String("exception", errorText(a.Value.Resolve().Any().(error)))
-		}
-		out.AddAttrs(a)
-		i++
-		return true
-	})
-	return out
 }
 
 // errorText is err.Error() rendered the way slog renders an error value: a
@@ -263,31 +428,52 @@ func errorText(err error) (s string) {
 	return err.Error()
 }
 
-func (h *switchHandler) with(op handlerOp, stdout slog.Handler) *switchHandler {
+// with returns a handler with op appended (replayed on the bridge) and stdout
+// as the stdout destination; stdoutAttrs are the attributes stdout received.
+func (h *switchHandler) with(op handlerOp, stdout slog.Handler, stdoutAttrs []slog.Attr) *switchHandler {
 	ops := make([]handlerOp, len(h.ops), len(h.ops)+1)
 	copy(ops, h.ops)
 	exc := h.excInScope
 	if op.group != "" {
 		exc = false
 	}
-	for _, a := range op.attrs {
-		exc = exc || a.Key == "exception"
+	exc = exc || hasException(stdoutAttrs)
+	n := &switchHandler{min: h.min, stdout: stdout, ops: append(ops, op), derived: new(atomic.Pointer[derivedBridge]), excInScope: exc}
+	if op.group == "" {
+		n.scopeLogger, n.hasScopeLogger = h.scopeLogger, h.hasScopeLogger
 	}
-	return &switchHandler{min: h.min, stdout: stdout, ops: append(ops, op), derived: new(atomic.Pointer[derivedBridge]), excInScope: exc}
+	return n
 }
 
 func (h *switchHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
 	if len(attrs) == 0 {
 		return h
 	}
-	return h.with(handlerOp{attrs: attrs}, h.stdout.WithAttrs(attrs))
+	if h.inGroup() {
+		return h.with(handlerOp{attrs: attrs}, h.stdout.WithAttrs(attrs), attrs)
+	}
+	// Top level: an error under a reserved key becomes exception when the
+	// scope has none yet (A23, G4); the rest of the reserved rule as for records.
+	rename := !h.excInScope && !hasException(attrs)
+	stdoutAttrs, _, logger, hasLogger := filterReserved(attrs, &rename)
+	n := h.with(handlerOp{attrs: attrs}, h.stdout.WithAttrs(stdoutAttrs), stdoutAttrs)
+	if hasLogger {
+		n.scopeLogger, n.hasScopeLogger = logger, true
+	}
+	return n
 }
 
 func (h *switchHandler) WithGroup(name string) slog.Handler {
 	if name == "" {
 		return h
 	}
-	return h.with(handlerOp{group: name}, h.stdout.WithGroup(name))
+	stdout := h.stdout
+	if h.hasScopeLogger && !h.inGroup() {
+		// The held-back scope logger is written before the group opens: inside
+		// the group, a record's logger nests and cannot replace it.
+		stdout = stdout.WithAttrs([]slog.Attr{{Key: loggerKey, Value: h.scopeLogger}})
+	}
+	return h.with(handlerOp{group: name}, stdout.WithGroup(name), nil)
 }
 
 // NewSlogHandler returns the helper's slog.Handler. While Setup has a logs

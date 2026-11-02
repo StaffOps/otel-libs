@@ -242,8 +242,9 @@ describe('parity harness (matcher and schema are test infrastructure)', () => {
 
   test('driver: reports pending helper APIs, adapter errors and crashes', async () => {
     const env = { PATH: process.env.PATH ?? '' };
-    const pending = await runCase({ id: 'p', kind: 'logging', env: { OTEL_SERVICE_NAME: 'svc' }, code: {}, expect: {} }, { env });
-    assert.match(String(pending.adapter_pending), /createLogger\(\) yet \(task B8\)/);
+    // Every helper API the kinds use exists since B8; the pending report is checked on the guard itself.
+    const driverGuard = require('./driver.cjs');
+    assert.throws(() => driverGuard.need({}, ['createLogger'], 'B8'), /@staffops\/otel-helper has no createLogger\(\) yet \(task B8\)/);
     // setup() exists since B3: a resolve case runs and reports the resource.
     const resolved = await runCase({ id: 'r', kind: 'resolve', env: { OTEL_SERVICE_NAME: 'svc' }, code: {}, expect: {} }, { env });
     assert.equal(resolved.resource?.['service.name'], 'svc', JSON.stringify(resolved));
@@ -261,8 +262,8 @@ describe('parity harness (matcher and schema are test infrastructure)', () => {
     assert.deepEqual(Object.keys(driverModule.KINDS).sort(), Object.keys(SCHEMA).sort());
     // Every kind is wired, never "unknown kind": kinds whose helper API exists
     // run (no adapter status); the others report the task that adds it.
-    // http_server/grpc_server run since B7 (metricsHandler); their spans and metrics since B6.
-    const runnable = new Set(['resolve', 'sampler', 'propagation', 'fork', 'metrics_scrape', 'metrics_listener', 'http_server', 'grpc_server']);
+    // http_server/grpc_server run since B7 (metricsHandler); their spans and metrics since B6; logging since B8.
+    const runnable = new Set(['resolve', 'sampler', 'propagation', 'fork', 'metrics_scrape', 'metrics_listener', 'http_server', 'grpc_server', 'logging']);
     for (const kind of Object.keys(SCHEMA)) {
       if (kind === 'export') continue; // needs the receiver; covered by the export check below
       const res = await runCase({ id: kind, kind, env: {}, code: {}, input: { scenario: 'root', requests: [], method: '/x' } }, { env });

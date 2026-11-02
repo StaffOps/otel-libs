@@ -622,7 +622,7 @@ test('globals: a registration the API refuses anyway is reported (context manage
     'otelhelper: the OpenTelemetry API refused the global context manager; in-process context is not propagated',
     "otelhelper: the OpenTelemetry API refused the global TracerProvider; the helper's traces are inactive signal=traces",
     "otelhelper: the OpenTelemetry API refused the global MeterProvider; the helper's metrics are inactive signal=metrics",
-    "otelhelper: the OpenTelemetry API refused the global LoggerProvider; the helper's logs are inactive signal=logs",
+    "otelhelper: the OpenTelemetry API refused the global LoggerProvider; OpenTelemetry Logs API callers get no logs, the helper's loggers (createLogger) still export through the helper's provider signal=logs",
   ]);
   // The instrumentation constructors read the (broken) globals too (B6): reported, setup() still returns.
   assert.equal(lines.length, 5);

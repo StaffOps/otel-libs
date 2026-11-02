@@ -779,4 +779,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { CODE_KEYS, KINDS, classify, mapOptions, grpcTimeoutMs, signalOf, DRIVER: path.resolve(__filename) };
+module.exports = { CODE_KEYS, KINDS, classify, mapOptions, need, grpcTimeoutMs, signalOf, DRIVER: path.resolve(__filename) };

@@ -3768,7 +3768,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B8-logging"
+        "nodejs": "pass"
       }
     },
     {
@@ -3791,7 +3791,30 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B8-logging"
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "logging.stdout_time_utc_under_tz",
+      "kind": "logging",
+      "requirement": "D6/A23",
+      "note": "contract design D1 row \"Stdout fallback time zone\" (A23, 2026-11-02): the stdout fallback writes UTC with Z whatever the process zone",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "ENVIRONMENT": "DEV",
+        "TZ": "America/Sao_Paulo"
+      },
+      "code": {},
+      "expect": {
+        "console": {
+          "regex": "\"time\": ?\"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{3}Z\""
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "pass"
       }
     },
     {

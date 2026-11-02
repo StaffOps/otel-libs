@@ -25,6 +25,7 @@ import { clearReportedOnce, report, reportOnce, truncateValue } from './diagnost
 import { installDiagLogger } from './diag-logger';
 import { logExporter, metricExporter, spanExporter, tlsMaterial, withMaskedEnv, type ExporterInput, type FileCache } from './exporters';
 import { foreignRegistry, registeredGlobal } from './globals';
+import type { LogLevel } from './log-level';
 import { bindProviders, clientExclusions, createInstrumentations, disableInstrumentations, enableInstrumentations, loadedPackages, otlpTargets, type HelperInstrumentations } from './instrumentation';
 import { closeListener, createPrometheusReader, dropPredicate, droppingExporter, ENV_METRICS_PORT, serveMetrics, startListener, type DropPredicate, type ScrapeRequest, type ScrapeResponse, type ScrapeTarget } from './metrics-endpoint';
 import type { OtlpEndpoint } from './otlp';
@@ -45,6 +46,13 @@ interface Active {
   readonly ownsTracerProvider: boolean;
   readonly ownsMeterProvider: boolean;
   readonly ownsLoggerProvider: boolean;
+  /**
+   * Whether the helper's LoggerProvider has an export processor (OTLP and/or
+   * console) and is usable: the helper's loggers write through it, else to
+   * stdout (design D6). Independent of who owns the global LoggerProvider
+   * (Go and Python: the helper's handler keeps exporting through its own).
+   */
+  readonly logsExported: boolean;
   readonly contextManager: AsyncLocalStorageContextManager | undefined;
   /** The propagator the helper registered; `undefined` when it registered none. */
   readonly propagator: TextMapPropagator | undefined;
@@ -74,6 +82,11 @@ interface Runtime {
    * next setup; each failure is reported).
    */
   instrumentations: HelperInstrumentations | undefined;
+  /**
+   * The log level the last successful setup resolved (R4); `undefined` =
+   * none yet (`info`). Kept after `shutdown()`, as Go's installed level.
+   */
+  logLevel: LogLevel | undefined;
 }
 
 const DEFAULT_SHUTDOWN_TIMEOUT_MS = 30_000;
@@ -88,7 +101,7 @@ const SHORT_READER_TIMEOUT_MS = 1000;
 const MAX_TIMER_MS = 2 ** 31 - 1;
 
 function runtimeOf(state: HelperState): Runtime {
-  state.runtime ??= { active: undefined, diagLogger: undefined, instrumentations: undefined } satisfies Runtime;
+  state.runtime ??= { active: undefined, diagLogger: undefined, instrumentations: undefined, logLevel: undefined } satisfies Runtime;
   return state.runtime as Runtime;
 }
 
@@ -360,6 +373,8 @@ interface Providers {
   readonly tracerProvider: TracerProvider;
   readonly meterProvider: MeterProvider;
   readonly loggerProvider: LoggerProvider;
+  /** Whether the LoggerProvider has at least one export processor. */
+  readonly logsExported: boolean;
   readonly prometheus: PrometheusExporter | undefined;
 }
 
@@ -393,6 +408,7 @@ function buildProviders(plan: Plan, base: Resource, options: SetupOptions): Prov
       logRecordLimits: { ...plan.sdk.logRecordLimits },
       processors: pipelines.logProcessors,
     }),
+    logsExported: pipelines.logProcessors.length > 0,
     prometheus: pipelines.prometheus,
   };
 }
@@ -407,12 +423,24 @@ const PROVIDER_NAMES = { trace: 'TracerProvider', metrics: 'MeterProvider', logs
  */
 function registerProvider(type: keyof typeof PROVIDER_NAMES, signal: Signal, register: () => boolean): boolean {
   const name = PROVIDER_NAMES[type];
+  // The helper's loggers keep their own provider (Go, Python): only Logs API callers miss it.
+  const logs = type === 'logs';
   if (registeredGlobal(type) !== undefined) {
-    report(`a global ${name} is already registered; the helper does not replace it and its ${signal} are inactive`, { signal });
+    report(
+      logs
+        ? `a global ${name} is already registered; the helper does not replace it: OpenTelemetry Logs API callers use it, the helper's loggers (createLogger) still export through the helper's provider`
+        : `a global ${name} is already registered; the helper does not replace it and its ${signal} are inactive`,
+      { signal },
+    );
     return false;
   }
   if (register()) return true;
-  report(`the OpenTelemetry API refused the global ${name}; the helper's ${signal} are inactive`, { signal });
+  report(
+    logs
+      ? `the OpenTelemetry API refused the global ${name}; OpenTelemetry Logs API callers get no logs, the helper's loggers (createLogger) still export through the helper's provider`
+      : `the OpenTelemetry API refused the global ${name}; the helper's ${signal} are inactive`,
+    { signal },
+  );
   return false;
 }
 
@@ -560,6 +588,8 @@ export function setup(options?: SetupOptions): Resolved {
     ownsTracerProvider,
     ownsMeterProvider,
     ownsLoggerProvider,
+    // Not into a foreign API registry: its telemetry is inactive (reported above).
+    logsExported: foreignApi === undefined && built?.logsExported === true,
     contextManager,
     propagator: ownedPropagator,
     prometheus,
@@ -569,7 +599,31 @@ export function setup(options?: SetupOptions): Resolved {
     instrumented,
     shutdown: undefined,
   };
+  rt.logLevel = plan.resolved.logLevel;
   return plan.resolved;
+}
+
+/** Where the helper's loggers write a record now, and the installed level (design D6, R4). */
+export interface LogDestination {
+  /** The active setup's LoggerProvider while it has an export processor; `undefined` = stdout. */
+  readonly provider: LoggerProvider | undefined;
+  /** The level the last successful setup resolved; `info` before the first. */
+  readonly level: LogLevel;
+}
+
+/**
+ * Read per record by the helper's loggers: the provider only while a setup
+ * is active (not shut down) and has a logs exporter, so a logger created
+ * before `setup()` switches to it and one outliving `shutdown()` goes back to
+ * stdout instead of a dead provider (Go `activeLogBridge`).
+ */
+export function logDestination(): LogDestination {
+  const state = getState();
+  if (state === null) return { provider: undefined, level: 'info' };
+  const rt = runtimeOf(state);
+  const active = rt.active;
+  const exporting = active !== undefined && active.shutdown === undefined && active.logsExported;
+  return { provider: exporting ? active.loggerProvider : undefined, level: rt.logLevel ?? 'info' };
 }
 
 const UNAVAILABLE: ScrapeTarget = Object.freeze({ kind: 'unavailable' });
@@ -726,6 +780,7 @@ export function resetForTests(): void {
     disableInstrumentations(rt.instrumentations);
     if (helperOwnsDiag(rt)) diag.disable();
     rt.diagLogger = undefined;
+    rt.logLevel = undefined;
   }
   clearReportedOnce();
   setDiagnosticSink(undefined);
