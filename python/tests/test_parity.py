@@ -40,20 +40,22 @@ _CASE_KEYS = {"id", "kind", "requirement", "note", "env", "code", "input", "expe
 _REQUIRED_KEYS = {"id", "kind", "env", "code", "expect", "status"}  # same set as go/parity_match_test.go
 _OVERRIDE_RE = re.compile(r"^python@sdk>=[\d.]+$")
 _SCHEMA = {
-    "resolve": {"resource", "metric_exporters", "metric_export_interval_ms", "log_level"},
+    "resolve": {"resource", "metric_exporters", "metric_export_interval_ms", "log_level", "prometheus_metrics_port"},
     "export": {"received"},
     "sampler": {"sampled", "attributes"},
     "propagation": {"headers"},
-    "http_server": {"server_spans", "requests_counted", "handler_child_spans"},
+    "http_server": {"server_spans", "requests_counted", "handler_child_spans", "scrape"},
     "grpc_server": {"server_spans", "rpcs_counted", "call_ok"},
     "logging": set(),
     "metrics_scrape": {"scrape", "scrape_status"},
+    "metrics_listener": {"listener_statuses"},
     "fork": {"instance_ids", "instance_ids_distinct"},
 }
 _INPUT_SCHEMA = {
     "sampler": {"scenario"},
     "http_server": {"requests", "traceparent", "child_span"},
     "grpc_server": {"method"},
+    "metrics_listener": {"requests"},
 }
 _SIGNALS = {"traces", "metrics", "logs"}
 _RECORD_FIELDS = {"proto", "tls", "port", "path", "raw_path", "encoding", "headers", "timeout_ms", "absent"}
@@ -127,6 +129,10 @@ def validate_case(case: dict) -> list[str]:
             errs.append(f"input.{key} must be a string")
         elif key == "child_span" and not isinstance(val, bool):
             errs.append("input.child_span must be a boolean")
+    if kind == "metrics_listener":
+        reqs = inp.get("requests")
+        if not (isinstance(reqs, list) and reqs and all(isinstance(r, str) and re.fullmatch(r"[A-Z]+ /\S*", r) for r in reqs)):
+            errs.append('metrics_listener needs a non-empty input.requests of "METHOD /path" strings')
     wc = expect.get("warning_count")
     if wc is not None and not (isinstance(wc, dict) and all(isinstance(n, (int, float)) and not isinstance(n, bool)
                                                          for n in wc.values())):

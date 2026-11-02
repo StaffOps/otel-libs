@@ -113,6 +113,8 @@ _BAD_ESCAPE_RE = re.compile(r"%(?![0-9A-Fa-f]{2})")
 _PRINTABLE_ASCII_RE = re.compile(r"^[\x20-\x7e]*$")
 # D1 row "Metric export interval" (A19): ASCII digits, optional "+"; bound 2^31-1 ms.
 _INTERVAL_RE = re.compile(r"\+?[0-9]+")
+# Design D1 row "Metrics port grammar" (A21): ASCII digits, an optional "+".
+_PORT_RE = re.compile(r"\+?[0-9]+")
 # More significant digits than this cannot fit in 2^31-1 (and int() refuses > 4300 digits).
 _MAX_INTERVAL_DIGITS = 10
 # D1 row "Echoed values are truncated" (A19): Go maxEchoedValue, Node MAX_ECHOED_VALUE.
@@ -907,6 +909,8 @@ class TelemetryOptions:
         else:
             env_metrics = os.getenv(ENV_DISABLED_METRICS) or ""
             eff["disabled_metrics"] = [s.strip(TRIM_CHARS) for s in env_metrics.split(",") if s.strip(TRIM_CHARS)]
+        # Design D1 row "Disabled-metric patterns" (A21): code items too are trimmed, blanks ignored.
+        eff["disabled_metrics"] = [s.strip(TRIM_CHARS) for s in eff["disabled_metrics"] if s.strip(TRIM_CHARS)]
 
         if self.prometheus_metrics_port is not None:
             eff["prometheus_metrics_port"] = self.prometheus_metrics_port
@@ -914,12 +918,14 @@ class TelemetryOptions:
             eff["prometheus_metrics_port"] = _DEFAULT_METRICS_PORT
             env_port = _env(ENV_METRICS_PORT)
             if env_port is not None:
-                try:
-                    port = int(env_port)
-                    if not 0 <= port <= 65535:
-                        raise ValueError
+                # Design D1 row "Metrics port grammar" (A21): ASCII digits with an optional "+"
+                # (int() would accept "9_464" and non-ASCII digits); at most 5 significant digits
+                # are converted, so a long digit string is never parsed.
+                digits = env_port.lstrip("+").lstrip("0") if _PORT_RE.fullmatch(env_port) else None
+                port = int(digits or "0") if digits is not None and len(digits) <= 5 else None
+                if port is not None and port <= 65535:
                     eff["prometheus_metrics_port"] = port
-                except ValueError:
+                else:
                     self._warn_once(ENV_METRICS_PORT, "[OtelHelper] %s=%r is not a port (0-65535); using 9464.",
                                     ENV_METRICS_PORT, env_port)
         self._resolved = True

@@ -119,8 +119,8 @@ back to the generic one, then to the default.
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `OTEL_HELPER_DEBUG_LEVEL` | `false` | `true`: DEBUG log level **and** `debug=true` on entry spans ([Debug mode](HOW-TO.md#6-debug-mode)) |
-| `OTEL_HELPER_METRICS_PORT` | `9464` | Port of the standalone Prometheus `/metrics` listener; `0` = no listener (mount `MetricsHandler()` yourself) |
-| `OTEL_HELPER_DISABLED_METRICS` | _(unset)_ | Comma list of `path.Match` patterns (`http.server.*`); matching instruments are dropped from every exporter |
+| `OTEL_HELPER_METRICS_PORT` | `9464` | Port of the standalone Prometheus `/metrics` listener (dual-stack, `GET`/`HEAD /metrics` only: other paths 404, other methods 405); ASCII digits with an optional `+`, in [0, 65535], anything else warns and uses 9464; `0` = no listener (mount `MetricsHandler()` yourself) |
+| `OTEL_HELPER_DISABLED_METRICS` | _(unset)_ | Comma list of patterns (`http.server.*`), each a case-sensitive glob on the instrument name (`*` any run of characters, `.` and `/` included; `?` one character; everything else literal, no `[...]` classes); items trimmed, blank items ignored; matching instruments are dropped from every exporter |
 | `OTEL_HELPER_SAMPLE_RATIO` | _(unset)_ | **Deprecated** (warns once): ratio in [0, 1] → `ParentBased(TraceIDRatioBased(x))`, only while `OTEL_TRACES_SAMPLER` is unset. Use `OTEL_TRACES_SAMPLER=parentbased_traceidratio` + `_ARG` |
 | `OTEL_HELPER_DISABLED_SIGNALS` | _(unset)_ | **Deprecated** (warns once): `traces`, `metrics`, `logs`. Use `OTEL_<SIGNAL>_EXPORTER=none`. Ignored for a signal whose `OTEL_<SIGNAL>_EXPORTER` holds a valid entry, and for metrics when `WithMetricExporters` is used; unknown entries warn once |
 | `OTEL_HELPER_EXTRA_INSTRUMENTATION` | _(unset)_ | **Removed** in Go 0.3.0: no effect, warns once when set. Import an [`ext/*` module](#opt-in-extensions-ext) instead |
@@ -152,7 +152,7 @@ Options passed to `Setup` win over every environment variable.
 | `WithExportInterval(ms)` | Metric export interval in [1, 2 147 483 647] ms |
 | `WithPrometheusMetricsPort(port)` | Standalone `/metrics` port in [0, 65535] |
 | `WithoutMetricsListener()` | No standalone listener; mount `MetricsHandler()` on your mux |
-| `WithDisabledMetrics(patterns)` | Drop instruments matching `path.Match` patterns; `nil` = use env, `[]string{}` = none (beats env) |
+| `WithDisabledMetrics(patterns)` | Drop instruments matching the patterns (same glob as `OTEL_HELPER_DISABLED_METRICS`; items trimmed, blanks ignored); `nil` = use env, `[]string{}` = none (beats env) |
 | `WithDisabledSignals(signals)` | `traces`, `metrics`, `logs` (other names fail `Setup`); `nil` = use env, `[]string{}` = none |
 | `WithSampleRatio(ratio)` | Root-span ratio in [0, 1] → `ParentBased(TraceIDRatioBased)`, any value (1.0 included) beats `OTEL_TRACES_SAMPLER`; NaN / out of range fails `Setup` |
 | `WithHealthPaths(paths...)` | Replace the [health path list](#health-checks-spans-dropped-metrics-kept); `WithHealthPaths()` = none. Paths must be ASCII, start with `/`, no `?` `#` `,` |

@@ -144,8 +144,8 @@ metrics use the Prometheus fallback and logs stay local.
 | Variable | Default | Notes |
 |---|---|---|
 | `OTEL_HELPER_DEBUG_LEVEL` | `false` | DEBUG logs, every extension instrumentor, and `debug=true` on entry spans |
-| `OTEL_HELPER_METRICS_PORT` | `9464` | Standalone Prometheus `/metrics` listener; `0` disables it (serve `metrics_app()` from the app instead: `app.add_route("/metrics", metrics_app())`) |
-| `OTEL_HELPER_DISABLED_METRICS` | _(unset)_ | Comma list of wildcard instrument names dropped from every exporter |
+| `OTEL_HELPER_METRICS_PORT` | `9464` | Standalone Prometheus `/metrics` listener (dual-stack, `GET`/`HEAD /metrics` only: other paths 404, other methods 405); ASCII digits with an optional `+`, in [0, 65535] (`9_464` and non-ASCII digits warn and use 9464); `0` disables it (serve `metrics_app()` from the app instead: `app.add_route("/metrics", metrics_app())`) |
+| `OTEL_HELPER_DISABLED_METRICS` | _(unset)_ | Comma list of patterns, each a case-sensitive glob on the instrument name (`*` any run of characters, `.` and `/` included; `?` one character; everything else literal, no `[...]` classes); items trimmed, blank items ignored; matching instruments are dropped from every exporter. The SDK lower-cases instrument names, so use lower-case patterns |
 | `OTEL_HELPER_SAMPLE_RATIO` | `1.0` | **Deprecated** → `OTEL_TRACES_SAMPLER=parentbased_traceidratio` + `OTEL_TRACES_SAMPLER_ARG`. Used only while `OTEL_TRACES_SAMPLER` is unset |
 | `OTEL_HELPER_DISABLED_SIGNALS` | _(unset)_ | **Deprecated** → `OTEL_{TRACES,METRICS,LOGS}_EXPORTER=none`. A standard variable with a valid entry wins for its signal, and `metric_exporters` wins for metrics; unknown entries warn once |
 | `OTEL_HELPER_EXTRA_INSTRUMENTATION` | `SQL` | **Deprecated** → call `staffops_otel_helper.ext.*` before setup. Still effective; warns whenever set (also when empty, which turns the `SQL` default off) |

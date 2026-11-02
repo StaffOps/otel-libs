@@ -1,19 +1,25 @@
 """Metrics setup — equivalent to MetricsSetup.cs."""
 
+import dataclasses
 import logging
+import re
+import socket
 import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import urlsplit
 
 from opentelemetry import metrics
 from opentelemetry.exporter.prometheus import PrometheusMetricReader
 from opentelemetry.sdk.metrics import MeterProvider, TraceBasedExemplarFilter
-from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
+from opentelemetry.sdk.metrics.export import Gauge, MetricsData, PeriodicExportingMetricReader
 from opentelemetry.sdk.metrics.view import View, DropAggregation
 from opentelemetry.sdk.resources import Resource
 
+from staffops_otel_helper._diag import warn_once_per_process
 from staffops_otel_helper._exporters import build_otlp_exporter
 from prometheus_client import CollectorRegistry
 
-from staffops_otel_helper.config import TelemetryOptions
+from staffops_otel_helper.config import TelemetryOptions, _truncate
 
 _logger = logging.getLogger(__name__)
 
@@ -40,6 +46,10 @@ class _HelperPrometheusReader(PrometheusMetricReader):
 
     def __init__(self) -> None:
         super().__init__(registry=_REGISTRY)
+
+    def _receive_metrics(self, metrics_data: MetricsData, timeout_millis: float = 10_000, **kwargs) -> None:
+        # The MetricReader hook every reader implements; the data is adapted, then handed over.
+        super()._receive_metrics(_ratio_units(metrics_data), timeout_millis=timeout_millis, **kwargs)
 
     def shutdown(self, timeout_millis: float = 30_000, **kwargs) -> None:
         with _active_lock:
@@ -71,12 +81,220 @@ def deactivate() -> None:
         _active_readers.clear()
 
 
+_UNIT_ANNOTATION = re.compile(r"\{[^}]*\}")
+
+
+_LABEL_RE = re.compile(r"[^a-zA-Z0-9]+")
+
+
+def _label_name(key: str) -> str:
+    """The upstream exporter's label sanitization (``sanitize_attribute``)."""
+    if key and key[0].isdigit():
+        key = "_" + key[1:]
+    return _LABEL_RE.sub("_", key)
+
+
+def _label_value(value) -> str:
+    """A merged value as Go and Node render it: strings as is, ``true``/``false``, compact JSON otherwise."""
+    import json
+
+    if isinstance(value, str):
+        return value
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, tuple):
+        value = list(value)
+    return json.dumps(value, default=str, separators=(",", ":"))
+
+
+def _merged(attributes):
+    """Keys colliding once sanitized become one label, the sorted values joined with ``;``.
+
+    Design D1 row "Colliding label names" (as Go, ``slices.Sort(vals)``): the exporter would
+    otherwise keep the last value. Attributes without a collision are returned unchanged.
+    """
+    if not attributes:
+        return attributes
+    groups: dict[str, list[str]] = {}
+    for key in sorted(attributes):
+        groups.setdefault(_label_name(key), []).append(key)
+    if all(len(keys) == 1 for keys in groups.values()):
+        return attributes
+    return {name: attributes[keys[0]] if len(keys) == 1 else ";".join(sorted(_label_value(attributes[k]) for k in keys))
+            for name, keys in groups.items()}
+
+
+def _ratio_units(metrics_data: MetricsData | None) -> MetricsData | None:
+    """Gauges in unit ``1`` get the ``_ratio`` suffix (design D1 row "Unit 1", A21).
+
+    The OpenTelemetry Prometheus compatibility spec suffixes a Gauge in unit ``1`` with
+    ``_ratio`` and no other instrument; the upstream exporter maps ``1`` to no suffix for
+    every type (``_mapping.py`` ``"1": ""``). Rewriting only those Gauges' unit to ``ratio``
+    makes the exporter write the spec name; nothing else changes.
+    """
+    if metrics_data is None:
+        return None
+
+    # Objects without a change are returned as they are: nothing is copied on a plain collect.
+    def adapt(metric):
+        data = metric.data
+        merged = [_merged(p.attributes) for p in data.data_points]
+        if any(m is not p.attributes for m, p in zip(merged, data.data_points)):
+            points = [p if m is p.attributes else dataclasses.replace(p, attributes=m)
+                      for m, p in zip(merged, data.data_points)]
+            metric = dataclasses.replace(metric, data=dataclasses.replace(data, data_points=points))
+        if isinstance(data, Gauge) and _UNIT_ANNOTATION.sub("", metric.unit or "") == "1":
+            return dataclasses.replace(metric, unit="ratio")
+        return metric
+
+    def scope(sm):
+        metrics_ = [adapt(m) for m in sm.metrics]
+        return sm if all(a is b for a, b in zip(metrics_, sm.metrics)) else dataclasses.replace(sm, metrics=metrics_)
+
+    def resource(res):
+        attrs = dict(res.attributes)
+        merged = _merged(attrs)
+        return res if merged is attrs else Resource(merged, res.schema_url)
+
+    def resource_metrics(rm):
+        res = resource(rm.resource)
+        scopes = [scope(sm) for sm in rm.scope_metrics]
+        if res is rm.resource and all(a is b for a, b in zip(scopes, rm.scope_metrics)):
+            return rm
+        return dataclasses.replace(rm, resource=res, scope_metrics=scopes)
+
+    adapted = [resource_metrics(rm) for rm in metrics_data.resource_metrics]
+    if all(a is b for a, b in zip(adapted, metrics_data.resource_metrics)):
+        return metrics_data
+    return dataclasses.replace(metrics_data, resource_metrics=adapted)
+
+
+def _view_pattern(pattern: str) -> str | None:
+    """The SDK View pattern equal to a contract glob (design D1 row "Disabled-metric patterns", A21).
+
+    Contract: case-sensitive, ``*`` any run of characters, ``?`` one character, every other
+    character literal. The View matches with ``fnmatchcase``, where ``[`` opens a class
+    (escaped as ``[[]``), against the name the SDK stores lower-cased (``instrument.py``
+    ``self.name = name.lower()``): a pattern with an upper-case letter can match no name
+    case-sensitively, so it gets no View (the SDK lower-cases the pattern before matching).
+    """
+    if pattern != pattern.lower():
+        # Patterns are not secrets: named, truncated, as Go's warnEnv (design D1 row "Disabled-metric patterns").
+        warn_once_per_process(
+            _logger, f"disabled-metrics-upper-case:{pattern}",
+            "[OtelHelper] OTEL_HELPER_DISABLED_METRICS / disabled_metrics pattern %r has an upper-case "
+            "letter; the Python SDK lower-cases instrument names, so it matches no instrument (use lower case).",
+            _truncate(pattern))
+        return None
+    return pattern.replace("[", "[[]")
+
+
 def _build_drop_views(patterns: list[str]) -> list[View]:
-    """Build View objects that drop metrics matching wildcard patterns."""
+    """Views that drop the instruments matching the contract globs, from every exporter."""
     views = []
     for pattern in patterns:
-        views.append(View(instrument_name=pattern, aggregation=DropAggregation()))
+        view_pattern = _view_pattern(pattern)
+        if view_pattern is not None:
+            views.append(View(instrument_name=view_pattern, aggregation=DropAggregation()))
     return views
+
+
+class _ListenerHandler(BaseHTTPRequestHandler):
+    """The standalone listener: ``GET``/``HEAD /metrics`` only (design D1 row "Metrics listener", A21).
+
+    Every method goes through :meth:`_serve`: other paths answer 404, other methods on
+    ``/metrics`` 405 (as Go). A connection idle for ``timeout`` seconds is closed. Requests
+    are not logged; failures go to the helper logger.
+    """
+
+    timeout = 10
+
+    def __getattr__(self, name: str):
+        # BaseHTTPRequestHandler dispatches to do_<METHOD> and answers 501 without one.
+        if name.startswith("do_"):
+            return self._serve
+        raise AttributeError(name)
+
+    def _serve(self) -> None:
+        if urlsplit(self.path).path != "/metrics":
+            self._plain(404, b"404 page not found\n")
+            return
+        if self.command not in ("GET", "HEAD"):
+            self._plain(405, b"Method Not Allowed\n", allow="GET, HEAD")
+            return
+        from prometheus_client import generate_latest
+
+        try:
+            body = generate_latest(_REGISTRY)  # text exposition format 0.0.4
+        except Exception as e:  # noqa: BLE001 - a failed collection answers 500, never a traceback
+            _logger.warning("[OtelHelper] /metrics collection failed: %s", _truncate(str(e)))
+            self._plain(500, b"metric collection failed\n")
+            return
+        self.send_response(200)
+        self.send_header("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        if self.command != "HEAD":
+            self.wfile.write(body)
+
+    def _plain(self, status: int, body: bytes, allow: str | None = None) -> None:
+        self.send_response(status)
+        self.send_header("Content-Type", "text/plain; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        if allow:
+            self.send_header("Allow", allow)
+        self.end_headers()
+        if self.command != "HEAD":
+            self.wfile.write(body)
+
+    def log_message(self, format, *args) -> None:  # noqa: A002 - silence per-request logging
+        pass
+
+
+class _QuietErrors:
+    """Logs a request that failed in the server machinery on the helper logger, not as a stderr traceback."""
+
+    def handle_error(self, request, client_address) -> None:
+        import sys
+
+        _logger.warning("[OtelHelper] /metrics listener request failed: %s", _truncate(str(sys.exc_info()[1])))
+
+
+class _DualStackServer(_QuietErrors, ThreadingHTTPServer):
+    """``[::]`` accepting IPv4 too (``IPV6_V6ONLY`` off), as Go's ``:port`` and Node's omitted host."""
+
+    address_family = socket.AF_INET6
+    daemon_threads = True
+
+    def server_bind(self) -> None:
+        self.socket.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 0)
+        super().server_bind()
+
+
+class _IPv4Server(_QuietErrors, ThreadingHTTPServer):
+    daemon_threads = True
+
+
+def _start_listener(port: int):
+    """Binds the listener: dual-stack, else IPv4 when the platform has no IPv6.
+
+    A port in use is never retried on IPv4 (it would bind only half the address space).
+    Returns ``(server, thread)`` (the shape :func:`stop_listener` takes).
+    """
+    import errno
+
+    server = None
+    if socket.has_ipv6:
+        try:
+            server = _DualStackServer(("::", port), _ListenerHandler)
+        except OSError as e:
+            if e.errno == errno.EADDRINUSE:
+                raise
+    if server is None:
+        server = _IPv4Server(("0.0.0.0", port), _ListenerHandler)
+    thread = threading.Thread(target=server.serve_forever, name="otel-helper-metrics", daemon=True)
+    thread.start()
+    return server, thread
 
 
 class _MetricsASGIApp:
@@ -147,6 +365,15 @@ def stop_listener(listener) -> None:
         server.server_close()
 
 
+def foreign_meter_provider() -> bool:
+    """Whether code other than the helper already installed a global MeterProvider.
+
+    Until one is set, the API returns its proxy (class ``_ProxyMeterProvider``; compared by
+    name, nothing is imported from ``opentelemetry.*._internal``, P17).
+    """
+    return type(metrics.get_meter_provider()).__name__ != "_ProxyMeterProvider"
+
+
 def build_metrics(resource: Resource, options: TelemetryOptions):
     """Build the MeterProvider (not installed globally) and the standalone listener.
 
@@ -179,11 +406,11 @@ def build_metrics(resource: Resource, options: TelemetryOptions):
             ))
 
         if "prometheus" in exporters:
-            if options.resolved.prometheus_metrics_port > 0:
-                from prometheus_client import start_http_server
-
+            # A foreign global MeterProvider will keep the helper's provider off (setup warns at install):
+            # bind nothing, so a busy port cannot fail setup for a listener that would be stopped anyway.
+            if options.resolved.prometheus_metrics_port > 0 and not foreign_meter_provider():
                 try:
-                    listener = start_http_server(port=options.resolved.prometheus_metrics_port, registry=_REGISTRY)
+                    listener = _start_listener(options.resolved.prometheus_metrics_port)
                 except OSError as e:
                     raise RuntimeError(
                         f"[OtelHelper] Could not bind the /metrics listener on port "
@@ -192,7 +419,7 @@ def build_metrics(resource: Resource, options: TelemetryOptions):
                         "OTEL_HELPER_METRICS_PORT=0 to disable the standalone listener."
                     ) from e
                 _logger.info(
-                    "OTel Prometheus exporter: metrics available at http://0.0.0.0:%d/metrics",
+                    "OTel Prometheus exporter: metrics available on port %d at /metrics",
                     options.resolved.prometheus_metrics_port,
                 )
             else:

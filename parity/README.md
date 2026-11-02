@@ -34,14 +34,15 @@ suite runs every case. **`cases.json` is hand-maintained**: edit it directly
 
 | Kind | `input` | Does | Snapshot fields (`expect` keys) |
 |---|---|---|---|
-| `resolve` | — | Setup, read what it installed | `resource` (all attributes of the installed resource), `metric_exporters` (the **effective** list: `[]` when metrics are disabled — `OTEL_HELPER_DISABLED_SIGNALS`, code disabled signals — or the SDK is, `OTEL_SDK_DISABLED=true`; defined 2026-10-29, A19 fix round), `metric_export_interval_ms`, `log_level` |
+| `resolve` | — | Setup, read what it installed | `resource` (all attributes of the installed resource), `metric_exporters` (the **effective** list: `[]` when metrics are disabled — `OTEL_HELPER_DISABLED_SIGNALS`, code disabled signals — or the SDK is, `OTEL_SDK_DISABLED=true`; defined 2026-10-29, A19 fix round), `metric_export_interval_ms`, `log_level`, `prometheus_metrics_port` (the resolved `/metrics` listener port; added 2026-11-02, A21) |
 | `export` | — | Setup, emit one span + counter + log, shut down, read the receiver | `received{traces,metrics,logs}` → records `{proto, tls, port, path, raw_path, encoding, headers, timeout_ms}` (`path` decoded, `raw_path` as sent with escapes kept; `timeout_ms` from the gRPC `grpc-timeout` header) |
 | `sampler` | `scenario`: `root`, `remote_sampled`, `remote_unsampled`, `remote_sampled_debug_tracestate`, `remote_sampled_debug_baggage`, `local_child_of_root`, `local_child_of_remote_unsampled` | Start one span | `sampled`, `attributes` |
 | `propagation` | — | Inject inside a span with baggage `parity=1` | `headers` (sorted names) |
-| `http_server` | `requests`, `traceparent`, `child_span` | Serve the requests through the helper's HTTP server instrumentation; optionally the handler starts `handler-child` | `server_spans`, `handler_child_spans`, `requests_counted` (HTTP server duration `_count` from the helper's `/metrics`) |
+| `http_server` | `requests`, `traceparent`, `child_span` | Serve the requests through the helper's HTTP server instrumentation; optionally the handler starts `handler-child` | `server_spans`, `handler_child_spans`, `requests_counted` (HTTP server duration `_count` from the helper's `/metrics`), `scrape` (that `/metrics` text; added 2026-11-02, Node B7) |
 | `grpc_server` | `method` | One call on an instrumented server | `server_spans`, `rpcs_counted`, `call_ok` |
 | `logging` | — | Emit one WARN record through the helper's logger | (common fields) |
-| `metrics_scrape` | — | Increment `parity.requests`, scrape the helper's `/metrics` | `scrape`, `scrape_status` (HTTP status of the mounted handler: 503 before/after/failed setup, 200 when Prometheus is deliberately inactive — design "Mounted /metrics handler status") |
+| `metrics_scrape` | — | Increment `parity.requests` and `parity.payload` (unit `By`, by 5; added 2026-11-02, Node B7), record the Gauge `parity.utilization` (unit `1`, 0.5) and add 1 to the UpDownCounter `parity.inflight` (unit `1`; both A21), scrape the helper's `/metrics` | `scrape`, `scrape_status` (HTTP status of the mounted handler: 503 before/after/failed setup, 200 when Prometheus is deliberately inactive — design "Mounted /metrics handler status") |
+| `metrics_listener` | `requests` (`"METHOD /path"` strings) | Set `OTEL_HELPER_METRICS_PORT` to a free port, set up, send each request to the helper's own listener (added 2026-11-02, A21) | `listener_statuses` (HTTP status per request) |
 | `fork` | — | Python: import the helper, `os.fork()` twice, set up in each child (gunicorn `post_fork` model). Go: `skip:no-prefork-model` | `instance_ids`, `instance_ids_distinct` |
 
 Common fields, every kind: `error` (present only when setup failed),
@@ -78,7 +79,7 @@ what reached the wire), never from resolved options.
 | `{"absent": true}` | field not present |
 | `{"not_contains": "…"}` | **extension**: substring must not appear (RE2 has no lookahead) |
 | `{"all": [m1, m2]}` | **extension**: every matcher must hold |
-| `{"lte": n}` / `{"gte": n}` | **extension**: numeric bounds |
+| `{"lte": n}` / `{"gte": n}` | **extension**: numeric bounds. For a gRPC `timeout_ms` bound, `lte` is the configured value plus one encoding unit: `grpc-timeout` is rounded up to its unit (10 ms for 1–10 s in gRPC core) |
 | nested object | matched key by key (partial) |
 | `"error": "substr"` | setup fails with an error containing it; without an `error` key any error fails the case |
 | `"warning": "substr"` | `log` contains it |

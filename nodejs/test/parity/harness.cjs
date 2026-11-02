@@ -25,20 +25,22 @@ const CASE_KEYS = new Set(['id', 'kind', 'requirement', 'note', 'env', 'code', '
 const REQUIRED_KEYS = ['id', 'kind', 'env', 'code', 'expect', 'status'];
 const OVERRIDE_RE = /^python@sdk>=[\d.]+$/;
 const SCHEMA = {
-  resolve: ['resource', 'metric_exporters', 'metric_export_interval_ms', 'log_level'],
+  resolve: ['resource', 'metric_exporters', 'metric_export_interval_ms', 'log_level', 'prometheus_metrics_port'],
   export: ['received'],
   sampler: ['sampled', 'attributes'],
   propagation: ['headers'],
-  http_server: ['server_spans', 'requests_counted', 'handler_child_spans'],
+  http_server: ['server_spans', 'requests_counted', 'handler_child_spans', 'scrape'],
   grpc_server: ['server_spans', 'rpcs_counted', 'call_ok'],
   logging: [],
   metrics_scrape: ['scrape', 'scrape_status'],
+  metrics_listener: ['listener_statuses'],
   fork: ['instance_ids', 'instance_ids_distinct'],
 };
 const INPUT_SCHEMA = {
   sampler: ['scenario'],
   http_server: ['requests', 'traceparent', 'child_span'],
   grpc_server: ['method'],
+  metrics_listener: ['requests'],
 };
 const SIGNALS = new Set(['traces', 'metrics', 'logs']);
 const RECORD_FIELDS = new Set(['proto', 'tls', 'port', 'path', 'raw_path', 'encoding', 'headers', 'timeout_ms', 'absent']);
@@ -105,6 +107,12 @@ function validateCase(c) {
     else if (key === 'requests' && !(Array.isArray(val) && val.every((x) => typeof x === 'string'))) errs.push('input.requests must be a list of strings');
     else if (['method', 'scenario', 'traceparent'].includes(key) && typeof val !== 'string') errs.push(`input.${key} must be a string`);
     else if (key === 'child_span' && typeof val !== 'boolean') errs.push('input.child_span must be a boolean');
+  }
+  if (c.kind === 'metrics_listener') {
+    const reqs = c.input?.requests;
+    if (!Array.isArray(reqs) || reqs.length === 0 || !reqs.every((r) => typeof r === 'string' && /^[A-Z]+ \/\S*$/.test(r))) {
+      errs.push('metrics_listener needs a non-empty input.requests of "METHOD /path" strings');
+    }
   }
   if (has(expect, 'warning_count') && !(isObject(expect.warning_count) && Object.values(expect.warning_count).every(isNumber))) {
     errs.push('warning_count must map substrings to numbers');

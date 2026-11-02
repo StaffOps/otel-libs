@@ -15,6 +15,8 @@ const IDENTITY_VARS = [
   'OTEL_NODE_RESOURCE_DETECTORS', 'OTEL_SERVICE_NAME', 'OTEL_RESOURCE_ATTRIBUTES', 'SERVICE_NAME', 'ENVIRONMENT', 'OTEL_HELPER_DEBUG_LEVEL',
   'OTEL_HELPER_SAMPLE_RATIO', 'OTEL_HELPER_DISABLED_SIGNALS', 'OTEL_HELPER_EXTRA_INSTRUMENTATION', 'OTEL_LOG_LEVEL',
 ];
+// Children inherit it: never bind :9464 from unit tests (test/metrics.test.cjs binds its own).
+process.env.OTEL_HELPER_METRICS_PORT = '0';
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
 let records;
@@ -330,10 +332,7 @@ test('lifecycle (B3 subset): a hung provider while a socket is open rejects at t
 
 test('lifecycle (B3 subset): fire-and-forget shutdown of a healthy setup exits promptly and cleanly', () => {
   const started = Date.now();
-  // OTEL_METRICS_EXPORTER=none: no B7 pending report (prometheus) on stderr; remove with B7.
-  const res = runCjs("const h = require('@staffops/otel-helper'); h.setup({ serviceName: 'svc', environment: 'DEV' }); h.shutdown();", {
-    env: { OTEL_METRICS_EXPORTER: 'none' },
-  });
+  const res = runCjs("const h = require('@staffops/otel-helper'); h.setup({ serviceName: 'svc', environment: 'DEV' }); h.shutdown();");
   assert.equal(res.status, 0, res.stderr);
   assert.equal(res.stdout, '');
   assert.equal(res.stderr, '');
@@ -411,8 +410,7 @@ test('lifecycle (B3 subset): foreign global TracerProvider / context manager: se
     helper.setup({ serviceName: 'svc', environment: 'DEV' });
     // Exactly the helper's two warnings: no API duplicate-registration error
     // (with its stack trace) forwarded from diag.
-    // The B7 pending report (prometheus, INFO) is left out; remove the filter with B7.
-    assert.deepEqual(records.filter((r) => !r.line.includes('not implemented yet in Node')).map((r) => [r.origin, r.level, r.line]), [
+    assert.deepEqual(records.map((r) => [r.origin, r.level, r.line]), [
       ['helper', 'warn', 'otelhelper: a global context manager is already registered; the helper keeps it'],
       ['helper', 'warn', 'otelhelper: a global TracerProvider is already registered; the helper does not replace it and its traces are inactive signal=traces'],
     ]);

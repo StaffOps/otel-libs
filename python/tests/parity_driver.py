@@ -164,6 +164,7 @@ def kind_resolve(case: dict) -> dict:
         snap["metric_export_interval_ms"] = opts.resolved.export_interval_ms
         level = logging.getLevelName(get_default_log_level(opts.environment, opts.resolved.debug_level))
         snap["log_level"] = "WARN" if level == "WARNING" else level
+        snap["prometheus_metrics_port"] = opts.resolved.prometheus_metrics_port
     _flush_and_shutdown()
     return snap
 
@@ -354,6 +355,7 @@ def kind_http_server(case: dict) -> dict:
         client.get(path, headers=headers)
     snap["server_spans"] = _server_spans(exporter)
     snap["handler_child_spans"] = sum(1 for s in exporter.get_finished_spans() if s.name == "handler-child")
+    snap["scrape"] = _scrape()
     snap["requests_counted"] = _scrape_count(r"^http_server(_request)?_duration[a-z_]*_count[{ ]")
     _flush_and_shutdown()
     return snap
@@ -427,8 +429,49 @@ def kind_metrics_scrape(case: dict) -> dict:
     if "error" in snap:
         return snap
     metrics.get_meter("parity").create_counter("parity.requests").add(1)
+    # A counter with a unit: the scrape name carries the unit word.
+    metrics.get_meter("parity").create_counter("parity.payload", unit="By").add(5)
+    # Unit 1: a Gauge gets _ratio, an UpDownCounter does not (design D1 row "Unit 1", A21).
+    metrics.get_meter("parity").create_gauge("parity.utilization", unit="1").set(0.5)
+    metrics.get_meter("parity").create_up_down_counter("parity.inflight", unit="1").add(1)
+    # B7/A21 fix round: colliding label names, suffix semantics, a mixed-case name.
+    meter = metrics.get_meter("parity")
+    meter.create_counter("parity.collide").add(1, {"a.b": "x", "a_b": "y"})
+    meter.create_counter("parity.collide_sorted").add(1, {"a.b": "y", "a_b": "x"})
+    meter.create_counter("probe.bytes-sent", unit="By").add(1)
+    meter.create_counter("req.total.count").add(1)
+    meter.create_gauge("ratio.load", unit="1").set(1)
+    meter.create_counter("Parity.Mixed").add(1)
     response = _scrape_response()
     snap["scrape"], snap["scrape_status"] = response.text, response.status_code
+    _flush_and_shutdown()
+    return snap
+
+
+def kind_metrics_listener(case: dict) -> dict:
+    """The helper's own /metrics listener on a free port: the status of each "METHOD /path"."""
+    import http.client
+    import socket
+
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]
+    os.environ["OTEL_HELPER_METRICS_PORT"] = str(port)
+    _, snap = _setup(case)
+    if "error" in snap:
+        return snap
+    statuses = []
+    for request in case["input"]["requests"]:
+        method, target = request.split(" ", 1)
+        conn = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
+        try:
+            conn.request(method, target)
+            response = conn.getresponse()
+            response.read()
+            statuses.append(response.status)
+        finally:
+            conn.close()
+    snap["listener_statuses"] = statuses
     _flush_and_shutdown()
     return snap
 
@@ -480,6 +523,7 @@ KINDS = {
     "grpc_server": kind_grpc_server,
     "logging": kind_logging,
     "metrics_scrape": kind_metrics_scrape,
+    "metrics_listener": kind_metrics_listener,
     "fork": kind_fork,
 }
 

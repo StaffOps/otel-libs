@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net"
 	"net/http"
-	"path"
 	"sync"
 	"time"
 
@@ -159,8 +158,12 @@ func configureMetrics(ctx context.Context, res *resource.Resource, opts *Options
 					"prometheus /metrics listener on port %d: %w (if another process owns the port, mount otelhelper.MetricsHandler() and use WithoutMetricsListener())",
 					opts.PrometheusMetricsPort, err))
 			}
+			// GET (and HEAD) /metrics only: other paths 404, other methods 405
+			// (design D1 row "Metrics listener", A21). The method is checked
+			// here, not with a "GET /metrics" pattern, so GODEBUG=httpmuxgo121=1
+			// cannot change it.
 			mux := http.NewServeMux()
-			mux.Handle("/metrics", promhttp.HandlerFor(reg, promhttp.HandlerOpts{}))
+			mux.Handle("/metrics", getOrHead(promhttp.HandlerFor(reg, promhttp.HandlerOpts{})))
 			srv := &http.Server{
 				Handler:           mux,
 				ReadHeaderTimeout: 5 * time.Second,
@@ -184,8 +187,8 @@ func configureMetrics(ctx context.Context, res *resource.Resource, opts *Options
 	for _, r := range readers {
 		mpOpts = append(mpOpts, sdkmetric.WithReader(r))
 	}
-	if len(opts.DisabledMetrics) > 0 {
-		mpOpts = append(mpOpts, sdkmetric.WithView(disabledMetricsView(opts.DisabledMetrics)))
+	if patterns := trimPatterns(opts.DisabledMetrics); len(patterns) > 0 {
+		mpOpts = append(mpOpts, sdkmetric.WithView(disabledMetricsView(patterns)))
 	}
 
 	mp := sdkmetric.NewMeterProvider(mpOpts...)
@@ -198,16 +201,71 @@ func configureMetrics(ctx context.Context, res *resource.Resource, opts *Options
 	return mp, release, registry, nil
 }
 
-// disabledMetricsView returns a View that drops metrics matching any of the given glob patterns.
+// disabledMetricsView returns a View that drops the instruments whose name
+// matches any of the patterns (globMatch), from every reader.
 func disabledMetricsView(patterns []string) sdkmetric.View {
 	return func(inst sdkmetric.Instrument) (sdkmetric.Stream, bool) {
 		for _, pattern := range patterns {
-			if matched, _ := path.Match(pattern, inst.Name); matched {
+			if globMatch(pattern, inst.Name) {
 				return sdkmetric.Stream{Aggregation: sdkmetric.AggregationDrop{}}, true
 			}
 		}
 		return sdkmetric.Stream{}, false
 	}
+}
+
+// getOrHead answers 405 (Allow: GET, HEAD) to any other method.
+func getOrHead(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+			w.Header().Set("Allow", "GET, HEAD")
+			http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// trimPatterns trims every pattern with the contract set and drops blank ones
+// (code and env values alike, design D1 row "Disabled-metric patterns", A21).
+func trimPatterns(patterns []string) []string {
+	var out []string
+	for _, p := range patterns {
+		if t := trimWS(p); t != "" {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
+// globMatch reports whether name matches pattern (design D1 row
+// "Disabled-metric patterns", A21): case-sensitive; "*" matches any run of
+// characters ("." and "/" included), "?" exactly one character, every other
+// character is literal (no "[...]" classes, no escapes).
+func globMatch(pattern, name string) bool {
+	p, n := []rune(pattern), []rune(name)
+	pi, ni := 0, 0
+	star, mark := -1, 0
+	for ni < len(n) {
+		switch {
+		case pi < len(p) && p[pi] == '*':
+			star, mark = pi, ni
+			pi++
+		case pi < len(p) && (p[pi] == '?' || p[pi] == n[ni]):
+			pi++
+			ni++
+		case star >= 0:
+			pi = star + 1
+			mark++
+			ni = mark
+		default:
+			return false
+		}
+	}
+	for pi < len(p) && p[pi] == '*' {
+		pi++
+	}
+	return pi == len(p)
 }
 
 // newOTLPMetricExporter mirrors newOTLPTraceExporter for metrics.

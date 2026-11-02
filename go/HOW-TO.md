@@ -605,7 +605,10 @@ default health path list, so scrapes of a wrapped mux are not traced.
 ### Scoping what is exported
 
 `OTEL_HELPER_DISABLED_METRICS` / `WithDisabledMetrics` drop instruments from
-**every** exporter (SDK views are per provider). To expose less on `/metrics`
+**every** exporter (SDK views are per provider). Each pattern is a
+case-sensitive glob on the instrument name: `*` matches any run of characters
+(`.` and `/` included), `?` one character, everything else is literal
+(`[...]` is not a class): `http.server.*`, `orders.?.latency`. To expose less on `/metrics`
 than on OTLP, filter at the scraper (`metric_relabel_configs`, vmagent relabel).
 
 ---

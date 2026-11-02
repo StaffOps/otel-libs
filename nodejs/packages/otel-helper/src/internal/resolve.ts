@@ -9,7 +9,8 @@
  * `otlp-settings.ts`, `sdk-settings.ts`), the exporter lists,
  * `OTEL_SDK_DISABLED` and the metric export interval (task B4c,
  * `signals.ts`), the sampler, propagators and health paths (task B5,
- * `tracing.ts`); later tasks add theirs.
+ * `tracing.ts`), the `/metrics` port (task B7, `metrics-endpoint.ts`); later
+ * tasks add theirs.
  */
 import { randomUUID } from 'node:crypto';
 import { report, reportOnce, type DiagnosticValue } from './diagnostics';
@@ -17,6 +18,7 @@ import { envBool, envValue, trimWS, typeName, type Warn } from './env';
 import { checkCodeOtlp, resolveOtlp, type OtlpHeaders, type OtlpPlan, type Reporter } from './otlp';
 import { resolveSdkSettings, type SdkSettings } from './sdk-settings';
 import { checkCodeSignals, resolveSignals, type MetricExporterName, type SpanLogExporterName } from './signals';
+import { checkCodeDisabledMetrics, checkCodeMetricsPort, resolveDisabledMetrics, resolveMetricsPort } from './metrics-endpoint';
 import { defaultLogLevel, knownEnvironment, LOG_LEVELS, type LogLevel } from './log-level';
 import { parseResourceAttributes } from './resource-attributes';
 import { checkCodeTracing, DEFAULT_HEALTH_PATHS, DEFAULT_SAMPLER, ENV_SAMPLE_RATIO, resolvePropagators, resolveSampler, type PropagatorName, type SamplerConfig } from './tracing';
@@ -50,7 +52,8 @@ const BUILTIN_DETECTORS: ReadonlySet<string> = new Set(['env', 'serviceinstance'
  * log-level and diagnostics options, task B4a the OTLP endpoint, protocol and
  * `insecure` options, task B4b `exportTimeoutMs` and `compression`, task B4c
  * `metricExporters`, `exportIntervalMs` and `disabledSignals`, task B5
- * `sampleRatio` and `healthPaths`; the other documented options land with their tasks and
+ * `sampleRatio` and `healthPaths`, task B7 `prometheusMetricsPort`, A21
+ * `disabledMetrics`; the other documented options land with their tasks and
  * are rejected as unknown until then. Pass a plain object (or
  * a null-prototype one); class instances are rejected. `setup()` reads each
  * property once.
@@ -108,6 +111,19 @@ export interface SetupOptions {
   readonly metricExporters?: readonly string[] | undefined;
   /** Metric export interval in milliseconds (an integer in [1, 2^31-1]); wins over `OTEL_METRIC_EXPORT_INTERVAL`. */
   readonly exportIntervalMs?: number | undefined;
+  /**
+   * Port of the helper's `/metrics` listener (an integer in [0, 65535]; `0` =
+   * no listener, mount `metricsHandler()` instead); wins over
+   * `OTEL_HELPER_METRICS_PORT`, whatever the value (9464 included).
+   */
+  readonly prometheusMetricsPort?: number | undefined;
+  /**
+   * Instrument-name globs to drop from every exporter (case-sensitive; `*` any
+   * run of characters, `?` one, everything else literal); wins over
+   * `OTEL_HELPER_DISABLED_METRICS`, `[]` included. Items are trimmed, blank
+   * ones ignored.
+   */
+  readonly disabledMetrics?: readonly string[] | undefined;
   /**
    * Signals to disable (`traces`, `metrics`, `logs`); wins over the deprecated
    * `OTEL_HELPER_DISABLED_SIGNALS`, `[]` included. Prefer `OTEL_<SIGNAL>_EXPORTER=none`.
@@ -167,6 +183,14 @@ export interface Resolved {
   /** Metric export interval in milliseconds (`exportIntervalMs` > `OTEL_METRIC_EXPORT_INTERVAL` > 30 000). */
   readonly metricExportIntervalMs: number;
   /**
+   * Port of the `/metrics` listener (`prometheusMetricsPort` >
+   * `OTEL_HELPER_METRICS_PORT` > 9464; `0` = none). Used only while
+   * `metricExporters` holds `prometheus`.
+   */
+  readonly prometheusMetricsPort: number;
+  /** Disabled-metric globs (`disabledMetrics` > `OTEL_HELPER_DISABLED_METRICS`), trimmed, blanks dropped. */
+  readonly disabledMetrics: readonly string[];
+  /**
    * The sampler (`sampleRatio` > `OTEL_TRACES_SAMPLER`/`_ARG` >
    * `OTEL_HELPER_SAMPLE_RATIO` > `parentbased_always_on`), wrapped by the
    * health sampler. Under `OTEL_SDK_DISABLED=true` the sampler variables are
@@ -214,6 +238,8 @@ const OPTION_KEYS: ReadonlySet<string> = new Set([
   'compression',
   'metricExporters',
   'exportIntervalMs',
+  'prometheusMetricsPort',
+  'disabledMetrics',
   'disabledSignals',
   'sampleRatio',
   'healthPaths',
@@ -289,6 +315,8 @@ export function validateOptions(options: unknown): SetupOptions {
   }
   checkCodeOtlp(o);
   Object.assign(o, checkCodeSignals(o), checkCodeTracing(o));
+  if (o.prometheusMetricsPort !== undefined) o.prometheusMetricsPort = checkCodeMetricsPort(o.prometheusMetricsPort);
+  if (o.disabledMetrics !== undefined) o.disabledMetrics = checkCodeDisabledMetrics(o.disabledMetrics);
   const level = o.minimumLogLevel;
   if (level !== undefined && !LOG_LEVELS.includes(level as LogLevel)) {
     const shown = typeof level === 'string' ? JSON.stringify(level) : typeName(level);
@@ -444,6 +472,7 @@ export function resolvePlan(options: SetupOptions, defaultServiceName: string, q
   // Not read under OTEL_SDK_DISABLED=true (no TracerProvider is built), as in Go and Python.
   const sampler = signals.sdkDisabled ? DEFAULT_SAMPLER : resolveSampler(options, reporter.warn);
   const propagators = resolvePropagators(reporter.warn);
+  const prometheusMetricsPort = resolveMetricsPort(options.prometheusMetricsPort, reporter.warn);
 
   const resolved: Resolved = Object.freeze({
     serviceName,
@@ -457,6 +486,8 @@ export function resolvePlan(options: SetupOptions, defaultServiceName: string, q
     metricExporters: signals.metricExporters,
     logsExporters: signals.logsExporters,
     metricExportIntervalMs: signals.metricExportIntervalMs,
+    prometheusMetricsPort,
+    disabledMetrics: resolveDisabledMetrics(options.disabledMetrics),
     sampler,
     propagators,
     healthPaths: options.healthPaths ?? DEFAULT_HEALTH_PATHS,

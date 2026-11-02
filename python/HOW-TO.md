@@ -349,7 +349,11 @@ translation); check your backend before writing queries.
 - Keep attribute values bounded (enums, status classes); every distinct set is a
   new series.
 - `OTEL_HELPER_DISABLED_METRICS=orders.debug.*` drops instruments from every
-  exporter.
+  exporter. Patterns are case-sensitive globs (`*` any run of characters,
+  `?` one character, `[` literal); the SDK lower-cases instrument names, so a
+  pattern with an upper-case letter matches nothing (warned once) and a
+  lower-case pattern also matches mixed-case instruments (`orders.*` drops
+  `Orders.Total`, which Go and Node.js keep).
 
 ### Logs correlated with the trace
 
@@ -506,7 +510,12 @@ silently.
 ## 10. Metrics without a Collector (Prometheus `/metrics`)
 
 With no metrics endpoint configured, metrics are served on
-`http://<host>:9464/metrics` (`OTEL_HELPER_METRICS_PORT`). The registry is
+`http://<host>:9464/metrics` (`OTEL_HELPER_METRICS_PORT`) by a helper-owned
+listener: dual-stack (`[::]`, IPv4 fallback), `GET`/`HEAD /metrics` only
+(other paths 404, other methods 405), Gauges in unit `1` with the `_ratio`
+suffix as Go writes them, attribute keys that collide once sanitized merged into
+one label (`a.b`/`a_b` → `a_b="x;y"`, as Go). An idle connection is closed after
+10 s; no listener runs when another MeterProvider was installed first. The registry is
 dedicated: only OTel-produced series, no `process_*` / `python_*` and nothing
 your code registers on `prometheus_client.REGISTRY`.
 
@@ -681,7 +690,7 @@ sets the CA; with a plaintext endpoint it is warned and ignored.
 | `metric_exporters` | `list[str] \| tuple \| None = None` | `otlp`, `prometheus`, `console`, `none` (trimmed, lowercased, de-duplicated) |
 | `export_interval_ms` | `int \| None = None` | Metric export interval in [1, 2 147 483 647] ms (default 30000) |
 | `prometheus_metrics_port` | `int \| None = None` (→ env, then 9464) | Standalone `/metrics` port; `0` disables it |
-| `disabled_metrics` | `list[str] \| tuple \| None = None` (→ env, then none; `[]` = none, beats env) | Wildcard instrument names to drop |
+| `disabled_metrics` | `list[str] \| tuple \| None = None` (→ env, then none; `[]` = none, beats env) | Instrument-name globs to drop (`*`, `?`, everything else literal; items trimmed, blanks ignored) |
 | `disabled_signals` | `list[str] \| tuple \| None = None` (→ env, then none; `[]` beats env) | `traces`, `metrics`, `logs`, trimmed, lowercased, de-duplicated (prefer `OTEL_*_EXPORTER=none`) |
 | `sample_ratio` | `float \| None = None` | Any code value (1.0 included) → `parentbased_traceidratio`, beating `OTEL_TRACES_SAMPLER`; `None` → env, then `parentbased_always_on` |
 | `health_paths` | `list[str] \| None = None` | HTTP health paths; `None` = `DEFAULT_HEALTH_PATHS`, `[]` = none |

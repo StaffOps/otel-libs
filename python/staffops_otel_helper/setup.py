@@ -460,6 +460,10 @@ def _install(pipeline: _Pipeline, options: TelemetryOptions, prep=None) -> None:
                          "the helper's metrics pipeline is not active.")
             pipeline.prometheus_reader = None
             options._setup_disabled.add("metrics")  # a conflict, not a choice: /metrics stays 503
+            # Nothing would reach the helper's reader: no standalone listener either (design D1
+            # row "Metrics listener", as Node); the mounted metrics_app() answers 503.
+            stop_listener(pipeline.listener)
+            pipeline.listener = None
     if pipeline.logger_provider is not None and not _logs_global_installed:
         # For code using the OTel Logs API directly (opentelemetry._logs), as Go does.
         # Set once per process like the other globals: after shutdown -> setup the

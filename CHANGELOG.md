@@ -181,6 +181,22 @@ Runtime and operations:
     look-alike such as `PARENTBASED_TRACEİDRATIO` (U+0130), which
     `strings.ToLower` used to accept silently, now warns and falls back to
     the default: spell these values in ASCII.
+23. **BREAKING — Prometheus fallback rulings (design D1 rows of 2026-11-02,
+    A21).** `OTEL_HELPER_DISABLED_METRICS` / `WithDisabledMetrics` patterns
+    are no longer `path.Match`: `*` matches any run of characters (`/`
+    included), `?` one character and every other character is literal — a
+    `[...]` class such as `http.[sc]*` now matches nothing; rewrite it as one
+    pattern per alternative (`http.s*,http.c*`). Code patterns are trimmed and
+    blank ones ignored, like env items. `OTEL_HELPER_METRICS_PORT` must be
+    ASCII digits with an optional `+` (`-0` now warns and uses 9464). The
+    standalone listener answers only `GET`/`HEAD /metrics`: other methods get
+    405 (`MetricsHandler()` on your own mux is unchanged). *Amended
+    (B7/A21 fix round):* the method is checked by a wrapper, not a
+    `GET /metrics` pattern, so `GODEBUG=httpmuxgo121=1` keeps the behavior.
+    Known Go differences, unchanged: names drop a unit word, `total` or
+    `ratio` found inside the name (`req.total.count` → `req_count_total`;
+    Python and Node.js write `req_total_count_total`), and a data-point
+    attribute named `otel.scope.name` fails the scrape.
 
 ### Migration guide 0.2 → 0.3 — Python
 
@@ -381,6 +397,31 @@ Telemetry and runtime:
     cut to 64 characters. `options.resolved.metric_exporters` is the
     configured list, not the effective one (see the HOW-TO).
 
+23. **BREAKING — Prometheus fallback rulings (design D1 rows of 2026-11-02,
+    A21).** Gauges in unit `1` scrape with the `_ratio` suffix, as Go writes
+    them (`system_cpu_utilization` → `system_cpu_utilization_ratio`; an
+    UpDownCounter in `1` keeps its name): update dashboards and alerts that
+    read such Gauges from `/metrics` (OTLP is unchanged). The standalone
+    listener is now the helper's own server, not `prometheus_client`'s
+    `start_http_server`: it binds dual-stack (`[::]`, IPv4 fallback) and
+    serves only `GET`/`HEAD /metrics` — scrape configs pointing at another
+    path (`/`) get 404 and must use `/metrics`; other methods get 405.
+    `OTEL_HELPER_DISABLED_METRICS` / `disabled_metrics` patterns: `[` is
+    literal (no classes), and a pattern with an upper-case letter matches
+    nothing (the SDK lower-cases instrument names and patterns are
+    case-sensitive): use lower-case patterns. Code items are trimmed, blanks
+    ignored. `OTEL_HELPER_METRICS_PORT` must be ASCII digits with an
+    optional `+`: `9_464`, `-0` and non-ASCII digits, which `int()`
+    accepted, now warn and use 9464. *Amended (B7/A21 fix round):* attribute
+    keys that collide once sanitized (`a.b` and `a_b`) now become one label
+    with the values sorted and joined by `;` (`a_b="x;y"`, as Go), on
+    series and on `target_info` — it used to keep only the last value; every
+    method reaches the path check (TRACE/PROPFIND: 405 on `/metrics`, 404
+    elsewhere, no more 501); idle connections are closed after 10 s; a failed
+    collection answers 500 and is logged; no standalone listener runs when
+    another MeterProvider was installed first (the mounted `metrics_app()`
+    answers 503); an upper-case disabled-metric pattern is warned once.
+
 ### Collector / platform prerequisites (before rolling 0.3.0 out)
 
 Owned outside this repo (design D11); each item blocks the rollout, not the rc:
@@ -434,6 +475,7 @@ upgrading.
 | **BREAKING** Go HTTP health requests | `/ping /health /healthz /ready` (exact) through `NewHTTPHandler`: no span **and no metric** | `/health /healthz /ready /readyz /live /livez /ping /metrics` (exact, case-insensitive, trailing slash and query ignored): no server span, but **counted** in `http.server.request.duration` | exclude health routes (`http_route` / probe paths) in SLI queries; `WithHealthPaths(...)` changes the list |
 | Go resource `schema_url` | `https://opentelemetry.io/schemas/1.26.0` | `https://opentelemetry.io/schemas/1.43.0`, the contract literal shared with Python and Node.js (the helper builds its resource with `resource.NewWithAttributes`, no merge with `resource.Default()`) | — |
 | Python resource | — | on sdk ≥ 1.45 the SDK adds `service.instance.id` (one value per process: a new label per restart where resource attributes become labels) | — |
+| **BREAKING** Python Prometheus names of Gauges in unit `1` (A21) | `system_cpu_utilization` (no suffix) | `system_cpu_utilization_ratio`, as Go (OTel Prometheus compatibility spec); OTLP names unchanged | none; update the PromQL |
 | **BREAKING** Python resource `schema_url`, `telemetry.sdk.*`, extra detectors (A16) | no schema URL; `telemetry.sdk.*` overridable through `OTEL_RESOURCE_ATTRIBUTES`; `OTEL_EXPERIMENTAL_RESOURCE_DETECTORS` attributes (`process.*`, `os.*`, `host.*`, …) | `https://opentelemetry.io/schemas/1.43.0`; `telemetry.sdk.*` always the SDK's; detector attributes gone (warned) | add host/process attributes in the Collector (`resourcedetection`) |
 
 Python HTTP metrics switch to the stable semconv too in 0.3.0 (R10/D12 — see
@@ -450,6 +492,22 @@ by Operation" panel groups by `span_name` and shows the new Go HTTP span names
 after the upgrade.
 
 ### Go — detailed changes
+
+- **BREAKING (narrow) — A21 rulings from the Node B7 work (design D1 rows of
+  2026-11-02: "Disabled-metric patterns", "Metrics port grammar", "Metrics
+  listener").** `globMatch` replaces `path.Match` in the disabled-metrics
+  View (`*` crosses `/`, `?` one rune, `[` literal, case-sensitive); code
+  patterns are trimmed and blank ones skipped. `parseMetricsPort`:
+  `^\+?[0-9]+$` in [0, 65535], leading zeros of any length accepted, a long
+  digit string never converted; `-0` is invalid. The listener's mux pattern
+  is `GET /metrics` (HEAD included; other methods 405). Tests:
+  `go/a21_test.go`; the parity driver records `prometheus_metrics_port`,
+  adds the Gauge `parity.utilization` and UpDownCounter `parity.inflight`
+  (unit `1`) to `metrics_scrape` and runs the new kind `metrics_listener`.
+  **Fix round (2026-11-02):** the listener registers `/metrics` with a
+  `getOrHead` wrapper (405, `Allow: GET, HEAD`) instead of the `GET /metrics`
+  pattern; `TestA21ListenerMethodsAndPaths` clears inherited `OTEL_*`
+  variables and asserts `Allow`; `parity_match_test.go` is gofmt-clean.
 
 - **BREAKING (narrow) — A20 rulings from the Node B5 review (design D1 rows of
   2026-10-30: "Propagator diagnostics", "Deprecated sample ratio", "ASCII case
@@ -835,6 +893,28 @@ Behavior changes, with migration notes:
   (Apache-2.0). `aws-sdk-go-v2` v1.47.1 → v1.47.5.
 
 ### Python — detailed changes
+
+- **BREAKING — A21 rulings from the Node B7 work (design D1 rows of
+  2026-11-02).** The helper's Prometheus reader rewrites the unit of Gauges in
+  `1` to `ratio` in `_receive_metrics` before the upstream exporter
+  translates them (its `_mapping.py` maps `1` to no suffix), so they scrape
+  with `_ratio` as in Go. The standalone listener is a helper-owned
+  `ThreadingHTTPServer` (`IPV6_V6ONLY` off, IPv4 fallback when IPv6 is
+  unavailable; a busy port still raises) serving `generate_latest` of the
+  dedicated registry on `GET`/`HEAD /metrics` only (404 elsewhere, 405 for
+  other methods, requests not logged), replacing `start_http_server`.
+  Disabled-metric Views escape `[` (`[[]`) and are not created for patterns
+  with an upper-case letter (the SDK lower-cases names and View patterns);
+  code items are trimmed. The port grammar (`^\+?[0-9]+$`, at most five
+  significant digits converted) replaces `int()`. Tests: `tests/test_a21.py`.
+  **Fix round (2026-11-02):** the reader adapter also merges colliding label
+  names (data points and resource, sorted values joined by `;`); the listener handler
+  routes every method through one check (`__getattr__` for `do_*`), reads
+  the path with `urlsplit`, has `timeout = 10`, answers 500 when
+  `generate_latest` raises and logs it, and its servers log `handle_error`
+  on the helper logger; the listener is stopped when a foreign MeterProvider
+  wins; an upper-case pattern warns once (variable named, pattern not
+  echoed).
 
 - **A20 rulings from the Node B5 review (design D1 rows of 2026-10-30).**
   `OTEL_HELPER_SAMPLE_RATIO` that is not a plain decimal in [0, 1] (`2`,
@@ -1765,6 +1845,85 @@ Unsupported instrumentation versions, task A10 (P18):
   `propagation.a20_warning_names_effective_list`,
   `sampler.a20_sample_ratio_alias_out_of_range_ignored`,
   `sampler.a20_non_ascii_name_falls_back`.
+- **Node.js Prometheus `/metrics` (Phase B, task B7; not released).** With no
+  OTLP metrics endpoint, or `prometheus` in `OTEL_METRICS_EXPORTER` /
+  `metricExporters`, metrics are served for scraping (ADR-007): a Prometheus
+  reader (`@opentelemetry/exporter-prometheus`, its own server never started)
+  and a helper listener on `OTEL_HELPER_METRICS_PORT` (default 9464, `0` = no
+  listener; new option `prometheusMetricsPort`, an integer in [0, 65535] that
+  wins over the variable; an invalid variable warns and uses 9464), host
+  omitted (`::` dual-stack, else `0.0.0.0`), serving only `/metrics`,
+  `unref()`'d so it never keeps the process alive, closed by `shutdown()`
+  before the MeterProvider flushes. A busy port does not fail the synchronous
+  `setup()`: it is one ERROR record on the diagnostics sink naming the port
+  and the mount alternative (Go fails `Setup`; design D-JS14). A cluster
+  worker with a non-zero port is warned (each scrape reaches one worker). New
+  export `metricsHandler()` — `(req, res)` for `node:http` and express — with
+  the contract status table: 503 before setup, after a failed setup, after
+  `shutdown()` and when the global MeterProvider is not the helper's; 200 with
+  an empty body when Prometheus is deliberately off (`OTEL_SDK_DISABLED=true`,
+  `OTEL_METRICS_EXPORTER` without `prometheus`); otherwise the exposition text
+  (`text/plain; version=0.0.4; charset=utf-8`), only OTel series. Metric names
+  match Go and Python: unit suffixes (`s` → `_seconds`, `ms` →
+  `_milliseconds`, `By` → `_bytes`, `a/b` → `_a_per_b`, `{…}` dropped, `1` →
+  `_ratio` on gauges, as Go), the unit before `_total`, `target_info` for the
+  resource and an `otel_scope_name` label on every series. `Resolved` gains
+  `prometheusMetricsPort`. `OTEL_HELPER_DISABLED_METRICS` is **not
+  implemented in Node yet** (Go uses `path.Match`, Python `fnmatch`; no
+  contract ruling, and the SDK View wildcard matches neither): warned once per
+  process and ignored (*superseded the same day by A21, below*). The B4c INFO
+  report "prometheus metric exporter not implemented yet in Node" is gone. Parity: the three `nodejs:
+  skip:B7-metrics-endpoint` cases pass on Node 22.15.0/24/26; the
+  `metrics_scrape` drivers (Go, Python, Node) also increment `parity.payload`
+  (unit `By`) and the `http_server` snapshot gains `scrape`; three new cases
+  (304 in total) — `metrics.scrape_counter_unit_suffix`,
+  `metrics.scrape_target_info_and_scope_label` (pass in Go, Python and Node)
+  and `metrics.http_server_duration_histogram_name` (pass in Go and Python;
+  Node `skip:B6-http-instrumentation`). **A21 (same day, contract design D1
+  rows of 2026-11-02, Go and Python too):** `OTEL_HELPER_DISABLED_METRICS` and
+  the new option `disabledMetrics` (array of strings; `[]` wins) are
+  implemented — case-sensitive globs (`*` any run, `?` one character,
+  everything else literal), items trimmed, blanks ignored — through a dropping
+  wrapper around every push exporter (OTLP, console) and the same filter on
+  the scrape (SDK Views cannot express the glob); `Resolved.disabledMetrics`.
+  `1` → `_ratio` on Gauges only. `OTEL_HELPER_METRICS_PORT`: `^\+?[0-9]+$`
+  (`-0` now invalid). The listener answers 405 (`Allow: GET, HEAD`) to other
+  methods on `/metrics`. Eleven new parity cases (315 in total) pass in Go,
+  Python and Node: `metrics.disabled_metrics_glob_star_dot`,
+  `_question_mark`, `_bracket_literal`, `_case_sensitive`,
+  `metrics.scrape_gauge_unit_one_ratio`, `metrics.port_env_underscore_invalid`,
+  `_out_of_range_invalid`, `_long_digits_invalid`, `_leading_zeros_valid`,
+  `metrics.listener_other_path_404`, `metrics.listener_get_head_only`; new
+  fixture kind `metrics_listener` and `resolve` field
+  `prometheus_metrics_port`. **Fix round (2026-11-02, after observability,
+  dev and code-review):** the listener `unref()`s accepted connections and
+  checks its timeouts every second, so a stalled or keep-alive client no
+  longer keeps the process alive (it took about 30 s to exit); 404/405 carry
+  text bodies; colliding label names are merged as Go does (they were
+  written twice, which Prometheus rejects); the scope labels are written by
+  the helper, empty values included. New D1 rows "Colliding label names",
+  "Suffix semantics", "Exposition details"; "Unit 1", "Metrics listener" and
+  "Disabled-metric patterns" amended. Five new cases (320 in total):
+  `metrics.scrape_colliding_label_names_merged` (pass everywhere),
+  `metrics.scrape_unit_word_inside_name`, `metrics.scrape_total_inside_name`,
+  `metrics.scrape_ratio_inside_name` (pass in Python and Node, Go
+  `skip:no-upstream-go-otlptranslator-tokens`),
+  `metrics.disabled_metrics_mixed_case_instrument` (pass in Go and Node,
+  Python `skip:no-upstream-python-case-preserving-names`); the listener cases
+  probe TRACE and PROPFIND; `metrics.scrape_gauge_unit_one_ratio` asserts the
+  values; `metrics.scrape_target_info_and_scope_label` runs on Python from
+  sdk 1.43; the runners require a non-empty `input.requests` for
+  `metrics_listener`. **Final round (2026-11-02):** merged label values are
+  sorted as strings before joining (Go sorts the values, not the keys;
+  `a.b="y"`, `a_b="x"` → `a_b="x;y"`), in Node and Python, on data points and
+  `target_info`; Python renders colliding non-strings as Go and Node
+  (`true`, `5`, `["a","b"]`) and copies nothing when no name collides; Python
+  binds no listener when a foreign MeterProvider is already installed (a busy
+  port no longer fails `setup_telemetry()` then); the 500 log and the
+  upper-case pattern warning are truncated (the pattern is now named). New
+  case `metrics.scrape_colliding_label_values_sorted` (321 in total);
+  `export.code_export_timeout_wins_grpc` allows one `grpc-timeout` encoding
+  unit (`lte` 2100).
 - **Go test hygiene:** `captureDiag` (`go/config_contract_test.go`) no longer
   prints slog timestamps, which made `TestDeprecatedEnvWarnsNamingReplacement`
   (`go/deprecation_test.go`) flaky.

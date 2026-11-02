@@ -261,7 +261,7 @@ func (o *Options) resolveFromEnv() {
 	if !o.metricsPortSet {
 		if v := trimWS(os.Getenv(EnvMetricsPort)); v != "" {
 			// 0 is valid: disables the standalone listener (mounted-handler mode).
-			if p, err := strconv.Atoi(v); err == nil && p >= 0 && p <= 65535 {
+			if p, ok := parseMetricsPort(v); ok {
 				o.PrometheusMetricsPort = p
 			} else {
 				warnEnv("invalid port", EnvMetricsPort, v, "9464")
@@ -322,6 +322,28 @@ func dedupe(list []string) []string {
 		}
 	}
 	return out
+}
+
+// parseMetricsPort parses OTEL_HELPER_METRICS_PORT (already trimmed; design D1
+// row "Metrics port grammar", A21): ASCII decimal digits with an optional "+"
+// ("-0" and "9_464" are invalid), in [0, 65535]; a long digit string is never
+// converted.
+func parseMetricsPort(v string) (int, bool) {
+	digits := strings.TrimPrefix(v, "+")
+	if digits == "" {
+		return 0, false
+	}
+	for i := 0; i < len(digits); i++ {
+		if digits[i] < '0' || digits[i] > '9' {
+			return 0, false
+		}
+	}
+	trimmed := strings.TrimLeft(digits, "0")
+	if len(trimmed) > 5 {
+		return 0, false
+	}
+	p, _ := strconv.Atoi("0" + trimmed) // at most 5 digits: fits
+	return p, p <= 65535
 }
 
 // parseExportInterval parses OTEL_METRIC_EXPORT_INTERVAL (already trimmed;

@@ -173,8 +173,8 @@ rulings are in [design D1](specs/config-contract-v0.3/design.md).
 | Variable | Default | Behavior |
 |----------|---------|----------|
 | `OTEL_HELPER_DEBUG_LEVEL` | `false` | Debug log level and `debug=true` on entry spans (no parent or a remote parent) for Collector tail-sampling policies ([ADR-006](specs/decisions/ADR-006-debug-span-attribute.md)); the Collector policy needs an environment allow-list and a rate limit ([prerequisites](#collector-and-platform-prerequisites)). Python debug mode also turns on every installed `ext` instrumentor (SQL, Redis, AWS). Do not leave on in production |
-| `OTEL_HELPER_METRICS_PORT` | `9464` | Standalone Prometheus `/metrics` listener port; `0` disables the listener (the mountable handler keeps working) |
-| `OTEL_HELPER_DISABLED_METRICS` | _(unset)_ | Wildcard patterns of metric names to drop (all exporters) |
+| `OTEL_HELPER_METRICS_PORT` | `9464` | Standalone Prometheus `/metrics` listener port: ASCII digits with an optional `+`, in [0, 65535] (else warned, 9464); dual-stack, `GET`/`HEAD /metrics` only. `0` disables the listener (the mountable handler keeps working) |
+| `OTEL_HELPER_DISABLED_METRICS` | _(unset)_ | Comma list of case-sensitive instrument-name globs to drop from every exporter: `*` any run of characters, `?` one character, everything else literal |
 | `OTEL_HELPER_SAMPLE_RATIO` | `1.0` | **Deprecated** → `OTEL_TRACES_SAMPLER=parentbased_traceidratio` + `OTEL_TRACES_SAMPLER_ARG`. Used only while `OTEL_TRACES_SAMPLER` is unset; builds `ParentBased(TraceIdRatioBased(x))`; a value that is not a plain decimal in [0, 1] warns and is ignored |
 | `OTEL_HELPER_DISABLED_SIGNALS` | _(unset)_ | **Deprecated** → `OTEL_{TRACES,METRICS,LOGS}_EXPORTER=none`. A signal whose `OTEL_<SIGNAL>_EXPORTER` holds a valid entry (`none` included; only unknown entries count as unset) is not disabled by it, nor are metrics when code sets the metric exporters; unknown entries warn once |
 | `OTEL_HELPER_EXTRA_INSTRUMENTATION` | Python: `SQL` | **Go: removed** (no effect, warns). **Python: deprecated** — call `staffops_otel_helper.ext.instrument_sql()` / `instrument_redis()` / `instrument_aws()` before `setup_telemetry()` |
@@ -212,7 +212,7 @@ lightweight.
 ## Cross-language parity
 
 Parity is enforced, not promised. [`parity/cases.json`](parity/cases.json) is a
-hand-maintained, language-neutral fixture (301 cases: 187 after A13, 17 added by the Node B3 review, 6 by A16, 40 by Node B4a and its rulings, 16 by A17, 2 by Node B4b, 13 by A18, 14 by A19 and its fix round, 1 by Node B5, 5 by A20)
+hand-maintained, language-neutral fixture (321 cases: 187 after A13, 17 added by the Node B3 review, 6 by A16, 40 by Node B4a and its rulings, 16 by A17, 2 by Node B4b, 13 by A18, 14 by A19 and its fix round, 1 by Node B5, 5 by A20, 3 by Node B7, 11 by A21, 6 by the B7/A21 fix rounds)
 that every language's test suite runs — config resolution, wire-level export
 against a fake OTLP receiver, sampling, propagation, health exclusion, logging
 and `/metrics` status
@@ -233,6 +233,10 @@ always identical:
 | Go OTLP/HTTP endpoint path escapes | The Go exporters send the decoded path: `/a%2Fb` reaches the Collector as `/a/b` (`WithEndpointURL` keeps `url.URL.Path`). The helper warns once per variable. Python and Node.js send the path as written ([design D1](specs/config-contract-v0.3/design.md), "Go: path escapes decoded") |
 | Python IDN hosts | Python validates IDN labels by IDNA 2008 (`idna` package), so it rejects some hosts Go and Node.js accept — emoji, `_` next to non-ASCII text, labels over 63 characters, hyphens in the third and fourth position — as `<unparseable URL>` (empty labels and hosts over 253 characters are invalid in every language) ([design D1](specs/config-contract-v0.3/design.md), "IDN hosts: Python residual divergence") |
 | Python log value-length limit with SDK 1.42 | `OTEL_LOGRECORD_ATTRIBUTE_VALUE_LENGTH_LIMIT=0` (or the generic `0`) is invalid by contract (warned, no limit), but the SDK 1.42 `LoggerProvider` takes no limits, so log attribute values are still emptied there; SDKs whose `LoggerProvider` accepts `log_record_limits` (1.45) follow the contract ([design D1](specs/config-contract-v0.3/design.md), "Value-length limits") |
+| Python `/metrics` scope labels on the lower bound | With `opentelemetry-exporter-prometheus` 0.63b0 (sdk 1.42) series carry no `otel_scope_name` / `otel_scope_version` labels; from 0.64b0 (sdk 1.43) they are written as in Go and Node.js (case `metrics.scrape_target_info_and_scope_label`, `python@sdk>=1.43`) |
+| Go Prometheus names with a unit word, `total` or `ratio` inside | Go's exporter (`otlptranslator`) removes those words wherever they appear in the name: `probe.bytes-sent` in `By` → `probe_bytes_sent_total`, `req.total.count` → `req_count_total`, a Gauge `ratio.load` in `1` → `load_ratio`. Python and Node.js add a suffix only when the name does not already end with it (`probe_bytes_sent_bytes_total`, `req_total_count_total`, `ratio_load_ratio`) ([design D1](specs/config-contract-v0.3/design.md), "Suffix semantics") |
+| Go scrape with an `otel.scope.*` data-point attribute | A data-point attribute named `otel.scope.name` (or `_version`, `_schema_url`) makes Go's `/metrics` fail (`duplicate label names`); Python and Node.js keep the data-point value. Don't use those attribute names |
+| Python disabled-metric patterns and mixed-case names | The Python SDK lower-cases instrument names, so `OTEL_HELPER_DISABLED_METRICS=Orders.*` matches `Orders.Total` in Go and Node.js but nothing in Python (warned once, the pattern is not echoed), and a lower-case `orders.*` drops `Orders.Total` in Python while Go and Node.js keep it (patterns are case-sensitive). Use lower-case instrument names and patterns ([design D1](specs/config-contract-v0.3/design.md), "Disabled-metric patterns") |
 | .NET | Still on the 0.2.x contract and instrumentation set until Phase C ([differences](#net-02x-differences)) |
 
 ## Collector and platform prerequisites

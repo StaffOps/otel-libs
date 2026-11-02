@@ -27,6 +27,7 @@ test.beforeEach(() => {
   }
   process.env.OTEL_SERVICE_NAME = 'svc';
   process.env.OTEL_RESOURCE_ATTRIBUTES = 'deployment.environment.name=DEV';
+  process.env.OTEL_HELPER_METRICS_PORT = '0'; // never bind :9464 from unit tests (test/metrics.test.cjs binds its own)
   resetAndCapture();
 });
 
@@ -540,11 +541,11 @@ test('R8 code: only the endpoint each signal uses is checked; a schemeless code 
   assert.equal(fresh({}, { otelEndpoint: 'collector:4317', insecure: false }).traces.url, 'https://collector:4317');
 });
 
-test('Resolved keeps its B3 fields and adds otlp (B4a), the signal selection (B4c) and the sampler/propagators/health paths (B5)', () => {
+test('Resolved keeps its B3 fields and adds otlp (B4a), the signal selection (B4c), the sampler/propagators/health paths (B5) and the metrics port (B7)', () => {
   const resolved = helper.setup({ otelEndpoint: 'http://c:4317' });
   assert.deepEqual(Object.keys(resolved).sort(), [
-    'debug', 'environment', 'healthPaths', 'logLevel', 'logsExporters', 'metricExportIntervalMs', 'metricExporters', 'otlp',
-    'propagators', 'sampler', 'sdkDisabled', 'serviceInstanceId', 'serviceName', 'tracesExporters',
+    'debug', 'disabledMetrics', 'environment', 'healthPaths', 'logLevel', 'logsExporters', 'metricExportIntervalMs', 'metricExporters', 'otlp',
+    'prometheusMetricsPort', 'propagators', 'sampler', 'sdkDisabled', 'serviceInstanceId', 'serviceName', 'tracesExporters',
   ]);
   assert.ok(Object.isFrozen(resolved));
 });
@@ -574,8 +575,7 @@ test('globals: a registry of another @opentelemetry/api version is foreign — r
       const helper = require('@staffops/otel-helper');
       const testing = require('@staffops/otel-helper/testing');
       const lines = [];
-      // The B7 pending report (prometheus) is not what this test is about; remove with B7.
-      testing.setDiagnosticSink((l) => { if (!l.includes('not implemented yet in Node')) lines.push(l); });
+      testing.setDiagnosticSink((l) => lines.push(l));
       helper.setup({ serviceName: 'svc', environment: 'DEV' });
       console.log(JSON.stringify({ lines, keys: Object.keys(globalThis[key]).filter((k) => k !== 'version').concat('version').sort() }));
     `);
@@ -613,8 +613,7 @@ test('globals: a registration the API refuses anyway is reported (context manage
     }
     globalThis[key] = reg;
     const lines = [];
-    // The B7 pending report (prometheus, INFO) is not what this test is about; remove with B7.
-    require('@staffops/otel-helper/testing').setDiagnosticSink((l, m) => { if (m.origin === 'helper' && !l.includes('not implemented yet in Node')) lines.push(l); });
+    require('@staffops/otel-helper/testing').setDiagnosticSink((l, m) => { if (m.origin === 'helper') lines.push(l); });
     require('@staffops/otel-helper').setup({ serviceName: 'svc', environment: 'DEV', installDiagLogger: false });
     console.log(JSON.stringify(lines));
   `);

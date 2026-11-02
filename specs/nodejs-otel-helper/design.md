@@ -242,6 +242,53 @@ use only this response surface: `statusCode`, `headersSent`,
 `write(chunk[, encoding][, cb])`, `end([chunk][, encoding][, cb])`; it reads
 `req.method`, `req.url`, `req.headers`. B7 also unit-tests the handler on a real
 `http.Server` (the mock alone could drift from Node's `ServerResponse`).*
+*Implemented 2026-11-02 (B7): `metrics-endpoint.ts`. The reader is
+`new PrometheusExporter({preventServerStart: true})` (its own server is created
+by the constructor but never listens); the handler collects it and writes the
+text with the package's exported `PrometheusSerializer`, fed a copy of the
+collection whose metric names are already the Go/Python names
+(`prometheusName`: unit table of the OTel Prometheus-compatibility spec, `a/b`
+→ `a_per_b`, `{…}` dropped, `1` → `ratio` on Gauges only (Go writes none on an UpDownCounter, verified 2026-11-02),
+a `_total` already in a counter's name moved after the unit) and whose unit is
+cleared (no `# UNIT` line, as in Go/Python); the serializer's
+`# no registered metrics` placeholder is dropped. Content-Type
+`text/plain; version=0.0.4; charset=utf-8`; `Content-Length` set; HEAD answers
+without a body; a failed collection answers 500 (503 when the setup went away
+meanwhile). The listener serves the path `/metrics` only (query ignored,
+absolute-form targets parsed; anything else 404), `headersTimeout` 5 s (Go
+`ReadHeaderTimeout`), and is started only when the reader was built and the
+global MeterProvider is the helper's. A bind failure is one ERROR record on the
+sink naming the port and the mount alternative. Shutdown closes the listener
+(`close` + `closeAllConnections`) before the MeterProvider flushes, inside the
+deadline. `OTEL_HELPER_METRICS_PORT` / option `prometheusMetricsPort`:
+`^[+-]?[0-9]+$` in [0, 65535] (*superseded 2026-11-02 by the contract row
+"Metrics port grammar", A21: `^\+?[0-9]+$`*), invalid env → warning, 9464; invalid code → TypeError;
+`Resolved.prometheusMetricsPort`. `isHelperServer()` is the WeakSet check B6's
+`ignoreIncomingRequestHook` uses; the "two scrapes leave the HTTP server
+duration count unchanged" test lands with B6 (no HTTP instrumentation before).
+`OTEL_HELPER_DISABLED_METRICS` / `disabledMetrics` were not implemented in the
+first B7 pass (no ruling; the sdk-metrics 3.0 View `instrumentName` wildcard
+expands only the first `*` and escapes `?`, `PatternPredicate.escapePattern`).*
+*Amended 2026-11-02 (contract A21, D1 rows "Disabled-metric patterns",
+"Unit 1", "Metrics port grammar", "Metrics listener"): `globMatch` (`*` any run,
+`?` one character, everything else literal, case-sensitive);
+`droppingExporter` wraps every push exporter (OTLP, console) and the scrape
+filters the same predicate — chosen over Views (the SDK View wildcard cannot
+express the glob, and a View per instrument is impossible: views are fixed at
+MeterProvider construction); dropped instruments are still aggregated.
+Option `disabledMetrics` (array of strings, `[]` wins), `Resolved.disabledMetrics`.
+`1` → `ratio` on Gauges only (Go verified: no suffix on an UpDownCounter). Port
+grammar `^\+?[0-9]+$` (`-0` now invalid). The listener answers 405 with
+`Allow: GET, HEAD` to other methods on `/metrics`.*
+*Amended 2026-11-02 (B7/A21 fix round): the listener `unref()`s every accepted
+connection and sets `connectionsCheckingInterval: 1_000` (the header/request
+timeouts are only checked at that period, 30 s by default), so a stalled or
+keep-alive client never keeps the process alive (a test runs a child whose
+script returns while a client holds half a request: it exits in under 2 s);
+404 and 405 carry Go's `text/plain` bodies; labels are merged by
+`mergedLabels` (contract D1 row "Colliding label names") and the scope labels
+are written by the helper; names follow the contract D1 row "Suffix
+semantics".*
 
 ### D-JS9 — Semconv opt-in
 **Choice**: helper parses `OTEL_SEMCONV_STABILITY_OPT_IN` (default
@@ -379,4 +426,5 @@ cluster/pm2 are Node's prefork model (not `skip:no-prefork-model`).
 | A `__proto__` resource attribute (env or code) is kept by the helper as an own data property but dropped by `@opentelemetry/resources` 3.0: `Resource.attributes` builds a plain object with `attrs[k] = v` (A16, 2026-10-29) | `skip:no-upstream-resource-proto-key` on `resource_attributes.proto_key_kept`; helper side unit-tested via `getRawAttributes()` |
 | `unknown_service:<suffix>`: Node `process.argv0` (`node`), Go the binary name, Python the interpreter name (helper-computed on every SDK version since A16) | recorded; the fixture asserts the `unknown_service` prefix only (R5) |
 | A propagator registered before `setup()` is kept: the 3.0 API refuses a second registration; Go and Python replace it (B5 fix round, 2026-10-30) | recorded; reported `a global propagator is already registered; the helper keeps it and OTEL_PROPAGATORS is not applied`; `Resolved.propagators` is what the helper installs when it owns the global; under `OTEL_SDK_DISABLED=true` the INFO line then says `the helper installed no propagator`. B9 `replaceGlobals` covers the propagator. Unit-tested in `test/tracing.test.cjs` |
+| `/metrics` scope labels: `otel_scope_version` / `otel_scope_schema_url` are omitted when empty (Go and Python write `""`), and an instrument without a description gets `# HELP <name> description missing` (Go/Python: empty HELP) — the upstream `PrometheusSerializer` (B7, 2026-11-02) | recorded; equivalent for Prometheus (an empty label value is an absent label). Unit-tested in `test/metrics.test.cjs`. *Amended 2026-11-02 (B7/A21 fix round): the helper now writes the three scope labels itself (serializer `withoutScopeInfo`), empty values included, as Go and Python, so only `description missing` remains. Scope **attributes** (`otel_scope_<key>` in Go and Python) are not written: the JS 3.0 `InstrumentationScope` has no attributes (`@opentelemetry/core` `common/types.d.ts`: `name`, `version`, `schemaUrl`), so there is nothing to write — recorded* |
 | `module.register` runtime-deprecated on Node 26 (DEP0205) — spike B1c F3 | `/hooks` uses sync hooks there; the `module.register` fallback runs only on versions where it is not deprecated |

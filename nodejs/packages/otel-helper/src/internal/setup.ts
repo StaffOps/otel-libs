@@ -5,12 +5,16 @@
  * metric reader, batch log record processor); task B4c the exporter lists
  * (console exporters), `OTEL_SDK_DISABLED` and the export interval; task B5
  * the sampler (with the health sampler around it), the propagators and the
- * debug marker. The full lifecycle — rollback, foreign globals,
+ * debug marker; task B7 the Prometheus reader, the `/metrics` listener and
+ * `metricsHandler()`. The full lifecycle — rollback, foreign globals,
  * re-binding instrumentations, the stable forwarding providers of D-JS10 — is
  * task B9; the shape below (one runtime record on the shared state, rebuilt
  * after shutdown) is what it extends.
  */
+import cluster from 'node:cluster';
+import type * as http from 'node:http';
 import { context, diag, logs, metrics, propagation, trace, type Attributes, type TextMapPropagator } from '@opentelemetry/api';
+import type { PrometheusExporter } from '@opentelemetry/exporter-prometheus';
 import { AsyncLocalStorageContextManager } from '@opentelemetry/context-async-hooks';
 import { defaultResource, resourceFromAttributes, type Resource } from '@opentelemetry/resources';
 import { BatchLogRecordProcessor, ConsoleLogRecordExporter, LoggerProvider, type LogRecordProcessor } from '@opentelemetry/sdk-logs';
@@ -20,6 +24,7 @@ import { clearReportedOnce, report, reportOnce, truncateValue } from './diagnost
 import { installDiagLogger } from './diag-logger';
 import { logExporter, metricExporter, spanExporter, tlsMaterial, withMaskedEnv, type ExporterInput, type FileCache } from './exporters';
 import { foreignRegistry, registeredGlobal } from './globals';
+import { closeListener, createPrometheusReader, dropPredicate, droppingExporter, ENV_METRICS_PORT, serveMetrics, startListener, type DropPredicate, type ScrapeRequest, type ScrapeResponse, type ScrapeTarget } from './metrics-endpoint';
 import type { OtlpEndpoint } from './otlp';
 import type { Signal } from './otlp-settings';
 import { ATTR_SERVICE_NAME, TELEMETRY_SDK_KEYS, resolvePlan, validateOptions, type Plan, type Resolved, type SetupOptions } from './resolve';
@@ -41,6 +46,14 @@ interface Active {
   readonly contextManager: AsyncLocalStorageContextManager | undefined;
   /** The propagator the helper registered; `undefined` when it registered none. */
   readonly propagator: TextMapPropagator | undefined;
+  /** The Prometheus reader; `undefined` when `prometheus` is not an effective metric exporter or it failed to build. */
+  readonly prometheus: PrometheusExporter | undefined;
+  /** Prometheus deliberately off (`OTEL_SDK_DISABLED`, or no `prometheus` metric exporter): `/metrics` answers 200, empty. */
+  readonly prometheusInactive: boolean;
+  /** The helper's `/metrics` listener; `undefined` with port 0 or without a scrapable reader. */
+  readonly listener: http.Server | undefined;
+  /** Disabled metrics (A21); `undefined` = none. */
+  readonly drop: DropPredicate | undefined;
   /** Cached result of the first `shutdown()`. */
   shutdown: Promise<void> | undefined;
 }
@@ -110,15 +123,12 @@ interface Pipelines {
   readonly spanProcessors: SpanProcessor[];
   readonly metricReaders: IMetricReader[];
   readonly logProcessors: LogRecordProcessor[];
+  /** The Prometheus reader, also in `metricReaders`. */
+  prometheus: PrometheusExporter | undefined;
 }
 
 /** A diagnostic held back until the masked environment is restored. */
-export type Pending = readonly [
-  string,
-  Readonly<Record<string, string | number | boolean>>,
-  /** `'info'`: reported once per process at INFO; omitted: a warning. */
-  level?: 'info',
-];
+export type Pending = readonly [string, Readonly<Record<string, string | number | boolean>>];
 
 /**
  * Builds one exporter's pipeline (exporter, then its processor or reader). A
@@ -151,7 +161,7 @@ export function tryBuild<E extends { shutdown(): Promise<void> }, P>(
  * The exporters, processors and metric readers of every signal, from its
  * exporter list (task B4c): `otlp` (only while the signal has an endpoint),
  * `console` (the SDK console exporters, printing to stdout, as Go and Python
- * do); the `prometheus` metric reader is task B7. The OTLP exporters are built
+ * do) and `prometheus` (the reader `/metrics` collects, design D-JS8). The OTLP exporters are built
  * with the helper-owned OTLP variables hidden (spec JS2). The resolved OTLP
  * timeout of a signal is its single export deadline (contract D1 ruling
  * "Export deadline", A18): the batch processors get it; the metric reader
@@ -162,6 +172,8 @@ export function tryBuild<E extends { shutdown(): Promise<void> }, P>(
  */
 function buildPipelines(plan: Plan): Pipelines {
   const { otlp, tracesExporters, metricExporters, logsExporters, metricExportIntervalMs: interval } = plan.resolved;
+  // Disabled metrics leave every push exporter through this wrapper (A21); the scrape filters itself.
+  const drop = dropPredicate(plan.resolved.disabledMetrics);
   const cache: FileCache = new Map();
   const pending: Pending[] = [];
   const seen = new Set<string>();
@@ -183,7 +195,7 @@ function buildPipelines(plan: Plan): Pipelines {
     metrics: input('metrics', metricExporters.includes('otlp')),
     logs: input('logs', logsExporters.includes('otlp')),
   };
-  const out: Pipelines = { spanProcessors: [], metricReaders: [], logProcessors: [] };
+  const out: Pipelines = { spanProcessors: [], metricReaders: [], logProcessors: [], prometheus: undefined };
   const add = <T>(list: T[], built: T | undefined): void => {
     if (built !== undefined) list.push(built);
   };
@@ -206,7 +218,7 @@ function buildPipelines(plan: Plan): Pipelines {
       const timeout = metricTimeout(metricsIn.endpoint, interval, plan.intervalSource, warnOnce);
       add(out.metricReaders, tryBuild(
         'metrics',
-        () => metricExporter(metricsIn),
+        () => droppingExporter(metricExporter(metricsIn), drop),
         (exporter) => new PeriodicExportingMetricReader({ exporter, exportIntervalMillis: interval, exportTimeoutMillis: timeout }),
         pending,
       ));
@@ -214,18 +226,16 @@ function buildPipelines(plan: Plan): Pipelines {
     if (metricExporters.includes('console')) {
       add(out.metricReaders, tryBuild(
         'metrics',
-        () => new ConsoleMetricExporter(),
+        () => droppingExporter(new ConsoleMetricExporter(), drop),
         (exporter) =>
           new PeriodicExportingMetricReader({ exporter, exportIntervalMillis: interval, exportTimeoutMillis: Math.min(CONSOLE_READER_TIMEOUT_MS, interval) }),
         pending,
         'console',
       ));
     }
-    // `prometheus` (the /metrics reader and listener) is task B7; until then
-    // the choice is reported (remove this with B7).
     if (metricExporters.includes('prometheus')) {
-      // INFO, not WARN: a temporary development state of the unreleased package, not a configuration problem.
-      pending.push(['prometheus metric exporter not implemented yet in Node; metrics are not exposed on /metrics', { signal: 'metrics' }, 'info']);
+      out.prometheus = tryBuild('metrics', createPrometheusReader, (reader) => reader, pending, 'prometheus');
+      add(out.metricReaders, out.prometheus);
     }
     const logsIn = inputs.logs;
     if (logsIn !== undefined) {
@@ -240,10 +250,7 @@ function buildPipelines(plan: Plan): Pipelines {
       add(out.logProcessors, tryBuild('logs', () => new ConsoleLogRecordExporter(), (exporter) => new BatchLogRecordProcessor({ exporter, ...blrp }), pending, 'console'));
     }
   });
-  for (const [message, attrs, level] of pending) {
-    if (level === 'info') reportOnce(`pending:${message}`, message, attrs, { origin: 'helper', level: 'info' });
-    else report(message, attrs);
-  }
+  for (const [message, attrs] of pending) report(message, attrs);
   return out;
 }
 
@@ -293,6 +300,7 @@ interface Providers {
   readonly tracerProvider: TracerProvider;
   readonly meterProvider: MeterProvider;
   readonly loggerProvider: LoggerProvider;
+  readonly prometheus: PrometheusExporter | undefined;
 }
 
 function buildProviders(plan: Plan, base: Resource, options: SetupOptions): Providers {
@@ -322,6 +330,7 @@ function buildProviders(plan: Plan, base: Resource, options: SetupOptions): Prov
       logRecordLimits: { ...plan.sdk.logRecordLimits },
       processors: pipelines.logProcessors,
     }),
+    prometheus: pipelines.prometheus,
   };
 }
 
@@ -448,6 +457,21 @@ export function setup(options?: SetupOptions): Resolved {
     ownsMeterProvider = registerProvider('metrics', 'metrics', () => metrics.setGlobalMeterProvider(meterProvider));
     ownsLoggerProvider = registerProvider('logs', 'logs', () => logs.setGlobalLoggerProvider(loggerProvider));
   }
+  // The listener serves only a reader whose MeterProvider is the global one
+  // (a foreign provider's instruments would never reach it: 503 instead).
+  const prometheus = built?.prometheus;
+  const port = plan.resolved.prometheusMetricsPort;
+  let listener: http.Server | undefined;
+  if (prometheus !== undefined && ownsMeterProvider && port > 0) {
+    if (cluster.isWorker) {
+      reportOnce(
+        'cluster:metrics-port',
+        `cluster worker with ${ENV_METRICS_PORT}=${String(port)}: the workers share the port and each scrape reaches one worker at random; set ${ENV_METRICS_PORT}=0 and mount metricsHandler() on a per-worker port, or export metrics over OTLP`,
+        { variable: ENV_METRICS_PORT },
+      );
+    }
+    listener = startListener(port, metricsHandler());
+  }
   rt.active = {
     resolved: plan.resolved,
     resource: built?.resource,
@@ -459,9 +483,42 @@ export function setup(options?: SetupOptions): Resolved {
     ownsLoggerProvider,
     contextManager,
     propagator: ownedPropagator,
+    prometheus,
+    prometheusInactive: !plan.resolved.metricExporters.includes('prometheus'),
+    listener,
+    drop: dropPredicate(plan.resolved.disabledMetrics),
     shutdown: undefined,
   };
   return plan.resolved;
+}
+
+const UNAVAILABLE: ScrapeTarget = Object.freeze({ kind: 'unavailable' });
+const INACTIVE: ScrapeTarget = Object.freeze({ kind: 'inactive' });
+
+function scrapeTarget(): ScrapeTarget {
+  const state = getState();
+  const active = state === null ? undefined : runtimeOf(state).active;
+  if (active === undefined || active.shutdown !== undefined) return UNAVAILABLE;
+  if (active.prometheus !== undefined) return active.ownsMeterProvider ? { kind: 'active', reader: active.prometheus, drop: active.drop } : UNAVAILABLE;
+  return active.prometheusInactive ? INACTIVE : UNAVAILABLE;
+}
+
+/**
+ * A request handler serving the Prometheus scrape of the active setup, for
+ * the app's own server (`node:http`, express):
+ * `app.get('/metrics', metricsHandler())`. Pair it with
+ * `OTEL_HELPER_METRICS_PORT=0` (or `prometheusMetricsPort: 0`) to skip the
+ * helper's listener. It can be created before `setup()`; every request reads
+ * the current state. Status (design "Mounted /metrics handler status"): 503
+ * before setup, after a failed one, after `shutdown()` and when the global
+ * MeterProvider is not the helper's; 200 with an empty body when Prometheus
+ * is deliberately off (`OTEL_SDK_DISABLED=true`, or `OTEL_METRICS_EXPORTER`
+ * without `prometheus`); else 200 with the exposition text (format 0.0.4).
+ */
+export function metricsHandler(): (req: ScrapeRequest, res: ScrapeResponse) => void {
+  return (req, res) => {
+    serveMetrics(scrapeTarget, req, res);
+  };
 }
 
 // Unregisters what an earlier setup registered, so the next one can.
@@ -527,9 +584,13 @@ async function runShutdown(active: Active, timeoutMs: number): Promise<void> {
       resolve('timeout');
     }, timeoutMs);
   });
+  // The listener first (Go): scrapes stop, then the MeterProvider flushes.
+  const listenerClosed = closeListener(active.listener);
   // Promise.resolve().then(): a provider that throws synchronously still lands in allSettled.
   const named = providersOf(active);
-  const providers = named.map(({ provider }) => Promise.resolve().then(() => provider.shutdown()));
+  const providers = named.map(({ name, provider }) =>
+    (name === PROVIDER_NAMES.metrics ? listenerClosed : Promise.resolve()).then(() => provider.shutdown()),
+  );
   try {
     const outcome = await Promise.race([Promise.allSettled(providers), deadline]);
     if (outcome === 'timeout') throw new Error(`shutdown(): providers did not finish within ${String(timeoutMs)} ms`);
@@ -567,6 +628,7 @@ export function resetForTests(): void {
     const active = rt.active;
     if (active !== undefined) {
       releaseGlobals(active);
+      void closeListener(active.listener);
       if (active.shutdown === undefined) {
         for (const { provider } of providersOf(active)) void Promise.resolve().then(() => provider.shutdown()).catch(() => undefined);
       }

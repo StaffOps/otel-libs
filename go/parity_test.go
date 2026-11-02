@@ -52,6 +52,7 @@ import (
 	"go.opentelemetry.io/otel/baggage"
 	otellog "go.opentelemetry.io/otel/log"
 	logglobal "go.opentelemetry.io/otel/log/global"
+	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/propagation"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
@@ -425,6 +426,8 @@ func runCaseKind(t *testing.T, c parityCase, recv *fakeReceiver) map[string]any 
 		snap = runLogging(t, opts)
 	case "metrics_scrape":
 		snap = runMetricsScrape(opts)
+	case "metrics_listener":
+		snap = runMetricsListener(t, opts, c.Input)
 	default:
 		return map[string]any{"adapter_error": "unknown kind " + c.Kind}
 	}
@@ -627,6 +630,7 @@ func runResolve(opts []Option) map[string]any {
 	snap["metric_exporters"] = exporters
 	snap["metric_export_interval_ms"] = float64(o.metricIntervalMs)
 	snap["log_level"] = DefaultLogLevel(o.Environment, o.DebugLevel).String()
+	snap["prometheus_metrics_port"] = float64(o.PrometheusMetricsPort)
 	return snap
 }
 
@@ -868,6 +872,7 @@ func runHTTPServer(t *testing.T, opts []Option, input map[string]any) map[string
 	}
 	snap["server_spans"] = countSpans(exp, isServer)
 	snap["handler_child_spans"] = countSpans(exp, func(s tracetest.SpanStub) bool { return s.Name == "handler-child" })
+	snap["scrape"] = scrapeText()
 	snap["requests_counted"] = scrapeCount(httpServerCountRe)
 	return snap
 }
@@ -950,6 +955,42 @@ func runLogging(t *testing.T, opts []Option) map[string]any {
 	return snap
 }
 
+// runMetricsListener starts the helper's own /metrics listener on a free port
+// (OTEL_HELPER_METRICS_PORT set by the driver) and records the status of each
+// "METHOD /path" request.
+func runMetricsListener(t *testing.T, opts []Option, input map[string]any) map[string]any {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return map[string]any{"adapter_error": "free port: " + err.Error()}
+	}
+	port := ln.Addr().(*net.TCPAddr).Port
+	_ = ln.Close()
+	t.Setenv(EnvMetricsPort, strconv.Itoa(port))
+	shutdown, snap := setupForCase(opts)
+	defer shutdownQuick(shutdown)
+	if snap["error"] != nil {
+		return snap
+	}
+	client := &http.Client{Timeout: 10 * time.Second, Transport: &http.Transport{DisableKeepAlives: true}}
+	statuses := []any{}
+	for _, r := range input["requests"].([]any) {
+		method, target, _ := strings.Cut(r.(string), " ")
+		req, err := http.NewRequest(method, fmt.Sprintf("http://127.0.0.1:%d%s", port, target), nil)
+		if err != nil {
+			return map[string]any{"adapter_error": "request: " + err.Error()}
+		}
+		resp, err := client.Do(req)
+		if err != nil {
+			return map[string]any{"adapter_error": "request: " + err.Error()}
+		}
+		_, _ = io.Copy(io.Discard, resp.Body)
+		_ = resp.Body.Close()
+		statuses = append(statuses, float64(resp.StatusCode))
+	}
+	snap["listener_statuses"] = statuses
+	return snap
+}
+
 func runMetricsScrape(opts []Option) map[string]any {
 	shutdown, snap := setupForCase(opts)
 	defer shutdownQuick(shutdown)
@@ -958,6 +999,27 @@ func runMetricsScrape(opts []Option) map[string]any {
 	}
 	counter, _ := GetMeter("parity").Int64Counter("parity.requests")
 	counter.Add(context.Background(), 1)
+	// A counter with a unit: the scrape name carries the unit word.
+	payload, _ := GetMeter("parity").Int64Counter("parity.payload", metric.WithUnit("By"))
+	payload.Add(context.Background(), 5)
+	// Unit 1: a Gauge gets _ratio, an UpDownCounter does not (design D1 row "Unit 1", A21).
+	util, _ := GetMeter("parity").Float64Gauge("parity.utilization", metric.WithUnit("1"))
+	util.Record(context.Background(), 0.5)
+	inflight, _ := GetMeter("parity").Int64UpDownCounter("parity.inflight", metric.WithUnit("1"))
+	inflight.Add(context.Background(), 1)
+	// B7/A21 fix round: colliding label names, suffix semantics, a mixed-case name.
+	collide, _ := GetMeter("parity").Int64Counter("parity.collide")
+	collide.Add(context.Background(), 1, metric.WithAttributes(attribute.String("a.b", "x"), attribute.String("a_b", "y")))
+	collideSorted, _ := GetMeter("parity").Int64Counter("parity.collide_sorted")
+	collideSorted.Add(context.Background(), 1, metric.WithAttributes(attribute.String("a.b", "y"), attribute.String("a_b", "x")))
+	sent, _ := GetMeter("parity").Int64Counter("probe.bytes-sent", metric.WithUnit("By"))
+	sent.Add(context.Background(), 1)
+	totalCount, _ := GetMeter("parity").Int64Counter("req.total.count")
+	totalCount.Add(context.Background(), 1)
+	load, _ := GetMeter("parity").Float64Gauge("ratio.load", metric.WithUnit("1"))
+	load.Record(context.Background(), 1)
+	mixed, _ := GetMeter("parity").Int64Counter("Parity.Mixed")
+	mixed.Add(context.Background(), 1)
 	rr := httptest.NewRecorder()
 	MetricsHandler().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/metrics", nil))
 	snap["scrape"] = rr.Body.String()

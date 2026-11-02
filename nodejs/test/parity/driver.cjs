@@ -189,6 +189,7 @@ async function kindResolve(c) {
       const level = String(resolvedField(resolved, 'logLevel', 'B3')).toUpperCase();
       snap.log_level = level === 'WARNING' ? 'WARN' : level;
     }
+    if ('prometheus_metrics_port' in expect) snap.prometheus_metrics_port = resolvedField(resolved, 'prometheusMetricsPort', 'B7');
   }
   await shutdown();
   return snap;
@@ -412,7 +413,11 @@ function scrape() {
 }
 
 async function scrapeCount(nameRegex) {
-  const { text } = await scrape();
+  return countIn((await scrape()).text, nameRegex);
+}
+
+/** Sum of the sample values on the lines of `text` whose name matches `nameRegex`. */
+function countIn(text, nameRegex) {
   let total = 0;
   for (const line of text.split('\n')) {
     if (line.startsWith('#') || !nameRegex.test(line)) continue;
@@ -470,7 +475,9 @@ async function kindHttpServer(c) {
   }
   snap.server_spans = serverSpans(exporter);
   snap.handler_child_spans = exporter.getFinishedSpans().filter((s) => s.name === 'handler-child').length;
-  snap.requests_counted = await scrapeCount(/^http_server(_request)?_duration[a-z_]*_count[{ ]/);
+  const { text } = await scrape();
+  snap.scrape = text;
+  snap.requests_counted = countIn(text, /^http_server(_request)?_duration[a-z_]*_count[{ ]/);
   await shutdown();
   return snap;
 }
@@ -565,10 +572,86 @@ async function kindMetricsScrape(c) {
   setupCase(c, snap);
   if ('error' in snap) return snap;
   need(helper(), ['metricsHandler'], 'B7');
-  api().metrics.getMeter('parity').createCounter('parity.requests').add(1);
+  const meter = api().metrics.getMeter('parity');
+  meter.createCounter('parity.requests').add(1);
+  // A counter with a unit: the scrape name carries the unit word (design D-JS8).
+  meter.createCounter('parity.payload', { unit: 'By' }).add(5);
+  // Unit 1: a Gauge gets _ratio, an UpDownCounter does not (contract D1 row "Unit 1", A21).
+  meter.createGauge('parity.utilization', { unit: '1' }).record(0.5);
+  meter.createUpDownCounter('parity.inflight', { unit: '1' }).add(1);
+  // B7/A21 fix round: colliding label names, suffix semantics, a mixed-case name.
+  meter.createCounter('parity.collide').add(1, { 'a.b': 'x', a_b: 'y' });
+  meter.createCounter('parity.collide_sorted').add(1, { 'a.b': 'y', a_b: 'x' });
+  meter.createCounter('probe.bytes-sent', { unit: 'By' }).add(1);
+  meter.createCounter('req.total.count').add(1);
+  meter.createGauge('ratio.load', { unit: '1' }).record(1);
+  meter.createCounter('Parity.Mixed').add(1);
   const { status, text } = await scrape();
   snap.scrape = text;
   snap.scrape_status = status;
+  await shutdown();
+  return snap;
+}
+
+function freePort() {
+  const net = require('node:net');
+  return new Promise((resolve, reject) => {
+    const srv = net.createServer();
+    srv.once('error', reject);
+    srv.listen(0, '127.0.0.1', () => {
+      const { port } = srv.address();
+      srv.close(() => resolve(port));
+    });
+  });
+}
+
+// One raw HTTP/1.1 request over node:net (not instrumented); resolves to the status code.
+function rawStatus(port, method, target) {
+  const net = require('node:net');
+  return new Promise((resolve, reject) => {
+    const sock = net.connect(port, '127.0.0.1');
+    let data = '';
+    sock.setEncoding('utf8');
+    sock.on('connect', () => sock.write(`${method} ${target} HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n`));
+    sock.on('data', (d) => {
+      data += d;
+    });
+    sock.on('end', () => resolve(Number(data.split(' ', 2)[1])));
+    sock.on('error', reject);
+    sock.setTimeout(10_000, () => sock.destroy(new Error(`${method} ${target} timed out`)));
+  });
+}
+
+// The helper's own /metrics listener on a free port: the status of each "METHOD /path".
+async function kindMetricsListener(c) {
+  const snap = {};
+  need(helper(), ['metricsHandler'], 'B7');
+  const port = await freePort();
+  process.env.OTEL_HELPER_METRICS_PORT = String(port);
+  setupCase(c, snap);
+  if ('error' in snap) return snap;
+  // setup() is synchronous, the bind is not: wait until the port accepts.
+  let bound = false;
+  for (let i = 0; i < 100 && !bound; i++) {
+    const up = await new Promise((resolve) => {
+      const sock = require('node:net').connect(port, '127.0.0.1', () => {
+        sock.destroy();
+        resolve(true);
+      });
+      sock.on('error', () => resolve(false));
+    });
+    bound = up;
+    if (!up) await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  if (!bound) {
+    await shutdown();
+    return { adapter_error: `listener never bound on port ${String(port)}` };
+  }
+  snap.listener_statuses = [];
+  for (const request of c.input?.requests ?? []) {
+    const [method, target] = request.split(' ', 2);
+    snap.listener_statuses.push(await rawStatus(port, method, target));
+  }
   await shutdown();
   return snap;
 }
@@ -635,6 +718,7 @@ const KINDS = {
   grpc_server: kindGrpcServer,
   logging: kindLogging,
   metrics_scrape: kindMetricsScrape,
+  metrics_listener: kindMetricsListener,
   fork: kindFork,
 };
 

@@ -3482,6 +3482,42 @@
       }
     },
     {
+      "id": "metrics.http_server_duration_histogram_name",
+      "kind": "http_server",
+      "requirement": "R10",
+      "note": "Stable HTTP semconv on /metrics: http.server.request.duration (unit s) scrapes as the histogram http_server_request_duration_seconds (Node design D-JS8 unit-suffix adapter; the instrumentation is task B6).",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc"
+      },
+      "code": {},
+      "input": {
+        "requests": [
+          "/orders"
+        ]
+      },
+      "expect": {
+        "scrape": {
+          "all": [
+            {
+              "regex": "# TYPE http_server_request_duration_seconds histogram\n"
+            },
+            {
+              "regex": "\nhttp_server_request_duration_seconds_bucket\\{"
+            },
+            {
+              "not_contains": "http_server_duration_milliseconds"
+            }
+          ]
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "skip:B6-http-instrumentation"
+      }
+    },
+    {
       "id": "http.non_health_traced_and_counted",
       "kind": "http_server",
       "requirement": "R7",
@@ -3735,7 +3771,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B7-metrics-endpoint"
+        "nodejs": "pass"
       }
     },
     {
@@ -3756,7 +3792,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B7-metrics-endpoint"
+        "nodejs": "pass"
       }
     },
     {
@@ -3777,7 +3813,531 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B7-metrics-endpoint"
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "metrics.scrape_counter_unit_suffix",
+      "kind": "metrics_scrape",
+      "requirement": "P14",
+      "note": "Unit suffix (Node design D-JS8 unit-suffix adapter): the driver's counter parity.payload in By scrapes as parity_payload_bytes_total, the name the Go and Python Prometheus exporters write.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc"
+      },
+      "code": {},
+      "expect": {
+        "scrape": {
+          "all": [
+            {
+              "regex": "# TYPE parity_payload_bytes_total counter\n"
+            },
+            {
+              "regex": "\nparity_payload_bytes_total(\\{[^\n]*\\})? 5(\\.0)?\n"
+            },
+            {
+              "not_contains": "parity_payload_total"
+            }
+          ]
+        },
+        "scrape_status": 200
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "metrics.scrape_target_info_and_scope_label",
+      "kind": "metrics_scrape",
+      "requirement": "P14",
+      "note": "The resource is one target_info series; each series carries the instrumentation scope as the otel_scope_name label (Go, Python and the Node serializer). Python's exporter 0.63b0 (sdk 1.42, the lower bound) writes no scope labels; 0.64b0 (sdk 1.43) does, so the case runs from sdk 1.43 (checked 2026-11-02).",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc"
+      },
+      "code": {},
+      "expect": {
+        "scrape": {
+          "all": [
+            {
+              "regex": "\ntarget_info\\{[^\n]*service_name=\"parity-svc\"[^\n]*\\} 1(\\.0)?\n"
+            },
+            {
+              "regex": "\nparity_requests_total\\{[^\n]*otel_scope_name=\"parity\""
+            }
+          ]
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "skip:no-upstream-python-prom-scope-labels",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "pass",
+        "python@sdk>=1.43": "pass"
+      }
+    },
+    {
+      "id": "metrics.disabled_metrics_glob_star_dot",
+      "kind": "metrics_scrape",
+      "requirement": "D1/A21",
+      "note": "Design D1 row \"Disabled-metric patterns\" (A21): items trimmed, blank items ignored; * matches any run of characters, dots included.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_HELPER_DISABLED_METRICS": " par*load ,, "
+      },
+      "code": {},
+      "expect": {
+        "scrape": {
+          "all": [
+            {
+              "not_contains": "parity_payload"
+            },
+            {
+              "regex": "\nparity_requests_total[{ ]"
+            }
+          ]
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "metrics.disabled_metrics_question_mark",
+      "kind": "metrics_scrape",
+      "requirement": "D1/A21",
+      "note": "Design D1 row \"Disabled-metric patterns\" (A21): ? matches exactly one character (parity.payloa?? needs two after payloa, so parity.payload is kept).",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_HELPER_DISABLED_METRICS": "parity.r?quests,parity.payloa??"
+      },
+      "code": {},
+      "expect": {
+        "scrape": {
+          "all": [
+            {
+              "not_contains": "parity_requests_total"
+            },
+            {
+              "regex": "\nparity_payload_bytes_total[{ ]"
+            }
+          ]
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "metrics.disabled_metrics_bracket_literal",
+      "kind": "metrics_scrape",
+      "requirement": "D1/A21",
+      "note": "Design D1 row \"Disabled-metric patterns\" (A21): [ is literal (no classes), so parity.[pr]* drops nothing (Go path.Match and Python fnmatch read it as a class).",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_HELPER_DISABLED_METRICS": "parity.[pr]*"
+      },
+      "code": {},
+      "expect": {
+        "scrape": {
+          "all": [
+            {
+              "regex": "\nparity_requests_total[{ ]"
+            },
+            {
+              "regex": "\nparity_payload_bytes_total[{ ]"
+            }
+          ]
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "metrics.disabled_metrics_case_sensitive",
+      "kind": "metrics_scrape",
+      "requirement": "D1/A21",
+      "note": "Design D1 row \"Disabled-metric patterns\" (A21): matching is case-sensitive (the Python SDK View lower-cases its pattern).",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_HELPER_DISABLED_METRICS": "PARITY.*"
+      },
+      "code": {},
+      "expect": {
+        "scrape": {
+          "all": [
+            {
+              "regex": "\nparity_requests_total[{ ]"
+            },
+            {
+              "regex": "\nparity_payload_bytes_total[{ ]"
+            }
+          ]
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "metrics.scrape_colliding_label_names_merged",
+      "kind": "metrics_scrape",
+      "requirement": "D1/A21",
+      "note": "Design D1 row \"Colliding label names\" (B7/A21 fix round): attribute keys that collide once sanitized (a.b, a_b) become one label, the values sorted and joined with ;, on data points and on target_info (Go's exporter; Prometheus rejects a repeated label name).",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_RESOURCE_ATTRIBUTES": "x.y=1,x_y=2"
+      },
+      "code": {},
+      "expect": {
+        "scrape": {
+          "all": [
+            {
+              "regex": "\nparity_collide_total\\{[^\n]*a_b=\"x;y\""
+            },
+            {
+              "regex": "\ntarget_info\\{[^\n]*x_y=\"1;2\""
+            },
+            {
+              "not_contains": "a_b=\"y\""
+            }
+          ]
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "metrics.scrape_colliding_label_values_sorted",
+      "kind": "metrics_scrape",
+      "requirement": "D1/A21",
+      "note": "Design D1 row \"Colliding label names\" (final round): the merged values are sorted as strings, not ordered by key (Go exporter.go:652 and :692, slices.Sort(vals)): a.b=\"y\", a_b=\"x\" give a_b=\"x;y\"; the resource twin x.y=2, x_y=1 gives x_y=\"1;2\".",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_RESOURCE_ATTRIBUTES": "x.y=2,x_y=1"
+      },
+      "code": {},
+      "expect": {
+        "scrape": {
+          "all": [
+            {
+              "regex": "\nparity_collide_sorted_total\\{[^\n]*a_b=\"x;y\""
+            },
+            {
+              "regex": "\ntarget_info\\{[^\n]*x_y=\"1;2\""
+            }
+          ]
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "metrics.scrape_unit_word_inside_name",
+      "kind": "metrics_scrape",
+      "requirement": "D1/A21",
+      "note": "Design D1 row \"Suffix semantics\": the unit word is added unless the name already ends with it (probe.bytes-sent in By). Go's otlptranslator v1.0.0 works on name tokens and drops a unit word found anywhere (metric_namer.go:273-276, removeItem): probe_bytes_sent_total.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc"
+      },
+      "code": {},
+      "expect": {
+        "scrape": {
+          "regex": "\nprobe_bytes_sent_bytes_total[{ ]"
+        }
+      },
+      "status": {
+        "go": "skip:no-upstream-go-otlptranslator-tokens",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "metrics.scrape_total_inside_name",
+      "kind": "metrics_scrape",
+      "requirement": "D1/A21",
+      "note": "Design D1 row \"Suffix semantics\": _total is added unless the name already ends with it (req.total.count). Go's token namer removes the inner total token: req_count_total (otlptranslator v1.0.0 metric_namer.go:239, removeItem at :273-276).",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc"
+      },
+      "code": {},
+      "expect": {
+        "scrape": {
+          "regex": "\nreq_total_count_total[{ ]"
+        }
+      },
+      "status": {
+        "go": "skip:no-upstream-go-otlptranslator-tokens",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "metrics.scrape_ratio_inside_name",
+      "kind": "metrics_scrape",
+      "requirement": "D1/A21",
+      "note": "Design D1 row \"Suffix semantics\": a Gauge in unit 1 gets _ratio unless the name already ends with it (ratio.load). Go's token namer writes load_ratio (otlptranslator v1.0.0 metric_namer.go:248, removeItem at :273-276).",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc"
+      },
+      "code": {},
+      "expect": {
+        "scrape": {
+          "regex": "# TYPE ratio_load_ratio gauge\n"
+        }
+      },
+      "status": {
+        "go": "skip:no-upstream-go-otlptranslator-tokens",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "metrics.disabled_metrics_mixed_case_instrument",
+      "kind": "metrics_scrape",
+      "requirement": "D1/A21",
+      "note": "Design D1 row \"Disabled-metric patterns\": the glob is case-sensitive on the name as created (Parity.* drops Parity.Mixed). The Python SDK lower-cases instrument names (instrument.py: self.name = name.lower()), so no case-sensitive upper-case pattern can match there.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_HELPER_DISABLED_METRICS": "Parity.*"
+      },
+      "code": {},
+      "expect": {
+        "scrape": {
+          "all": [
+            {
+              "not_contains": "Parity_Mixed"
+            },
+            {
+              "regex": "\nparity_requests_total[{ ]"
+            }
+          ]
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "skip:no-upstream-python-case-preserving-names",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "metrics.scrape_gauge_unit_one_ratio",
+      "kind": "metrics_scrape",
+      "requirement": "D1/A21",
+      "note": "Design D1 row \"Unit 1\" (A21, OTel Prometheus compatibility spec): a Gauge in unit 1 gets _ratio, an UpDownCounter in unit 1 does not.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc"
+      },
+      "code": {},
+      "expect": {
+        "scrape": {
+          "all": [
+            {
+              "regex": "# TYPE parity_utilization_ratio gauge\n"
+            },
+            {
+              "regex": "\nparity_utilization_ratio(\\{[^\n]*\\})? 0\\.5\n"
+            },
+            {
+              "regex": "# TYPE parity_inflight gauge\n"
+            },
+            {
+              "regex": "\nparity_inflight(\\{[^\n]*\\})? 1(\\.0)?\n"
+            },
+            {
+              "not_contains": "parity_inflight_ratio"
+            }
+          ]
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "metrics.port_env_underscore_invalid",
+      "kind": "resolve",
+      "requirement": "D1/A21",
+      "note": "Design D1 row \"Metrics port grammar\" (A21): ^\\+?[0-9]+$ only (Python int() accepted 9_100).",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_HELPER_METRICS_PORT": "9_100",
+        "OTEL_METRICS_EXPORTER": "none"
+      },
+      "code": {},
+      "expect": {
+        "prometheus_metrics_port": 9464,
+        "warning": "OTEL_HELPER_METRICS_PORT"
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "metrics.port_env_out_of_range_invalid",
+      "kind": "resolve",
+      "requirement": "D1/A21",
+      "note": "Design D1 row \"Metrics port grammar\" (A21): a value above 65535 warns and uses 9464.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_HELPER_METRICS_PORT": "65536",
+        "OTEL_METRICS_EXPORTER": "none"
+      },
+      "code": {},
+      "expect": {
+        "prometheus_metrics_port": 9464,
+        "warning": "OTEL_HELPER_METRICS_PORT"
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "metrics.port_env_long_digits_invalid",
+      "kind": "resolve",
+      "requirement": "D1/A21",
+      "note": "Design D1 row \"Metrics port grammar\" (A21): a long digit string is invalid and never converted.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_HELPER_METRICS_PORT": "1111111111111111111111111111111111111111",
+        "OTEL_METRICS_EXPORTER": "none"
+      },
+      "code": {},
+      "expect": {
+        "prometheus_metrics_port": 9464,
+        "warning": "OTEL_HELPER_METRICS_PORT"
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "metrics.port_env_leading_zeros_valid",
+      "kind": "resolve",
+      "requirement": "D1/A21",
+      "note": "Design D1 row \"Metrics port grammar\" (A21): leading zeros and a leading + are valid, whatever the length.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_HELPER_METRICS_PORT": "+0000000000000000000000000000009100",
+        "OTEL_METRICS_EXPORTER": "none"
+      },
+      "code": {},
+      "expect": {
+        "prometheus_metrics_port": 9100
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "metrics.listener_other_path_404",
+      "kind": "metrics_listener",
+      "requirement": "D1/A21",
+      "note": "Design D1 row \"Metrics listener\" (A21): the helper's listener serves /metrics only; other paths answer 404 (prometheus_client's start_http_server served every path). Every method goes through the same path check (TRACE, PROPFIND: 404 off /metrics; Python answered 501).",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc"
+      },
+      "code": {},
+      "input": {
+        "requests": [
+          "GET /other",
+          "GET /metrics/",
+          "GET /",
+          "GET /metrics",
+          "PROPFIND /other",
+          "TRACE /other"
+        ]
+      },
+      "expect": {
+        "listener_statuses": [
+          404,
+          404,
+          404,
+          200,
+          404,
+          404
+        ]
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "metrics.listener_get_head_only",
+      "kind": "metrics_listener",
+      "requirement": "D1/A21",
+      "note": "Design D1 row \"Metrics listener\" (A21): GET and HEAD /metrics (query ignored); other methods answer 405, as Go's GET /metrics mux pattern.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc"
+      },
+      "code": {},
+      "input": {
+        "requests": [
+          "HEAD /metrics",
+          "POST /metrics",
+          "GET /metrics?x=1",
+          "TRACE /metrics",
+          "PROPFIND /metrics"
+        ]
+      },
+      "expect": {
+        "listener_statuses": [
+          200,
+          405,
+          200,
+          405,
+          405
+        ]
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:phase-c",
+        "nodejs": "pass"
       }
     },
     {
@@ -8033,7 +8593,7 @@
       "id": "export.code_export_timeout_wins_grpc",
       "kind": "export",
       "requirement": "R2",
-      "note": "A18 (D1 ruling 'Export deadline'): a code export timeout beats OTEL_EXPORTER_OTLP_TIMEOUT and the per-signal variable, for every signal.",
+      "note": "A18 (D1 ruling 'Export deadline'): a code export timeout beats OTEL_EXPORTER_OTLP_TIMEOUT and the per-signal variable, for every signal. grpc-timeout is rounded up to the encoding unit (10 ms for 1\u201310 s in gRPC core), so lte is the configured value plus one encoding unit.",
       "env": {
         "OTEL_SERVICE_NAME": "parity-svc",
         "OTEL_EXPORTER_OTLP_ENDPOINT": "http://{receiver}:4317",
@@ -8048,19 +8608,19 @@
           "traces": {
             "timeout_ms": {
               "gte": 1500,
-              "lte": 2000
+              "lte": 2100
             }
           },
           "metrics": {
             "timeout_ms": {
               "gte": 1500,
-              "lte": 2000
+              "lte": 2100
             }
           },
           "logs": {
             "timeout_ms": {
               "gte": 1500,
-              "lte": 2000
+              "lte": 2100
             }
           }
         }

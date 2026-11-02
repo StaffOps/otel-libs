@@ -30,6 +30,7 @@ test.beforeEach(() => {
   }
   process.env.OTEL_SERVICE_NAME = 'svc';
   process.env.OTEL_RESOURCE_ATTRIBUTES = 'deployment.environment.name=DEV';
+  process.env.OTEL_HELPER_METRICS_PORT = '0'; // never bind :9464 from unit tests (test/metrics.test.cjs binds its own)
   resetAndCapture();
 });
 
@@ -326,13 +327,6 @@ test('A19 unknown OTEL_HELPER_DISABLED_SIGNALS entries warn once per setup', () 
   process.env.OTEL_HELPER_DISABLED_SIGNALS = 'profiles,profiles,PROFILES';
   helper.setup();
   assert.equal(warnings().filter((l) => l.includes('value=profiles')).length, 1);
-});
-
-test('B7 pending: a resolved prometheus exporter is reported once (nothing is built yet)', async () => {
-  helper.setup();
-  await helper.shutdown();
-  helper.setup();
-  assert.equal(records.filter((r) => r.level === 'info' && r.line.includes('prometheus metric exporter not implemented yet in Node; metrics are not exposed on /metrics signal=metrics')).length, 1);
 });
 
 test('A19 OTEL_SDK_DISABLED: one INFO line on the sink', () => {

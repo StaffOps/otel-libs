@@ -28,21 +28,26 @@ var (
 )
 
 var snapshotSchema = map[string][]string{
-	"resolve":        {"resource", "metric_exporters", "metric_export_interval_ms", "log_level"},
-	"export":         {"received"},
-	"sampler":        {"sampled", "attributes"},
-	"propagation":    {"headers"},
-	"http_server":    {"server_spans", "requests_counted", "handler_child_spans"},
-	"grpc_server":    {"server_spans", "rpcs_counted", "call_ok"},
-	"logging":        {},
-	"metrics_scrape": {"scrape", "scrape_status"},
-	"fork":           {"instance_ids", "instance_ids_distinct"},
+	"resolve":          {"resource", "metric_exporters", "metric_export_interval_ms", "log_level", "prometheus_metrics_port"},
+	"export":           {"received"},
+	"sampler":          {"sampled", "attributes"},
+	"propagation":      {"headers"},
+	"http_server":      {"server_spans", "requests_counted", "handler_child_spans", "scrape"},
+	"grpc_server":      {"server_spans", "rpcs_counted", "call_ok"},
+	"logging":          {},
+	"metrics_scrape":   {"scrape", "scrape_status"},
+	"metrics_listener": {"listener_statuses"},
+	"fork":             {"instance_ids", "instance_ids_distinct"},
 }
 
+// listenerRequestRe is one metrics_listener request: "METHOD /path".
+var listenerRequestRe = regexp.MustCompile(`^[A-Z]+ /\S*$`)
+
 var inputSchema = map[string][]string{
-	"sampler":     {"scenario"},
-	"http_server": {"requests", "traceparent", "child_span"},
-	"grpc_server": {"method"},
+	"sampler":          {"scenario"},
+	"http_server":      {"requests", "traceparent", "child_span"},
+	"grpc_server":      {"method"},
+	"metrics_listener": {"requests"},
 }
 
 var (
@@ -109,6 +114,18 @@ func validateCase(c parityCase) []string {
 			if _, ok := v.(bool); !ok {
 				errs = append(errs, "input.child_span must be a boolean")
 			}
+		}
+	}
+	if c.Kind == "metrics_listener" {
+		reqs, ok := c.Input["requests"].([]any)
+		ok = ok && len(reqs) > 0
+		for _, r := range reqs {
+			if s, isStr := r.(string); !isStr || !listenerRequestRe.MatchString(s) {
+				ok = false
+			}
+		}
+		if !ok {
+			errs = append(errs, `metrics_listener needs a non-empty input.requests of "METHOD /path" strings`)
 		}
 	}
 	if w, ok := c.Expect["warning_count"]; ok {

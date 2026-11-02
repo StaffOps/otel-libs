@@ -49,6 +49,7 @@ test.beforeEach(() => {
   }
   process.env.OTEL_SERVICE_NAME = 'svc';
   process.env.OTEL_RESOURCE_ATTRIBUTES = 'deployment.environment.name=DEV';
+  process.env.OTEL_HELPER_METRICS_PORT = '0'; // never bind :9464 from unit tests (test/metrics.test.cjs binds its own)
   resetAndCapture();
 });
 

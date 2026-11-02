@@ -6,10 +6,12 @@
  * traces, metrics and logs (B4b), exporter lists with the console exporters,
  * `OTEL_SDK_DISABLED` and the metric export interval (B4c), the sampler
  * (ParentBased, health sampler around it), propagators and the debug marker
- * (B5); `/metrics`, instrumentation and logging land in B6–B9.
+ * (B5), the Prometheus `/metrics` listener and `metricsHandler()` (B7);
+ * instrumentation and logging land in B6, B8 and B9.
  */
 export { VERSION } from './version';
-export { setup, shutdown } from './internal/setup';
+export { metricsHandler, setup, shutdown } from './internal/setup';
+export type { ScrapeRequest, ScrapeResponse } from './internal/metrics-endpoint';
 export { defaultLogLevel } from './internal/log-level';
 export type { DeploymentEnvironment, LogLevel } from './internal/log-level';
 export type { Resolved, SetupOptions } from './internal/resolve';
