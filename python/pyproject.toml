@@ -51,6 +51,9 @@ dev = [
     # Test-only (A26, 2026-11-03): real redis-py spans for the DB error-status rule
     # (tests/test_a26_redis.py, against an in-process RESP fake). MIT.
     "redis>=5.0,<9",
+    # Test-only (A27, 2026-11-03): real botocore spans for the AWS error-status rule
+    # (tests/test_a27_aws.py, against an in-process fake endpoint). Apache-2.0.
+    "botocore>=1.34,<2",
 ]
 
 [tool.hatch.build.targets.wheel]

@@ -39,6 +39,7 @@ _EXT_ENTRY_POINTS = {"SQL": "staffops_otel_helper.ext.sql.instrument_sql()",
 _DB_EXT = {
     "SQLAlchemyInstrumentor": ("sql", logging.getLogger("staffops_otel_helper.ext.sql")),
     "RedisInstrumentor": ("redis", logging.getLogger("staffops_otel_helper.ext.redis")),
+    "BotocoreInstrumentor": ("aws", logging.getLogger("staffops_otel_helper.ext.aws")),
 }
 
 _INSTRUMENTORS = (
@@ -151,6 +152,11 @@ def configure_instrumentations(options: TelemetryOptions, instrumented: list | N
             elif class_name == "RedisInstrumentor":
                 # The same wrapped tracer as ext.redis.instrument_redis() (A26): ERROR keeps its code, no description.
                 kwargs = _db_status.wrapped_instrument_kwargs(redis=True)
+            elif class_name == "BotocoreInstrumentor":
+                # The same wrapped tracer as ext.aws.instrument_aws() (A27): ERROR keeps its code, no description.
+                from staffops_otel_helper._aws_status import aws_instrument_kwargs
+
+                kwargs = aws_instrument_kwargs()
             grpc_filter = _grpc_filter() if class_name in _GRPC else None
             with _env_hidden_or_set(env):
                 instrumentor = cls(filter_=grpc_filter) if class_name in _GRPC else cls()
@@ -170,7 +176,7 @@ def configure_instrumentations(options: TelemetryOptions, instrumented: list | N
         if instrumentor.is_instrumented_by_opentelemetry:
             if class_name == "SQLAlchemyInstrumentor":
                 _sql_ext.mark_wrapped(instrumentor)
-            elif class_name == "RedisInstrumentor":
+            elif class_name in ("RedisInstrumentor", "BotocoreInstrumentor"):
                 _db_status.mark_wrapped(instrumentor)
             instrumented.append(instrumentor)
             if flag is not None:

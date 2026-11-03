@@ -2,8 +2,10 @@
  * `@staffops/otel-helper/internal/db` — NOT public API (Node design D-JS9,
  * tasks B10a/B10b). The database-span rules the opt-in instrumentation
  * packages `@staffops/otel-helper-sql` and `@staffops/otel-helper-redis`
- * share, so the rules have one implementation and not a copy per package
- * (moved here from `-sql` in B10b, 2026-11-03). Those packages peer-depend on
+ * share — and `@staffops/otel-helper-aws` (B10c, 2026-11-03), whose DynamoDB
+ * spans are database spans and whose ERROR status follows the same rule — so
+ * the rules have one implementation and not a copy per package (moved here
+ * from `-sql` in B10b, 2026-11-03). Those packages peer-depend on
  * the core at the same version; this entry may change in any release, so
  * applications must not import it.
  *
@@ -12,7 +14,8 @@
  *   description (contract D1 row "DB error status", A25: the description is
  *   the server's error text, which can quote a value), with `error.type`
  *   `_OTHER` when the span has none; the legacy `db.system` on the span-start
- *   attributes; an optional span-name rule.
+ *   attributes; an optional span-name rule; an optional attribute sanitizer
+ *   (`-aws`, B10c).
  * - {@link dbMeterProvider}: the legacy key on synchronous measurements, and a
  *   generation guard (an instrument created before the latest bind records
  *   nothing; instrumentation-pg moves its pool max between instrument
@@ -128,15 +131,25 @@ export interface DbTracerOptions {
    * `_OTHER`.
    */
   readonly responseStatusCode?: ((description: string) => string | undefined) | undefined;
+  /**
+   * The attributes actually recorded (`-aws`, B10c, 2026-11-03): applied to
+   * the span-start attributes (after the legacy key) and to every
+   * `setAttribute`/`setAttributes`, so a value it removes never reaches the
+   * span, its processors or its exporter. Must be idempotent (the SDK's
+   * `setAttributes` calls `setAttribute`). Unset: attributes unchanged.
+   */
+  readonly sanitizeAttributes?: ((attributes: Attributes) => Attributes) | undefined;
 }
 
 /**
  * `span.setStatus` keeps an ERROR code and drops its description; when the
  * span has no `error.type` it gets `_OTHER` (semconv: the fallback value when
  * no specific type is known), so the failure stays classifiable (2026-11-03, N1).
+ * With `sanitizeAttributes`, `setAttribute`/`setAttributes` record only what it returns.
  */
-function withoutErrorDescription(span: Span, statusCode: DbTracerOptions['responseStatusCode']): Span {
+function wrapSpan(span: Span, opts: DbTracerOptions): Span {
   const original = span.setStatus.bind(span);
+  const statusCode = opts.responseStatusCode;
   try {
     span.setStatus = (status: SpanStatus): Span => {
       if (status.code !== SpanStatusCode.ERROR) {
@@ -152,29 +165,41 @@ function withoutErrorDescription(span: Span, statusCode: DbTracerOptions['respon
       }
       return span;
     };
+    const sanitize = opts.sanitizeAttributes;
+    if (sanitize !== undefined) {
+      const setAttribute = span.setAttribute.bind(span);
+      const record = (attributes: Attributes): Span => {
+        for (const [k, v] of Object.entries(sanitize(attributes))) if (v !== undefined) setAttribute(k, v);
+        return span;
+      };
+      span.setAttribute = (key: string, value: Parameters<Span['setAttribute']>[1]): Span => record({ [key]: value });
+      // The sanitized batch, attribute by attribute (each once, through the original setAttribute).
+      span.setAttributes = record;
+    }
   } catch {
     // A frozen span: left as it is.
   }
   return span;
 }
 
-function spanOptions(options: SpanOptions | undefined, legacyKeys: boolean): SpanOptions | undefined {
-  if (!legacyKeys || options?.attributes === undefined) return options;
-  const attributes = withLegacyKey(options.attributes);
+function spanOptions(options: SpanOptions | undefined, opts: DbTracerOptions): SpanOptions | undefined {
+  if (options?.attributes === undefined) return options;
+  let attributes = opts.legacyKeys ? withLegacyKey(options.attributes) : options.attributes;
+  if (opts.sanitizeAttributes !== undefined) attributes = opts.sanitizeAttributes(attributes);
   return attributes === options.attributes ? options : { ...options, attributes };
 }
 
 function dbTracer(tracer: Tracer, opts: DbTracerOptions): Tracer {
   const name = (requested: string, options: SpanOptions | undefined): string => (opts.spanName === undefined ? requested : opts.spanName(requested, options?.attributes));
   const startSpan = (spanName: string, options?: SpanOptions, context?: Context): Span =>
-    withoutErrorDescription(tracer.startSpan(name(spanName, options), spanOptions(options, opts.legacyKeys), context), opts.responseStatusCode);
+    wrapSpan(tracer.startSpan(name(spanName, options), spanOptions(options, opts), context), opts);
   const startActiveSpan = (spanName: string, ...rest: unknown[]): unknown => {
     // (name, fn) | (name, options, fn) | (name, options, context, fn).
     const fn = rest.pop() as (span: Span) => unknown;
     const options = rest[0] as SpanOptions | undefined;
-    const next: unknown[] = rest.length > 0 ? [spanOptions(options, opts.legacyKeys), ...rest.slice(1)] : [];
+    const next: unknown[] = rest.length > 0 ? [spanOptions(options, opts), ...rest.slice(1)] : [];
     const start = tracer as unknown as { startActiveSpan(...args: unknown[]): unknown };
-    return start.startActiveSpan(name(spanName, options), ...next, (span: Span) => fn(withoutErrorDescription(span, opts.responseStatusCode)));
+    return start.startActiveSpan(name(spanName, options), ...next, (span: Span) => fn(wrapSpan(span, opts)));
   };
   return forwarding(tracer, { startSpan, startActiveSpan });
 }

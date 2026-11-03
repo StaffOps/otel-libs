@@ -26,8 +26,8 @@
  * would patch twice and drop the mysql2 statement mask).
  */
 import type { Instrumentation } from '@opentelemetry/instrumentation';
-import { appDirectories, LIBRARIES, resolvesFromApp, unresolvedMessage, type Library } from './internal/libraries';
-import { legacyKeysMode, shared, SqlInstrumentationImpl, type ReportLevel } from './internal/sql-instrumentation';
+import { LIBRARIES, type Library } from './internal/libraries';
+import { legacyKeysMode, registry } from './internal/sql-instrumentation';
 
 export { VERSION } from './internal/sql-instrumentation';
 
@@ -87,31 +87,5 @@ export function sqlInstrumentation(options?: SqlInstrumentationOptions): SqlInst
   const o = checkOptions(options);
   if (o.pg === false && o.mysql2 === false) throw new TypeError('sqlInstrumentation(): pg and mysql2 are both false; nothing to instrument');
   legacyKeysMode();
-  const dirs = appDirectories();
-  const children: [Library, Instrumentation][] = [];
-  const unresolved: [Library, string, ReportLevel][] = [];
-  let firstError: unknown;
-  for (const library of LIBRARIES.filter((l) => o[l] !== false)) {
-    let child: Instrumentation;
-    try {
-      child = shared(library);
-    } catch (err) {
-      // Named explicitly: certain, thrown. Default mode: skipped (thrown below if none loads).
-      if (o[library] === true) throw err;
-      firstError ??= err;
-      // Reported on the first enable when another library is instrumented.
-      unresolved.push([library, `@staffops/otel-helper-sql: '${library}' is not instrumented: ${err instanceof Error ? err.message : String(err)}`, 'warn']);
-      continue;
-    }
-    children.push([library, child]);
-    // Named true but not resolvable: WARN (the app expects it), naming the entry
-    // directory and cwd; the full lookup chain goes on a debug line. Default
-    // mode: usually just absent (a pg-only app has no mysql2), so debug only.
-    if (!resolvesFromApp(library, dirs)) {
-      if (o[library] === true) unresolved.push([library, unresolvedMessage(library, appDirectories(undefined, undefined, [])), 'warn']);
-      unresolved.push([library, unresolvedMessage(library, dirs), 'debug']);
-    }
-  }
-  if (children.length === 0) throw firstError;
-  return new SqlInstrumentationImpl(children, unresolved);
+  return registry.instrument(o);
 }

@@ -167,8 +167,17 @@ class TestExtraInstalled:
     def test_aws_instruments(self, monkeypatch):
         cls = _fake_instrumentor_module(
             monkeypatch, "opentelemetry.instrumentation.botocore", "BotocoreInstrumentor")
+        cls.return_value.is_instrumented_by_opentelemetry = False
         instrument_aws()
-        cls.return_value.instrument.assert_called_once_with()
+        # A27: bound to the AWS error-status wrapper, as instrument_redis().
+        cls.return_value.instrument.assert_called_once_with(tracer_provider=ANY)
+
+    def test_aws_already_instrumented_is_kept(self, monkeypatch):
+        cls = _fake_instrumentor_module(
+            monkeypatch, "opentelemetry.instrumentation.botocore", "BotocoreInstrumentor")
+        cls.return_value.is_instrumented_by_opentelemetry = True
+        assert instrument_aws() is True
+        cls.return_value.instrument.assert_not_called()
 
     def test_redis_instruments(self, monkeypatch):
         cls = _fake_instrumentor_module(

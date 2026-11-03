@@ -221,6 +221,17 @@ Runtime and operations:
     argument: `ERR unknown command 'X', with args beginning with: '<arg>'`).
     Alerts or queries that matched on that text must use the status code;
     the text is still in the span's `exception` event.
+27. **BREAKING (narrow) — AWS error status (A27).** A failed AWS SDK call
+    span from `ext/otelaws` keeps status Error but no longer carries
+    `err.Error()` as its status description (an AWS error message can quote
+    request values), and `error.type` is now the AWS error code (`NoSuchKey`,
+    `AccessDenied`, `ValidationException`; `_OTHER` when there is none)
+    instead of the Go error type (the modeled type name, e.g.
+    `QueueDoesNotExist`, when the code is a dotted query code; a transport
+    error without an AWS error is `_OTHER`). Alerts or queries that matched on
+    the description or the old `error.type` values must use the status code
+    and the AWS codes. Spans no longer carry `aws.s3.key`,
+    `aws.s3.copy_source` or `aws.s3.delete`.
 
 ### Migration guide 0.2 → 0.3 — Python
 
@@ -476,6 +487,17 @@ Telemetry and runtime:
     the `exception` event. If other code instruments Redis before the helper,
     that instrumentation is kept and a warning says failed commands may carry
     the text.
+27. **BREAKING (narrow) — AWS spans (A27).** A failed botocore call's span
+    (`instrument_aws()` or the deprecated `AWS` flag of `setup_telemetry()`)
+    keeps status ERROR but no longer carries the error text as its status
+    description (it could quote request values); `error.type` is the AWS
+    error code (`NoSuchKey`, `AccessDenied`; `QueueDoesNotExist` for an SQS
+    query-compatible code, `NotFound` for a body-less 404; a transport error
+    without an AWS error gives its class name) or `_OTHER`. DynamoDB spans no
+    longer carry `aws.dynamodb.item_collection_metrics` (it held the
+    partition-key value). The text is still in the `exception` event. If other
+    code instruments botocore before the helper, that instrumentation is kept
+    and a warning says failed calls may carry the text.
 
 ### Collector / platform prerequisites (before rolling 0.3.0 out)
 
@@ -547,6 +569,31 @@ by Operation" panel groups by `span_name` and shows the new Go HTTP span names
 after the upgrade.
 
 ### Go — detailed changes
+
+- **A27 fix round (2026-11-03).** `ext/otelaws`: `error.type` falls back to
+  the modeled error's type name when `ErrorCode()` is not PascalCase
+  (`QueueDoesNotExist`); the call context keeps the SDK span and the code
+  travels in a private context value; `aws.s3.key`, `aws.s3.copy_source`
+  and `aws.s3.delete` are dropped; `Instrument` is documented as once per
+  config. Tests: `TestContextKeepsSDKSpan`, `TestErrorCode`, HeadObject 404
+  and SQS cases in `TestErrorStatusDropsDescription`; HEAD 403/503
+  (`Forbidden`, `ServiceUnavailable`) cases.
+- **BREAKING (narrow) — A27 AWS error status (design D1 rows "AWS error
+  status", "AWS payload attributes", "AWS RPC keys" of 2026-11-03; migration
+  item 27).** `ext/otelaws` passes contrib otelaws v0.72 a tracer wrapper
+  (`WithTracerProvider`): a failed call's span keeps Error with an empty
+  description (otelaws wrote `err.Error()`, `aws.go:76-79`) and `error.type`
+  is the AWS error code from `smithy.APIError.ErrorCode()` (an inner
+  Initialize middleware) when it matches `^[A-Z][A-Za-z0-9]{1,63}$`, else
+  `_OTHER` (was the Go error type). The same rule in Python and Node.js. Go
+  records no DynamoDB item collection metrics and no SNS phone number (no
+  change). `service/s3`, `service/dynamodb` and `smithy-go` became direct
+  requirements of the `ext/otelaws` module (test and middleware). Tests:
+  `TestErrorStatusDropsDescription` (httptest fake: NoSuchKey, AccessDenied,
+  a ValidationException quoting the item), `TestErrorType`,
+  `TestSanitizingSpanPassesOtherStatusesAndAttributes`. The RPC keys stay as
+  otelaws writes them (`rpc.system.name`, `rpc.method=<Service>/<Operation>`;
+  Python and Node.js write the legacy keys: a recorded parity gap).
 
 - **BREAKING (narrow) — A26 Redis DB error status (design D1 row "DB error
   status", amended 2026-11-03; migration item 26).** `ext/otelredis` wraps
@@ -1009,6 +1056,30 @@ Behavior changes, with migration notes:
   (Apache-2.0). `aws-sdk-go-v2` v1.47.1 → v1.47.5.
 
 ### Python — detailed changes
+
+- **A27 fix round (2026-11-03).** `error.type` falls back to
+  `Error.QueryErrorCode`, the modeled exception class
+  (`QueueDoesNotExist`) and, for an all-digit code, the HTTP reason
+  phrase from a fixed table of Go's `http.StatusText` values (`NotFound`,
+  `Forbidden`, `ServiceUnavailable`), as Go and Node; contrib's Bedrock `error.type` writes
+  are dropped (every value comes from `aws_error_type()`); the 3.10 lower
+  leg runs on `botocore==1.34.0`. aiobotocore is not covered.
+- **BREAKING (narrow) — A27 AWS error status (design D1 rows "AWS error
+  status", "AWS payload attributes" of 2026-11-03; migration item 27).**
+  `instrument_aws()` and the deprecated `AWS` flag of `setup_telemetry()`
+  bind contrib botocore to a new TracerProvider wrapper
+  (`staffops_otel_helper/_aws_status.py`, a subclass of the `_db_status` one):
+  a failed call keeps ERROR without description (contrib sets
+  `str(error)`), `error.type` is the AWS error code
+  (`ClientError.response["Error"]["Code"]`) when it matches
+  `^[A-Z][A-Za-z0-9]{1,63}$`, else `_OTHER` (a transport error without an
+  AWS code: its class name when that matches), and
+  `aws.dynamodb.item_collection_metrics` is never recorded. The SNS phone
+  number was already redacted by contrib (`phone_number:**`). botocore
+  instrumented elsewhere without the wrapper is kept and warned once.
+  `instrument_aws()` called twice is a no-op that returns True. Tests:
+  `tests/test_a27_aws.py` (in-process fake: S3, DynamoDB, SNS). Test-only dev
+  dependency `botocore>=1.34,<2` (Apache-2.0).
 
 - **A25: `instrument_sql(engine)` after `setup_telemetry()` (2026-11-03).** An
   engine created before `setup_telemetry()` was never traced, and
@@ -2535,6 +2606,69 @@ Unsupported instrumentation versions, task A10 (P18):
   *A26 final round (2026-11-03):* only allowlisted Redis reply codes become
   `error.type` (a Lua `error_reply` word is `_OTHER`); a `setConfig()` call
   is warned on the next enable (once the DiagLogger is installed).
+- **Node.js AWS SDK instrumentation (Phase B, task B10c; not released).**
+  `@staffops/otel-helper-aws` implements `awsInstrumentation()` (no options
+  yet; any key is a TypeError) over the official
+  `@opentelemetry/instrumentation-aws-sdk` `~0.79.0` (a dependency, matched to
+  the core's `@opentelemetry/instrumentation` `~0.300.0`); the AWS SDK v3
+  clients (`@aws-sdk/client-*`) stay the app's. One span per `send()`,
+  retries included, with the contrib's attributes (`rpc.system=aws-api`,
+  `rpc.service`, `rpc.method`, `cloud.region`, `http.response.status_code`,
+  S3 bucket, DynamoDB `db.system.name=dynamodb` and table names, SQS/SNS
+  messaging attributes with trace context in the message attributes, Lambda
+  `faas.*`) plus `aws.request_id` and `aws.region` (Go and Python keys; the
+  contrib's `aws.request.id` is kept) and, on DynamoDB, the legacy
+  `db.system` (same opt-in rule as `-sql`/`-redis`). The HTTP requests the
+  SDK makes are not traced again under its span
+  (`suppressInternalInstrumentation`, as Go and Python). Never recorded:
+  credentials (access key, secret, session token, signature), request and
+  response bodies (no DynamoDB statement serializer, no SQS payload parsing),
+  DynamoDB `aws.dynamodb.item_collection_metrics` (it holds the partition-key
+  value; dropped), an SNS phone number (`phone_number:**`, as Python). A
+  failed call keeps ERROR without description (the A25 rule) and gets
+  `error.type` = the AWS error code (`NoSuchKey`, `ThrottlingException`; only
+  PascalCase codes `^[A-Z][A-Za-z0-9]{1,63}$`, else `_OTHER`); the exception
+  event is kept (the A25 residual). Same model as `-sql`/`-redis`: one shared
+  contrib instance per process, a client built before `setup()` is
+  instrumented, `coveredInstrumentations` (a raw `AwsInstrumentation` next to
+  it is refused), the D14 rule (only a contrib module that does not load
+  throws). Divergences from Go and Python are in design D-JS14 (AWS rows of
+  2026-11-03); Go and Python still keep the AWS ERROR description and Python
+  records `item_collection_metrics` (contract rulings requested). The
+  `OTEL_HELPER_EXTRA_INSTRUMENTATION` warning also names
+  `awsInstrumentation()`. **Core internal:** the contrib-instance machinery
+  of `-sql` and `-redis` (shared instances, counted enables, tracer/meter
+  binding with the generation guard, the re-require of preloaded files, the
+  one-time reports, D14 detection and load errors) moved to a new non-public
+  entry, `@staffops/otel-helper/internal/contrib`, used by all three packages
+  (no behavior change for `-sql` and `-redis`); `internal/db`
+  `dbTracerProvider` gained an optional attribute sanitizer. Tests: an
+  in-process fake AWS endpoint (S3, DynamoDB, SQS, SNS, Lambda wire formats,
+  service errors, throttling, fake credentials only) with the real clients
+  (`@aws-sdk/client-{s3,dynamodb,sqs,sns,lambda}` `~3.1153.0`, test-only
+  devDependencies): every service, a secrets sweep (credentials, signatures,
+  presigned query values, bodies), a re-setup, a preloaded client, an ESM
+  custom preload with and without the loader hooks, the database mode;
+  `ci/api-range-install.sh` installs `-aws` with the newest
+  `@aws-sdk/client-sqs` and `client-s3` and checks one SDK span per `send()`.
+  *Rulings 2026-11-03 (B10c Q1-Q3, contract task A27):* Go and Python now
+  drop the AWS ERROR description and write the AWS error code as
+  `error.type` too; Python drops `item_collection_metrics`; the RPC key split
+  (Node.js and Python legacy, Go current) and Node's missing
+  `server.address`/`server.port` are a recorded parity gap. Dependencies
+  owner-approved.
+  *Code-review round (2026-11-03):* a traced call made in an S3
+  `GetObject` body listener records nothing (the body keeps the SDK's
+  suppressed HTTP context; documented with a `context.with` workaround); the SNS phone number is redacted in attributes and the span name
+  (an `InvalidParameter` exception event quotes it, the A25 residual); the
+  secrets sweep also covers the diagnostics and `/metrics`; a transport
+  error's `error.type` is its Node `code` (`ECONNREFUSED`); the request id of
+  a failed call is written as `aws.request_id`; a Lambda `Unhandled`
+  function error is not an ERROR span.
+  *A27/A28 fix round (2026-11-03):* the S3 host id is also written as the
+  semconv `aws.extended_request_id`; `getSignedUrl` records a phantom SDK
+  span (D-JS14); HEAD errors without a body map their status code through
+  the shared table (`403` → `Forbidden`).
 - **Go test hygiene:** `captureDiag` (`go/config_contract_test.go`) no longer
   prints slog timestamps, which made `TestDeprecatedEnvWarnsNamingReplacement`
   (`go/deprecation_test.go`) flaky.

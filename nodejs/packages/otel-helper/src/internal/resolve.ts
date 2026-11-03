@@ -162,7 +162,8 @@ export interface SetupOptions {
   /**
    * Opt-in instrumentations, e.g. `sqlInstrumentation()` from
    * `@staffops/otel-helper-sql`, `redisInstrumentation()` from
-   * `@staffops/otel-helper-redis`, or any `@opentelemetry/instrumentation`
+   * `@staffops/otel-helper-redis`, `awsInstrumentation()` from
+   * `@staffops/otel-helper-aws`, or any `@opentelemetry/instrumentation`
    * `Instrumentation`. Each setup binds them to the helper's providers and
    * enables them; `shutdown()` disables them. Not enabled under
    * `OTEL_SDK_DISABLED=true` or into another API version's registry. Create
@@ -476,8 +477,7 @@ function warnDeprecatedEnv(): void {
   if (envValue(ENV_EXTRA_INSTRUMENTATION) !== undefined) {
     reportOnce(
       `unused:${ENV_EXTRA_INSTRUMENTATION}`,
-      // B10c adds awsInstrumentation() when it exists.
-      `${ENV_EXTRA_INSTRUMENTATION} has no effect in Node.js and is ignored; pass sqlInstrumentation() (@staffops/otel-helper-sql) or redisInstrumentation() (@staffops/otel-helper-redis) in setup({ instrumentations })`,
+      `${ENV_EXTRA_INSTRUMENTATION} has no effect in Node.js and is ignored; pass sqlInstrumentation() (@staffops/otel-helper-sql), redisInstrumentation() (@staffops/otel-helper-redis) or awsInstrumentation() (@staffops/otel-helper-aws) in setup({ instrumentations })`,
       { variable: ENV_EXTRA_INSTRUMENTATION },
     );
   }

@@ -94,6 +94,20 @@
         "default": "./dist/bridge.js"
       }
     },
+    "./internal/contrib": {
+      "import": {
+        "types": "./esm/contrib.d.mts",
+        "default": "./esm/contrib.mjs"
+      },
+      "require": {
+        "types": "./dist/contrib.d.ts",
+        "default": "./dist/contrib.js"
+      },
+      "default": {
+        "types": "./dist/contrib.d.ts",
+        "default": "./dist/contrib.js"
+      }
+    },
     "./internal/db": {
       "import": {
         "types": "./esm/db.d.mts",

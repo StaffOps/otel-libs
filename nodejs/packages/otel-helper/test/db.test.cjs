@@ -169,6 +169,41 @@ test('A26: responseStatusCode sets db.response.status_code and error.type from t
   assert.equal(byName.empty.attributes['error.type'], '_OTHER');
 });
 
+test('B10c: sanitizeAttributes rewrites the start attributes and every setAttribute/setAttributes (after the legacy key)', () => {
+  const seen = [];
+  // Drops `secret`, aliases `a` to `b`, and is idempotent (as -aws's rule).
+  const sanitizeAttributes = (attributes) => {
+    seen.push(Object.keys(attributes).sort().join(','));
+    const out = { ...attributes };
+    delete out.secret;
+    if (out.a !== undefined && out.b === undefined) out.b = out.a;
+    return out;
+  };
+  const { exporter, wrapped } = tracerOf({ legacyKeys: true, sanitizeAttributes });
+  const tracer = wrapped.getTracer('t');
+  const start = { 'db.system.name': 'dynamodb', secret: 's', a: 1 };
+  const span = tracer.startSpan('start', { attributes: start });
+  assert.equal(span.setAttribute('secret', 'later'), span, 'chainable');
+  span.setAttribute('a', 2);
+  assert.equal(span.setAttributes({ secret: 'x', a: 3, kept: true }), span, 'chainable');
+  span.end();
+  tracer.startActiveSpan('active', { attributes: { secret: 's', a: 'v' } }, (s) => s.end());
+  tracer.startSpan('plain').end();
+  const byName = Object.fromEntries(exporter.getFinishedSpans().map((s) => [s.name, s.attributes]));
+  assert.deepEqual(byName.start, { 'db.system.name': 'dynamodb', 'db.system': 'dynamodb', a: 3, b: 3, kept: true }, 'the alias follows each later value');
+  assert.deepEqual(byName.active, { a: 'v', b: 'v' });
+  assert.deepEqual(byName.plain, {});
+  assert.deepEqual(start, { 'db.system.name': 'dynamodb', secret: 's', a: 1 }, 'the caller attributes are not mutated');
+  assert.ok(seen.includes('a,db.system,db.system.name,secret'), 'the legacy key is added before the sanitizer runs');
+  // A rule that maps a key to undefined records nothing for it.
+  const blank = tracerOf({ legacyKeys: false, sanitizeAttributes: (attributes) => ({ ...attributes, gone: undefined }) });
+  const b = blank.wrapped.getTracer('t').startSpan('blank');
+  b.setAttribute('gone', 'x');
+  b.setAttribute('kept', 1);
+  b.end();
+  assert.deepEqual(blank.exporter.getFinishedSpans()[0].attributes, { kept: 1 });
+});
+
 test('wrappers forward the members they do not change (forceFlush, getDelegate, unknown ones)', async () => {
   let flushed = 0;
   const inner = { getTracer: () => ({ startSpan: () => api.trace.wrapSpanContext(api.INVALID_SPAN_CONTEXT), extra: () => 'tracer-extra' }), forceFlush: () => ((flushed += 1), Promise.resolve()), getDelegate: () => 'delegate' };

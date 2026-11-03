@@ -22,6 +22,8 @@ idna==3.7
 sqlalchemy==2.0.31
 # Test-only (A26, 2026-11-03): redis-py floor of the [dev] range.
 redis==5.0.0
+# Test-only (A27, 2026-11-03): botocore floor of the [dev] range.
+botocore==1.34.0
 # Transitive floors that matter for the lower leg:
 prometheus-client==0.20.0
 # opentelemetry-proto 1.42.0: protobuf>=5.0,<7 — 5.26.0 is the first 5.x release.

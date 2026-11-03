@@ -237,7 +237,7 @@ test('R8/D8 deprecated variables warn once per process, naming only the variable
     }
     const extra = lines((r) => r.line.includes('OTEL_HELPER_EXTRA_INSTRUMENTATION'));
     assert.deepEqual(extra, [
-      'otelhelper: OTEL_HELPER_EXTRA_INSTRUMENTATION has no effect in Node.js and is ignored; pass sqlInstrumentation() (@staffops/otel-helper-sql) or redisInstrumentation() (@staffops/otel-helper-redis) in setup({ instrumentations }) variable=OTEL_HELPER_EXTRA_INSTRUMENTATION',
+      'otelhelper: OTEL_HELPER_EXTRA_INSTRUMENTATION has no effect in Node.js and is ignored; pass sqlInstrumentation() (@staffops/otel-helper-sql), redisInstrumentation() (@staffops/otel-helper-redis) or awsInstrumentation() (@staffops/otel-helper-aws) in setup({ instrumentations }) variable=OTEL_HELPER_EXTRA_INSTRUMENTATION',
     ]);
     assert.doesNotMatch(lines().join('\n'), /legacy-secret/);
     assert.ok(records.every((r) => r.origin === 'helper'));

@@ -75,13 +75,15 @@ _FOREIGN = {
             "instrument_sql()"),
     "redis": ("Redis", "failed commands may carry the server error text in their span status",
               "instrument_redis()"),
+    "aws": ("botocore", "failed AWS calls may carry the error text in their span status",
+            "instrument_aws()"),
 }
 
 _log = logging.getLogger("staffops_otel_helper._db_status")
 
 
 def warn_foreign(log: logging.Logger, kind: str) -> None:
-    """Warn once that ``kind`` (``sql`` / ``redis``) was instrumented by other code without the wrapper."""
+    """Warn once that ``kind`` (``sql`` / ``redis`` / ``aws``) was instrumented by other code without the wrapper."""
     label, consequence, call = _FOREIGN[kind]
     warn_once_per_process(
         log, f"{kind}:instrumented-without-wrapper",

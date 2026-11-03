@@ -7,7 +7,7 @@
  * an unresolved library is reported, not an error; only a contrib
  * instrumentation that does not load is.
  */
-import * as path from 'node:path';
+import { appDirectories as coreAppDirectories, contribLoadError, resolvesFromApp as coreResolvesFromApp } from '@staffops/otel-helper/internal/contrib';
 
 /** The libraries this package instruments, in the order they are reported. */
 export const LIBRARIES = ['redis', 'ioredis'] as const;
@@ -25,18 +25,10 @@ export const PACKAGES: Readonly<Record<Library, readonly string[]>> = Object.fre
 
 /**
  * Directories the app resolves packages from: its entry script's, the
- * working directory, then the main module's `node_modules` lookup paths.
+ * working directory, then the main module's `node_modules` lookup paths
+ * (core `internal/contrib` since B10c).
  */
-export function appDirectories(
-  argv1: string | undefined = process.argv[1],
-  cwd: string = process.cwd(),
-  mainPaths: readonly string[] = require.main?.paths ?? [],
-): string[] {
-  const dirs: string[] = [];
-  if (argv1 !== undefined && argv1 !== '') dirs.push(path.dirname(path.resolve(cwd, argv1)));
-  dirs.push(cwd, ...mainPaths);
-  return [...new Set(dirs)];
-}
+export const appDirectories: typeof coreAppDirectories = coreAppDirectories;
 
 /**
  * Whether one of the library's packages resolves from the app (never loaded:
@@ -44,23 +36,7 @@ export function appDirectories(
  * the app's copy unpatched).
  */
 export function resolvesFromApp(library: Library, dirs: readonly string[] = appDirectories()): boolean {
-  return PACKAGES[library].some((name) => {
-    try {
-      require.resolve(name, { paths: [...dirs] });
-      return true;
-    } catch {
-      return false;
-    }
-  });
-}
-
-/**
- * The report for a library the app dirs do not resolve; it is still
- * instrumented. WARN when the library was named `true`, `diag` debug in
- * default mode (an absent library is the common case).
- */
-export function unresolvedMessage(library: Library, dirs: readonly string[]): string {
-  return `@staffops/otel-helper-redis: '${library}' could not be resolved from ${dirs.join(', ')}; instrumented if it loads`;
+  return coreResolvesFromApp(PACKAGES[library], dirs);
 }
 
 /**
@@ -72,11 +48,5 @@ export function unresolvedMessage(library: Library, dirs: readonly string[]): st
  * helper).
  */
 export function instrumentationLoadError(module: string, err: unknown): Error {
-  const message = err instanceof Error ? err.message : String(err);
-  const first = message.split('\n', 1)[0] ?? '';
-  const code = typeof err === 'object' && err !== null ? (err as { code?: unknown }).code : undefined;
-  if (code === 'MODULE_NOT_FOUND' && first.includes(`'${module}'`)) {
-    return new Error(`Redis instrumentation not installed: ${module} is missing. Reinstall @staffops/otel-helper-redis (it depends on ${module}).`, { cause: err });
-  }
-  return new Error(`failed to import the Redis instrumentation: ${first}`, { cause: err });
+  return contribLoadError('Redis', '@staffops/otel-helper-redis', module, err);
 }
