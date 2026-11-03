@@ -17,7 +17,7 @@
   "scripts": {
     "build": "npm run build --workspaces --if-present",
     "typecheck": "npm run typecheck --workspaces --if-present",
-    "lint": "eslint .",
+    "lint": "npm run build --workspace=@staffops/otel-helper && eslint .",
     "check": "npm run check --workspaces --if-present",
     "test": "npm run test --workspaces --if-present",
     "test:parity": "node --test \"test/parity/*.test.cjs\"",
@@ -34,8 +34,10 @@
     "globals": "^17.13.0",
     "mysql2": "~3.24.6",
     "pg": "~8.23.1",
+    "pino": "~10.4.0",
     "publint": "~0.3.25",
     "typescript": "~6.0.3",
-    "typescript-eslint": "~8.72.1"
+    "typescript-eslint": "~8.72.1",
+    "winston": "~3.19.0"
   }
 }

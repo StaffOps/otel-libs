@@ -948,6 +948,91 @@ export function logDestination(): LogDestination {
   return { provider: exporting ? active.loggerProvider : undefined, level: rt.logLevel ?? 'info' };
 }
 
+/** A provider's bridge flush running now, and the one queued behind it (B10d fix round 2, 2026-11-03). */
+interface BridgeFlushes {
+  current: Promise<void> | undefined;
+  queued: Promise<void> | undefined;
+}
+
+/**
+ * Per LoggerProvider (final round, 2026-11-03): a flush for a new setup's
+ * provider never waits behind one of an older (perhaps hung) provider, and
+ * `shutdown()` waits only for its own provider's flushes.
+ */
+const bridgeFlushes = new Map<LoggerProvider, BridgeFlushes>();
+
+/**
+ * Flushes the active setup's logs pipeline (a bridge's `flush(cb)` /
+ * `close()`, so `logger.flush(() => process.exit())` delivers its records).
+ * Resolves when done, at once when records go to stdout; never rejects (a
+ * failure is reported once, with its reason only).
+ *
+ * Serialized: sdk-logs 3.0 `BatchLogRecordProcessorBase._flushAll` returns at
+ * once while another flush runs (`if (this._flushing) return`), so a second
+ * concurrent `forceFlush()` would resolve before its records were exported
+ * (D-JS14). Per provider, one flush runs at a time; a request that arrives
+ * meanwhile waits for it and then runs one more `forceFlush` (requests
+ * arriving during the same wait share it).
+ *
+ * @internal For `@staffops/otel-helper-pino` / `-winston` only (B10d).
+ */
+export function flushBridgeRecords(): Promise<void> {
+  const provider = logDestination().provider;
+  return provider === undefined ? Promise.resolve() : flushProvider(provider);
+}
+
+function flushProvider(provider: LoggerProvider): Promise<void> {
+  let entry = bridgeFlushes.get(provider);
+  if (entry === undefined) {
+    entry = { current: undefined, queued: undefined };
+    bridgeFlushes.set(provider, entry);
+  }
+  const flushes = entry;
+  if (flushes.current === undefined) {
+    flushes.current = runBridgeFlush(provider).finally(() => {
+      flushes.current = undefined;
+      if (flushes.queued === undefined) bridgeFlushes.delete(provider);
+    });
+    return flushes.current;
+  }
+  flushes.queued ??= flushes.current.then(() => {
+    flushes.queued = undefined;
+    return flushProvider(provider);
+  });
+  return flushes.queued;
+}
+
+async function runBridgeFlush(provider: LoggerProvider): Promise<void> {
+  try {
+    await provider.forceFlush();
+  } catch (err) {
+    // Redacted (an exporter error can carry an endpoint), read guarded: the flush never rejects.
+    reportOnce('logging:flush-failed', 'the helper logs pipeline could not be flushed', { reason: redactErrorText(flushFailureReason(err)) });
+  }
+}
+
+/** The failure's message when it is a readable string, else its type; never throws. */
+function flushFailureReason(err: unknown): string {
+  try {
+    if (err instanceof Error && typeof err.message === 'string') return err.message;
+  } catch {
+    // A throwing `message` getter or prototype trap.
+  }
+  return typeof err;
+}
+
+/**
+ * Settles once the bridge flushes of `provider` pending **now** have settled
+ * (the queued one runs after the current one, so it covers both): `shutdown()`
+ * waits for them before shutting the provider down, whose own `_flushAll`
+ * would otherwise return early. Flushes requested later are not waited for (no
+ * starvation by a steady stream of flushes).
+ */
+function bridgeFlushesSettled(provider: LoggerProvider): Promise<void> {
+  const flushes = bridgeFlushes.get(provider);
+  return (flushes?.queued ?? flushes?.current ?? Promise.resolve()).then(() => undefined);
+}
+
 const UNAVAILABLE: ScrapeTarget = Object.freeze({ kind: 'unavailable' });
 const INACTIVE: ScrapeTarget = Object.freeze({ kind: 'inactive' });
 
@@ -1068,7 +1153,10 @@ async function runShutdown(rt: Runtime, active: Active, timeoutMs: number): Prom
     const providers = named.map(({ name, provider }) => {
       const run = name === PROVIDER_NAMES.metrics
         ? listenerClosed.then(() => (provider as MeterProvider).shutdown({ timeoutMillis: timeoutMs }))
-        : Promise.resolve().then(() => provider.shutdown());
+        : name === PROVIDER_NAMES.logs
+          // An in-flight bridge flush first: during it the SDK's shutdown flush would return early (D-JS14).
+          ? bridgeFlushesSettled(provider as LoggerProvider).then(() => provider.shutdown())
+          : Promise.resolve().then(() => provider.shutdown());
       return run.finally(() => {
         releaseDelegate(slots[name], provider);
       });

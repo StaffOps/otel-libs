@@ -479,3 +479,313 @@ test('the ESM entry exposes the same createLogger()', async () => {
   const esm = await import('@staffops/otel-helper');
   assert.equal(esm.createLogger, helper.createLogger);
 });
+
+// ── the internal bridge entry (B10d: -pino / -winston) ──────────────────
+
+const bridge = require('@staffops/otel-helper/internal/bridge');
+
+test('B10d internal/bridge: the entry exports exactly what the bridge packages use', () => {
+  assert.deepEqual(Object.keys(bridge).filter((k) => k !== '__esModule').sort(), ['LOG_LEVELS', 'ROOT_CONTEXT', 'activeContext', 'emitBridgeRecord', 'flushBridgeRecords', 'recordEnabled']);
+  assert.equal(bridge.ROOT_CONTEXT, api.ROOT_CONTEXT);
+  assert.equal(bridge.LOG_LEVELS, require('../dist/internal/log-level.js').LOG_LEVELS);
+});
+
+test('B10d recordEnabled: trace never, fatal always, the rest by the fixed or installed level', () => {
+  assert.equal(bridge.recordEnabled(undefined, 'trace'), false);
+  assert.equal(bridge.recordEnabled('debug', 'trace'), false);
+  assert.equal(bridge.recordEnabled('error', 'fatal'), true);
+  assert.equal(bridge.recordEnabled(undefined, 'debug'), false);
+  assert.equal(bridge.recordEnabled(undefined, 'info'), true);
+  assert.equal(bridge.recordEnabled('warn', 'info'), false);
+  helper.setup({ serviceName: 's', environment: 'LOCAL' });
+  assert.equal(bridge.recordEnabled(undefined, 'debug'), true);
+});
+
+test('B10d emitBridgeRecord on stdout: fatal as ERROR, trace dropped, the record time, the leading error replaces an `exception` field', () => {
+  const err = new Error('lead');
+  const lines = captureStdout(() => {
+    bridge.emitBridgeRecord({ logger: 'b', level: 'trace', minimum: 'debug', message: 'dropped' });
+    bridge.emitBridgeRecord({ logger: 'b', level: 'fatal', severityText: 'EMERG', message: 'f', time: new Date(Date.UTC(2026, 10, 2, 1, 2, 3, 4)) });
+    bridge.emitBridgeRecord({ logger: 'b', level: 'error', message: 'e', error: err, attributes: { exception: 'theirs', other: new Error('second'), k: 'v' } });
+    bridge.emitBridgeRecord({ logger: 'b', level: 'info', message: 42 });
+  });
+  assert.deepEqual(lines[0], { time: '2026-11-02T01:02:03.004Z', level: 'ERROR', msg: 'f', logger: 'b' });
+  assert.deepEqual(Object.keys(lines[1]), ['time', 'level', 'msg', 'logger', 'other', 'k', 'exception']);
+  assert.equal(lines[1].exception, err.stack);
+  assert.match(lines[1].other, /^Error: second/);
+  assert.equal(lines[2].msg, '42');
+  assert.equal(lines.length, 3);
+});
+
+test('B10d emitBridgeRecord on the OTel path: TRACE/FATAL numbers, source severityText, timestamp, the leading error as the exception', async () => {
+  const err = new Error('lead');
+  const { stdout, logs } = await otlpRecords(() => {
+    bridge.emitBridgeRecord({ logger: 'bridge-scope', level: 'fatal', severityText: 'EMERG', message: 'bridged-fatal', time: new Date(Date.UTC(2026, 10, 2)) });
+    bridge.emitBridgeRecord({ logger: 'bridge-scope', level: 'error', message: 'bridged-error', error: err, attributes: { other: new Error('second-err') } });
+  });
+  assert.deepEqual(stdout, []);
+  assert.match(logs, /bridged-fatal/);
+  assert.match(logs, /EMERG/);
+  assert.match(logs, /bridge-scope/);
+  assert.match(logs, /exception\.message[\s\S]*lead/);
+  assert.match(logs, /Error: second-err/, 'a second Error is written as its stack text');
+});
+
+test('B10d emitBridgeRecord never throws: an unlistable attributes object is reported once, without its values', () => {
+  const unlistable = new Proxy({}, { ownKeys() { throw new Error('secret-token'); } });
+  const lines = captureStdout(() => bridge.emitBridgeRecord({ logger: 'b', level: 'warn', message: 'm', attributes: unlistable }));
+  assert.deepEqual(lines, []);
+  assert.ok(records.some((r) => r.line.includes('a helper log record could not be written and was dropped')));
+  assert.ok(!records.some((r) => r.line.includes('secret-token')));
+});
+
+// ── B10d fix round 2026-11-03 ───────────────────────────────────────────
+
+const { otlpReceiver } = require('../../../test/otlp-logs.cjs');
+
+async function decodedRecords(fn) {
+  const receiver = await otlpReceiver();
+  try {
+    process.env.OTEL_EXPORTER_OTLP_COMPRESSION = 'none';
+    process.env.OTEL_TRACES_EXPORTER = 'none';
+    process.env.OTEL_METRICS_EXPORTER = 'none';
+    helper.setup({ serviceName: 's', environment: 'DEV', otelEndpoint: receiver.endpoint, otlpProtocol: 'http/protobuf' });
+    const stdout = captureStdout(fn);
+    await helper.shutdown();
+    return { stdout, logs: receiver.logs() };
+  } finally {
+    await receiver.close();
+  }
+}
+
+test('B10d fix round: a bridged record\'s context decides its trace (captured, or ROOT_CONTEXT = uncorrelated), not the context active at write', async () => {
+  let captured;
+  let active;
+  const { stdout, logs } = await decodedRecords(() => {
+    const tracer = api.trace.getTracer('t');
+    tracer.startActiveSpan('call', (span) => {
+      captured = bridge.activeContext();
+      span.end();
+    });
+    tracer.startActiveSpan('delivery', (span) => {
+      active = span.spanContext();
+      bridge.emitBridgeRecord({ logger: 'b', level: 'info', message: 'captured', context: captured });
+      bridge.emitBridgeRecord({ logger: 'b', level: 'info', message: 'root', context: bridge.ROOT_CONTEXT });
+      bridge.emitBridgeRecord({ logger: 'b', level: 'info', message: 'active' });
+      span.end();
+    });
+  });
+  assert.deepEqual(stdout, []);
+  const byBody = Object.fromEntries(logs.map((r) => [r.body, r]));
+  assert.equal(byBody.captured.traceId, api.trace.getSpanContext(captured).traceId);
+  assert.notEqual(byBody.captured.traceId, active.traceId);
+  assert.equal(byBody.root.traceId, '');
+  assert.equal(byBody.active.traceId, active.traceId);
+});
+
+test('B10d fix round: a non-string body is an OTel map and stdout JSON text; no message: no body; the leading error drops an `exception` attribute on OTel too', async () => {
+  const lines = captureStdout(() => {
+    bridge.emitBridgeRecord({ logger: 'b', level: 'info', message: { a: 1, nested: [1, 'x'] } });
+    bridge.emitBridgeRecord({ logger: 'b', level: 'info', message: undefined });
+    bridge.emitBridgeRecord({ logger: 'b', level: 'info', message: 'text' });
+  });
+  assert.deepEqual(lines.map((l) => l.msg), ['{"a":1,"nested":[1,"x"]}', '', 'text']);
+  const { logs } = await decodedRecords(() => {
+    bridge.emitBridgeRecord({ logger: 'b', level: 'info', message: { a: 1, nested: [1, 'x'] } });
+    bridge.emitBridgeRecord({ logger: 'b', level: 'info', message: undefined, attributes: { k: 'v' } });
+    bridge.emitBridgeRecord({ logger: 'b', level: 'error', message: 'with-error', error: new Error('lead'), attributes: { exception: 'theirs', k: 'v' } });
+  });
+  assert.deepEqual(logs[0].body, { a: 1, nested: [1, 'x'] });
+  assert.equal(logs[1].body, undefined);
+  assert.deepEqual(logs[1].attributes, { k: 'v' });
+  assert.equal(logs[2].attributes.exception, undefined);
+  assert.equal(logs[2].attributes['exception.message'], 'lead');
+  assert.equal(logs[2].attributes.k, 'v');
+});
+
+test('B10d fix round: flushBridgeRecords() resolves on stdout, flushes the OTLP pipeline, and reports a failure once without throwing', async () => {
+  await bridge.flushBridgeRecords();
+  const receiver = await otlpReceiver();
+  try {
+    process.env.OTEL_EXPORTER_OTLP_COMPRESSION = 'none';
+    process.env.OTEL_TRACES_EXPORTER = 'none';
+    process.env.OTEL_METRICS_EXPORTER = 'none';
+    helper.setup({ serviceName: 's', environment: 'DEV', otelEndpoint: receiver.endpoint, otlpProtocol: 'http/protobuf' });
+    bridge.emitBridgeRecord({ logger: 'b', level: 'warn', message: 'flushed' });
+    await bridge.flushBridgeRecords();
+    assert.deepEqual(receiver.logs().map((r) => r.body), ['flushed']);
+    const { loggerProvider } = testing.getProviders();
+    const original = loggerProvider.forceFlush;
+    loggerProvider.forceFlush = () => Promise.reject(new Error('flush-broke'));
+    try {
+      await bridge.flushBridgeRecords();
+      // A rejection that is not an Error: still resolves (reported once already).
+      loggerProvider.forceFlush = () => Promise.reject('not-an-error');
+      await bridge.flushBridgeRecords();
+    } finally {
+      loggerProvider.forceFlush = original;
+    }
+    assert.ok(records.some((r) => r.line.includes('the helper logs pipeline could not be flushed') && JSON.stringify(r).includes('flush-broke')), JSON.stringify(records));
+    await helper.shutdown();
+  } finally {
+    await receiver.close();
+  }
+});
+
+// ── B10d fix round 2, 2026-11-03 ────────────────────────────────────────
+
+/** A setup exporting logs to a fresh receiver; returns the receiver. */
+async function logsSetup() {
+  const receiver = await otlpReceiver();
+  process.env.OTEL_EXPORTER_OTLP_COMPRESSION = 'none';
+  process.env.OTEL_TRACES_EXPORTER = 'none';
+  process.env.OTEL_METRICS_EXPORTER = 'none';
+  helper.setup({ serviceName: 's', environment: 'DEV', otelEndpoint: receiver.endpoint, otlpProtocol: 'http/protobuf' });
+  return receiver;
+}
+
+test('B10d fix round 2 HIGH-2: two overlapping bridge flushes, then shutdown(): both records arrive and both flushes resolve', async () => {
+  const receiver = await logsSetup();
+  try {
+    bridge.emitBridgeRecord({ logger: 'b', level: 'warn', message: 'overlap-1' });
+    const first = bridge.flushBridgeRecords();
+    bridge.emitBridgeRecord({ logger: 'b', level: 'warn', message: 'overlap-2' });
+    const second = bridge.flushBridgeRecords();
+    assert.notEqual(first, second, 'the second waits for the first, then flushes again');
+    await helper.shutdown();
+    await Promise.all([first, second]);
+  } finally {
+    await receiver.close();
+  }
+  assert.deepEqual(receiver.logs().map((r) => r.body).sort(), ['overlap-1', 'overlap-2']);
+});
+
+test('B10d fix round 2 HIGH-2: N un-awaited flushes interleaved with N records, then shutdown(): all N arrive; requests during one wait share it', async () => {
+  const receiver = await logsSetup();
+  const N = 20;
+  const flushes = [];
+  try {
+    for (let i = 0; i < N; i++) {
+      bridge.emitBridgeRecord({ logger: 'b', level: 'warn', message: `record-${i}` });
+      flushes.push(bridge.flushBridgeRecords());
+    }
+    assert.equal(new Set(flushes.slice(1)).size, 1, 'every request after the first shares the one queued flush');
+    await helper.shutdown();
+    await Promise.all(flushes);
+  } finally {
+    await receiver.close();
+  }
+  assert.equal(receiver.logs().length, N);
+});
+
+test('B10d fix round 2: a body that converts to a string (bigint, Error) is written as that text; emitRecord converts nothing below the level', async () => {
+  const err = new Error('as-body');
+  const lines = captureStdout(() => {
+    bridge.emitBridgeRecord({ logger: 'b', level: 'info', message: 10n });
+    bridge.emitBridgeRecord({ logger: 'b', level: 'info', message: err });
+  });
+  assert.deepEqual(lines.map((l) => l.msg), ['10', err.stack]);
+  let converted = false;
+  const hostile = { toString() { converted = true; return 'x'; } };
+  const { emitRecord } = require('../dist/internal/logging.js');
+  captureStdout(() => emitRecord('b', 'error', 'info', hostile));
+  assert.equal(converted, false, 'a dropped record\'s message is never converted');
+  const receiver = await logsSetup();
+  try {
+    bridge.emitBridgeRecord({ logger: 'b', level: 'info', message: 10n });
+    await helper.shutdown();
+  } finally {
+    await receiver.close();
+  }
+  assert.equal(receiver.logs()[0].body, '10');
+});
+
+test('B10d fix round 2 HIGH-2: shutdown() during a single in-flight bridge flush waits for it; the record arrives', async () => {
+  const receiver = await logsSetup();
+  try {
+    bridge.emitBridgeRecord({ logger: 'b', level: 'warn', message: 'single-in-flight' });
+    const flush = bridge.flushBridgeRecords();
+    bridge.emitBridgeRecord({ logger: 'b', level: 'warn', message: 'after-the-flush-started' });
+    await helper.shutdown();
+    await flush;
+  } finally {
+    await receiver.close();
+  }
+  assert.deepEqual(receiver.logs().map((r) => r.body).sort(), ['after-the-flush-started', 'single-in-flight']);
+});
+
+// ── B10d final round, 2026-11-03 ────────────────────────────────────────
+
+test('B10d final round: flush serialization is per provider — a hung provider\'s flush does not hold a new setup\'s flush or shutdown', async () => {
+  const http = require('node:http');
+  const hung = http.createServer(() => { /* never answers */ });
+  await new Promise((resolve) => hung.listen(0, '127.0.0.1', resolve));
+  const good = await otlpReceiver();
+  try {
+    process.env.OTEL_EXPORTER_OTLP_COMPRESSION = 'none';
+    process.env.OTEL_TRACES_EXPORTER = 'none';
+    process.env.OTEL_METRICS_EXPORTER = 'none';
+    helper.setup({ serviceName: 's', environment: 'DEV', otelEndpoint: `http://127.0.0.1:${hung.address().port}`, otlpProtocol: 'http/protobuf', exportTimeoutMs: 3000 });
+    bridge.emitBridgeRecord({ logger: 'b', level: 'warn', message: 'to-the-hung-receiver' });
+    const hungFlush = bridge.flushBridgeRecords();
+    await assert.rejects(helper.shutdown(500), /did not finish within 500 ms/);
+    helper.setup({ serviceName: 's', environment: 'DEV', otelEndpoint: good.endpoint, otlpProtocol: 'http/protobuf' });
+    bridge.emitBridgeRecord({ logger: 'b', level: 'warn', message: 'to-the-good-receiver' });
+    const started = Date.now();
+    await bridge.flushBridgeRecords();
+    assert.ok(Date.now() - started < 1500, `the new provider's flush did not wait for the hung one (${Date.now() - started} ms)`);
+    assert.deepEqual(good.logs().map((r) => r.body), ['to-the-good-receiver']);
+    await helper.shutdown();
+    await hungFlush;
+  } finally {
+    hung.closeAllConnections();
+    await new Promise((resolve) => hung.close(resolve));
+    await good.close();
+  }
+});
+
+test('B10d final round: a flush failure is reported redacted, and read guarded — the flush never rejects', async () => {
+  const receiver = await logsSetup();
+  try {
+    const { loggerProvider } = testing.getProviders();
+    const original = loggerProvider.forceFlush;
+    loggerProvider.forceFlush = () => Promise.reject(new Error('export to https://user:hunter2@collector.example.com/v1/logs?token=abc failed'));
+    try {
+      await bridge.flushBridgeRecords();
+    } finally {
+      loggerProvider.forceFlush = original;
+    }
+    const report = JSON.stringify(records.filter((r) => r.line.includes('could not be flushed')));
+    assert.match(report, /collector\.example\.com/);
+    assert.doesNotMatch(report, /hunter2|token=abc/);
+    await helper.shutdown();
+  } finally {
+    await receiver.close();
+  }
+});
+
+test('B10d final round: a failure whose message cannot be read is reported by its type', async () => {
+  const receiver = await logsSetup();
+  try {
+    const { loggerProvider } = testing.getProviders();
+    const original = loggerProvider.forceFlush;
+    const unreadable = new Error('x');
+    Object.defineProperty(unreadable, 'message', { get() { throw new Error('secret-token'); } });
+    const numeric = new Error('y');
+    Object.defineProperty(numeric, 'message', { value: 42 });
+    loggerProvider.forceFlush = () => Promise.reject(unreadable);
+    try {
+      await bridge.flushBridgeRecords();
+      loggerProvider.forceFlush = () => Promise.reject(numeric);
+      await bridge.flushBridgeRecords();
+    } finally {
+      loggerProvider.forceFlush = original;
+    }
+    const report = JSON.stringify(records.filter((r) => r.line.includes('could not be flushed')));
+    assert.match(report, /object/);
+    assert.doesNotMatch(report, /secret-token/);
+    await helper.shutdown();
+  } finally {
+    await receiver.close();
+  }
+});

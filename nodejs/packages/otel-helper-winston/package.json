@@ -11,7 +11,9 @@
   },
   "keywords": [
     "opentelemetry",
-    "otel"
+    "otel",
+    "logging",
+    "winston"
   ],
   "type": "commonjs",
   "engines": {
@@ -45,9 +47,10 @@
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "check": "publint --strict . && attw --pack . --profile node16",
-    "test": "c8 --config ../../.c8rc.json node --test \"test/*.test.cjs\" \"test/*.test.mjs\""
+    "test": "c8 --config ../../.c8rc.json --lines 99 --branches 99 --functions 99 --statements 99 node --test \"test/*.test.cjs\" \"test/*.test.mjs\""
   },
   "peerDependencies": {
-    "@staffops/otel-helper": "0.3.0-dev.0"
+    "@staffops/otel-helper": "0.3.0-dev.0",
+    "winston": "^3.10.0"
   }
 }

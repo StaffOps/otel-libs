@@ -2334,6 +2334,70 @@ Unsupported instrumentation versions, task A10 (P18):
   debug line. A meter bind that throws restores the previous generation.
   `ci/api-range-install.sh` now proves that the installed `-sql` instruments
   the installed `pg`.
+- **Node.js pino destination and winston transport (Phase B, task B10d; not
+  released).** `@staffops/otel-helper-pino` exports
+  `createPinoDestination({name?, minimumLogLevel?})`, passed by the app to
+  `pino(options, destination)` or as one stream of `pino.multistream`;
+  `@staffops/otel-helper-winston` exports `OtelHelperTransport` (winston's
+  transport options plus `name`, `minimumLogLevel`). Both apply the per-record
+  rule of `createLogger` (design D6): the OpenTelemetry Logs API while the
+  helper's logs exporter is active, else one stdout JSON line of exactly the
+  core shape (`time`, `level`, `msg`, `logger`, the fields, `exception`) —
+  never both, and the app's other destinations/transports are never touched.
+  Levels: pino 10/20/30/40/50/60 and winston's npm, syslog and cli levels map
+  to TRACE 1, DEBUG 5, INFO 9, WARN 13, ERROR 17, FATAL 21 (custom levels by
+  their bucket); `severityText` is the source level name upper-cased; the
+  stdout `level` is one of DEBUG/INFO/WARN/ERROR (trace below debug, fatal
+  as ERROR, as Python); trace-level records are always dropped and the
+  helper's level (fixed, or the installed one, read per record) applies on
+  top of the library's own (R4, as Go `NewSlogHandler`). The pino
+  destination reads the serialized line (redaction, serializers and
+  formatters apply) plus pino's destination metadata (level, logger,
+  `messageKey`, `errorKey`); pino's `err` becomes the record exception (its
+  other keys, e.g. `statusCode`, stay a map under the error key), `level` and
+  `time` are not fields, nor `pid`/`hostname` when they are this process's.
+  `pino(createPinoDestination())` with one argument works (`writable: true`).
+  winston: `logger.error(err)`, `logger.error(msg, err)`, an `Error` field,
+  `format.errors({ stack: true })` output and the `handleExceptions` /
+  `handleRejections` info become the exception. Trace correlation: pino
+  writes inside the logging call (the active context); while the winston
+  transport is attached, the logger's `write` records each call's context
+  and time for the info object in a process-wide `WeakMap` (nothing is added
+  to the info; the logger's own `write` is restored when the last helper
+  transport is removed), so a record winston buffers under backpressure keeps
+  its caller's trace; an unstamped record (e.g. one written before the
+  transport was attached) is uncorrelated (root context), never on the span active at
+  delivery. A non-string message is a map body on OTel and its JSON text on
+  stdout. `logger.flush(cb)` (pino), `close()` and `logger.end()` (winston)
+  flush the logs pipeline; overlapping flushes are serialized and
+  `shutdown()` waits for them (sdk-logs 3.0 returns early from a flush that
+  overlaps another). `pino.transport({ target
+  })` is not supported (its default export throws saying so). No contrib
+  instrumentation is used. Peer dependencies: the core at the same version,
+  `pino` `^10.0.0` / `winston` `^3.10.0`; a missing library throws an error
+  naming it (contract D14 wording). The packages write through a new
+  **non-public** core subpath, `@staffops/otel-helper/internal/bridge`
+  (design D-JS6, 2026-11-02); the root `lint` script now builds the core
+  first (type-aware lint of packages that import it). Test-only
+  devDependencies `pino` ~10.4.0, `winston` ~3.19.0 (owner-approved list);
+  the OTLP path is asserted on records decoded from a local receiver
+  (`nodejs/test/otlp-logs.cjs`); package coverage gates at 99%;
+  `ci/api-range-install.sh` also installs the packed bridges next to their
+  peer floors, pino 10.0.0 and winston 3.10.0. Fix round 2026-11-03 (three
+  reviews, no BLOCKING): the winston backpressure trace misattribution and
+  the one-argument pino form (the two HIGHs above), plus the MEDIUM/LOW
+  items recorded in design D-JS6 and D-JS14 (rows of 2026-11-03). Fix round
+  2 (2026-11-03, re-reviews): the winston stamp moved off the info object
+  (it leaked into other transports' output and went stale on reused
+  objects), and bridge flushes are serialized with `shutdown()` waiting for
+  them; plus pino overhead (cached bound name, reviver and split only when
+  needed), the winston exception-handler shape (first-line body; no `date`,
+  `process`, `os`) and the LOW items in design D-JS6 "Fix round 2". Final
+  round (2026-11-03, re-reviews clean): the logger's `_transform` is wrapped
+  too, so a logger-level `format.errors()` keeps the call's trace; bridge
+  flushes are serialized per LoggerProvider (a new setup's flush never waits
+  behind an old, hung one; `shutdown()` waits only for its own provider's
+  pending flushes); flush failures are reported redacted.
 - **Go test hygiene:** `captureDiag` (`go/config_contract_test.go`) no longer
   prints slog timestamps, which made `TestDeprecatedEnvWarnsNamingReplacement`
   (`go/deprecation_test.go`) flaky.

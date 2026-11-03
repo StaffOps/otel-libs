@@ -230,6 +230,200 @@ keep exporting through the helper's provider when a **foreign global
 LoggerProvider** is registered; the two registration reports for logs say so
 (`OpenTelemetry Logs API callers use it, the helper's loggers (createLogger)
 still export through the helper's provider`). A logging call never throws.
+*Implemented 2026-11-02 (B10d, `-pino` and `-winston`):* **Record emission**:
+the packages write through `emitBridgeRecord()` / `recordEnabled()` of a new
+**non-public** core subpath, `@staffops/otel-helper/internal/bridge`
+(`src/bridge.ts`, CJS + ESM wrapper like the other entries; publint, attw and
+`ci/check-pack.mjs` pass), so the per-record rule, the level filter, the
+converter and the stdout shape are the core's own code (`src/internal/logging.ts`
+`write()`, shared with `emitRecord`), not a copy. The entry is documented as
+not part of the API and may change in any release; the packages peer-depend
+on the core at the same version, so the two always match. *Alternatives*:
+copying the rule (rejected: two stdout shapes to keep equal); a global-symbol
+hook on the shared state (rejected: a second, invisible contract); making
+`emitRecord` public (rejected by the owner ruling of 2026-11-02). *Reversal*:
+if a public extension point is wanted later, promote the entry's
+`emitBridgeRecord` under a public name and keep the subpath as an alias for
+one minor. The bridge extends the core with `trace` and `fatal`
+(`RecordLevel`: TRACE 1 / FATAL 21; stdout DEBUG / ERROR, as Python
+`_slog_level`), a source `severityText`, a record `time`, and a **leading**
+error (the record's own: the exception on both paths; `Error` attributes are
+then written as their stack text, and an attribute named `exception` is left
+out on stdout). `trace` ranks below every minimum, so trace records are always
+dropped (Go `NewSlogHandler` drops levels below Debug; Python drops levels
+below DEBUG by default — *wording corrected 2026-11-03*); the
+helper level (the option `minimumLogLevel`, else the installed one, per
+record) applies on top of the library's own level, as Go `NewSlogHandler`.
+**pino** (`createPinoDestination`): an object destination with
+`Symbol.for('pino.metadata')`; it parses the line pino serialized, so
+redaction, serializers, formatters and mixins apply (pino's metadata
+`lastObj` is the unredacted object, so it is never read), and takes from
+the metadata the numeric level, the logger's `messageKey`/`errorKey` (pino
+symbols) and its level label (`severityText`). Levels by bucket: ≥60 fatal,
+≥50 error, ≥40 warn, ≥30 info, ≥20 debug, else trace. The `name` field is the
+logger (else the option `name`, else `pino`); `level`, `time`, `pid`,
+`hostname` are not fields (the contrib pino bridge also drops `pid` and
+`hostname`); the record time is now (pino writes inside the call; its time
+formats vary, `unixTime` is seconds). An error-like object under the error key
+(`{type, message, stack}` from pino's serializer) is rebuilt as the leading
+error, its stack kept. A line that is not a JSON object becomes the body.
+**winston** (`OtelHelperTransport`): extends `winston.Transport`, loaded
+when the module loads (a missing winston makes the constructor throw);
+`log()` writes then calls `next()` synchronously. Level by name against the
+anchors the logger's `levels` define (`error`, `warn`/`warning`, `info`,
+`debug`): more severe than `error` fatal (syslog `emerg`/`alert`/`crit`),
+then the first anchor at or above it, below `debug` trace (npm `silly`, cli
+`prompt`/`verbose`/`input`/`silly`; npm `http`/`verbose` are debug); no
+levels or an unknown name: by name, else info. The raw level is read from
+`Symbol.for('level')`, so `format.colorize()` does not change it. The info
+itself when it is an `Error` (`logger.error(err)`), else the first `Error` of
+the splat (`logger.error(msg, err)`, whose copied `stack` field is then left
+out), is the leading error; other fields are read by the core through
+getters, so a throwing accessor becomes `[unreadable accessor]`. **Contrib
+instrumentations: not used** (amends the Choice above, 2026-11-02): the
+destination and the transport are called inside the logging call, so the
+active context already gives trace correlation, and the contrib injection
+writes `trace_id`/`span_id`/`trace_flags` into every record, which would add
+fields to the stdout line (the core line has no trace ids, as Python) and
+would need `setup({ instrumentations })` (B10a). ~~*Trade-off*: a winston
+logger under backpressure from a slower transport buffers the record and
+delivers it later, without the caller's context (D-JS14 row of 2026-11-02).~~
+*Corrected 2026-11-03 (B10d fix round, HIGH-1): that trade-off was wrong in
+kind — a buffered record was written with the context active **at
+delivery**, which is another span's (both reviewers reproduced records on
+the wrong trace, and a record logged outside any span landing in a span).
+Fixed without contrib: see the fix-round note below.* *Reversal*: add
+`@opentelemetry/instrumentation-winston` injection
+(`disableLogSending: true`) and read its fields as the record context,
+removing them from the attributes. **Missing library**: `createPinoDestination()`
+/ `new OtelHelperTransport()` throw `<package> is installed but the library
+'<lib>' is not. Install it (e.g. npm install <lib>)` for a `MODULE_NOT_FOUND`
+of the library itself, else `<package>: failed to load <lib>: <error>`
+(contract D14 wording). Peer ranges `pino` `^10.0.0`, `winston` `^3.10.0`
+(tested with 10.4 and 3.19). The root `lint` script builds the core first:
+type-aware lint of a package that imports the core needs its declarations.
+*Fix round 2026-11-03 (B10d; reviews: observability, dev, code-review — no
+BLOCKING, 3 HIGH):* **winston context (HIGH-1)**: on the transport's `'pipe'`
+event (winston-transport `modern.js` sets `this.parent` there) the transport
+wraps that logger's `write` once (marker `Symbol.for('@staffops/otel-helper-winston.wrapped')`)
+and stamps each info with the context active at the call and the call time,
+under a private, enumerable symbol (so winston's child loggers,
+`format.errors()` and transport formats, which `Object.assign` the info,
+carry it). `BridgeRecord` gained `context` (passed to `emit({ context })`);
+the transport passes the stamp's context, else **`ROOT_CONTEXT`** (an
+unstamped record — the transport used outside a logger ~~, winston's exception
+handlers~~ — is uncorrelated, never on the span active at delivery; *corrected
+2026-11-03, fix round 2: winston's exception handler logs through
+`logger.log`, so its records are stamped; test "probe-q3"*), and the
+stamp's time as the record time (`BridgeRecord.time` is used for this). The
+bridge entry also exports `activeContext()` and `ROOT_CONTEXT`, so the
+packages do not depend on `@opentelemetry/api`. Regression test: two
+concurrent spans and a slow transport (`highWaterMark: 1`), zero
+misattributed records, one record outside a span with no trace ids; against
+the old code it fails (records of span B on another trace). **pino one
+argument (HIGH-2)**: the destination has `writable: true`, which
+`pino(destination)` needs to treat it as the stream (pino `lib/tools.js`).
+**Bodies**: a non-string message is converted by the core's attribute
+converter — an AnyValue map (or array, number…) body on OTel, its JSON text as
+the stdout `msg`; no message: no OTel body and `msg` `""` (createLogger
+keeps its string message). **pino**: `messageKey`/`errorKey` are found on
+`lastLogger` by their symbols' descriptions (`pino.messageKey`,
+`pino.errorKey`) up the prototype chain, so another pino copy works; the
+logger name is `lastLogger.bindings().name` (guarded), a per-call `name`
+that differs stays a field; `pid`/`hostname` are dropped only when they are
+this process's pid and `os.hostname()` (pino's default `base`); the serialized
+error's other keys (`statusCode`, `details`, `code`…, i.e. minus
+`type`/`message`/`stack`/`name`) stay a map under the error key; the
+exception type is a string `name` before `type` (the SDK's `exception.type`
+is still the `code` when there is one, core rule); pino's `message` and
+`stack` already include the causes (pino-std-serializers). Integers past
+`Number.MAX_SAFE_INTEGER` keep their digits as text (`JSON.parse` reviver
+with source text, present on the 22.15.0 floor); a chunk with several lines
+is one record per line (each line's own level; one line: pino's metadata
+level); `flush(cb)` (`logger.flush(cb)`) calls the LoggerProvider's
+`forceFlush` first (`flushBridgeRecords()`, never rejects, reports a failure
+once); the default export throws "pino.transport({ target }) is not
+supported … pass createPinoDestination() to pino() instead" (a worker thread
+has no helper setup). **winston**: winston's exception-handler shape
+(`info.exception === true && info.error` an Error, from `getAllInfo`) makes
+`info.error` the leading error and leaves out `error`, `exception`, `trace`
+and the copied `stack`; when no Error is found and `info.stack` is a string
+whose first line is `<Name>: <message>` (`format.errors({ stack: true })`
+flattened the Error), the error is rebuilt from it and `stack` left out;
+`'logged'` is emitted with `setImmediate` before `next()`; `close()` and
+`_final()` (before `'finish'`, `logger.end()`) flush the logs pipeline.
+**D14**: another load failure keeps only the error message's first line (the
+rest is a require stack of local paths), the original as `cause` (as B10a).
+**Peer floors**: `ci/api-range-install.sh` installs pino 10.0.0 and winston
+3.10.0 next to the packed bridges and writes one record through each; both
+package suites also passed against those floors (27/27, 23/23), so the ranges
+stay. **Core**: with a leading error an `exception` attribute is left out on
+the OTel path too (as on stdout); the bridge symbols carry `@internal`.
+*Fix round 2, 2026-11-03 (re-reviews: no BLOCKING; code-review and dev 2 new
+HIGH each):* **winston stamp (HIGH-1)** — the enumerable-symbol stamp above
+is replaced (it leaked into other transports' output, e.g. `prettyPrint`, and
+went stale on a reused object): the stamp lives in a `WeakMap` keyed by the
+info object, in a process-wide registry (`Symbol.for('@staffops/otel-helper-winston.registry.v1')`,
+non-enumerable on `globalThis`) shared by every installed copy of the
+package; nothing is added to the info and no Context sits in an enumerable
+property. Every call of the wrapped `logger.write` sets the stamp, replacing
+an older one (a reused Error or info gets the current call's context and
+time; no re-entrancy flag is needed: winston's child loggers call the
+parent's wrapped `write` once, and a nested call is a real call). The
+transport overrides `_write` (and `_writev`, chunk by chunk) to look the
+incoming info up **before** winston-transport's format copy
+(`Object.assign({}, info)`, `modern.js`), so a transport's own format keeps
+correlation; a logger-level format that returns a new object
+(`format.errors()` for an Error) leaves the record unstamped:
+`ROOT_CONTEXT` (D-JS14 row of 2026-11-03). Only a winston logger source
+(`typeof src.add === 'function'`) is wrapped; attachments are counted per
+logger across transports and copies (`'pipe'` / `'unpipe'`), and the last
+detach restores the logger's own `write` (deleting the own property, or
+putting back an own `write` the logger had), unless something wrapped it
+since. **Overlapping flushes (HIGH-2)**: sdk-logs 3.0
+`BatchLogRecordProcessorBase._flushAll` returns at once while another flush
+runs (`if (this._flushing) return`), so a concurrent `forceFlush()` — and a
+`shutdown()` during a flush — resolved without exporting what it was asked
+to. `flushBridgeRecords()` moved to `setup.ts` and is serialized (one in
+flight; requests meanwhile share one queued follow-up `forceFlush`), and
+`shutdown()` waits for any in-flight or queued bridge flush before shutting
+the LoggerProvider down (D-JS14 row of 2026-11-03; an upstream issue is to
+be filed). **pino overhead**: the bound name is cached per logger, keyed by
+its serialized bindings (pino's `chindings` symbol, found by description),
+so `setBindings` invalidates it; the big-integer reviver runs only when the
+line has 16+ consecutive digits; the split runs only for a chunk with an
+inner newline; pino's own single-line write is level-checked from the
+metadata before parsing. **winston exception-handler shape**: the body is
+the message's first line; `date`, `process` (its `argv` can carry secrets)
+and `os` are left out too. **Stack rebuild**: only a stack with at least one
+`\n    at ` frame; heads `Name`, `Name: message`, `Name [CODE]: message`
+(Node's coded errors); a bare `Name` takes its message from `info.message`;
+the info's `code` (else the bracketed code) is the error's `code`, the SDK's
+`exception.type`, as for a live Error. **Core**: `emitRecord` checks the level
+before converting the message. **pino ESM types**: `esm/index.d.mts`
+declares the default export itself (a re-export of a CommonJS default would
+type the whole `module.exports`).
+*Final round, 2026-11-03 (re-reviews: no BLOCKING, no HIGH):* **winston
+`_transform`**: while attached, the logger's `_transform` is wrapped too: it
+looks up the incoming info's stamp and, for that call only, wraps `push` so
+an object the logger's format returns instead (`format.errors()` for an
+Error) gets the same stamp when it has none; `detach()` restores `write` and
+`_transform` (and `push` is put back after every call, an own `push`
+included). A sync and a buffered logger-level `format.errors()` in span S
+are both on trace S (the D-JS14 row is narrowed to the reused-object case).
+The stamp is the call's Context and a Date only; the `WeakMap` keeps it while
+the app keeps the info object reachable. **Flushes per provider**:
+`flushBridgeRecords()` serializes per LoggerProvider (`Map<LoggerProvider,
+{current, queued}>`), so a flush for a new setup's provider does not queue
+behind an older provider's hung flush, and `shutdown()` waits only for the
+flushes of the provider it shuts down that were pending when it was called
+(the queued one, else the current one — no waiting loop, no starvation).
+Test: a hung receiver, `shutdown(500)` (times out), `setup()` against a good
+receiver, a flush resolves in well under a second and `shutdown()` resolves.
+A flush failure's reason is read guarded (a throwing `message` getter gives
+the type) and redacted (`redactErrorText`); the flush never rejects.
+**`'logged'`** is emitted for every record winston hands the transport,
+including one the helper level then drops.
 
 ### D-JS7 — Instrumentation and health (D5)
 **Choice**: core registers `instrumentation-http`, `-undici`, `-grpc`,
@@ -688,3 +882,17 @@ worker that exits before reporting fails it too (B9b fix round, 2026-11-02).*
 | mysql2 `query(sql, values)` with **no callback** (the event-emitter form with values): instrumentation-mysql2 0.70 wraps only the one-argument emitter form and the callback forms, so this call's span is never ended or exported (`dist/instrumentation.cjs` `_patchQuery`) (dev L2, 2026-11-03) | recorded; upstream issue to be filed by the owner; the promise API and callbacks are unaffected |
 | instrumentation-pg 0.77 has `@types/pg` and `@types/pg-pool` as **runtime** dependencies, so installing `-sql` adds them to the app's tree (code-review L10, 2026-11-03) | recorded; B12 CONSUMING item |
 | Opt-in instrumentations are matched **by name** (M2, 2026-11-03): two for one library (`instrumentationName`, plus a composite's `coveredInstrumentations`) or one the core installs itself (`@opentelemetry/instrumentation-{http,undici,express,grpc}`) make `setup()` throw a TypeError — a raw `MySQL2Instrumentation` next to `sqlInstrumentation()` would patch twice and drop the statement mask. The same object twice is still enabled once. Every opt-in object of a call that does not enable it is turned off: a rollback at any step, an inactive copy, another API version's registry, `OTEL_SDK_DISABLED=true`, and a `setup()` while one is active (those not used by the active setup; named in its report) (M3) | recorded; core `test/opt-in.test.cjs` |
+| Log bridges, stdout `level` of a level outside DEBUG/INFO/WARN/ERROR (pino `trace`/`fatal`, winston `emerg`, `silly`…): Node writes `DEBUG` below info and `ERROR` above error, as Python `_slog_level` (`CRITICAL` → `ERROR`); Go `NewSlogHandler` writes slog's offset text (`DEBUG-4`, `ERROR+4`) (B10d, 2026-11-02) | recorded; Python behavior. Unit-tested in `otel-helper-pino/test/pino.test.cjs` and `otel-helper-winston/test/winston.test.cjs` |
+| Log bridges, OTel `severityText`: the source level name upper-cased (`INFO`, `HTTP`, `NOTICE`, `EMERG`, a pino custom label); Python writes the stdlib `levelname` (`WARNING`, `CRITICAL`), Go otelslog slog's text. All three carry the source's own text; the texts differ because the sources do. `severityNumber` is the bucket (TRACE 1, DEBUG 5, INFO 9, WARN 13, ERROR 17, FATAL 21) (B10d, 2026-11-02). *Added 2026-11-03 (fix round 2): every level of a range gets the range's lowest number (winston `http` and `verbose` are both DEBUG 5, syslog `emerg`/`alert`/`crit` all FATAL 21, a pino custom 35 is INFO 9), so the ordering within a range is not kept in `severityNumber`; `severityText` keeps the name. Go otelslog maps slog's offsets inside a range (`DEBUG+1` → DEBUG2); the Python mapping inside a range not checked* | recorded; asserted on decoded OTLP records in both suites |
+| pino destination: `level`, `time`, `pid`, `hostname` of pino's line are not record fields, and the record time is the write time, not pino's `time` (B10d, 2026-11-02). *Corrected 2026-11-03 (fix round): `pid`/`hostname` are left out only when they equal this process's pid and `os.hostname()` (pino's default `base`); other values stay fields* | recorded; Node-only (Go and Python have no pino). Unit-tested |
+| winston transport, trace correlation: from the active context when winston calls the transport — inside the logging call, except when a slower transport of the same logger applies backpressure (winston buffers the record and delivers it later, uncorrelated). Go correlates only through the context-taking slog calls; Python always at handler time (B10d, 2026-11-02). *Corrected 2026-11-03 (fix round, HIGH-1): "uncorrelated" was wrong — a buffered record took the context active at delivery, i.e. another span's. Now the transport stamps each record with its call's context and time (wrapped `logger.write`, D-JS6 fix-round note); a record without a stamp (the transport used outside a logger, winston's exception handlers) is written with `ROOT_CONTEXT`, uncorrelated. Buffered records keep their call's trace and call time*. *Corrected 2026-11-03 (fix round 2): winston's exception handlers log through `logger.log`, so their records are stamped too; the stamp now lives in a process-wide `WeakMap` (nothing added to the info, D-JS6 "Fix round 2")* | recorded; regression test "HIGH-1" in `otel-helper-winston/test/winston.test.cjs` (two concurrent spans, slow transport, zero misattribution) |
+| Log bridges, non-string message: the body is the converted value — an OTLP map (or array, number…) on the OTel path, its JSON text as the stdout `msg` (winston `logger.info({a: 1})` makes the object the message; pino `{msg: {…}}`). No message: no OTel body, stdout `msg` `""`. Python's stdlib `logging` renders a non-string message with `str()` (`{'a': 1}`); Go slog messages are always strings, no equivalent; `createLogger` keeps its string message (B10d fix round, 2026-11-03) | recorded; unit-tested in both suites and `test/logging.test.cjs` |
+| pino serialized error extras: the keys of pino's serialized `err` other than `type`, `message`, `stack`, `name` (`statusCode`, `details`, `code`, custom properties) stay one **map attribute under the logger's error key** (`err` by default), next to the record exception; none: no such field. The exception type is a string `name` before pino's `type`; pino's `message` and `stack` already contain the causes. Go/Python have no pino; their Error attributes keep no extra properties (B10d fix round, 2026-11-03) | recorded; unit-tested |
+| winston `format.errors({ stack: true })` (logger level) flattens the Error before the transport: when no Error is found and `info.stack` is a string whose first line is `<Name>: <message>`, the transport rebuilds the record exception from it (name, message, stack) and leaves out `stack`. A transport-level format copies the info with `Object.assign` (own enumerable keys only), so `logger.error(err)` reaches such a transport without the Error's message and stack — winston behavior, not fixable in the transport (B10d fix round, 2026-11-03). *Updated 2026-11-03 (final round; the rule changed in fix round 2): the rebuild needs a real stack (a head line and at least one `\n    at ` frame); the head is `Name`, `Name: message` or `Name [CODE]: message`; a bare `Name` takes its message from `info.message`; the info's `code` (else the bracketed code) is the error's `code`, so `exception.type` is the code, as for a live Error; and since the final round the object `format.errors()` returns keeps the call's trace (logger `_transform` wrapped)* | recorded; unit-tested; HOW-TO item for B12 |
+| pino `pino.multistream([{ stream: createPinoDestination() }, { stream: process.stdout }])`: before `setup()` (or without a logs exporter) both streams write stdout, so each record appears twice. Do not combine the destination with `process.stdout`; no option (B10d fix round, 2026-11-03) | recorded; HOW-TO item for B12 |
+| pino integers past `Number.MAX_SAFE_INTEGER` (pino serializes BigInt as digits) keep their digits as **text** on both paths (`JSON.parse` reviver with source text, available on the 22.15.0 floor); Go and Python keep integers exact (B10d fix round, 2026-11-03) | recorded; unit-tested |
+| Log bridges, record time: pino records take the write time (synchronous); winston records take the **call** time from the transport's stamp, also when buffered; an unstamped winston record the delivery time. `format.timestamp()` leaves its own `timestamp` field (a string attribute) next to the record time (B10d fix round, 2026-11-03) | recorded; unit-tested (call-order times under backpressure) |
+| sdk-logs 3.0 `BatchLogRecordProcessorBase._flushAll` returns at once while another flush runs (`if (this._flushing) return`): a concurrent `forceFlush()` resolves before its records are exported, and a `shutdown()` during a flush shuts the exporter down with records still buffered. The helper serializes the bridges' flushes (`flushBridgeRecords`, one in flight plus one shared follow-up) and `shutdown()` waits for them first; an app calling `LoggerProvider.forceFlush()` itself concurrently is not covered. Go and Python not checked for the same early return (B10d fix round 2, 2026-11-03). *Amended 2026-11-03 (final round): serialized **per LoggerProvider** — a flush for a new setup's provider never queues behind an older (perhaps hung) provider's, and `shutdown()` waits only for the flushes of the provider it shuts down that were pending when it was called (no waiting loop); a flush failure is reported redacted (`redactErrorText`), read guarded* | recorded; tests "HIGH-2" in `test/logging.test.cjs`. **Upstream issue to file** (opentelemetry-js, sdk-logs `_flushAll` early return); re-check on SDK bumps (B13) |
+| winston: ~~a logger-level format that returns a **new** info object (e.g. `format.errors()` for an Error, a custom format building a fresh object) leaves the record without its call stamp, so it is written with `ROOT_CONTEXT` (uncorrelated) and the delivery time.~~ The same holds for a reused info or Error that winston buffers twice before delivering it: the later call's stamp replaces the earlier. A transport-level format is fine: the transport finds the stamp before winston-transport copies the info (B10d fix round 2, 2026-11-03). *Narrowed 2026-11-03 (final round): the logger's `_transform` is wrapped too, so the object a logger-level format returns gets the incoming info's stamp (sync and buffered `format.errors()` tested on span S); what remains is the **reused-object** case (a reused info or Error buffered twice gets the later call's context and time). Corner cases not covered: an object replaced outside the logger's `_transform` (a custom stream piped between the logger and the transport, or a record written before the transport was attached — uncorrelated, root context); another transport's own format only changes that transport's copy* | recorded; tested ("our transport's own format keeps correlation; a logger-level format that replaces the info keeps it too", "final round: logger-level format.errors() in span S") |
+| winston `handleExceptions` / `handleRejections` records (`getAllInfo`): the error is the record exception; the body is the first line of winston's message (`uncaughtException: <msg>`); `error`, `exception`, `trace`, the copied `stack`, `date`, `process` (its `argv` can carry secrets) and `os` are not fields. winston-specific; nothing to compare in Go or Python (B10d fix round 2, 2026-11-03) | recorded; tested through `getAllInfo` and `_uncaughtException` |
+| pino destination: a chunk with inner newlines is one record per line, so a **direct** write of non-JSON text containing newlines (not pino's own output) becomes several records, each with the text of its line as the body (B10d fix round 2, 2026-11-03) | recorded; unit-tested |

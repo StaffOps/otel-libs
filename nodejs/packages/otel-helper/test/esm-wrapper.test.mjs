@@ -8,8 +8,8 @@ const require = createRequire(import.meta.url);
 const pkg = require('../package.json');
 const subpaths = Object.keys(pkg.exports).filter((p) => p !== './package.json');
 
-test('exports lists the four entry points', () => {
-  assert.deepEqual(subpaths.sort(), ['.', './hooks', './register', './testing']);
+test('exports lists the four entry points and the internal bridge entry (B10d, not public API)', () => {
+  assert.deepEqual(subpaths.sort(), ['.', './hooks', './internal/bridge', './register', './testing']);
 });
 
 for (const sub of subpaths) {

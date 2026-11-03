@@ -6,6 +6,9 @@
 # app's own @grpc/grpc-js, check the tree is valid, that the packages which
 # must be shared have exactly one copy (`npm ls` exits 0 with duplicates, so
 # paths are counted), and that both `require` and `import` load the core.
+# The -pino and -winston packages (B10d fix round, 2026-11-03) are installed
+# next to their peer floors, pino 10.0.0 and winston 3.10.0, and must write a
+# record through the library at that floor.
 # Needs the npm registry; NODE_TESTS_OFFLINE=1 skips it. Run from nodejs/
 # after `npm ci && npm run build`:
 #   sh ci/api-range-install.sh
@@ -24,11 +27,13 @@ echo "api peer range: $range -> newest admitted: $newest"
 
 dir="$(mktemp -d)"
 trap 'rm -rf "$dir"' EXIT
-npm pack ./packages/otel-helper ./packages/otel-helper-sql --pack-destination "$dir" --loglevel=error >/dev/null
+npm pack ./packages/otel-helper ./packages/otel-helper-sql ./packages/otel-helper-pino ./packages/otel-helper-winston \
+  --pack-destination "$dir" --loglevel=error >/dev/null
 cd "$dir"
 printf '{ "name": "api-range-consumer", "private": true }\n' > package.json
 npm install --ignore-scripts --no-audit --no-fund --loglevel=error ./staffops-otel-helper-[0-9]*.tgz ./staffops-otel-helper-sql-*.tgz \
-  "@opentelemetry/api@$newest" "@grpc/grpc-js@^1.14.5" "pg@^8"
+  ./staffops-otel-helper-pino-*.tgz ./staffops-otel-helper-winston-*.tgz \
+  "@opentelemetry/api@$newest" "@grpc/grpc-js@^1.14.5" "pg@^8" "pino@10.0.0" "winston@3.10.0"
 npm ls --all >/dev/null
 # The api package does not export ./package.json; read the installed file.
 installed="$(node -p "JSON.parse(require('fs').readFileSync('node_modules/@opentelemetry/api/package.json', 'utf8')).version")"
@@ -59,4 +64,17 @@ OTEL_HELPER_METRICS_PORT=0 node -e "
   shutdown().then(() => console.log('-sql instruments pg: OK'));
 "
 node --input-type=module -e "import { sqlInstrumentation } from '@staffops/otel-helper-sql'; if (typeof sqlInstrumentation !== 'function') process.exit(1)"
+# The log bridges at their peer floors write one stdout line each (no setup: the stdout fallback).
+lines="$(node -e "
+  const v = (p) => require(p + '/package.json').version;
+  if (v('pino') !== '10.0.0' || v('winston') !== '3.10.0') { console.error('FAIL: floors not installed', v('pino'), v('winston')); process.exit(1); }
+  require('pino')(require('@staffops/otel-helper-pino').createPinoDestination()).info('pino-floor');
+  const winston = require('winston');
+  const { OtelHelperTransport } = require('@staffops/otel-helper-winston');
+  winston.createLogger({ transports: [new OtelHelperTransport()] }).info('winston-floor');
+")"
+echo "$lines" | grep -q '"msg":"pino-floor","logger":"pino"' || { echo "FAIL: -pino at pino 10.0.0: $lines"; exit 1; }
+echo "$lines" | grep -q '"msg":"winston-floor","logger":"winston"' || { echo "FAIL: -winston at winston 3.10.0: $lines"; exit 1; }
+echo "-pino at pino 10.0.0, -winston at winston 3.10.0: OK"
+node --input-type=module -e "import { createPinoDestination } from '@staffops/otel-helper-pino'; import { OtelHelperTransport } from '@staffops/otel-helper-winston'; if (typeof createPinoDestination !== 'function' || typeof OtelHelperTransport !== 'function') process.exit(1)"
 echo "api-range install test: OK (workspace $ws)"

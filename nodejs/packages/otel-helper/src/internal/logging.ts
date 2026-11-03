@@ -15,7 +15,7 @@
  * `exception` for the first `Error`-valued attribute. No trace ids (as
  * Python). Both paths drop records below the level (R4).
  */
-import { SeverityNumber, type AnyValue, type Attributes } from '@opentelemetry/api';
+import { SeverityNumber, type AnyValue, type Attributes, type Context } from '@opentelemetry/api';
 import { reportOnce, truncateValue } from './diagnostics';
 import { typeName } from './env';
 import { LOG_LEVELS, type LogLevel } from './log-level';
@@ -45,12 +45,35 @@ export interface Logger {
   error(message: string, attributes?: LogAttributes): void;
 }
 
-const SEVERITY: Readonly<Record<LogLevel, { readonly number: SeverityNumber; readonly text: string }>> = {
-  debug: { number: SeverityNumber.DEBUG, text: 'DEBUG' },
-  info: { number: SeverityNumber.INFO, text: 'INFO' },
-  warn: { number: SeverityNumber.WARN, text: 'WARN' },
-  error: { number: SeverityNumber.ERROR, text: 'ERROR' },
+/**
+ * Level of a record written through the helper: the logger's four levels plus
+ * `trace` (below `debug`) and `fatal` (above `error`), which the pino and
+ * winston packages receive (B10d). `trace` is below every minimum level, so it
+ * is always dropped (Go `NewSlogHandler` drops levels below Debug; Python
+ * drops levels below DEBUG by default); `fatal` always passes.
+ */
+export type RecordLevel = 'trace' | LogLevel | 'fatal';
+
+interface Severity {
+  readonly number: SeverityNumber;
+  readonly text: string;
+  /** The level written on the stdout line (Python `_slog_level`: below INFO DEBUG, CRITICAL ERROR). */
+  readonly stdout: LogLevel;
+  /** Position against {@link LOG_LEVELS}. */
+  readonly rank: number;
+}
+
+const SEVERITY: Readonly<Record<RecordLevel, Severity>> = {
+  trace: { number: SeverityNumber.TRACE, text: 'TRACE', stdout: 'debug', rank: -1 },
+  debug: { number: SeverityNumber.DEBUG, text: 'DEBUG', stdout: 'debug', rank: 0 },
+  info: { number: SeverityNumber.INFO, text: 'INFO', stdout: 'info', rank: 1 },
+  warn: { number: SeverityNumber.WARN, text: 'WARN', stdout: 'warn', rank: 2 },
+  error: { number: SeverityNumber.ERROR, text: 'ERROR', stdout: 'error', rank: 3 },
+  fatal: { number: SeverityNumber.FATAL, text: 'FATAL', stdout: 'error', rank: 4 },
 };
+
+/** The stdout `level` text of each logger level. */
+const STDOUT_TEXT: Readonly<Record<LogLevel, string>> = { debug: 'DEBUG', info: 'INFO', warn: 'WARN', error: 'ERROR' };
 
 /** Keys of the stdout line that record attributes cannot replace (Python: skipped). */
 const RESERVED = new Set(['time', 'level', 'msg', 'logger']);
@@ -83,8 +106,73 @@ export function createLogger(options: LoggerOptions): Logger {
   return Object.freeze({ name, debug: log('debug'), info: log('info'), warn: log('warn'), error: log('error') });
 }
 
-function enabled(min: LogLevel, level: LogLevel): boolean {
-  return LOG_LEVELS.indexOf(level) >= LOG_LEVELS.indexOf(min);
+function enabled(min: LogLevel, level: RecordLevel): boolean {
+  return SEVERITY[level].rank >= LOG_LEVELS.indexOf(min);
+}
+
+/**
+ * Whether a record at `level` would be written now: `minimum` is a fixed
+ * level, `undefined` = the installed one (read per call, as the record is).
+ * Lets a bridge skip building a record that would be dropped.
+ *
+ * @internal For `@staffops/otel-helper-pino` / `-winston` only (B10d).
+ */
+export function recordEnabled(minimum: LogLevel | undefined, level: RecordLevel): boolean {
+  return enabled(minimum ?? logDestination().level, level);
+}
+
+/**
+ * One record handed to {@link emitBridgeRecord} by the pino and winston packages (B10d).
+ *
+ * @internal Not public API: may change in any release.
+ */
+export interface BridgeRecord {
+  /** Logger name: the stdout `logger` field and the instrumentation scope. */
+  readonly logger: string;
+  /** Fixed minimum level; `undefined` = the installed one. */
+  readonly minimum?: LogLevel | undefined;
+  readonly level: RecordLevel;
+  /** OTel `severityText` (the source's level name); default the level's own text. */
+  readonly severityText?: string | undefined;
+  /**
+   * The body. A string as it is; `undefined`: no OTel body and `msg` `""` on
+   * stdout; anything else through the attribute converter — an OTel AnyValue
+   * (a map for an object) and its JSON text as the stdout `msg` (fix round
+   * 2026-11-03).
+   */
+  readonly message: unknown;
+  readonly attributes?: LogAttributes | null | undefined;
+  /**
+   * The record's own error, ahead of the attributes: it is the `exception`
+   * (stdout) and the record exception (OTel); `Error` attributes are then
+   * written as their stack text under their own key, and an attribute named
+   * `exception` is left out on both paths.
+   */
+  readonly error?: Error | undefined;
+  /** Record time (stdout `time`, OTel timestamp): the logging call's, when the bridge captured it; default now. */
+  readonly time?: Date | undefined;
+  /**
+   * The logging call's context (trace correlation). `undefined`: the context
+   * active when the record is written (pino writes inside the call); a bridge
+   * that may deliver later passes the captured one, else `ROOT_CONTEXT`.
+   */
+  readonly context?: Context | undefined;
+}
+
+/**
+ * Writes one bridged record by the per-record rule of {@link emitRecord}
+ * (D6): the active setup's Logs API while it has a logs exporter, else one
+ * stdout JSON line of the core shape. Never throws.
+ *
+ * @internal For `@staffops/otel-helper-pino` / `-winston` only (B10d).
+ */
+export function emitBridgeRecord(record: BridgeRecord): void {
+  try {
+    const { logger, minimum, level, severityText, message, attributes, error, time, context } = record;
+    write(logger, minimum, level, severityText, bridgeBody(message), attributes, error, time, context);
+  } catch (err) {
+    reportEmitFailed(err);
+  }
 }
 
 /**
@@ -94,38 +182,77 @@ function enabled(min: LogLevel, level: LogLevel): boolean {
  */
 export function emitRecord(name: string, fixed: LogLevel | undefined, level: LogLevel, message: unknown, attributes?: LogAttributes | null): void {
   try {
-    const destination = logDestination();
-    if (!enabled(fixed ?? destination.level, level)) return;
+    // The level first: a dropped record's message is never converted (fix round 2, 2026-11-03).
+    if (!recordEnabled(fixed, level)) return;
     const text = typeof message === 'string' ? message : safeText(message);
-    if (destination.provider !== undefined) {
-      const { attrs, exception } = otelAttributes(attributes);
-      let plain: ReturnType<typeof plainException> | undefined;
-      try {
-        plain = exception === undefined ? undefined : plainException(exception);
-      } catch {
-        // Unreachable in practice (plainException reads through read()); stdout keeps the record.
-        process.stdout.write(`${stdoutLine(name, level, text, attributes, new Date())}\n`);
-        return;
-      }
-      const severity = SEVERITY[level];
-      destination.provider.getLogger(name).emit({
-        severityNumber: severity.number,
-        severityText: severity.text,
-        body: text,
-        attributes: attrs,
-        ...(plain === undefined ? {} : { exception: plain }),
-      });
+    write(name, fixed, level, undefined, { stdout: text, otel: text }, attributes, undefined, undefined, undefined);
+  } catch (err) {
+    reportEmitFailed(err);
+  }
+}
+
+/** A record body: the stdout `msg` text and the OTel body (`undefined` = none). */
+interface Body {
+  readonly stdout: string;
+  /** `AnyValue` admits `undefined`: no body. */
+  readonly otel: AnyValue;
+}
+
+/** The body of a bridged record (see {@link BridgeRecord.message}). */
+function bridgeBody(message: unknown): Body {
+  if (typeof message === 'string') return { stdout: message, otel: message };
+  if (message === undefined) return { stdout: '', otel: undefined };
+  const json = jsonValue(message);
+  return { stdout: typeof json === 'string' ? json : JSON.stringify(json), otel: otelValue(message) };
+}
+
+function write(
+  name: string,
+  fixed: LogLevel | undefined,
+  level: RecordLevel,
+  severityText: string | undefined,
+  body: Body,
+  attributes: LogAttributes | null | undefined,
+  leading: Error | undefined,
+  time: Date | undefined,
+  context: Context | undefined,
+): void {
+  const destination = logDestination();
+  if (!enabled(fixed ?? destination.level, level)) return;
+  const severity = SEVERITY[level];
+  if (destination.provider !== undefined) {
+    const { attrs, exception } = otelAttributes(attributes, leading);
+    let plain: ReturnType<typeof plainException> | undefined;
+    try {
+      plain = exception === undefined ? undefined : plainException(exception);
+    } catch {
+      // Unreachable in practice (plainException reads through read()); stdout keeps the record.
+      process.stdout.write(`${stdoutLine(name, severity.stdout, body.stdout, attributes, time ?? new Date(), leading)}\n`);
       return;
     }
-    process.stdout.write(`${stdoutLine(name, level, text, attributes, new Date())}\n`);
-  } catch (err) {
-    // Never into the caller: an attribute object that cannot even be listed (a
-    // Proxy whose ownKeys trap throws), an SDK error, a synchronous write error.
-    // Reported once with the reason only (R8: never the values).
-    reportOnce('logging:emit-failed', 'a helper log record could not be written and was dropped', {
-      reason: truncateValue(errorReason(err)),
+    destination.provider.getLogger(name).emit({
+      severityNumber: severity.number,
+      severityText: severityText ?? severity.text,
+      ...(body.otel === undefined ? {} : { body: body.otel }),
+      attributes: attrs,
+      ...(time === undefined ? {} : { timestamp: time }),
+      ...(plain === undefined ? {} : { exception: plain }),
+      ...(context === undefined ? {} : { context }),
     });
+    return;
   }
+  process.stdout.write(`${stdoutLine(name, severity.stdout, body.stdout, attributes, time ?? new Date(), leading)}\n`);
+}
+
+/**
+ * Never into the caller: an attribute object that cannot even be listed (a
+ * Proxy whose ownKeys trap throws), an SDK error, a synchronous write error.
+ * Reported once with the reason only (R8: never the values).
+ */
+function reportEmitFailed(err: unknown): void {
+  reportOnce('logging:emit-failed', 'a helper log record could not be written and was dropped', {
+    reason: truncateValue(errorReason(err)),
+  });
 }
 
 /** `typeName(value)`, `object` when even that throws (`Array.isArray` of a revoked Proxy). */
@@ -347,15 +474,23 @@ function jsonValue(value: unknown): unknown {
 }
 
 /** The stdout JSON line of one record (design D6 "Stdout fallback shape"). */
-export function stdoutLine(name: string, level: LogLevel, message: string, attributes: LogAttributes | null | undefined, now: Date): string {
+export function stdoutLine(
+  name: string,
+  level: LogLevel,
+  message: string,
+  attributes: LogAttributes | null | undefined,
+  now: Date,
+  leading?: Error,
+): string {
   // `define` keeps a `__proto__` attribute an ordinary field.
-  const entry: Record<string, unknown> = { time: now.toISOString(), level: SEVERITY[level].text, msg: message, logger: name };
-  let exception: string | undefined;
+  const entry: Record<string, unknown> = { time: now.toISOString(), level: STDOUT_TEXT[level], msg: message, logger: name };
+  // A bridged record's own error (B10d) is the exception; an `exception` attribute is then left out.
+  let exception: string | undefined = leading === undefined ? undefined : errorText(leading);
   if (attributes !== undefined && attributes !== null) {
     const keys = keysOf(attributes);
     if (keys === undefined) throw new TypeError('the attributes cannot be listed');
     // Go: an attribute already named `exception` is kept and no error is renamed.
-    const renameError = !keys.includes(EXCEPTION);
+    const renameError = leading === undefined && !keys.includes(EXCEPTION);
     for (const key of keys) {
       const value = read(attributes, key);
       // The first Error is renamed even under a reserved key (A23 fix round, as Go).
@@ -363,7 +498,7 @@ export function stdoutLine(name: string, level: LogLevel, message: string, attri
         exception = errorText(value);
         continue;
       }
-      if (RESERVED.has(key)) continue;
+      if (RESERVED.has(key) || (leading !== undefined && key === EXCEPTION)) continue;
       define(entry, key, value === UNREADABLE ? UNREADABLE_ACCESSOR : jsonValue(value));
     }
   }
@@ -381,14 +516,18 @@ function otelValue(value: unknown): AnyValue {
  * The record attributes for the Logs API: the first `Error`-valued attribute
  * becomes the record's `exception` (the SDK writes `exception.type`,
  * `exception.message`, `exception.stacktrace`); `null`/`undefined` are left out.
+ * With a `leading` error (a bridged record's own, B10d) that one is the
+ * exception and `Error` attributes are written as their stack text.
  */
-export function otelAttributes(attributes: LogAttributes | null | undefined): { attrs: Attributes; exception: Error | undefined } {
+export function otelAttributes(attributes: LogAttributes | null | undefined, leading?: Error): { attrs: Attributes; exception: Error | undefined } {
   const attrs: Attributes = {};
-  let exception: Error | undefined;
+  let exception: Error | undefined = leading;
   if (attributes === undefined || attributes === null) return { attrs, exception };
   const keys = keysOf(attributes);
   if (keys === undefined) throw new TypeError('the attributes cannot be listed');
   for (const key of keys) {
+    // A leading error is the exception; an `exception` attribute is then left out (as on stdout).
+    if (leading !== undefined && key === EXCEPTION) continue;
     const value = read(attributes, key);
     if (value === UNREADABLE) {
       define(attrs, key, UNREADABLE_ACCESSOR);

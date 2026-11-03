@@ -3,3 +3,5 @@
 import cjs from '../dist/index.js';
 
 export const { createPinoDestination } = cjs;
+// pino.transport({ target }) loads the default export: it throws a clear "not supported" (B10d fix round).
+export default cjs.default;

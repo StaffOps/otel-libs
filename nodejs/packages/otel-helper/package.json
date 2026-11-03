@@ -80,6 +80,20 @@
         "default": "./dist/testing.js"
       }
     },
+    "./internal/bridge": {
+      "import": {
+        "types": "./esm/bridge.d.mts",
+        "default": "./esm/bridge.mjs"
+      },
+      "require": {
+        "types": "./dist/bridge.d.ts",
+        "default": "./dist/bridge.js"
+      },
+      "default": {
+        "types": "./dist/bridge.d.ts",
+        "default": "./dist/bridge.js"
+      }
+    },
     "./package.json": "./package.json"
   },
   "files": [
