@@ -32,5 +32,4 @@ SR14 not implemented yet (spec draft); owner task: S6
 # from specs/nodejs-otel-helper/tasks.md. The owner task deletes its line when its
 # tests cite the id (added by B2, 2026-10-29).
 JS8 pending B10a (opt-in -sql/-redis/-aws packages; B10b, B10c)
-JS9 pending B9b (cluster workers, fork kind)
 JS10 pending B13 (npmjs + GitHub Packages publication)

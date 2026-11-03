@@ -944,6 +944,16 @@ Behavior changes, with migration notes:
 
 ### Python — detailed changes
 
+- **A24 explicit instance id in a worker (design D1 row of 2026-11-02,
+  "Explicit instance id in a worker").** The warning for a
+  `service.instance.id` set in code or `OTEL_RESOURCE_ATTRIBUTES` in a worker
+  forked after the helper was imported is now a conditional, with the
+  same wording as Node.js except the worker kind (`forked`/`cluster`):
+  `service.instance.id is set explicitly in a
+  forked worker: unless each worker sets a different value, every worker
+  reports the same id; leave it unset so each process gets its own` (it
+  stated the collision as a fact and named the two sources). Log searches on
+  the old text need updating. The value is still kept.
 - **BREAKING — A23 stdout fallback rulings from the Node B8 work (design D1
   rows of 2026-11-02; migration item 24).** The stdout JSON fallback
   (`_console.JSONFormatter`): `time` in UTC with `Z` whatever the process
@@ -2172,6 +2182,34 @@ Unsupported instrumentation versions, task A10 (P18):
   a delegate's `forceFlush()` rejects; `/register` is silent in worker
   threads; `/testing` `getResource()` is `undefined` after shutdown, as
   `getProviders()`.
+- **Node.js prefork model (Phase B, task B9b; not released).** The parity
+  `fork` kind runs `cluster.fork()` twice, each worker calling `setup()`
+  (design D-JS13); `fork.instance_ids_distinct_post_fork` and
+  `fork.env_instance_id_warns_and_kept` now pass for Node. Each worker is a
+  fresh process, so the helper's per-process `service.instance.id` is
+  regenerated in every worker and never inherited from the primary. New: a
+  `service.instance.id` set explicitly (code or `OTEL_RESOURCE_ATTRIBUTES`)
+  in a `cluster` worker is kept and **warned once per worker**, as a
+  conditional with the same wording as Python except the worker kind
+  (`forked`/`cluster`) (`service.instance.id is set
+  explicitly in a cluster worker: unless each worker sets a different value,
+  every worker reports the same id; …`; contract design D4, task A24). Node detects every cluster
+  worker (`cluster.isWorker`); Python warns only
+  when it was imported before the fork (D-JS14). The `/metrics` listener
+  under `cluster` is unchanged and recorded: workers on one port share it
+  round-robin (warned), a primary that also ran `setup()` owns the port and
+  the workers report `EADDRINUSE` (warned + error), per-worker ports work
+  when they come from a stable slot owned by the primary
+  (`cluster.fork({ OTEL_HELPER_METRICS_PORT: String(base + slot) })`, re-forked
+  on the same slot; `cluster.worker.id` is never reused, so `base +
+  cluster.worker.id` would lose a restarted worker's metrics). The
+  cluster-worker port warning is reworded as a conditional ("if several
+  workers use this port, each scrape reaches one of them at random; give each
+  worker its own port (e.g. base + a per-worker slot) or use OTLP only"),
+  still WARN and once per worker. Tests wait for real events under a 20 s
+  deadline and cover shared-port round-robin, a worker restarted on its slot
+  and a `child_process.fork()` child (not a cluster worker, not warned).
+  New `test/cluster.test.cjs`; HOW-TO items for cluster/pm2 added to B12.
 - **Go test hygiene:** `captureDiag` (`go/config_contract_test.go`) no longer
   prints slog timestamps, which made `TestDeprecatedEnvWarnsNamingReplacement`
   (`go/deprecation_test.go`) flaky.

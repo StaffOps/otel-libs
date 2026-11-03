@@ -274,8 +274,9 @@ def _build_resource(options: TelemetryOptions) -> Resource:
     attributes[ATTR_INSTANCE_ID] = provided or sdk_id or str(uuid.uuid4())
     if provided and _forked_after_import:
         _log.warning(
-            "[OtelHelper] %s is set explicitly (code or OTEL_RESOURCE_ATTRIBUTES) in a forked worker "
-            "process: every worker reports the same id. Leave it unset so each process gets its own.",
+            # Same wording as Node except the worker kind (forked/cluster) (contract D1 row "Explicit instance id in a worker", A24).
+            "[OtelHelper] %s is set explicitly in a forked worker: unless each worker sets a different "
+            "value, every worker reports the same id; leave it unset so each process gets its own",
             ATTR_INSTANCE_ID,
         )
     attributes.update(_TELEMETRY_SDK)

@@ -246,14 +246,17 @@
       },
       "code": {},
       "expect": {
-        "instance_ids_distinct": true
+        "instance_ids_distinct": true,
+        "helper_log": {
+          "not_contains": "service.instance.id is set explicitly"
+        }
       },
       "note": "Pre-fork model: setup in each forked worker (gunicorn post_fork). Go has no pre-fork server model.",
       "status": {
         "go": "skip:no-prefork-model",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B9b-cluster-fork"
+        "nodejs": "pass"
       }
     },
     {
@@ -271,14 +274,14 @@
           "inst-fixed"
         ],
         "helper_log": {
-          "regex": "service\\.instance\\.id"
+          "regex": "service\\.instance\\.id is set explicitly in a (cluster|forked) worker: unless each worker sets a different value"
         }
       },
       "status": {
         "go": "skip:no-prefork-model",
         "python": "pass",
         "dotnet": "xfail:phase-c",
-        "nodejs": "skip:B9b-cluster-fork"
+        "nodejs": "pass"
       }
     },
     {

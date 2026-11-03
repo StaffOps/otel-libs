@@ -12,6 +12,7 @@
  * `tracing.ts`), the `/metrics` port (task B7, `metrics-endpoint.ts`); later
  * tasks add theirs.
  */
+import cluster from 'node:cluster';
 import { randomUUID } from 'node:crypto';
 import { report, reportOnce, type DiagnosticValue } from './diagnostics';
 import { envBool, envValue, trimWS, typeName, type Warn } from './env';
@@ -470,7 +471,19 @@ export function resolvePlan(options: SetupOptions, defaultServiceName: string, q
   }
 
   // service.instance.id: code > OTEL_RESOURCE_ATTRIBUTES > per-process UUID (D4).
-  const serviceInstanceId = nonBlank(code[ATTR_INSTANCE_ID]) ?? nonBlank(env[ATTR_INSTANCE_ID]) ?? randomUUID();
+  // randomUUID() runs per resolve, so each process (cluster worker) gets its own id;
+  // a forked worker is a fresh process and never inherits the primary's (D-JS13).
+  const explicitInstanceId = nonBlank(code[ATTR_INSTANCE_ID]) ?? nonBlank(env[ATTR_INSTANCE_ID]);
+  const serviceInstanceId = explicitInstanceId ?? randomUUID();
+  if (explicitInstanceId !== undefined && cluster.isWorker && !quiet) {
+    // D4: an explicit id in a multi-worker server may collide; kept, never rewritten. Same
+    // wording as Python except the worker kind (forked/cluster) (contract D1 "Explicit instance id in a worker", A24).
+    reportOnce(
+      'cluster:service.instance.id',
+      `${ATTR_INSTANCE_ID} is set explicitly in a cluster worker: unless each worker sets a different value, every worker reports the same id; leave it unset so each process gets its own`,
+      { key: ATTR_INSTANCE_ID },
+    );
+  }
 
   // Own data properties only (never `Object.assign`/`[[Set]]`): `__proto__` is an ordinary key.
   for (const [key, value] of Object.entries(code)) {

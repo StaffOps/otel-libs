@@ -659,7 +659,11 @@ class TestInstanceId:
         with caplog.at_level(logging.WARNING, logger="staffops_otel_helper"):
             attrs = self._resource().attributes
         assert attrs["service.instance.id"] == "inst-1"
-        assert "service.instance.id" in caplog.text
+        # A24: the conditional wording, prefix shared with Node up to "worker".
+        assert caplog.text.count(
+            "service.instance.id is set explicitly in a forked worker: unless each worker sets a different "
+            "value, every worker reports the same id; leave it unset so each process gets its own"
+        ) == 1
 
     def test_forked_worker_without_explicit_id_silent(self, monkeypatch, caplog):
         import staffops_otel_helper.setup as setup_mod

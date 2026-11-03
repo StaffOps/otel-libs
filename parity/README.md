@@ -43,7 +43,7 @@ suite runs every case. **`cases.json` is hand-maintained**: edit it directly
 | `logging` | — | Emit one WARN record through the helper's logger | (common fields) |
 | `metrics_scrape` | — | Increment `parity.requests` and `parity.payload` (unit `By`, by 5; added 2026-11-02, Node B7), record the Gauge `parity.utilization` (unit `1`, 0.5) and add 1 to the UpDownCounter `parity.inflight` (unit `1`; both A21), scrape the helper's `/metrics` | `scrape`, `scrape_status` (HTTP status of the mounted handler: 503 before/after/failed setup, 200 when Prometheus is deliberately inactive — design "Mounted /metrics handler status") |
 | `metrics_listener` | `requests` (`"METHOD /path"` strings) | Set `OTEL_HELPER_METRICS_PORT` to a free port, set up, send each request to the helper's own listener (added 2026-11-02, A21) | `listener_statuses` (HTTP status per request) |
-| `fork` | — | Python: import the helper, `os.fork()` twice, set up in each child (gunicorn `post_fork` model). Go: `skip:no-prefork-model` | `instance_ids`, `instance_ids_distinct` |
+| `fork` | — | Python: import the helper, `os.fork()` twice, set up in each child (gunicorn `post_fork` model). Node.js: `cluster.fork()` twice, set up in each worker (design D-JS13). Go: `skip:no-prefork-model` | `instance_ids`, `instance_ids_distinct` |
 
 Common fields, every kind: `error` (present only when setup failed),
 `diagnostics` (structured capture: Go — otel error handler, otel internal

@@ -420,7 +420,7 @@ test('D-JS8 cluster worker with a non-zero port: warned (each scrape reaches one
     const res = runNode([script], { env: { OTEL_HELPER_METRICS_PORT: String(port), OTEL_TRACES_EXPORTER: 'none', OTEL_LOGS_EXPORTER: 'none' } });
     assert.equal(res.status, 0, res.stderr);
     assert.deepEqual(lastJson(res), [
-      `otelhelper: cluster worker with OTEL_HELPER_METRICS_PORT=${port}: the workers share the port and each scrape reaches one worker at random; set OTEL_HELPER_METRICS_PORT=0 and mount metricsHandler() on a per-worker port, or export metrics over OTLP variable=OTEL_HELPER_METRICS_PORT`,
+      `otelhelper: cluster worker serving /metrics on port ${port}: if several workers use this port, each scrape reaches one of them at random; give each worker its own port (e.g. base + a per-worker slot) or use OTLP only variable=OTEL_HELPER_METRICS_PORT`,
     ]);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });

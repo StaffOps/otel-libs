@@ -857,7 +857,7 @@ function install(rt: Runtime, plan: Plan, options: SetupOptions, base: Resource,
     if (cluster.isWorker) {
       reportOnce(
         'cluster:metrics-port',
-        `cluster worker with ${ENV_METRICS_PORT}=${String(port)}: the workers share the port and each scrape reaches one worker at random; set ${ENV_METRICS_PORT}=0 and mount metricsHandler() on a per-worker port, or export metrics over OTLP`,
+        `cluster worker serving /metrics on port ${String(port)}: if several workers use this port, each scrape reaches one of them at random; give each worker its own port (e.g. base + a per-worker slot) or use OTLP only`,
         { variable: ENV_METRICS_PORT },
       );
     }
