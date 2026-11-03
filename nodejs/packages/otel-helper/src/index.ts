@@ -8,7 +8,8 @@
  * (ParentBased, health sampler around it), propagators and the debug marker
  * (B5), the Prometheus `/metrics` listener and `metricsHandler()` (B7), the
  * http/undici/express/gRPC instrumentation (B6), `createLogger()` with the
- * stdout fallback (B8); the full lifecycle lands in B9.
+ * stdout fallback (B8), the lifecycle (B9: rollback, foreign globals and
+ * `replaceGlobals`, forwarding providers across re-setups, the register entry).
  */
 export { VERSION } from './version';
 export { metricsHandler, setup, shutdown } from './internal/setup';

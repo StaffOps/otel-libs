@@ -102,3 +102,38 @@ test('an unreadable sink falls back to stderr', () => {
   assert.equal(res.status, 0);
   assert.equal(res.stderr, 'otelhelper: still on stderr\n');
 });
+
+test('B9 fix round: redactErrorText drops URL userinfo, query and fragment, credential pairs and bearer tokens', () => {
+  assert.equal(diag.redactErrorText('connect https://user:pw@collector.example.com:4318/v1/traces?sig=1#f failed'), 'connect https://collector.example.com:4318/v1/traces failed');
+  assert.equal(diag.redactErrorText('a http://h.example.com b'), 'a http://h.example.com b');
+  assert.equal(diag.redactErrorText('x grpc://u@h.example.com?k=v'), 'x grpc://h.example.com');
+  assert.equal(diag.redactErrorText('x https://h.example.com/p@ss'), 'x https://h.example.com');
+  assert.equal(diag.redactErrorText('Authorization: Bearer abc.def'), 'Authorization: <redacted> <redacted>');
+  assert.equal(diag.redactErrorText('api-key=k1, token="t 2"; password: p3'), 'api-key=<redacted>, token=<redacted>; password: <redacted>');
+  assert.equal(diag.redactErrorText('basic dXNlcjpwYXNz'), 'basic <redacted>');
+  assert.equal(diag.redactErrorText('y'.repeat(100)), `${'y'.repeat(64)}…`);
+});
+
+test('B9 final round: redactErrorText key names, generic credential names, schemeless userinfo, dns:///, bearer forms, basic', () => {
+  const r = diag.redactErrorText;
+  assert.equal(r('xtoken=keep'), 'xtoken=<redacted>'); // generic rule: a name containing "token"
+  assert.equal(r('"password":"p1"'), '"password":<redacted>');
+  assert.equal(r('"api_key": "k"'), '"api_key": <redacted>');
+  assert.equal(r('X-Team-Id=t1 my_secret_value: s'), 'X-Team-Id=<redacted> my_secret_value: <redacted>');
+  assert.equal(r('client_auth=a; session-cookie=c'), 'client_auth=<redacted>; session-cookie=<redacted>');
+  assert.equal(r('dial user:pw@collector.example.com:4317 failed'), 'dial collector.example.com:4317 failed');
+  assert.equal(r('dns:///user:pw@collector.example.com:4317'), 'dns:///collector.example.com:4317');
+  assert.equal(r('bearer:abc'), 'bearer:<redacted>');
+  assert.equal(r('Bearer=abc'), 'Bearer=<redacted>');
+  assert.equal(r('bearerabc'), 'bearer <redacted>');
+  assert.equal(r('basic auth failed'), 'basic auth failed');
+  assert.equal(r('Basic dXNlcjpw=='), 'Basic <redacted>');
+  assert.equal(r('basic short'), 'basic short');
+  assert.equal(r('the error: x@y'), 'the error: x@y');
+  // Large inputs stay linear (no ReDoS).
+  for (const big of ['a'.repeat(200_000), '_'.repeat(200_000), 'k'.repeat(200_000) + '=', `${'x:'.repeat(100_000)}@`, `https://${'u'.repeat(200_000)}`]) {
+    const started = Date.now();
+    r(big);
+    assert.ok(Date.now() - started < 1000, `slow on ${big.slice(0, 8)}…`);
+  }
+});

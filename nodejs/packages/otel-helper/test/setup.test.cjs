@@ -1,14 +1,18 @@
 'use strict';
-// setup()/shutdown() for task B3: identity resolution (spec JS4, contract R4/R5,
+// setup()/shutdown(): identity resolution (task B3; spec JS4, contract R4/R5,
 // D1, D4, ADR-003), deprecations (D8, Go G9), diagnostics and the DiagLogger
-// (spec JS3, design D-JS5), minimal lifecycle (the rest of the lifecycle
-// requirement is task B9, which cites it).
+// (spec JS3, design D-JS5) and the lifecycle (task B9; spec JS7, design
+// D-JS10): forwarding providers across re-setups, the G1 rollback, foreign
+// globals and replaceGlobals.
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const api = require('@opentelemetry/api');
 const { TracerProvider, InMemorySpanExporter, SimpleSpanProcessor } = require('@opentelemetry/sdk-trace');
 const helper = require('@staffops/otel-helper');
 const testing = require('@staffops/otel-helper/testing');
+const http = require('node:http');
+const net = require('node:net');
+const zlib = require('node:zlib');
 const { runCjs, lastJson } = require('./helpers.cjs');
 
 const IDENTITY_VARS = [
@@ -339,11 +343,10 @@ test('lifecycle (B3 subset): fire-and-forget shutdown of a healthy setup exits p
   assert.ok(Date.now() - started < 10_000, 'the default 30 s deadline timer is cleared once providers finish');
 });
 
-// Decision recorded for B9 (design D-JS10, 2026-10-29): one stable,
-// helper-owned forwarding TracerProvider registered once, whose SDK delegate is
-// swapped on rebuild. Until then a tracer obtained before a re-setup stays
-// bound to the old, shut-down provider; this test pins the target behavior.
-test('re-setup keeps tracers obtained earlier working (forwarding provider)', { todo: 'B9: stable forwarding TracerProvider (design D-JS10, 2026-10-29)' }, async () => {
+// Design D-JS10 (decided 2026-10-29, implemented in B9): one stable,
+// helper-owned forwarding TracerProvider registered once, whose SDK delegate
+// is swapped on rebuild, so a tracer obtained before a re-setup keeps working.
+test('JS7/D-JS10 re-setup keeps tracers obtained earlier working (forwarding provider)', async () => {
   const before = api.trace.getTracer('early');
   helper.setup({ serviceName: 'svc' });
   before.startSpan('warm').end();
@@ -354,9 +357,449 @@ test('re-setup keeps tracers obtained earlier working (forwarding provider)', { 
   assert.deepEqual(exporter.getFinishedSpans().map((s) => s.name), ['after-resetup']);
 });
 
-test('lifecycle (B3 subset): reset() unregisters the globals the helper registered', () => {
+test('JS7/D-JS10 meters, instruments and Logs API loggers obtained before a re-setup keep working', async () => {
+  const options = { serviceName: 'svc', metricExporters: ['prometheus'], prometheusMetricsPort: 0 };
+  helper.setup(options);
+  const meter = api.metrics.getMeter('early');
+  const counter = meter.createCounter('early_count');
+  meter.createObservableGauge('early_gauge').addCallback((result) => result.observe(3));
+  const logger = api.logs.getLogger('early');
+  counter.add(1);
+  logger.emit({ body: 'first' });
+  await helper.shutdown();
+  counter.add(100); // after shutdown: the API no-op
+  helper.setup(options);
+  counter.add(2);
+  const { meterProvider, loggerProvider } = testing.getProviders();
+  const { resourceMetrics } = await meterProvider._sharedState.metricCollectors[0]._metricReader.collect();
+  const points = Object.fromEntries(
+    resourceMetrics.scopeMetrics.flatMap((s) => s.metrics).filter((m) => m.descriptor.name.startsWith('early_')).map((m) => [m.descriptor.name, m.dataPoints.map((p) => p.value)]),
+  );
+  assert.deepEqual(points, { early_count: [2], early_gauge: [3] });
+  const emitted = [];
+  loggerProvider.getLogger = () => ({ emit: (record) => emitted.push(record.body), enabled: () => true });
+  logger.emit({ body: 'after-resetup' });
+  assert.deepEqual(emitted, ['after-resetup']);
+});
+
+test('JS7/H1 the forwarders keep each provider until its shutdown settles, then forward to nothing; the next setup records again', async () => {
+  const tracer = api.trace.getTracer('t');
   helper.setup({ serviceName: 'svc' });
-  assert.equal(api.trace.getTracerProvider().getDelegate().constructor.name, 'TracerProvider');
+  assert.equal(tracer.startSpan('a').isRecording(), true);
+  const sdk = testing.getProviders();
+  assert.ok(Object.isFrozen(sdk));
+  const forwarders = [api.trace.getTracerProvider().getDelegate(), api.metrics.getMeterProvider(), api.logs.getLoggerProvider()];
+  const pending = helper.shutdown();
+  assert.deepEqual(forwarders.map((f) => f.getDelegate()), [sdk.tracerProvider, sdk.meterProvider, sdk.loggerProvider]);
+  assert.equal(testing.getProviders(), undefined, 'shutting down: no active providers');
+  await pending;
+  assert.deepEqual(forwarders.map((f) => f.getDelegate()), [undefined, undefined, undefined]);
+  assert.equal(tracer.startSpan('b').isRecording(), false);
+  helper.setup({ serviceName: 'svc' });
+  assert.equal(tracer.startSpan('c').isRecording(), true);
+});
+
+test('JS7/H1 a delegate a newer setup replaced is not cleared by the older shutdown', async () => {
+  let release;
+  const slow = { onStart() {}, onEnd() {}, forceFlush: () => Promise.resolve(), shutdown: () => new Promise((r) => { release = r; }) };
+  helper.setup({ serviceName: 'svc', spanProcessors: [slow] });
+  const forwarder = api.trace.getTracerProvider().getDelegate();
+  const pending = helper.shutdown();
+  helper.setup({ serviceName: 'svc' });
+  const newer = testing.getProviders().tracerProvider;
+  while (release === undefined) await new Promise((r) => setImmediate(r));
+  release();
+  await pending;
+  assert.equal(forwarder.getDelegate(), newer);
+});
+
+test('M1 forceFlush() on the global providers flushes the active SDK providers', async () => {
+  let flushed = 0;
+  const probe = { onStart() {}, onEnd() {}, forceFlush: async () => { flushed++; }, shutdown: () => Promise.resolve() };
+  helper.setup({ serviceName: 'svc', spanProcessors: [probe] });
+  await api.trace.getTracerProvider().getDelegate().forceFlush();
+  await api.metrics.getMeterProvider().forceFlush();
+  await api.logs.getLoggerProvider().forceFlush();
+  assert.equal(flushed, 1);
+});
+
+/** A local OTLP/HTTP receiver: every POST body (gunzipped) by path. */
+async function otlpSink() {
+  const posts = [];
+  const server = http.createServer((req, res) => {
+    const chunks = [];
+    req.on('data', (c) => chunks.push(c));
+    req.on('end', () => {
+      const raw = Buffer.concat(chunks);
+      posts.push({ path: req.url, body: req.headers['content-encoding'] === 'gzip' ? zlib.gunzipSync(raw) : raw });
+      res.writeHead(200, { 'content-type': 'application/x-protobuf' });
+      res.end();
+    });
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  return { posts, port: server.address().port, close: () => new Promise((r) => server.close(r)) };
+}
+
+test('H1 regression: observable and batch callbacks on a global meter reach the final OTLP export of shutdown(), also after a re-setup', async () => {
+  const sink = await otlpSink();
+  try {
+    const options = {
+      serviceName: 'svc', otelEndpoint: `http://127.0.0.1:${sink.port}`, otlpProtocol: 'http/protobuf',
+      metricExporters: ['otlp'], exportIntervalMs: 600_000,
+    };
+    helper.setup(options);
+    const meter = api.metrics.getMeter('h1');
+    meter.createObservableGauge('h1_gauge').addCallback((r) => r.observe(1));
+    const batched = meter.createObservableGauge('h1_batch');
+    meter.addBatchObservableCallback((r) => r.observe(batched, 2), [batched]);
+    const exported = () => sink.posts.filter((p) => p.path === '/v1/metrics').map((p) => p.body.toString('latin1'));
+    // Before the first interval: only the final collection of shutdown() exports.
+    await helper.shutdown();
+    assert.equal(exported().length, 1);
+    assert.ok(exported()[0].includes('h1_gauge') && exported()[0].includes('h1_batch'));
+    helper.setup(options);
+    await helper.shutdown();
+    assert.equal(exported().length, 2);
+    assert.ok(exported()[1].includes('h1_gauge') && exported()[1].includes('h1_batch'));
+  } finally {
+    await sink.close();
+  }
+});
+
+// ── G1 rollback, foreign globals, replaceGlobals (JS7, task B9) ──────────
+
+const { registeredGlobal } = require('../dist/internal/globals.js');
+const { setupFault, logDestination } = require('../dist/internal/setup.js');
+
+const STEPS = ['diag', 'pipelines', 'built', 'context', 'propagator', 'providers', 'instrumentations', 'listener'];
+const { MeterProvider, MetricReader } = require('@opentelemetry/sdk-metrics');
+const { LoggerProvider } = require('@opentelemetry/sdk-logs');
+
+/** Counts shutdown() calls on every MeterProvider, LoggerProvider and metric reader while `fn` runs (M5). */
+async function countingShutdowns(fn) {
+  const counts = { meterProvider: 0, loggerProvider: 0, reader: 0 };
+  const patches = [[MeterProvider.prototype, 'meterProvider'], [LoggerProvider.prototype, 'loggerProvider'], [MetricReader.prototype, 'reader']];
+  const originals = patches.map(([proto]) => proto.shutdown);
+  patches.forEach(([proto, key], i) => {
+    proto.shutdown = function (...args) {
+      counts[key]++;
+      return originals[i].apply(this, args);
+    };
+  });
+  try {
+    await fn(counts);
+  } finally {
+    patches.forEach(([proto], i) => {
+      proto.shutdown = originals[i];
+    });
+  }
+}
+const GLOBALS = ['trace', 'metrics', 'logs', 'context', 'propagation'];
+const present = () => GLOBALS.filter((g) => registeredGlobal(g) !== undefined);
+const snapshot = () => Object.fromEntries(GLOBALS.map((g) => [g, registeredGlobal(g)]));
+
+/** Runs `fn` with setup() failing at `step`. */
+function failingAt(step, fn) {
+  setupFault.at = (s) => {
+    if (s === step) throw new Error(`injected at ${s}`);
+  };
+  try {
+    return fn();
+  } finally {
+    setupFault.at = undefined;
+  }
+}
+
+/** The status the mounted /metrics handler answers now. */
+function scrapeStatus() {
+  return new Promise((resolve) => {
+    const res = {
+      statusCode: 200,
+      headersSent: false,
+      setHeader() {},
+      getHeader() {},
+      removeHeader() {},
+      writeHead(status) {
+        this.statusCode = status;
+        return this;
+      },
+      write() {
+        return true;
+      },
+      end() {
+        resolve(this.statusCode);
+        return this;
+      },
+    };
+    helper.metricsHandler()({ method: 'GET', url: '/metrics', headers: {} }, res);
+  });
+}
+
+function freePort() {
+  return new Promise((resolve) => {
+    const server = net.createServer().listen(0, '127.0.0.1', () => {
+      const { port } = server.address();
+      server.close(() => resolve(port));
+    });
+  });
+}
+
+/** Whether `port` can be bound (retried briefly: a closing listener frees it asynchronously). */
+async function bindable(port) {
+  for (let i = 0; i < 50; i++) {
+    const ok = await new Promise((resolve) => {
+      const server = net.createServer();
+      server.once('error', () => resolve(false));
+      server.listen(port, () => server.close(() => resolve(true)));
+    });
+    if (ok) return true;
+    await new Promise((r) => setTimeout(r, 20));
+  }
+  return false;
+}
+
+function injected() {
+  const carrier = {};
+  const span = api.trace.setSpanContext(api.ROOT_CONTEXT, { traceId: '0af7651916cd43dd8448eb211c80319c', spanId: 'b7ad6b7169203331', traceFlags: 1 });
+  api.propagation.inject(api.propagation.setBaggage(span, api.propagation.createBaggage({ k: { value: 'v' } })), carrier);
+  return Object.keys(carrier).sort();
+}
+
+test('G1 a setup failing at any step throws, releases what it built and leaves the globals as they were', async () => {
+  const port = await freePort();
+  for (const step of STEPS) {
+    resetAndCapture();
+    let probeShutdowns = 0;
+    const probe = { onStart() {}, onEnd() {}, forceFlush: () => Promise.resolve(), shutdown: async () => { probeShutdowns++; } };
+    await countingShutdowns(async (counts) => {
+      assert.throws(
+        () => failingAt(step, () => helper.setup({ serviceName: 'svc', metricExporters: ['prometheus'], prometheusMetricsPort: port, spanProcessors: [probe] })),
+        { message: `injected at ${step}` },
+      );
+      await new Promise((r) => setImmediate(r));
+      // M5: from `built` on, the three providers are shut down (the reader with its MeterProvider);
+      // at `pipelines` (no provider yet) the pipelines alone are.
+      const built = STEPS.indexOf(step) >= STEPS.indexOf('built');
+      assert.deepEqual(
+        { probe: probeShutdowns, ...counts },
+        built ? { probe: 1, meterProvider: 1, loggerProvider: 1, reader: 1 } : { probe: 0, meterProvider: 0, loggerProvider: 0, reader: step === 'pipelines' ? 1 : 0 },
+        step,
+      );
+    });
+    assert.deepEqual(present(), [], step);
+    assert.equal(registeredGlobal('diag'), undefined, step);
+    assert.notEqual(http.request.__wrapped, true, step);
+    assert.equal(await scrapeStatus(), 503, step);
+    assert.equal(logDestination().provider, undefined, step);
+    assert.equal(testing.getResource(), undefined, step);
+    assert.equal(testing.getProviders(), undefined, step);
+    assert.ok(await bindable(port), `${step}: the listener was closed`);
+    // Nothing was recorded: the next setup runs in full.
+    const resolved = helper.setup({ serviceName: 'svc' });
+    assert.equal(resolved.serviceName, 'svc');
+    assert.deepEqual(present(), GLOBALS, step);
+    await helper.shutdown();
+  }
+});
+
+test('G1 a failed re-setup after shutdown keeps the helper\'s globals and the last propagator; the forwarders point at nothing', async () => {
+  const saved = process.env.OTEL_PROPAGATORS;
+  process.env.OTEL_PROPAGATORS = 'baggage';
+  try {
+    helper.setup({ serviceName: 'svc' });
+    await helper.shutdown();
+    const before = snapshot();
+    delete process.env.OTEL_PROPAGATORS;
+    assert.throws(() => failingAt('listener', () => helper.setup({ serviceName: 'svc' })), /injected at listener/);
+    assert.deepEqual(snapshot(), before);
+    assert.deepEqual(injected(), ['baggage']);
+    assert.equal(api.trace.getTracer('t').startSpan('x').isRecording(), false);
+    helper.setup({ serviceName: 'svc' });
+    assert.deepEqual(injected(), ['baggage', 'traceparent']);
+    assert.equal(api.trace.getTracer('t').startSpan('y').isRecording(), true);
+  } finally {
+    if (saved === undefined) delete process.env.OTEL_PROPAGATORS;
+    else process.env.OTEL_PROPAGATORS = saved;
+  }
+});
+
+test('G1 a failed setup puts back the DiagLogger it replaced (an app one, or the helper\'s from an earlier setup)', async () => {
+  const seen = [];
+  const app = { error: (m) => seen.push(m), warn: (m) => seen.push(m), info() {}, debug() {}, verbose() {} };
+  api.diag.setLogger(app, api.DiagLogLevel.WARN);
+  try {
+    assert.throws(() => failingAt('built', () => helper.setup({ serviceName: 'svc' })), /injected/);
+    records.length = 0;
+    api.diag.warn('to the app');
+    assert.ok(seen.includes('to the app'));
+    assert.equal(records.filter((r) => r.origin === 'diag').length, 0);
+  } finally {
+    api.diag.disable();
+  }
+  // The helper's own logger from an earlier setup stays the helper's: a later opt-out removes it.
+  helper.setup({ serviceName: 'svc' });
+  await helper.shutdown();
+  assert.throws(() => failingAt('built', () => helper.setup({ serviceName: 'svc' })), /injected/);
+  api.diag.warn('to the helper');
+  assert.ok(records.some((r) => r.origin === 'diag' && r.line.includes('to the helper')));
+  helper.setup({ serviceName: 'svc', installDiagLogger: false });
+  assert.equal(registeredGlobal('diag'), undefined);
+  await helper.shutdown();
+  // Opted out and failing: diag was never touched.
+  assert.throws(() => failingAt('diag', () => helper.setup({ serviceName: 'svc', installDiagLogger: false })), /injected/);
+  assert.equal(registeredGlobal('diag'), undefined);
+});
+
+test('G1 an undo step that throws is reported; the setup error is the one thrown', () => {
+  const res = runCjs(`
+    const key = Symbol.for('opentelemetry.js.api.1');
+    const { loadedApiVersion } = require('./dist/internal/globals.js');
+    globalThis[key] = new Proxy({ version: loadedApiVersion() }, {
+      deleteProperty(t, p) { if (p === 'propagation') throw new Error('sticky'); delete t[p]; return true; },
+    });
+    const lines = [];
+    require('@staffops/otel-helper/testing').setDiagnosticSink((l) => lines.push(l));
+    require('./dist/internal/setup.js').setupFault.at = (s) => { if (s === 'providers') throw new Error('injected'); };
+    let threw;
+    try { require('@staffops/otel-helper').setup({ serviceName: 'svc', environment: 'DEV', installDiagLogger: false }); } catch (e) { threw = e.message; }
+    console.log(JSON.stringify({ threw, lines: lines.filter((l) => l.includes('rollback')) }));
+  `);
+  assert.deepEqual(lastJson(res), { threw: 'injected', lines: ['otelhelper: setup() rollback: a step could not be undone error=sticky'] });
+});
+
+test('JS7 foreign providers are kept, warned and listed in inactiveSignals; a foreign LoggerProvider does not list logs', () => {
+  api.trace.setGlobalTracerProvider(new TracerProvider());
+  api.metrics.setGlobalMeterProvider({ getMeter: () => api.createNoopMeter() });
+  api.logs.setGlobalLoggerProvider({ getLogger: () => api.createNoopLogger() });
+  try {
+    const resolved = helper.setup({ serviceName: 'svc' });
+    assert.deepEqual(resolved.inactiveSignals, ['traces', 'metrics']);
+    assert.ok(Object.isFrozen(resolved.inactiveSignals));
+    assert.equal(helper.setup(), resolved);
+  } finally {
+    testing.reset();
+    api.trace.disable();
+    api.metrics.disable();
+    api.logs.disable();
+  }
+  assert.deepEqual(helper.setup({ serviceName: 'svc' }).inactiveSignals, []);
+});
+
+test('JS7 replaceGlobals replaces foreign providers and the propagator, never the context manager; the instrumentations move to the helper\'s', async () => {
+  const foreignTrace = new TracerProvider();
+  const foreignMeter = { getMeter: () => api.createNoopMeter() };
+  const foreignLogs = { getLogger: () => api.createNoopLogger() };
+  const foreignPropagator = { inject: (_c, carrier) => { carrier.foreign = '1'; }, extract: (c) => c, fields: () => ['foreign'] };
+  const cm = { active: () => api.ROOT_CONTEXT, with: (_c, fn, t, ...a) => fn.call(t, ...a), bind: (_c, t) => t, enable() { return this; }, disable() { return this; } };
+  api.trace.setGlobalTracerProvider(foreignTrace);
+  api.metrics.setGlobalMeterProvider(foreignMeter);
+  api.logs.setGlobalLoggerProvider(foreignLogs);
+  api.propagation.setGlobalPropagator(foreignPropagator);
+  api.context.setGlobalContextManager(cm);
+  const httpInstrumentation = () => testing.getState().runtime.instrumentations.instrumentations[0];
+  try {
+    // Without replaceGlobals the instrumentations bind to the foreign provider.
+    helper.setup({ serviceName: 'svc' });
+    assert.equal(httpInstrumentation().tracer.constructor.name, 'Tracer');
+    assert.deepEqual(injected(), ['foreign']);
+    await helper.shutdown();
+    records.length = 0;
+    const resolved = helper.setup({ serviceName: 'svc', replaceGlobals: true });
+    assert.deepEqual(resolved.inactiveSignals, []);
+    assert.equal(api.trace.getTracerProvider().getDelegate().constructor.name, 'ForwardingTracerProvider');
+    assert.equal(api.metrics.getMeterProvider().constructor.name, 'ForwardingMeterProvider');
+    assert.equal(api.logs.getLoggerProvider().constructor.name, 'ForwardingLoggerProvider');
+    assert.deepEqual(injected(), ['baggage', 'traceparent']);
+    assert.equal(registeredGlobal('context'), cm);
+    assert.equal(httpInstrumentation().tracer.constructor.name, 'ForwardingTracer');
+    assert.deepEqual(records.filter((r) => r.level === 'info' && r.line.includes('replaceGlobals')).map((r) => r.line), [
+      'otelhelper: a global propagator is already registered; replaceGlobals is set: the helper replaces it',
+      'otelhelper: a global TracerProvider is already registered; replaceGlobals is set: the helper replaces it signal=traces',
+      'otelhelper: a global MeterProvider is already registered; replaceGlobals is set: the helper replaces it signal=metrics',
+      'otelhelper: a global LoggerProvider is already registered; replaceGlobals is set: the helper replaces it signal=logs',
+    ]);
+    // Once per process under replaceGlobals (B9 fix round).
+    const kept = 'otelhelper: a global context manager is already registered; the helper keeps it; replaceGlobals never replaces the context manager';
+    assert.deepEqual(lines().filter((l) => l.includes('context manager')), [kept]);
+    await helper.shutdown();
+    records.length = 0;
+    helper.setup({ serviceName: 'svc', replaceGlobals: true });
+    assert.deepEqual(lines().filter((l) => l.includes('context manager')), []);
+  } finally {
+    testing.reset();
+    for (const g of ['trace', 'metrics', 'logs', 'propagation', 'context']) api[g].disable();
+  }
+});
+
+test('G1 a failed replaceGlobals setup puts the foreign globals back', () => {
+  const foreignTrace = new TracerProvider();
+  const foreignMeter = { getMeter: () => api.createNoopMeter() };
+  const foreignLogs = { getLogger: () => api.createNoopLogger() };
+  const foreignPropagator = { inject() {}, extract: (c) => c, fields: () => [] };
+  api.trace.setGlobalTracerProvider(foreignTrace);
+  api.metrics.setGlobalMeterProvider(foreignMeter);
+  api.logs.setGlobalLoggerProvider(foreignLogs);
+  api.propagation.setGlobalPropagator(foreignPropagator);
+  try {
+    assert.throws(() => failingAt('providers', () => helper.setup({ serviceName: 'svc', replaceGlobals: true })), /injected/);
+    assert.equal(api.trace.getTracerProvider().getDelegate(), foreignTrace);
+    assert.equal(api.metrics.getMeterProvider(), foreignMeter);
+    assert.equal(registeredGlobal('logs'), foreignLogs);
+    assert.equal(registeredGlobal('propagation'), foreignPropagator);
+    // The context manager the failed setup registered is gone again.
+    assert.equal(registeredGlobal('context'), undefined);
+  } finally {
+    testing.reset();
+    for (const g of ['trace', 'metrics', 'logs', 'propagation']) api[g].disable();
+  }
+});
+
+test('JS7 replaceGlobals: a replacement the API refuses is reported and the foreign global put back', () => {
+  const res = runCjs(`
+    const key = Symbol.for('opentelemetry.js.api.1');
+    const { loadedApiVersion } = require('./dist/internal/globals.js');
+    const sticky = { getMeter: () => require('@opentelemetry/api').createNoopMeter() };
+    // A registry whose MeterProvider can be neither removed nor replaced.
+    globalThis[key] = new Proxy({ version: loadedApiVersion() }, {
+      get(t, p) { return p === 'metrics' ? sticky : t[p]; },
+      deleteProperty(t, p) { if (p !== 'metrics') delete t[p]; return true; },
+    });
+    const lines = [];
+    require('@staffops/otel-helper/testing').setDiagnosticSink((l, m) => { if (m.origin === 'helper') lines.push(l); });
+    const r = require('@staffops/otel-helper').setup({ serviceName: 'svc', environment: 'DEV', installDiagLogger: false, replaceGlobals: true });
+    console.log(JSON.stringify({ inactive: r.inactiveSignals, same: require('@opentelemetry/api').metrics.getMeterProvider() === sticky, lines: lines.filter((l) => l.includes('MeterProvider')) }));
+  `);
+  assert.deepEqual(lastJson(res), {
+    inactive: ['metrics'],
+    same: true,
+    lines: [
+      'otelhelper: a global MeterProvider is already registered; replaceGlobals is set: the helper replaces it signal=metrics',
+      "otelhelper: the OpenTelemetry API refused the global MeterProvider; the helper's metrics are inactive signal=metrics",
+    ],
+  });
+});
+
+test('JS7 a global the helper registered and someone replaced is "no longer the helper\'s"; one only removed is registered again', async () => {
+  helper.setup({ serviceName: 'svc' });
+  await helper.shutdown();
+  api.trace.disable();
+  api.trace.setGlobalTracerProvider(new TracerProvider());
+  api.metrics.disable();
+  try {
+    const resolved = helper.setup({ serviceName: 'svc' });
+    assert.deepEqual(resolved.inactiveSignals, ['traces']);
+    assert.ok(lines().includes("otelhelper: the global TracerProvider is no longer the helper's; the helper does not replace it and its traces are inactive signal=traces"), lines().join('\n'));
+    assert.equal(api.metrics.getMeterProvider().constructor.name, 'ForwardingMeterProvider');
+    assert.ok(!lines().some((l) => l.includes('MeterProvider')));
+  } finally {
+    testing.reset();
+    api.trace.disable();
+  }
+});
+
+test('lifecycle: reset() unregisters the globals the helper registered', () => {
+  helper.setup({ serviceName: 'svc' });
+  assert.equal(api.trace.getTracerProvider().getDelegate().constructor.name, 'ForwardingTracerProvider');
   resetAndCapture();
   assert.equal(api.trace.getTracerProvider().getDelegate().constructor.name, 'NoopTracerProvider');
   assert.equal(api.context.active(), api.ROOT_CONTEXT);
@@ -518,10 +961,10 @@ test('D-JS10 another version owns the process: setup resolves and returns, but i
     const api = require('@opentelemetry/api');
     h.shutdown().then(() => {
       t.reset();
-      console.log(JSON.stringify({ name: r.serviceName, resource: t.getResource() === undefined, delegate: api.trace.getTracerProvider().getDelegate().constructor.name }));
+      console.log(JSON.stringify({ name: r.serviceName, inactive: r.inactiveSignals, resource: t.getResource() === undefined, delegate: api.trace.getTracerProvider().getDelegate().constructor.name }));
     });
   `, { env: { OTEL_SERVICE_NAME: '', ENVIRONMENT: '', SERVICE_NAME: 'legacy', OTEL_RESOURCE_ATTRIBUTES: 'broken' } });
-  assert.deepEqual(lastJson(res), { name: 'svc', resource: true, delegate: 'NoopTracerProvider' });
+  assert.deepEqual(lastJson(res), { name: 'svc', inactive: ['traces', 'metrics', 'logs'], resource: true, delegate: 'NoopTracerProvider' });
   assert.match(res.stderr, /another version is already loaded/);
   // Quiet: no per-setup identity/resource warnings for a copy that installs nothing; deprecations stay.
   assert.match(res.stderr, /SERVICE_NAME is deprecated/);
@@ -535,4 +978,102 @@ test('the ESM entry exposes the same setup()/shutdown()/defaultLogLevel()', asyn
   assert.equal(esm.defaultLogLevel, helper.defaultLogLevel);
   const esmTesting = await import('@staffops/otel-helper/testing');
   assert.equal(esmTesting.getResource, testing.getResource);
+});
+
+test('M3 a failed setup leaves the API proxies alone: a tracer and a Logs API logger obtained before it join the app\'s own SDK', () => {
+  const tracer = api.trace.getTracer('early');
+  const logger = api.logs.getLogger('early');
+  assert.throws(() => failingAt('providers', () => helper.setup({ serviceName: 'svc' })), /injected/);
+  const spans = new InMemorySpanExporter();
+  const { LoggerProvider: AppLoggerProvider, InMemoryLogRecordExporter, SimpleLogRecordProcessor } = require('@opentelemetry/sdk-logs');
+  const logRecords = new InMemoryLogRecordExporter();
+  api.trace.setGlobalTracerProvider(new TracerProvider({ spanProcessors: [new SimpleSpanProcessor({ exporter: spans })] }));
+  api.logs.setGlobalLoggerProvider(new AppLoggerProvider({ processors: [new SimpleLogRecordProcessor({ exporter: logRecords })] }));
+  try {
+    tracer.startSpan('app-span').end();
+    logger.emit({ body: 'app-log' });
+    assert.deepEqual(spans.getFinishedSpans().map((x) => x.name), ['app-span']);
+    assert.deepEqual(logRecords.getFinishedLogRecords().map((r) => r.body), ['app-log']);
+  } finally {
+    api.trace.disable();
+    api.logs.disable();
+  }
+});
+
+test('M4 a registry that throws during a replaceGlobals replacement is rolled back: the foreign provider comes back', () => {
+  const res = runCjs(`
+    const key = Symbol.for('opentelemetry.js.api.1');
+    const { loadedApiVersion } = require('./dist/internal/globals.js');
+    const foreign = { getMeter: () => require('@opentelemetry/api').createNoopMeter() };
+    let thrown = false;
+    globalThis[key] = new Proxy({ version: loadedApiVersion(), metrics: foreign }, {
+      set(t, p, v) { if (p === 'metrics' && !thrown) { thrown = true; throw new Error('registry set failed'); } t[p] = v; return true; },
+    });
+    require('@staffops/otel-helper/testing').setDiagnosticSink(() => {});
+    let threw;
+    try { require('@staffops/otel-helper').setup({ serviceName: 'svc', environment: 'DEV', installDiagLogger: false, replaceGlobals: true }); } catch (e) { threw = e.message; }
+    const reg = globalThis[key];
+    console.log(JSON.stringify({ threw, back: reg.metrics === foreign, others: ['trace', 'logs', 'context', 'propagation'].filter((k) => reg[k] !== undefined) }));
+  `);
+  assert.deepEqual(lastJson(res), { threw: 'registry set failed', back: true, others: [] });
+});
+
+test('G1/L the rollback report redacts URL credentials and header-like values', () => {
+  const res = runCjs(`
+    const lines = [];
+    require('@staffops/otel-helper/testing').setDiagnosticSink((l) => lines.push(l));
+    const key = Symbol.for('opentelemetry.js.api.1');
+    const { loadedApiVersion } = require('./dist/internal/globals.js');
+    globalThis[key] = new Proxy({ version: loadedApiVersion() }, {
+      deleteProperty(t, p) { if (p === 'propagation') throw new Error('to https://user:pw@host.example.com/v1?token=abc Authorization: Bearer xyz'); delete t[p]; return true; },
+    });
+    require('./dist/internal/setup.js').setupFault.at = (s) => { if (s === 'providers') throw new Error('injected'); };
+    try { require('@staffops/otel-helper').setup({ serviceName: 'svc', environment: 'DEV', installDiagLogger: false }); } catch {}
+    console.log(JSON.stringify(lines.filter((l) => l.includes('rollback'))));
+  `);
+  const [line] = lastJson(res);
+  assert.match(line, /^otelhelper: setup\(\) rollback: a step could not be undone error=/);
+  for (const secret of ['user', 'pw@', 'token=abc', 'xyz']) assert.ok(!line.includes(secret), `${secret} in ${line}`);
+});
+
+test('M2 in a worker thread setup() starts no /metrics listener and says so once', () => {
+  const res = runCjs(`
+    const { Worker } = require('node:worker_threads');
+    const w = new Worker(\`
+      const lines = [];
+      require('@staffops/otel-helper/testing').setDiagnosticSink((l) => lines.push(l));
+      const h = require('@staffops/otel-helper');
+      h.setup({ serviceName: 'w', environment: 'DEV', metricExporters: ['prometheus'], prometheusMetricsPort: 9 });
+      const s = require('@staffops/otel-helper/testing').getState();
+      require('node:worker_threads').parentPort.postMessage({ listener: s.runtime.active.listener !== undefined, lines: lines.filter((l) => l.includes('worker thread')) });
+    \`, { eval: true });
+    w.on('message', (m) => { console.log(JSON.stringify(m)); w.terminate(); });
+  `);
+  const out = lastJson(res);
+  assert.equal(out.listener, false);
+  assert.deepEqual(out.lines, ["otelhelper: worker thread: the helper's /metrics listener (OTEL_HELPER_METRICS_PORT=9) is not started outside the main thread; mount metricsHandler() on a server of this thread, or export metrics over OTLP variable=OTEL_HELPER_METRICS_PORT"]);
+});
+
+test('L getProviders() is undefined after shutdown and under OTEL_SDK_DISABLED', async () => {
+  helper.setup({ serviceName: 'svc' });
+  assert.ok(testing.getProviders());
+  await helper.shutdown();
+  assert.equal(testing.getProviders(), undefined);
+  process.env.OTEL_SDK_DISABLED = 'true';
+  try {
+    helper.setup({ serviceName: 'svc' });
+    assert.equal(testing.getProviders(), undefined);
+  } finally {
+    delete process.env.OTEL_SDK_DISABLED;
+  }
+});
+
+test('final round: on the shutdown deadline a hung provider stops being the delegate; getResource() is undefined after shutdown', async () => {
+  const hanging = { onStart() {}, onEnd() {}, forceFlush: () => Promise.resolve(), shutdown: () => new Promise(() => {}) };
+  helper.setup({ serviceName: 'svc', spanProcessors: [hanging] });
+  const forwarder = api.trace.getTracerProvider().getDelegate();
+  assert.ok(testing.getResource());
+  await assert.rejects(helper.shutdown(30), /did not finish within 30 ms/);
+  assert.equal(forwarder.getDelegate(), undefined);
+  assert.equal(testing.getResource(), undefined);
 });

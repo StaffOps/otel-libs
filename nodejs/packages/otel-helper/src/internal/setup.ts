@@ -7,24 +7,27 @@
  * the sampler (with the health sampler around it), the propagators and the
  * debug marker; task B7 the Prometheus reader, the `/metrics` listener and
  * `metricsHandler()`; task B6 the core instrumentations (http, undici,
- * express, gRPC). The full lifecycle — rollback, foreign globals,
- * re-binding instrumentations, the stable forwarding providers of D-JS10 — is
- * task B9; the shape below (one runtime record on the shared state, rebuilt
- * after shutdown) is what it extends.
+ * express, gRPC); task B9 the lifecycle: the stable forwarding providers and
+ * propagator of D-JS10 (registered once per process, their delegates swapped
+ * by every setup and shutdown), foreign globals and `replaceGlobals`, and the
+ * rollback of a failed setup (Go G1).
  */
 import cluster from 'node:cluster';
 import type * as http from 'node:http';
-import { context, diag, logs, metrics, propagation, trace, type Attributes, type MeterProvider as MeterProviderApi, type TextMapPropagator, type TracerProvider as TracerProviderApi } from '@opentelemetry/api';
+import { isMainThread } from 'node:worker_threads';
+import { context, diag, DiagLogLevel, logs, metrics, propagation, trace, type Attributes, type DiagLogger, type MeterProvider as MeterProviderApi, type TextMapPropagator, type TracerProvider as TracerProviderApi } from '@opentelemetry/api';
 import type { PrometheusExporter } from '@opentelemetry/exporter-prometheus';
 import { AsyncLocalStorageContextManager } from '@opentelemetry/context-async-hooks';
 import { defaultResource, resourceFromAttributes, type Resource } from '@opentelemetry/resources';
 import { BatchLogRecordProcessor, ConsoleLogRecordExporter, LoggerProvider, type LogRecordProcessor } from '@opentelemetry/sdk-logs';
 import { ConsoleMetricExporter, MeterProvider, PeriodicExportingMetricReader, type IMetricReader } from '@opentelemetry/sdk-metrics';
 import { BatchSpanProcessor, ConsoleSpanExporter, TracerProvider, type SpanProcessor } from '@opentelemetry/sdk-trace';
-import { clearReportedOnce, report, reportOnce, truncateValue } from './diagnostics';
+import { clearReportedOnce, redactErrorText, report, reportOnce, truncateValue } from './diagnostics';
 import { installDiagLogger } from './diag-logger';
 import { logExporter, metricExporter, spanExporter, tlsMaterial, withMaskedEnv, type ExporterInput, type FileCache } from './exporters';
-import { foreignRegistry, registeredGlobal } from './globals';
+import { createForwarders, type Forwarders } from './forwarding';
+import { foreignRegistry, registeredGlobal, removeGlobal, type ApiGlobal } from './globals';
+import { entryIsEsm, hooksMode } from './hooks';
 import type { LogLevel } from './log-level';
 import { bindProviders, clientExclusions, createInstrumentations, disableInstrumentations, enableInstrumentations, loadedPackages, otlpTargets, type HelperInstrumentations } from './instrumentation';
 import { closeListener, createPrometheusReader, dropPredicate, droppingExporter, ENV_METRICS_PORT, serveMetrics, startListener, type DropPredicate, type ScrapeRequest, type ScrapeResponse, type ScrapeTarget } from './metrics-endpoint';
@@ -42,7 +45,11 @@ interface Active {
   readonly tracerProvider: TracerProvider | undefined;
   readonly meterProvider: MeterProvider | undefined;
   readonly loggerProvider: LoggerProvider | undefined;
-  /** Whether the global TracerProvider is the helper's (false: a foreign one was registered first). */
+  /**
+   * Whether the global TracerProvider is the helper's forwarding provider
+   * (false: a foreign one was registered first, or the API refused it); while
+   * true it forwards to `tracerProvider`.
+   */
   readonly ownsTracerProvider: boolean;
   readonly ownsMeterProvider: boolean;
   readonly ownsLoggerProvider: boolean;
@@ -53,9 +60,6 @@ interface Active {
    * (Go and Python: the helper's handler keeps exporting through its own).
    */
   readonly logsExported: boolean;
-  readonly contextManager: AsyncLocalStorageContextManager | undefined;
-  /** The propagator the helper registered; `undefined` when it registered none. */
-  readonly propagator: TextMapPropagator | undefined;
   /** The Prometheus reader; `undefined` when `prometheus` is not an effective metric exporter or it failed to build. */
   readonly prometheus: PrometheusExporter | undefined;
   /** Prometheus deliberately off (`OTEL_SDK_DISABLED`, or no `prometheus` metric exporter): `/metrics` answers 200, empty. */
@@ -66,13 +70,29 @@ interface Active {
   readonly drop: DropPredicate | undefined;
   /** Whether this setup enabled the instrumentations (disabled again by `shutdown()`). */
   readonly instrumented: boolean;
+  /** `register`: built by `@staffops/otel-helper/register`; later code options are then warned about. */
+  readonly origin: SetupOrigin;
   /** Cached result of the first `shutdown()`. */
   shutdown: Promise<void> | undefined;
 }
 
+/** The API globals the helper registers. */
+type OwnedGlobal = Exclude<ApiGlobal, 'diag'>;
+
+/** Who called `setup()`: the app, or the `/register` preload. */
+type SetupOrigin = 'code' | 'register';
+
 /** Helper runtime kept on the shared state (one per process for this version). */
 interface Runtime {
   active: Active | undefined;
+  /** The forwarding providers and propagator, built on first use and kept for the process (design D-JS10). */
+  forwarders: Forwarders | undefined;
+  /**
+   * The registry entry the helper registered for each global (for `trace`, the
+   * API's proxy holding the forwarding provider): the global is the helper's
+   * while the registry still holds this exact entry. Kept across `shutdown()`.
+   */
+  registered: Partial<Record<OwnedGlobal, unknown>>;
   /** The `diag` registry entry the helper's DiagLogger produced; `undefined` = not installed. */
   diagLogger: unknown;
   /**
@@ -101,7 +121,7 @@ const SHORT_READER_TIMEOUT_MS = 1000;
 const MAX_TIMER_MS = 2 ** 31 - 1;
 
 function runtimeOf(state: HelperState): Runtime {
-  state.runtime ??= { active: undefined, diagLogger: undefined, instrumentations: undefined, logLevel: undefined } satisfies Runtime;
+  state.runtime ??= { active: undefined, forwarders: undefined, registered: {}, diagLogger: undefined, instrumentations: undefined, logLevel: undefined } satisfies Runtime;
   return state.runtime as Runtime;
 }
 
@@ -385,6 +405,17 @@ function buildProviders(plan: Plan, base: Resource, options: SetupOptions): Prov
   // grpc-js later is still patched by the require hooks (spike B1c F6,
   // asserted in test/instrumentation.test.cjs).
   const pipelines = buildPipelines(plan);
+  try {
+    step('pipelines');
+    return providersFrom(plan, options, resource, pipelines);
+  } catch (err) {
+    // A provider constructor threw: the pipelines are nobody's yet (B9 fix round).
+    for (const part of [...pipelines.spanProcessors, ...pipelines.metricReaders, ...pipelines.logProcessors]) shutDownQuietly(part);
+    throw err;
+  }
+}
+
+function providersFrom(plan: Plan, options: SetupOptions, resource: Resource, pipelines: Pipelines): Providers {
   return {
     resource,
     tracerProvider: new TracerProvider({
@@ -416,79 +447,323 @@ function buildProviders(plan: Plan, base: Resource, options: SetupOptions): Prov
 /** Display names of the providers the helper registers. */
 const PROVIDER_NAMES = { trace: 'TracerProvider', metrics: 'MeterProvider', logs: 'LoggerProvider' } as const;
 
+/** Display names of every global the helper registers. */
+const GLOBAL_NAMES: Readonly<Record<OwnedGlobal, string>> = { ...PROVIDER_NAMES, context: 'context manager', propagation: 'propagator' };
+
+/** The signal a provider global carries (reported as `signal=`); none for the context manager and the propagator. */
+const GLOBAL_SIGNALS: Readonly<Partial<Record<OwnedGlobal, Signal>>> = { trace: 'traces', metrics: 'metrics', logs: 'logs' };
+
 /**
- * Registers a provider as the `type` global unless one is registered already
- * (kept, reported) or the API refuses it (reported). Returns whether the
- * global is the helper's.
+ * What keeping someone else's global means. The helper's loggers keep their
+ * own provider (Go, Python): with a foreign LoggerProvider only Logs API
+ * callers miss the helper's.
  */
-function registerProvider(type: keyof typeof PROVIDER_NAMES, signal: Signal, register: () => boolean): boolean {
-  const name = PROVIDER_NAMES[type];
-  // The helper's loggers keep their own provider (Go, Python): only Logs API callers miss it.
-  const logs = type === 'logs';
-  if (registeredGlobal(type) !== undefined) {
-    report(
-      logs
-        ? `a global ${name} is already registered; the helper does not replace it: OpenTelemetry Logs API callers use it, the helper's loggers (createLogger) still export through the helper's provider`
-        : `a global ${name} is already registered; the helper does not replace it and its ${signal} are inactive`,
-      { signal },
-    );
+const KEPT: Readonly<Record<OwnedGlobal, string>> = {
+  trace: 'the helper does not replace it and its traces are inactive',
+  metrics: 'the helper does not replace it and its metrics are inactive',
+  logs: "the helper does not replace it: OpenTelemetry Logs API callers use it, the helper's loggers (createLogger) still export through the helper's provider",
+  context: 'the helper keeps it',
+  propagation: 'the helper keeps it and OTEL_PROPAGATORS is not applied',
+};
+
+/** What a refused registration means. */
+const REFUSED: Readonly<Record<OwnedGlobal, string>> = {
+  trace: "the helper's traces are inactive",
+  metrics: "the helper's metrics are inactive",
+  logs: "OpenTelemetry Logs API callers get no logs, the helper's loggers (createLogger) still export through the helper's provider",
+  context: 'in-process context is not propagated',
+  propagation: 'context is not propagated across processes',
+};
+
+const DISABLE: Readonly<Record<OwnedGlobal, () => void>> = {
+  trace: () => {
+    trace.disable();
+  },
+  metrics: () => {
+    metrics.disable();
+  },
+  logs: () => {
+    logs.disable();
+  },
+  context: () => {
+    context.disable();
+  },
+  propagation: () => {
+    propagation.disable();
+  },
+};
+
+/**
+ * Empties the `type` global after a failed setup registered it (no previous
+ * entry). For `trace` and `logs` the registry entry is removed directly and
+ * the API's own proxy is pointed at nothing, instead of `disable()`, which
+ * replaces that proxy: tracers and Logs API loggers the app obtained before
+ * `setup()` hold it, and must join the provider the app registers next (B9
+ * fix round M3). Falls back to `disable()` when the API's shape differs
+ * (re-check on API bumps, B13).
+ */
+function releaseGlobal(type: OwnedGlobal): void {
+  if (type === 'trace') {
+    const proxy = registeredGlobal('trace') as { setDelegate?: unknown } | undefined;
+    if (typeof proxy?.setDelegate === 'function' && removeGlobal('trace')) {
+      Reflect.apply(proxy.setDelegate, proxy, [undefined]);
+      return;
+    }
+  } else if (type === 'logs') {
+    const proxy = (logs as unknown as { _proxyLoggerProvider?: { _setDelegate?: unknown } })._proxyLoggerProvider;
+    if (typeof proxy?._setDelegate === 'function' && removeGlobal('logs')) {
+      Reflect.apply(proxy._setDelegate, proxy, [undefined]);
+      return;
+    }
+  }
+  DISABLE[type]();
+}
+
+/**
+ * Puts `previous` (a registry entry) back as the `type` global, or empties
+ * it ({@link releaseGlobal}) when `previous` is `undefined` (always for
+ * `context`, never replaced). For `trace` the registry holds the API's
+ * proxy: its delegate is registered again (a new proxy, the same provider).
+ */
+function restoreGlobal(type: OwnedGlobal, previous: unknown): void {
+  if (previous === undefined) {
+    if (registeredGlobal(type) !== undefined) releaseGlobal(type);
+    return;
+  }
+  if (registeredGlobal(type) !== undefined) DISABLE[type]();
+  switch (type) {
+    case 'trace': {
+      const proxy = previous as { getDelegate?: () => TracerProviderApi };
+      trace.setGlobalTracerProvider(typeof proxy.getDelegate === 'function' ? proxy.getDelegate() : (previous as TracerProviderApi));
+      break;
+    }
+    case 'metrics':
+      metrics.setGlobalMeterProvider(previous as MeterProviderApi);
+      break;
+    case 'logs':
+      logs.setGlobalLoggerProvider(previous as Parameters<typeof logs.setGlobalLoggerProvider>[0]);
+      break;
+    // No 'context': a foreign context manager is never replaced, so there is none to put back.
+    case 'propagation':
+      propagation.setGlobalPropagator(previous as TextMapPropagator);
+      break;
+  }
+}
+
+/** One `setup()` call in progress: what it built, and how to undo what it installed (G1). */
+interface Attempt {
+  /** `replaceGlobals`: replace foreign providers and the propagator. */
+  readonly replace: boolean;
+  /** Undo steps, in install order (run in reverse on failure). */
+  readonly undo: (() => void)[];
+  built: Providers | undefined;
+  listener: http.Server | undefined;
+  instrumented: boolean;
+}
+
+/**
+ * Makes the helper's instance the `type` global (`register` registers it and
+ * returns whether the API accepted it). A global the helper registered
+ * earlier is kept as is; someone else's is reported and kept, or replaced
+ * under `replaceGlobals` (never the context manager: the app's asynchronous
+ * context depends on it, design D-JS14). Returns whether the global is now
+ * the helper's. Every change is undone by `attempt.undo` on failure.
+ */
+function claimGlobal(rt: Runtime, type: OwnedGlobal, register: () => boolean, attempt: Attempt): boolean {
+  const name = GLOBAL_NAMES[type];
+  const signal = GLOBAL_SIGNALS[type];
+  const attrs = signal === undefined ? undefined : { signal };
+  const entry = registeredGlobal(type);
+  const mine = rt.registered[type];
+  if (entry !== undefined && entry === mine) return true;
+  // Registered by the helper once, replaced (or removed) by someone since.
+  const lost = mine !== undefined;
+  rt.registered[type] = undefined;
+  let previous: unknown;
+  if (entry !== undefined) {
+    if (!attempt.replace || type === 'context') {
+      const message = `${lost ? `the global ${name} is no longer the helper's` : `a global ${name} is already registered`}; ${KEPT[type]}`;
+      // Under replaceGlobals the kept context manager is worth saying once, not on every setup.
+      if (attempt.replace) reportOnce('replace-globals:context', `${message}; replaceGlobals never replaces the context manager`);
+      else report(message, attrs);
+      return false;
+    }
+    previous = entry;
+    report(`a global ${name} is already registered; replaceGlobals is set: the helper replaces it`, attrs, { origin: 'helper', level: 'info' });
+  }
+  // Set once the registration succeeded; read by the undo step below.
+  const ours: { entry: unknown } = { entry: undefined };
+  // Pushed before anything changes (B9 fix round M4): a throw from disable()
+  // or the registration is undone too. It puts `previous` back unless the
+  // global already is `previous` again or someone else's.
+  attempt.undo.push(() => {
+    const now = registeredGlobal(type);
+    if (now !== previous && (now === undefined || now === ours.entry)) restoreGlobal(type, previous);
+    rt.registered[type] = undefined;
+  });
+  if (previous !== undefined) DISABLE[type]();
+  if (!register()) {
+    if (previous !== undefined) restoreGlobal(type, previous);
+    report(`the OpenTelemetry API refused the global ${name}; ${REFUSED[type]}`, attrs);
     return false;
   }
-  if (register()) return true;
-  report(
-    logs
-      ? `the OpenTelemetry API refused the global ${name}; OpenTelemetry Logs API callers get no logs, the helper's loggers (createLogger) still export through the helper's provider`
-      : `the OpenTelemetry API refused the global ${name}; the helper's ${signal} are inactive`,
-    { signal },
-  );
-  return false;
+  ours.entry = registeredGlobal(type);
+  rt.registered[type] = ours.entry;
+  return true;
 }
+
+/** A forwarder's delegate slot. */
+interface DelegateSlot<P> {
+  getDelegate(): P | undefined;
+  setDelegate(next: P | undefined): void;
+}
+
+/** Points a forwarder at `next`; the previous delegate comes back on failure. */
+function forwardTo<P>(slot: DelegateSlot<P>, next: P | undefined, attempt: Attempt): void {
+  const previous = slot.getDelegate();
+  slot.setDelegate(next);
+  attempt.undo.push(() => {
+    slot.setDelegate(previous);
+  });
+}
+
+/** Puts the DiagLogger registered before a failed setup back. */
+function restoreDiag(previous: unknown): void {
+  if (registeredGlobal('diag') === previous) return;
+  if (previous === undefined) diag.disable();
+  // The registry holds a level-filtered logger: ALL keeps its own filter.
+  else diag.setLogger(previous as DiagLogger, { logLevel: DiagLogLevel.ALL, suppressOverrideMessage: true });
+}
+
+/**
+ * @internal Rollback test seam (test/setup.test.cjs): called after each
+ * install step with its name; a throw fails the setup at that step. Not part
+ * of the API (only reachable through `dist/internal/setup.js`).
+ */
+export const setupFault: { at: ((step: string) => void) | undefined } = { at: undefined };
+
+function step(name: string): void {
+  setupFault.at?.(name);
+}
+
+const ALL_SIGNALS: readonly Signal[] = Object.freeze(['traces', 'metrics', 'logs']);
+
+/** `resolved` with the signals the helper could not activate (JS7). */
+function withInactiveSignals(resolved: Resolved, inactiveSignals: readonly Signal[]): Resolved {
+  return Object.freeze({ ...resolved, inactiveSignals: Object.freeze([...inactiveSignals]) });
+}
+
+const ESM_WITHOUT_HOOKS =
+  'setup() runs in an ES module process without the module hooks; packages imported after setup() (express, @grpc/grpc-js) are not instrumented — start the process with --import @staffops/otel-helper/register, or import @staffops/otel-helper/hooks first in the preload that calls setup()';
 
 /**
  * Configures OpenTelemetry for this process and returns what it resolved,
  * frozen. Synchronous, so it works from a `--require` preload. Idempotent:
  * while a setup is active, later calls return its result unchanged (first call
- * wins); after `shutdown()` the next call builds everything again.
+ * wins); after `shutdown()` the next call builds everything again and points
+ * the helper's globals at it (design D-JS10), so tracers, meters and loggers
+ * obtained earlier keep working.
  *
  * Invalid options throw a `TypeError` naming the option before anything is
  * installed; problems in the environment only warn on the diagnostics sink.
- * When another version of the helper owns the process (design D-JS10), the
- * options are still resolved and returned but nothing is installed, and the
- * per-setup identity warnings are not repeated.
+ * A global registered by someone else is kept, reported, and its signal
+ * listed in `Resolved.inactiveSignals`, unless `replaceGlobals` is set (JS7).
+ * Any other failure (a bug, an SDK change) releases everything this call
+ * built, leaves the globals as they were and is thrown (Go G1); a later call
+ * can try again. When another version of the helper owns the process (design
+ * D-JS10), the options are still resolved and returned but nothing is
+ * installed, and the per-setup identity warnings are not repeated.
  */
 export function setup(options?: SetupOptions): Resolved {
+  return setupFrom('code', options);
+}
+
+/** @internal `setup()` from the environment, for `@staffops/otel-helper/register`. */
+export function setupFromRegister(): Resolved {
+  return setupFrom('register', undefined);
+}
+
+function setupFrom(origin: SetupOrigin, options: SetupOptions | undefined): Resolved {
   const validated = validateOptions(options);
   const state = getState();
   const base = defaultResource();
   if (state === null) {
     // Inactive copy (getState() already reported why): resolve, install nothing.
-    return resolvePlan(validated, defaultServiceName(base), true).resolved;
+    return withInactiveSignals(resolvePlan(validated, defaultServiceName(base), true).resolved, ALL_SIGNALS);
   }
   const rt = runtimeOf(state);
   if (rt.active !== undefined && rt.active.shutdown === undefined) {
     if (Object.keys(validated).length > 0) {
-      report('setup() already ran; these options are ignored and the first result is returned', undefined, {
-        origin: 'helper',
-        level: 'info',
-      });
+      if (rt.active.origin === 'register') {
+        // The app expects its options to apply: they silently would not (B9 fix round).
+        report('setup() already ran from @staffops/otel-helper/register, so these options are ignored; to pass options in code, preload your own file (import @staffops/otel-helper/hooks, then setup({...})) instead of /register');
+      } else {
+        report('setup() already ran; these options are ignored and the first result is returned', undefined, {
+          origin: 'helper',
+          level: 'info',
+        });
+      }
     }
     return rt.active.resolved;
   }
   // Resolution first: it can still throw for an invalid code option (code
   // `metricExporters` with `otlp` and no endpoint), before anything is installed.
   const plan = resolvePlan(validated, defaultServiceName(base));
+  const attempt: Attempt = { replace: validated.replaceGlobals === true, undo: [], built: undefined, listener: undefined, instrumented: false };
+  let active: Active;
+  try {
+    active = install(rt, plan, validated, base, attempt, origin);
+  } catch (err) {
+    rollback(rt, attempt);
+    throw err;
+  }
+  rt.active = active;
+  rt.logLevel = plan.resolved.logLevel;
+  return active.resolved;
+}
+
+/** Releases what a failed setup built and installed (Go G1); `rt.active` was never replaced. */
+function rollback(rt: Runtime, attempt: Attempt): void {
+  if (attempt.instrumented) disableInstrumentations(rt.instrumentations);
+  void closeListener(attempt.listener);
+  for (const undo of attempt.undo.reverse()) {
+    try {
+      undo();
+    } catch (err) {
+      report('setup() rollback: a step could not be undone', { error: redactErrorText(err instanceof Error ? err.message : String(err)) });
+    }
+  }
+  const built = attempt.built;
+  if (built !== undefined) {
+    for (const provider of [built.tracerProvider, built.meterProvider, built.loggerProvider]) shutDownQuietly(provider);
+  }
+}
+
+/** Shuts `target` down in the background, ignoring its errors (rollback, reset). */
+function shutDownQuietly(target: { shutdown(): Promise<void> }): void {
+  void Promise.resolve().then(() => target.shutdown()).catch(() => undefined);
+}
+
+/** The body of `setup()`: builds, then installs, recording every change in `attempt`. */
+function install(rt: Runtime, plan: Plan, options: SetupOptions, base: Resource, attempt: Attempt, origin: SetupOrigin): Active {
   // A registry of another API version refuses every registration (the API
   // compares versions), so the helper installs no global into it.
   const foreignApi = foreignRegistry();
   // Before anything is built, so SDK messages from it are captured.
   const ownsDiag = helperOwnsDiag(rt);
+  const diagBefore = registeredGlobal('diag');
+  const diagLoggerBefore = rt.diagLogger;
+  attempt.undo.push(() => {
+    restoreDiag(diagBefore);
+    rt.diagLogger = diagLoggerBefore === diagBefore ? registeredGlobal('diag') : diagLoggerBefore;
+  });
   if (foreignApi !== undefined) {
     report('the OpenTelemetry API globals belong to another @opentelemetry/api version; the helper registers no global and its telemetry is inactive', {
       version: truncateValue(foreignApi.version),
       required: foreignApi.required,
     });
     rt.diagLogger = undefined;
-  } else if (validated.installDiagLogger === false) {
+  } else if (options.installDiagLogger === false) {
     // Opt-out on a re-setup: remove the logger an earlier setup installed.
     if (ownsDiag) diag.disable();
     rt.diagLogger = undefined;
@@ -496,80 +771,89 @@ export function setup(options?: SetupOptions): Resolved {
     installDiagLogger(ownsDiag);
     rt.diagLogger = registeredGlobal('diag');
   }
+  step('diag');
+  const { sdkDisabled } = plan.resolved;
   // Before the exporters load grpc-js: what the app had loaded itself.
-  const loadedBeforeSetup = plan.resolved.sdkDisabled ? new Set<string>() : loadedPackages();
-  const built = plan.resolved.sdkDisabled ? undefined : buildProviders(plan, base, validated);
-  if (rt.active !== undefined) releaseGlobals(rt.active);
-  // A global registered by someone else is kept; checking first avoids the
-  // API's duplicate-registration error (with a stack trace) on `diag`.
-  let contextManager: AsyncLocalStorageContextManager | undefined;
-  if (foreignApi !== undefined) {
-    // Reported above.
-  } else if (registeredGlobal('context') === undefined) {
-    contextManager = new AsyncLocalStorageContextManager().enable();
-    if (!context.setGlobalContextManager(contextManager)) {
-      contextManager.disable();
-      contextManager = undefined;
-      report('the OpenTelemetry API refused the global context manager; in-process context is not propagated');
-    }
-  } else {
-    report('a global context manager is already registered; the helper keeps it');
-  }
-  // The propagators are installed under OTEL_SDK_DISABLED=true too (contract
-  // D1 row "OTEL_SDK_DISABLED", case propagation.sdk_disabled_propagators_kept).
-  // A propagator registered first is kept: the 3.0 API refuses a second
-  // registration (Go and Python replace it; design D-JS14).
-  let ownedPropagator: TextMapPropagator | undefined;
+  const loadedBeforeSetup = sdkDisabled ? new Set<string>() : loadedPackages();
+  const built = sdkDisabled ? undefined : buildProviders(plan, base, options);
+  attempt.built = built;
+  step('built');
+  const fw = (rt.forwarders ??= createForwarders());
+  // The context manager and the propagator are installed under
+  // OTEL_SDK_DISABLED=true too (spec JS1; contract D1 row "OTEL_SDK_DISABLED",
+  // case propagation.sdk_disabled_propagators_kept). A global registered by
+  // someone else is checked first, which avoids the API's duplicate-
+  // registration error (with a stack trace) on `diag`.
+  let ownsPropagator = false;
   if (foreignApi === undefined) {
-    if (registeredGlobal('propagation') !== undefined) {
-      report('a global propagator is already registered; the helper keeps it and OTEL_PROPAGATORS is not applied');
-    } else {
-      const propagator = buildPropagator(plan.resolved.propagators);
-      if (propagation.setGlobalPropagator(propagator)) ownedPropagator = propagator;
-      else report('the OpenTelemetry API refused the global propagator; context is not propagated across processes');
-    }
+    claimGlobal(rt, 'context', () => {
+      const manager = new AsyncLocalStorageContextManager().enable();
+      if (context.setGlobalContextManager(manager)) return true;
+      manager.disable();
+      return false;
+    }, attempt);
+    step('context');
+    // A propagator registered first is kept unless replaceGlobals: the 3.0
+    // API refuses a second registration (Go and Python replace it; D-JS14).
+    ownsPropagator = claimGlobal(rt, 'propagation', () => propagation.setGlobalPropagator(fw.propagator), attempt);
+    if (ownsPropagator) forwardTo(fw.propagator, buildPropagator(plan.resolved.propagators), attempt);
+    step('propagator');
   }
-  if (plan.resolved.sdkDisabled) {
+  if (sdkDisabled) {
     // The same INFO line in every language (contract D1 row "OTEL_SDK_DISABLED INFO", A19),
     // only when the propagator was installed; Node also keeps its context manager (spec JS1).
-    const message =
-      ownedPropagator === undefined
-        ? 'OTEL_SDK_DISABLED=true: telemetry disabled; the helper installed no propagator'
-        : 'OTEL_SDK_DISABLED=true: telemetry disabled, only propagators installed';
+    const message = ownsPropagator
+      ? 'OTEL_SDK_DISABLED=true: telemetry disabled, only propagators installed'
+      : 'OTEL_SDK_DISABLED=true: telemetry disabled; the helper installed no propagator';
     report(message, undefined, { origin: 'helper', level: 'info' });
   }
   let ownsTracerProvider = false;
   let ownsMeterProvider = false;
   let ownsLoggerProvider = false;
-  // OTEL_SDK_DISABLED=true: no provider is registered, so the API's no-op
-  // providers stay; the context manager and the propagators above still
-  // propagate context (spec JS1).
+  // OTEL_SDK_DISABLED=true: no provider is registered and the forwarders keep
+  // no delegate, so every global stays a no-op; the context manager and the
+  // propagators above still propagate context (spec JS1).
   if (foreignApi === undefined && built !== undefined) {
-    const { tracerProvider, meterProvider, loggerProvider } = built;
-    ownsTracerProvider = registerProvider('trace', 'traces', () => trace.setGlobalTracerProvider(tracerProvider));
-    ownsMeterProvider = registerProvider('metrics', 'metrics', () => metrics.setGlobalMeterProvider(meterProvider));
-    ownsLoggerProvider = registerProvider('logs', 'logs', () => logs.setGlobalLoggerProvider(loggerProvider));
+    ownsTracerProvider = claimGlobal(rt, 'trace', () => trace.setGlobalTracerProvider(fw.tracerProvider), attempt);
+    ownsMeterProvider = claimGlobal(rt, 'metrics', () => metrics.setGlobalMeterProvider(fw.meterProvider), attempt);
+    ownsLoggerProvider = claimGlobal(rt, 'logs', () => logs.setGlobalLoggerProvider(fw.loggerProvider), attempt);
+    // A forwarder forwards only while it is the global: a foreign provider's signal is inactive.
+    forwardTo(fw.tracerProvider, ownsTracerProvider ? built.tracerProvider : undefined, attempt);
+    forwardTo(fw.meterProvider, ownsMeterProvider ? built.meterProvider : undefined, attempt);
+    forwardTo(fw.loggerProvider, ownsLoggerProvider ? built.loggerProvider : undefined, attempt);
   }
+  step('providers');
   // The instrumentations, after the providers are registered: their
   // constructors read the API globals (design D-JS1, amended by B6). Not
   // under OTEL_SDK_DISABLED=true (Python: no instrumentation) nor into a
-  // foreign API registry. Bound to the helper's providers when they are the
-  // globals, else to the global ones (a foreign provider), so instrumentation
-  // spans join the app's own.
-  let instrumented = false;
+  // foreign API registry. Bound to the forwarding providers when they are the
+  // globals (so a re-setup needs no re-bind), else to the global ones (a
+  // foreign provider), so instrumentation spans join the app's own; every
+  // setup binds them again, so a later `replaceGlobals` setup moves them to
+  // the helper's (task B9).
   const instrumentations = foreignApi === undefined && built !== undefined ? instrumentationsOf(rt) : undefined;
-  if (instrumentations !== undefined && built !== undefined) {
-    instrumented = tryEnableInstrumentations(instrumentations, plan, {
-      tracerProvider: ownsTracerProvider ? built.tracerProvider : trace.getTracerProvider(),
-      meterProvider: ownsMeterProvider ? built.meterProvider : metrics.getMeterProvider(),
+  if (instrumentations !== undefined) {
+    attempt.instrumented = tryEnableInstrumentations(instrumentations, plan, {
+      tracerProvider: ownsTracerProvider ? fw.tracerProvider : trace.getTracerProvider(),
+      meterProvider: ownsMeterProvider ? fw.meterProvider : metrics.getMeterProvider(),
     }, loadedBeforeSetup);
+    // Spec JS5: in an ES module process, import-in-the-middle only sees later
+    // imports through the loader hooks (require-in-the-middle never does).
+    if (attempt.instrumented && hooksMode() === undefined && entryIsEsm()) reportOnce('esm-without-hooks', ESM_WITHOUT_HOOKS);
   }
+  step('instrumentations');
   // The listener serves only a reader whose MeterProvider is the global one
   // (a foreign provider's instruments would never reach it: 503 instead).
   const prometheus = built?.prometheus;
   const port = plan.resolved.prometheusMetricsPort;
-  let listener: http.Server | undefined;
-  if (prometheus !== undefined && ownsMeterProvider && port > 0) {
+  if (prometheus !== undefined && ownsMeterProvider && port > 0 && !isMainThread) {
+    // A worker thread shares the process (and the port) with the main thread: no listener (B9 fix round M2).
+    reportOnce(
+      'worker:metrics-port',
+      `worker thread: the helper's /metrics listener (${ENV_METRICS_PORT}=${String(port)}) is not started outside the main thread; mount metricsHandler() on a server of this thread, or export metrics over OTLP`,
+      { variable: ENV_METRICS_PORT },
+    );
+  } else if (prometheus !== undefined && ownsMeterProvider && port > 0) {
     if (cluster.isWorker) {
       reportOnce(
         'cluster:metrics-port',
@@ -577,10 +861,17 @@ export function setup(options?: SetupOptions): Resolved {
         { variable: ENV_METRICS_PORT },
       );
     }
-    listener = startListener(port, metricsHandler());
+    attempt.listener = startListener(port, metricsHandler());
   }
-  rt.active = {
-    resolved: plan.resolved,
+  step('listener');
+  const inactiveSignals: Signal[] = [];
+  if (foreignApi !== undefined) inactiveSignals.push(...ALL_SIGNALS);
+  else if (built !== undefined) {
+    if (!ownsTracerProvider) inactiveSignals.push('traces');
+    if (!ownsMeterProvider) inactiveSignals.push('metrics');
+  }
+  return {
+    resolved: withInactiveSignals(plan.resolved, inactiveSignals),
     resource: built?.resource,
     tracerProvider: built?.tracerProvider,
     meterProvider: built?.meterProvider,
@@ -590,17 +881,14 @@ export function setup(options?: SetupOptions): Resolved {
     ownsLoggerProvider,
     // Not into a foreign API registry: its telemetry is inactive (reported above).
     logsExported: foreignApi === undefined && built?.logsExported === true,
-    contextManager,
-    propagator: ownedPropagator,
     prometheus,
     prometheusInactive: !plan.resolved.metricExporters.includes('prometheus'),
-    listener,
+    listener: attempt.listener,
     drop: dropPredicate(plan.resolved.disabledMetrics),
-    instrumented,
+    instrumented: attempt.instrumented,
+    origin,
     shutdown: undefined,
   };
-  rt.logLevel = plan.resolved.logLevel;
-  return plan.resolved;
 }
 
 /** Where the helper's loggers write a record now, and the installed level (design D6, R4). */
@@ -655,20 +943,6 @@ export function metricsHandler(): (req: ScrapeRequest, res: ScrapeResponse) => v
   };
 }
 
-// Unregisters what an earlier setup registered, so the next one can.
-function releaseGlobals(active: Active): void {
-  if (active.ownsTracerProvider) trace.disable();
-  if (active.ownsMeterProvider) metrics.disable();
-  if (active.ownsLoggerProvider) logs.disable();
-  if (active.contextManager !== undefined) context.disable();
-  if (active.propagator !== undefined) {
-    // Only the helper's own instance: one registered after the helper's was disabled is someone else's.
-    const current = registeredGlobal('propagation');
-    if (current === active.propagator) propagation.disable();
-    else if (current !== undefined) report("the global propagator is no longer the helper's; the helper keeps it");
-  }
-}
-
 interface NamedProvider {
   readonly name: string;
   readonly provider: { shutdown(): Promise<void> };
@@ -695,47 +969,85 @@ function validTimeout(timeoutMs: unknown): timeoutMs is number {
  * that failed and the first reason when a provider failed
  * (also synchronously) and with an `Error` when the deadline passed. The
  * deadline timer keeps the process alive until it settles, so a hung export
- * is reported instead of the process exiting silently. Without an active
- * setup it resolves immediately.
+ * is reported instead of the process exiting silently. The deadline bounds the
+ * promise, not the process: a provider still exporting, or any other open
+ * handle, can keep the process alive after it settles, so a signal handler
+ * should exit explicitly:
+ * `process.once('SIGTERM', () => { shutdown().finally(() => process.exit(0)); })`.
+ * The global providers keep forwarding to this setup's providers until each
+ * one's shutdown settles (their final export still runs the observable
+ * callbacks), then forward to nothing. Without an active setup it resolves
+ * immediately.
  */
 export function shutdown(timeoutMs: number = DEFAULT_SHUTDOWN_TIMEOUT_MS): Promise<void> {
   if (!validTimeout(timeoutMs)) {
     return Promise.reject(new TypeError(`shutdown(): timeoutMs must be a positive number, got ${String(timeoutMs)}`));
   }
   const state = getState();
-  const active = state === null ? undefined : runtimeOf(state).active;
+  if (state === null) return Promise.resolve();
+  const rt = runtimeOf(state);
+  const active = rt.active;
   if (active === undefined) return Promise.resolve();
-  active.shutdown ??= runShutdown(active, Math.min(timeoutMs, MAX_TIMER_MS));
+  active.shutdown ??= runShutdown(rt, active, Math.min(timeoutMs, MAX_TIMER_MS));
   return active.shutdown;
 }
 
-async function runShutdown(active: Active, timeoutMs: number): Promise<void> {
+/**
+ * Points `slot` at nothing once `provider` settled, if it still forwards to
+ * it (a newer setup may have replaced it meanwhile).
+ */
+function releaseDelegate(slot: DelegateSlot<unknown> | undefined, provider: unknown): void {
+  if (slot !== undefined && slot.getDelegate() === provider) slot.setDelegate(undefined);
+}
+
+async function runShutdown(rt: Runtime, active: Active, timeoutMs: number): Promise<void> {
   let timer: NodeJS.Timeout | undefined;
-  // Ref'd on purpose (amended D-JS10): an unref'd timer lets a process whose
-  // only pending work is a hung provider exit without the rejection.
-  const deadline = new Promise<'timeout'>((resolve) => {
-    timer = setTimeout(() => {
-      resolve('timeout');
-    }, timeoutMs);
-  });
-  // Instrumentations off first (Python uninstruments first): no new spans or
-  // measurements reach providers that are shutting down.
-  if (active.instrumented) disableInstrumentations(stateInstrumentations());
-  // The listener first (Go): scrapes stop, then the MeterProvider flushes.
-  const listenerClosed = closeListener(active.listener);
-  // Promise.resolve().then(): a provider that throws synchronously still lands in allSettled.
-  const named = providersOf(active);
-  const providers = named.map(({ name, provider }) =>
-    (name === PROVIDER_NAMES.metrics ? listenerClosed : Promise.resolve()).then(() => provider.shutdown()),
-  );
   try {
+    // Ref'd on purpose (amended D-JS10): an unref'd timer lets a process whose
+    // only pending work is a hung provider exit without the rejection.
+    const deadline = new Promise<'timeout'>((resolve) => {
+      timer = setTimeout(() => {
+        resolve('timeout');
+      }, timeoutMs);
+    });
+    // Instrumentations off first (Python uninstruments first): no new spans or
+    // measurements from them reach providers that are shutting down.
+    if (active.instrumented) disableInstrumentations(rt.instrumentations);
+    // The listener first (Go): scrapes stop, then the MeterProvider flushes.
+    const listenerClosed = closeListener(active.listener);
+    // The forwarders keep each provider as their delegate until its shutdown
+    // settles (B9 fix round H1): Go and Python keep their global providers
+    // installed through the flush, and the final collection must still call
+    // the observable and batch callbacks registered with it. Only the
+    // MeterProvider takes the deadline (`timeoutMillis`); the TracerProvider
+    // and LoggerProvider of SDK 3.0 take none (D-JS14), the race below bounds them.
+    const fw = rt.forwarders;
+    const slots: Readonly<Record<string, DelegateSlot<unknown> | undefined>> = {
+      [PROVIDER_NAMES.trace]: fw?.tracerProvider,
+      [PROVIDER_NAMES.metrics]: fw?.meterProvider,
+      [PROVIDER_NAMES.logs]: fw?.loggerProvider,
+    };
+    const named = providersOf(active);
+    // Promise.resolve().then(): a provider that throws synchronously still lands in allSettled.
+    const providers = named.map(({ name, provider }) => {
+      const run = name === PROVIDER_NAMES.metrics
+        ? listenerClosed.then(() => (provider as MeterProvider).shutdown({ timeoutMillis: timeoutMs }))
+        : Promise.resolve().then(() => provider.shutdown());
+      return run.finally(() => {
+        releaseDelegate(slots[name], provider);
+      });
+    });
     const outcome = await Promise.race([Promise.allSettled(providers), deadline]);
-    if (outcome === 'timeout') throw new Error(`shutdown(): providers did not finish within ${String(timeoutMs)} ms`);
+    if (outcome === 'timeout') {
+      // A hung provider stops being a delegate now, not whenever it settles (B9 final round).
+      for (const { name, provider } of named) releaseDelegate(slots[name], provider);
+      throw new Error(`shutdown(): providers did not finish within ${String(timeoutMs)} ms`);
+    }
     const failed = outcome.flatMap((r, i) => (r.status === 'rejected' ? [{ name: named[i]?.name ?? 'provider', reason: r.reason as unknown }] : []));
     const first = failed[0];
     if (first !== undefined) {
       // Exporter errors carry the redacted endpoint at most; cut anyway.
-      const why = truncateValue(first.reason instanceof Error ? first.reason.message : String(first.reason));
+      const why = redactErrorText(first.reason instanceof Error ? first.reason.message : String(first.reason));
       throw new AggregateError(
         failed.map((f) => f.reason),
         `shutdown(): ${failed.map((f) => f.name).join(', ')} failed to shut down (first: ${why})`,
@@ -746,22 +1058,31 @@ async function runShutdown(active: Active, timeoutMs: number): Promise<void> {
   }
 }
 
-function stateInstrumentations(): HelperInstrumentations | undefined {
-  const state = getState();
-  return state === null ? undefined : runtimeOf(state).instrumentations;
-}
-
-/** The resource of the installed TracerProvider (tests only, through `/testing`); `undefined` under `OTEL_SDK_DISABLED=true`. */
+/** The resource of the active setup's TracerProvider (tests only, through `/testing`); `undefined` without one, after `shutdown()` and under `OTEL_SDK_DISABLED=true`, as `getProviders()`. */
 export function getResource(): Resource | undefined {
   const state = getState();
-  return state === null ? undefined : runtimeOf(state).active?.resource;
+  const active = state === null ? undefined : runtimeOf(state).active;
+  return active === undefined || active.shutdown !== undefined ? undefined : active.resource;
+}
+
+/** The SDK providers of the active setup, frozen (tests only, through `/testing`); `undefined` without one, after `shutdown()` and under `OTEL_SDK_DISABLED=true`. */
+export function getProviders(): { readonly tracerProvider: TracerProvider; readonly meterProvider: MeterProvider; readonly loggerProvider: LoggerProvider } | undefined {
+  const state = getState();
+  const active = state === null ? undefined : runtimeOf(state).active;
+  if (active === undefined || active.shutdown !== undefined) return undefined;
+  const { tracerProvider, meterProvider, loggerProvider } = active;
+  if (tracerProvider === undefined || meterProvider === undefined || loggerProvider === undefined) return undefined;
+  return Object.freeze({ tracerProvider, meterProvider, loggerProvider });
 }
 
 /**
  * Test-only: forgets every setup, unregisters what the helper registered
- * (globals it owns, its DiagLogger), clears the "once" diagnostics and
- * restores the stderr sink. Providers not shut down yet are shut down in the
- * background.
+ * (the globals it still owns, its DiagLogger), points the forwarders at
+ * nothing and discards them (tracers, meters and loggers obtained before
+ * `reset()` stay no-ops), clears the "once" diagnostics and restores the
+ * stderr sink. Providers not shut down yet are shut down in the background.
+ * The instrumentations are kept, disabled: their require/import hooks stay
+ * registered.
  */
 export function resetForTests(): void {
   const state = getState();
@@ -769,13 +1090,27 @@ export function resetForTests(): void {
     const rt = runtimeOf(state);
     const active = rt.active;
     if (active !== undefined) {
-      releaseGlobals(active);
       void closeListener(active.listener);
       if (active.shutdown === undefined) {
-        for (const { provider } of providersOf(active)) void Promise.resolve().then(() => provider.shutdown()).catch(() => undefined);
+        for (const { provider } of providersOf(active)) shutDownQuietly(provider);
       }
       rt.active = undefined;
     }
+    const fw = rt.forwarders;
+    if (fw !== undefined) {
+      fw.tracerProvider.setDelegate(undefined);
+      fw.meterProvider.setDelegate(undefined);
+      fw.loggerProvider.setDelegate(undefined);
+      fw.propagator.setDelegate(undefined);
+      // Discarded: objects obtained before reset() stay no-ops, so a test's
+      // observable callbacks never reach the next test's setup.
+      rt.forwarders = undefined;
+    }
+    for (const type of Object.keys(rt.registered) as OwnedGlobal[]) {
+      // Only the helper's own entries: one registered over them is someone else's.
+      if (rt.registered[type] !== undefined && registeredGlobal(type) === rt.registered[type]) DISABLE[type]();
+    }
+    rt.registered = {};
     // Unconditionally: whatever a setup left enabled (B6 review).
     disableInstrumentations(rt.instrumentations);
     if (helperOwnsDiag(rt)) diag.disable();

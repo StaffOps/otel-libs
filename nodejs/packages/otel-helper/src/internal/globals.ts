@@ -90,3 +90,18 @@ export function registeredGlobal(type: ApiGlobal): unknown {
     return undefined;
   }
 }
+
+/**
+ * Removes the `type` entry from the registry directly, as the API's
+ * `unregisterGlobal` does but without `disable()` replacing the API's proxy
+ * (setup.ts `releaseGlobal`). Returns whether the entry is gone. Never throws.
+ */
+export function removeGlobal(type: ApiGlobal): boolean {
+  try {
+    const reg = registry();
+    if (reg !== undefined) Reflect.deleteProperty(reg, type);
+    return reg?.[type] === undefined;
+  } catch {
+    return false;
+  }
+}

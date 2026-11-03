@@ -568,10 +568,7 @@ test('R1 gRPC export: target with explicit port, metadata, deadline from the res
 
 /** The processors/reader the helper installed (SDK internals, test only). */
 function installed() {
-  const tp = api.trace.getTracerProvider().getDelegate();
-  const mp = api.metrics.getMeterProvider();
-  const lp = api.logs.getLoggerProvider();
-  const lpDelegate = typeof lp.getDelegate === 'function' ? lp.getDelegate() : lp;
+  const { tracerProvider: tp, meterProvider: mp, loggerProvider: lpDelegate } = testing.getProviders();
   return {
     // The first processor with an exporter: the gRPC status rule comes first (A22).
     bsp: tp._activeSpanProcessor._spanProcessors.find((p) => p._exporter !== undefined),
@@ -604,13 +601,18 @@ test('A18 export deadline: BSP/BLRP get the resolved OTLP timeout; the reader ge
   assert.match(warnings().find((l) => l.includes('capped')), /variable=exportTimeoutMs/);
 });
 
-test('JS2 providers: metrics and logs globals are registered and released on re-setup; a foreign one is kept', async () => {
+test('JS2 providers: metrics and logs globals are the stable forwarders, new SDK providers on re-setup; a foreign one is kept', async () => {
   helper.setup();
   const mp = api.metrics.getMeterProvider();
-  assert.equal(mp.constructor.name, 'MeterProvider');
+  assert.equal(mp.constructor.name, 'ForwardingMeterProvider');
+  assert.equal(api.logs.getLoggerProvider().constructor.name, 'ForwardingLoggerProvider');
+  const sdk = testing.getProviders().meterProvider;
+  assert.equal(mp.getDelegate(), sdk);
   await helper.shutdown();
   helper.setup();
-  assert.notEqual(api.metrics.getMeterProvider(), mp);
+  assert.equal(api.metrics.getMeterProvider(), mp);
+  assert.notEqual(testing.getProviders().meterProvider, sdk);
+  assert.equal(mp.getDelegate(), testing.getProviders().meterProvider);
   await helper.shutdown();
   testing.reset();
   resetAndCapture();
@@ -645,7 +647,7 @@ test('R8 tryBuild: a failing exporter or pipeline step is reported, the signal s
 
 test('shutdown() (B4b review): a failing provider rejects with an AggregateError naming it and the first reason', async () => {
   helper.setup();
-  const tp = api.trace.getTracerProvider().getDelegate();
+  const tp = testing.getProviders().tracerProvider;
   tp.shutdown = () => Promise.reject(new Error('flush failed'));
   await assert.rejects(helper.shutdown(), (err) => err instanceof AggregateError && /TracerProvider failed to shut down \(first: flush failed\)/.test(err.message));
 });

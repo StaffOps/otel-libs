@@ -1,4 +1,6 @@
+import * as fs from 'node:fs';
 import * as nodeModule from 'node:module';
+import * as path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { isInternalThread } from 'node:worker_threads';
 import { report } from './diagnostics';
@@ -104,4 +106,62 @@ export function installHooks(env: HooksEnvironment = currentEnvironment()): Hook
     report('the hooks mode cannot be recorded: the shared state is read-only', { hooks: mode });
   }
   return mode;
+}
+
+/**
+ * How the hooks were installed in this process (`undefined` = not installed,
+ * or this copy is inactive). Never throws.
+ */
+export function hooksMode(): HooksMode | undefined {
+  const state = getState();
+  return state === null ? undefined : recordedMode(state);
+}
+
+/** Process facts {@link entryIsEsm} decides on; injectable for tests. */
+export interface EntryFacts {
+  /** The main script, as Node resolved it (`process.argv[1]`); `undefined` under `--eval`/`--print`. */
+  readonly script: string | undefined;
+  readonly execArgv: readonly string[];
+}
+
+const ESM_EXTENSIONS: ReadonlySet<string> = new Set(['.mjs', '.mts']);
+const CJS_EXTENSIONS: ReadonlySet<string> = new Set(['.cjs', '.cts']);
+
+/** The `type` of the package.json nearest to `file`; `undefined` when none is found or readable. */
+function packageType(file: string): unknown {
+  let dir = path.dirname(file);
+  for (;;) {
+    const candidate = path.join(dir, 'package.json');
+    if (fs.existsSync(candidate)) {
+      try {
+        return (JSON.parse(fs.readFileSync(candidate, 'utf8')) as { type?: unknown }).type;
+      } catch {
+        return undefined;
+      }
+    }
+    const parent = path.dirname(dir);
+    if (parent === dir) return undefined;
+    dir = parent;
+  }
+}
+
+/**
+ * Whether the process's entry point is an ES module (spec JS5): an
+ * `--input-type=module` eval, an `.mjs`/`.mts` script, or a `.js`/`.ts`/
+ * extensionless script in a `"type": "module"` package (or, in a package
+ * with no `type`, under `--experimental-default-type=module`). A `.js` file Node runs as ESM only by
+ * syntax detection is not recognized (design D-JS14). Never throws.
+ */
+export function entryIsEsm(facts: EntryFacts = { script: process.argv[1], execArgv: process.execArgv }): boolean {
+  const args = facts.execArgv;
+  const flag = (name: string, value: string): boolean =>
+    args.some((a, i) => a === `${name}=${value}` || (a === name && args[i + 1] === value));
+  if (facts.script === undefined || facts.script === '') return flag('--input-type', 'module');
+  const ext = path.extname(facts.script);
+  if (ESM_EXTENSIONS.has(ext)) return true;
+  if (CJS_EXTENSIONS.has(ext)) return false;
+  // An explicit package "type" wins over --experimental-default-type (Node's order).
+  const type = packageType(facts.script);
+  if (type === 'module' || type === 'commonjs') return type === 'module';
+  return flag('--experimental-default-type', 'module');
 }

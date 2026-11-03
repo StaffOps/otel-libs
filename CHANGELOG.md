@@ -2102,6 +2102,76 @@ Unsupported instrumentation versions, task A10 (P18):
   `test/logging.test.cjs`. The rulings' history is in contract design D1
   ("Stdout fallback time zone", "Stdout fallback fields", "OTel log scope
   name") and D-JS6/D-JS14.
+- **Node.js lifecycle (Phase B, task B9; not released).** The helper now
+  registers one **forwarding** TracerProvider, MeterProvider, LoggerProvider
+  and propagator per process (design D-JS10) and points them at the SDK
+  providers of each `setup()`: tracers, meters, instruments (observable and
+  batch callbacks included) and Logs API loggers obtained before a
+  `shutdown()` → `setup()` keep working with the new providers (the `todo`
+  test "re-setup keeps tracers obtained earlier working" now passes).
+  `shutdown()` keeps each provider as their delegate until that provider's
+  own shutdown settles (its final export still runs the observable and batch
+  callbacks), then points them at the API no-ops; the propagator stays; the
+  context manager is registered once. **The delegate of the API's global
+  TracerProvider proxy, and the global MeterProvider and LoggerProvider
+  themselves, are now the helper's forwarders, not the SDK providers**: code
+  that reached SDK internals through `trace.getTracerProvider().getDelegate()`
+  must use the forwarders' own `forceFlush()` (new) or `/testing`
+  `getProviders()`. A re-setup no longer
+  unregisters any global: the helper owns a global while the registry still
+  holds the exact entry it registered, and one someone replaced is reported
+  as `no longer the helper's` and kept. **Foreign globals (spec JS7):** kept
+  and warned as before, and the new `Resolved.inactiveSignals` lists
+  `traces` / `metrics` whose global provider is not the helper's (all three
+  under another `@opentelemetry/api` version or helper version; a foreign
+  LoggerProvider lists nothing). New option **`replaceGlobals`**: replaces a
+  foreign TracerProvider, MeterProvider, LoggerProvider and propagator (one
+  INFO line each), never the context manager; the instrumentations then
+  bind to the helper's providers. **Rollback (Go G1):** a `setup()` that
+  fails after resolution undoes every step it took (DiagLogger, context
+  manager, propagator, providers and their forwarding delegates,
+  instrumentations, `/metrics` listener), shuts down what it built, leaves
+  the previous state in place (`metricsHandler()` answers 503, loggers write
+  stdout) and rethrows; the next call starts over. **`/register`** now calls
+  `setup()` from the environment (a failure is reported, never thrown), and
+  the "loaded before setup()" report names
+  `--import @staffops/otel-helper/register` as the cure again. **ESM without
+  hooks (spec JS5):** `setup()` in an ES module entry (`.mjs`, `"type":
+  "module"`, `--input-type=module`) without the loader hooks warns once that
+  later imports are not instrumented. `/testing` gains `getProviders()` (the
+  active SDK providers) and `reset()` discards the forwarders, so objects and
+  callbacks of one test never reach the next. No signal handler is
+  installed (the SIGTERM pattern goes to the HOW-TO, B12). New D-JS14 rows:
+  re-setup vs Go/Python, foreign globals and `replaceGlobals`, the thrown
+  rollback, ESM entry detection limits, observable callbacks across
+  re-setups. New `test/forwarding.test.cjs`; no `skip:B9-*` parity case
+  existed (324 cases unchanged). **Fix round (2026-11-02, after observability,
+  dev and code-review):** the forwarders no longer drop the observable and
+  batch callbacks before the final collection of `shutdown()` (H1, found by
+  all three reviews); `forceFlush()` on the three forwarders; tracers, meters
+  and loggers cached by name, version and schema URL, and callback-less
+  observables no longer retained; a batch callback re-homes only its own
+  meter's observables; without a delegate a local no-op tracer replaces the
+  deprecated `ProxyTracerProvider`; a failed setup undoes the `trace`/`logs`
+  registrations through the registry, so tracers and Logs API loggers
+  obtained before it join the app's own SDK, records each undo step before
+  touching the registry, shuts down what it built at every step (the
+  pipelines alone when a provider constructor throws), and redacts its
+  report; `/register` calls `setup()` only in the main thread (a worker gets
+  the hooks only) and a worker thread's `setup()` starts no
+  `/metrics` listener; code options passed after a `/register` setup are
+  warned; the MeterProvider gets the shutdown deadline; `getProviders()` is
+  frozen and `undefined` after shutdown; an explicit package `type` wins over
+  `--experimental-default-type`; `Resolved.inactiveSignals` documented as Node
+  only, global ownership only. **Final round (2026-11-02):** on the shutdown
+  deadline every provider, a hung one included, stops being a delegate before
+  the rejection; `redactErrorText` matches credential names generically
+  (quoted too), strips schemeless `user:pw@`, keeps the host of
+  `dns:///user:pw@host`, and leaves prose such as "basic auth failed" alone;
+  the shutdown `AggregateError` message is redacted; a synchronous throw of
+  a delegate's `forceFlush()` rejects; `/register` is silent in worker
+  threads; `/testing` `getResource()` is `undefined` after shutdown, as
+  `getProviders()`.
 - **Go test hygiene:** `captureDiag` (`go/config_contract_test.go`) no longer
   prints slog timestamps, which made `TestDeprecatedEnvWarnsNamingReplacement`
   (`go/deprecation_test.go`) flaky.

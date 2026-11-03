@@ -467,7 +467,7 @@ test('D-JS7: requests to the helper OTLP/HTTP endpoint are not counted as HTTP c
     process.env.OTEL_METRICS_EXPORTER = 'otlp,prometheus';
     helper.setup();
     api.trace.getTracer('t').startSpan('exported').end();
-    await api.trace.getTracerProvider().getDelegate().forceFlush();
+    await testing.getProviders().tracerProvider.forceFlush();
     assert.ok(posts.includes('POST /v1/traces'), JSON.stringify(posts));
     // The same request made by the app through the patched module is filtered too.
     await clientGet(new URL(`http://127.0.0.1:${port}/v1/traces`), { method: 'POST' });
@@ -636,8 +636,8 @@ test('express and grpc-js required before setup() are instrumented and reported 
     reports: ['otelhelper: express', 'otelhelper: @grpc/grpc-js'],
   });
   for (const line of lastJson(res).fullReports) {
-    assert.match(line, / was loaded before setup\(\); apps, routers and clients created before setup\(\) may lack spans or have an incomplete http\.route — call setup\(\) in a preload \(e\.g\. `--import \.\/otel\.mjs` that imports the hooks entry and calls setup\(\)\) before the app loads module=/);
-    assert.ok(!line.includes('/register'), 'register is not the cure until B9');
+    // B9: the register entry calls setup(), so it is the cure the report names.
+    assert.match(line, / was loaded before setup\(\); apps, routers and clients created before setup\(\) may lack spans or have an incomplete http\.route — start the process with --import @staffops\/otel-helper\/register \(or a preload that imports @staffops\/otel-helper\/hooks and calls setup\(\)\) so setup\(\) runs before the app loads module=/);
   }
 });
 

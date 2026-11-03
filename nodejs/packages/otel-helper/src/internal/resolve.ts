@@ -16,6 +16,7 @@ import { randomUUID } from 'node:crypto';
 import { report, reportOnce, type DiagnosticValue } from './diagnostics';
 import { envBool, envValue, trimWS, typeName, type Warn } from './env';
 import { checkCodeOtlp, resolveOtlp, type OtlpHeaders, type OtlpPlan, type Reporter } from './otlp';
+import type { Signal } from './otlp-settings';
 import { resolveSdkSettings, type SdkSettings } from './sdk-settings';
 import { checkCodeSignals, resolveSignals, type MetricExporterName, type SpanLogExporterName } from './signals';
 import { checkCodeDisabledMetrics, checkCodeMetricsPort, resolveDisabledMetrics, resolveMetricsPort } from './metrics-endpoint';
@@ -145,6 +146,14 @@ export interface SetupOptions {
    * `[]` traces every path. `grpc.health.v1.Health` calls are dropped regardless.
    */
   readonly healthPaths?: readonly string[] | undefined;
+  /**
+   * Replace a TracerProvider, MeterProvider, LoggerProvider or propagator that
+   * someone else registered before `setup()` (default false: keep it, warn,
+   * and list its signal in `Resolved.inactiveSignals`). A foreign context
+   * manager is always kept. Tracers the app obtained from the replaced
+   * provider keep using it.
+   */
+  readonly replaceGlobals?: boolean | undefined;
   /** Test/advanced: extra span processors, added after the helper's own (design D-JS7). */
   readonly spanProcessors?: readonly SpanProcessor[] | undefined;
 }
@@ -206,6 +215,19 @@ export interface Resolved {
   readonly propagators: readonly PropagatorName[];
   /** HTTP health paths whose server spans are dropped (`healthPaths` > the default list). */
   readonly healthPaths: readonly string[];
+  /**
+   * Node only (Go and Python have no such field). Signals whose **global
+   * provider** is not the helper's (spec JS7): `traces` / `metrics` when
+   * someone else's global provider was kept (or the API refused the
+   * helper's); all three when the API globals belong to another
+   * `@opentelemetry/api` version or another helper version owns the process.
+   * A foreign LoggerProvider does not list `logs`: the helper's loggers still
+   * export through the helper's provider (as Python). It covers global
+   * ownership only: a signal whose exporter failed to build (reported on the
+   * diagnostics sink) is not listed. `[]` otherwise, also under
+   * `OTEL_SDK_DISABLED=true`.
+   */
+  readonly inactiveSignals: readonly Signal[];
 }
 
 /** Resolver output: the public view plus what the providers are built from. */
@@ -243,6 +265,7 @@ const OPTION_KEYS: ReadonlySet<string> = new Set([
   'disabledSignals',
   'sampleRatio',
   'healthPaths',
+  'replaceGlobals',
   'spanProcessors',
 ]);
 
@@ -306,6 +329,7 @@ export function validateOptions(options: unknown): SetupOptions {
   }
   checkBoolean('debug', o.debug);
   checkBoolean('installDiagLogger', o.installDiagLogger);
+  checkBoolean('replaceGlobals', o.replaceGlobals);
   for (const option of ['otelEndpoint', 'tracesEndpoint', 'metricsEndpoint', 'logsEndpoint', 'otlpProtocol', 'compression']) {
     checkString(option, o[option]);
   }
@@ -491,6 +515,8 @@ export function resolvePlan(options: SetupOptions, defaultServiceName: string, q
     sampler,
     propagators,
     healthPaths: options.healthPaths ?? DEFAULT_HEALTH_PATHS,
+    // Set by setup() once it knows which globals it owns.
+    inactiveSignals: Object.freeze([]),
   });
   return { resolved, resourceAttributes: Object.freeze(layer), otlpHeaders, sdk, intervalSource: signals.intervalSource };
 }

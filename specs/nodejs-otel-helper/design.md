@@ -72,7 +72,9 @@ does not call `setup()` until B9 and so fired on a correct run; it now reads
 `<module> was loaded before setup(); apps, routers and clients created before setup() may lack spans or have an incomplete http.route — call setup() in a preload (e.g. --import ./otel.mjs that imports the hooks entry and calls setup()) before the app loads`. Not reported when the loader hooks are installed and the
 package was imported through ESM (import-in-the-middle already handed it to
 the instrumentation; Node gives an ESM-loaded CJS `Module` no `parent`); CJS
-cache hits are still reported.*
+cache hits are still reported.* *Reworded 2026-11-02 (B9): `/register` now
+calls `setup()`, so the report names it as the cure again:
+`<module> was loaded before setup(); apps, routers and clients created before setup() may lack spans or have an incomplete http.route — start the process with --import @staffops/otel-helper/register (or a preload that imports @staffops/otel-helper/hooks and calls setup()) so setup() runs before the app loads`.*
 **Justification**: ADR-012; 3.0
 registers no context manager (without it no in-process parent link).
 **Trade-offs**: more code than `NodeSDK`. **When wrong / reversal / alternatives**: ADR-012.
@@ -438,6 +440,83 @@ LoggerProvider when B4/B8 add them) once per process and swaps its SDK delegate
 on rebuild. Tracers (and meters, loggers) obtained before a re-setup keep
 working; with the B3 shape they stay bound to the old, shut-down provider. A
 `todo` test in `test/setup.test.cjs` pins the target behavior until B9.*
+*Implemented 2026-11-02 (B9; `src/internal/forwarding.ts`, `setup.ts`). This
+supersedes the "re-setup calls `…disable()`, rebuilds, and re-binds" text
+above:*
+- *One forwarding TracerProvider, MeterProvider, LoggerProvider and
+  propagator per process, registered as the API globals by the first setup
+  that owns them and **kept registered across `shutdown()`**; every setup
+  points them at its SDK providers and its propagator. `shutdown()` keeps each
+  provider as the delegate until that provider's own `shutdown()` settles,
+  then points the forwarder at nothing (API no-ops) if it still forwards to
+  that provider; the propagator stays (Go and Python keep theirs installed).
+  Forwarding instruments resolve the delegate's instrument on each call;
+  observable and batch callbacks are moved to every new **defined** delegate
+  (and off the previous one) and stay on the last SDK instruments while there
+  is none. The context manager is also registered once and reused.*
+  *Corrected 2026-11-02 (B9 fix round H1, found by observability, dev and
+  code-review independently): the first B9 version pointed the forwarders at
+  nothing synchronously at the start of `shutdown()`, on the claim that Go
+  stops advertising the pipeline first. Go stops only its log bridge and
+  `/metrics` first and keeps the global providers through the flush
+  (`go/otelhelper.go` `pipeline.shutdown`); Python keeps them too. The early
+  unbind moved every observable and batch callback off the SDK instruments
+  before the final collection, so the last OTLP export lacked them.
+  Regression test "H1 regression" in `test/setup.test.cjs`.*
+  *Decided 2026-11-02 (B9 fix round M1, M7): the forwarders have
+  `forceFlush()` (to the current delegate; resolves without one); tracers,
+  meters and loggers are cached by (name, version, schema URL); an observable
+  and its meter are tracked only while they hold callbacks or batches (no
+  retention of callback-less instruments). Since B9 the delegate of the API's
+  global proxy is the forwarder, not the SDK provider (CHANGELOG).*
+  *Decided 2026-11-02 (B9 fix round L1): without a delegate the tracers use a
+  local no-op tracer (`NOOP_TRACER`: `wrapSpanContext` of a valid parent,
+  none for `root: true`, the `startActiveSpan` overloads) instead of the
+  deprecated `ProxyTracerProvider`.*
+- *Ownership is by identity: the helper records the registry entry it
+  registered (for `trace` the API's proxy) and owns the global while the
+  registry still holds that entry. A re-setup therefore never unregisters
+  anything; a global someone replaced is reported as `no longer the
+  helper's` and kept. Only `testing.reset()` unregisters, and only the
+  entries still the helper's; it also discards the forwarders, so a test's
+  tracers, meters and observable callbacks never reach the next test.* *Ruled 2026-11-02 (owner): `reset()` discards the forwarders.*
+- *Instrumentations bind to the forwarding providers when they are the
+  globals (no re-bind needed on re-setup), else to the foreign global; every
+  setup binds them again, so a `replaceGlobals` setup moves them to the
+  helper's (carry-over decision of B6).*
+- *Foreign globals: kept, reported per global, and `traces` / `metrics`
+  listed in the new `Resolved.inactiveSignals` (JS7; a foreign LoggerProvider
+  lists nothing, the helper's loggers still export). `replaceGlobals: true`
+  replaces a foreign TracerProvider, MeterProvider, LoggerProvider and
+  propagator (one INFO line each); never the context manager (D-JS14).*
+  *Ruled 2026-11-02 (owner): `Resolved.inactiveSignals` stays, Node only, and
+  covers global ownership only — a signal whose exporter failed to build is
+  not listed (that failure is reported on the sink). `replaceGlobals` never
+  replaces the context manager; the kept one is reported once per process
+  under `replaceGlobals`.*
+- *G1: `setup()` records an undo step for every change (DiagLogger, context
+  manager, propagator and its delegate, the three providers and their
+  delegates, instrumentations, listener). Any throw after resolution runs
+  them in reverse, shuts down the built providers in the background, leaves
+  `Runtime.active` untouched (so `metricsHandler()` answers 503 and the
+  helper's loggers write stdout, as before the call) and rethrows; the next
+  call starts over. `/register` reports a failed setup instead of throwing.
+  Tested at every install step through the internal `setupFault` seam.*
+  *Ruled 2026-11-02 (owner, B9 fix round): a failed `setup()` throws after the
+  rollback, as Go returns and Python raises; `/register` reports it instead.
+  The `setupFault` seam stays, tagged `@internal`. Fix round: an undo step is
+  recorded **before** each replacement changes the registry (M4); for
+  `trace` and `logs` a registration with no previous entry is undone through
+  the registry, leaving the API's own proxy in place with its delegate reset,
+  so tracers and Logs API loggers obtained before `setup()` join the
+  provider the app registers next (M3; `releaseGlobal`, falling back to
+  `disable()` if the API's shape changes); the providers a failed setup built
+  are shut down at every step from `built` on, and the pipelines alone when a
+  provider constructor throws (M5, L). The rollback report goes through
+  `redactErrorText` (URL userinfo/query, credential pairs, bearer tokens).*
+- *`setup()` in an ES module process without the loader hooks warns once
+  (JS5) when the instrumentations are enabled; the entry format comes from
+  `process.argv[1]` / `--input-type` (D-JS14 for what it misses).*
 
 ### D-JS11 — Loading, packaging, registry
 **Spike B1c (2026-10-29, `spike-B1c.md`)**: all gates pass on 22.15.0
@@ -456,7 +535,9 @@ points fine; upstream bug, documented).
 `supportsSyncHooks()` else `module.register` (iitm minor pinned); `/register`
 imports `/hooks` then calls `setup()`; `setup()` warns when it runs in an ESM
 process without the hooks; a B9 test runs an ESM app with a custom preload +
-`-sql` and asserts a pg span; go/no-go
+`-sql` and asserts a pg span (*moved to B10a, 2026-11-02: `-sql` does not
+exist before B10a; B9 tests `/register` calling `setup()` and the ESM warning
+with the core instrumentations*); go/no-go
 spike in B1c on 22.15.0/22/24/26. Opt-in packages are separate (peer on core,
 same version). Tooling: npm workspaces, `tsc`, eslint + typescript-eslint,
 `publint`, `@arethetypeswrong/cli`, `node:test` against `dist/`, `c8` per
@@ -517,7 +598,7 @@ cluster/pm2 are Node's prefork model (not `skip:no-prefork-model`).
 | `error.type` on transport errors: instrumentation-http and -undici write the JS error name (`Error`, `TypeError`), Go the Go error type, Python the exception class name (B6 fix round, 2026-11-02) | recorded; no case |
 | `http.route` only with express (an instrumented router); a plain `node:http` server has none, so span names and the server metric have no route (Go: only with a `ServeMux` pattern; Python: FastAPI routes) (B6 fix round, 2026-11-02) | recorded; README gap |
 | URL redaction: Node `node:http` and `fetch` clients write userinfo as `REDACTED:REDACTED` and redact the values of the signature parameters (`sig`, `Signature`, `AWSAccessKeyId`, `X-Goog-Signature`, `X-Amz-*`) in `url.full`; Node servers redact the same list in `url.query` (other values, e.g. `token`, are kept). Go `otelhttp` v0.72 drops userinfo from `url.full` (`internal/semconv/client.go:113-121`), redacts no query value and writes no server `url.query`. Python: not verified in the fix round (B6 fix round, 2026-11-02). *Amended 2026-11-02 (B6 dev re-probe L3–L5):* no client span carries `url.query` (undici's is dropped, as `node:http` and Go); in `url.full`, `node:http` re-serializes the query through `URLSearchParams` (upstream) while undici keeps it as written unless a name is redacted (`flag` stays `flag`, `%20` stays `%20`) — intentional, the helper rewrites no more than it must; parameter names are matched **case-sensitively** (`SIG` is not redacted), as upstream does | recorded; README gap; Python comparison open |
-| A foreign global TracerProvider: the instrumentations bind to it, so the helper's health sampler and gRPC status rule do not apply to their spans (they keep upstream's ERROR) (B6 fix round, 2026-11-02) | recorded; README gap |
+| A foreign global TracerProvider: the instrumentations bind to it, so the helper's health sampler and gRPC status rule do not apply to their spans (they keep upstream's ERROR) (B6 fix round, 2026-11-02). *Extended 2026-11-02 (B9):* a later setup with `replaceGlobals: true` binds them to the helper's forwarding providers | recorded; README gap |
 | Routers or apps created before `setup()`: express wires its route layers when the router is built, so a router or app built before the instrumentation is enabled gives a truncated `http.route` (`GET /api` for `/api/orders/:id`) or none, and may miss request-handler spans; the preload report names this. Routes modules must be required after `setup()` (B6 dev re-probe L1, 2026-11-02) | recorded; the report text (D-JS1); B12 HOW-TO item |
 | A gRPC handler that **throws synchronously** leaves its SERVER span unended (never exported): upstream instrumentation-grpc, reproduced without the helper; Go and Python record the call as UNKNOWN (B6 dev re-probe L2, 2026-11-02) | recorded; README gap; no case (the drivers' "throw" is not equivalent across languages: a Go handler would panic) |
 | The gRPC status rule also clears an app's own `setStatus(ERROR)` on a gRPC SERVER span whose `rpc.grpc.status_code` is not one of the six error codes (B6 final review, 2026-11-02) | recorded; the processor cannot tell who set the status |
@@ -538,9 +619,18 @@ cluster/pm2 are Node's prefork model (not `skip:no-prefork-model`).
 | gRPC over TLS to an **IP-literal** endpoint fails on Node 26 (Node refuses an IP as TLS ServerName; grpc-js sets it from the target host; DEP0123 warning on 22/24) — spike B1c F5 | recorded; the helper warning for IP-literal gRPC TLS endpoints lands in B4b (*implemented 2026-10-29: every Node version, naming the endpoint variable; unit-tested in `test/exporters.test.cjs`*). *Decided 2026-10-29 (B2): the Node legs reach the fake receiver by DNS name — `fakeotlp` → 127.0.0.2, `fakeotlp-tls` → 127.0.0.3 (new SAN in fakeotlp's default `TLS_HOSTS`; `extra_hosts` on `fakeotlp-node`, which `node-tests` shares through `network_mode: service:`; `/etc/hosts` in the CI `node-test` job); Go and Python keep the IP literals, so their cases and validators are unchanged. Rejected: `skip:node26-ip-servername` on the 26 leg — the validators accept no per-version Node status, the extension would touch all three runners, and it would leave the six gRPC TLS cases unrun on 26 (with DEP0123 noise in `diagnostics` on 22/24). Evidence: a runner test completes a CA-verified TLS handshake by name with both TLS receivers on 22.15.0, 22, 24 and 26; the mapping is visible in the joined container (`docker run --network container:…` sees the owner's `--add-host`). Cost: the IP-literal gRPC TLS path is not exercised by the Node fixture (unit test in B4b).* |
 | A `__proto__` resource attribute (env or code) is kept by the helper as an own data property but dropped by `@opentelemetry/resources` 3.0: `Resource.attributes` builds a plain object with `attrs[k] = v` (A16, 2026-10-29) | `skip:no-upstream-resource-proto-key` on `resource_attributes.proto_key_kept`; helper side unit-tested via `getRawAttributes()` |
 | `unknown_service:<suffix>`: Node `process.argv0` (`node`), Go the binary name, Python the interpreter name (helper-computed on every SDK version since A16) | recorded; the fixture asserts the `unknown_service` prefix only (R5) |
-| A propagator registered before `setup()` is kept: the 3.0 API refuses a second registration; Go and Python replace it (B5 fix round, 2026-10-30) | recorded; reported `a global propagator is already registered; the helper keeps it and OTEL_PROPAGATORS is not applied`; `Resolved.propagators` is what the helper installs when it owns the global; under `OTEL_SDK_DISABLED=true` the INFO line then says `the helper installed no propagator`. B9 `replaceGlobals` covers the propagator. Unit-tested in `test/tracing.test.cjs` |
+| A propagator registered before `setup()` is kept: the 3.0 API refuses a second registration; Go and Python replace it (B5 fix round, 2026-10-30) | recorded; reported `a global propagator is already registered; the helper keeps it and OTEL_PROPAGATORS is not applied`; `Resolved.propagators` is what the helper installs when it owns the global; under `OTEL_SDK_DISABLED=true` the INFO line then says `the helper installed no propagator`. B9 `replaceGlobals` covers the propagator (*implemented 2026-11-02*). Unit-tested in `test/tracing.test.cjs` |
 | `/metrics` scope labels: `otel_scope_version` / `otel_scope_schema_url` are omitted when empty (Go and Python write `""`), and an instrument without a description gets `# HELP <name> description missing` (Go/Python: empty HELP) — the upstream `PrometheusSerializer` (B7, 2026-11-02) | recorded; equivalent for Prometheus (an empty label value is an absent label). Unit-tested in `test/metrics.test.cjs`. *Amended 2026-11-02 (B7/A21 fix round): the helper now writes the three scope labels itself (serializer `withoutScopeInfo`), empty values included, as Go and Python, so only `description missing` remains. Scope **attributes** (`otel_scope_<key>` in Go and Python) are not written: the JS 3.0 `InstrumentationScope` has no attributes (`@opentelemetry/core` `common/types.d.ts`: `name`, `version`, `schemaUrl`), so there is nothing to write — recorded* |
 | `module.register` runtime-deprecated on Node 26 (DEP0205) — spike B1c F3 | `/hooks` uses sync hooks there; the `module.register` fallback runs only on versions where it is not deprecated |
 | `exception.type` of a helper log record on the OTel path comes from the error's `code` when it has one (`ECONNREFUSED`), else its `name`; `exception.message` and `exception.stacktrace` from the error (`@opentelemetry/sdk-logs` 3.0 `LogRecordImpl._setException`, upstream); the **first** `Error`-valued attribute is the record exception and leaves the attributes (B8, 2026-11-02). *Compared 2026-11-02 (A23):* **Go** — otelslog 0.21.0 takes an error-valued attribute out of the attributes as the record error, the **last** one winning (`handler.go:474-478`, `b.err = err`); sdk/log 1.47.0 derives `exception.message` = `Error()` and `exception.type` = the `ErrorType()` method or `<pkg path>.<type name>` (`logger.go:176-210`, `errorType` `logger.go:226-241`), **no stacktrace**, user-set `exception.*` attributes win. **Python** — only `exc_info` makes an exception (contrib `LoggingHandler._get_attributes`, 0.66b2 `handler.py:159-170`): `exception.type` = class `__name__`, `exception.message` = `str(args[0])`, `exception.stacktrace` = the traceback; an exception object passed in `extra` stays an ordinary attribute (rendered by `str()`) | recorded; three native forms, as the stdout `exception` (contract D1 row "Stdout fallback fields", A23). First vs last error and the `code`-based type are Node/Go upstream choices. No case: the `export` kind emits through the global LoggerProvider, not the helper's logger, and asserting exception attributes on the wire needs a record-level input in three drivers (not cheap). Unit-tested in `test/logging.test.cjs` (`exception.message` on the wire) |
 | Helper log attribute values on the OTel path. *Ruled 2026-11-02 (A23, owner):* plain objects are sent as **OTLP maps** and arrays as **OTLP arrays**, recursively and with any element types, as Go (otelslog 0.21.0 `convert.go:25-134`: maps → map values, slices/arrays → array values) and Python (opentelemetry-api 1.45.2 `attributes/__init__.py:41-98`, `_clean_attribute_value`: `Mapping` → map, `Sequence` → array) do; strings, numbers (NaN included) and booleans as they are, `Uint8Array` as bytes, an `Error` as its stack, a cycle as `[Circular]`, nesting deeper than 100 as `<max-depth-exceeded>` (Go's limit and marker; Go replaces the whole top-level value, Node the node at the limit). **Stay text:** `Date` (ISO 8601; Go writes `time.Time` as int64 Unix nanoseconds, Python `str(datetime)` — they disagree, so Node keeps Python's text form), bigint (`String`), symbols and functions, and other non-plain objects (`Set`, `Map`, class instances: their JSON text; Go: struct `%+v` text, Python: `str()`). *Before the ruling (B8):* objects and mixed arrays were sent as JSON text. *Amended 2026-11-02 (A23 fix round):* a `Map` is an OTLP map (keys coerced to strings) and a `Set` an OTLP array, on the stdout path an object and an array; functions are `[Function: name]`; every attribute read and conversion is guarded — a throwing getter or Proxy trap gives `[unreadable accessor]`, a value whose listing or `toJSON` throws `[unreadable <type>]`; only an attributes object that cannot be listed at all drops the record, reported once (`logging:emit-failed`, the reason cut to 64 characters, never a value). One converter serves both paths (`convert`, mode `json` / `otel`). *Corrected 2026-11-02 (A23 review):* a top-level `undefined` attribute is `null` on stdout and dropped on the OTel path (as `null`); the depth cap (100, `<max-depth-exceeded>`) applies on stdout too; a value whose prototype lookup throws (a Proxy trap, a revoked Proxy) is `[unreadable object]`, also at the top level; a `toJSON` returning `this` lists the own keys; the record exception is handed to the SDK as a plain `{name, message, stack, code}` read through guarded reads, so a hostile getter on the app's Error never runs inside the SDK nor reaches the emit-failed report | ruled; `src/internal/logging.ts` `otelValue`. Unit-tested in `test/logging.test.cjs` (nested object, homogeneous array, mixed array, cycle, depth limit; a map on the wire). No case (needs wire attributes with a record-level input in three drivers) |
 | Under a registry of another `@opentelemetry/api` version (telemetry inactive, D-JS10) the helper's loggers write the stdout fallback (B8, 2026-11-02) | recorded; Go and Python have no equivalent. Unit-tested in `test/logging.test.cjs` |
+| `setup()` after `shutdown()` rebuilds **all three** signals and keeps every earlier tracer, meter, instrument and Logs API logger working through the forwarding providers (Go: rebuilds and sets new globals, but a tracer obtained earlier stays on the provider it came from — the API's default provider delegates once, `delegateTraceOnce` in `go.opentelemetry.io/otel` `internal/global/state.go` `SetTracerProvider`; Python: OpenTelemetry Python sets the global Tracer/MeterProvider once per process, so traces and metrics stay off after a re-setup, design D13) (B9, 2026-11-02) | recorded; unit-tested in `test/setup.test.cjs` and `test/forwarding.test.cjs`; no fixture case (one process per case) |
+| Foreign global providers: Node checks the registry **before** registering and keeps a foreign TracerProvider/MeterProvider (warned, `Resolved.inactiveSignals`), as Python's outcome; Go has no such check (`otel.SetTracerProvider` replaces). `replaceGlobals: true` (Node only) replaces the providers and the propagator, never the context manager — the app's asynchronous context depends on it; tracers the app obtained from a replaced provider keep using it (the API proxy caches its delegate) (B9, 2026-11-02). *Ruled 2026-11-02 (owner): `replaceGlobals` never replaces the context manager (reported once per process); `Resolved.inactiveSignals` is Node only and covers global ownership only, not a failed exporter build* | recorded; unit-tested in `test/setup.test.cjs`; B12 HOW-TO item |
+| A failed `setup()` (after resolution) throws its error after the rollback, as Go returns it and Python raises it; the built providers are shut down in the background with no deadline of their own (Go: detached 5 s per component, Python: 200 ms) — nothing waits on them. `@staffops/otel-helper/register` reports the failure on the sink instead of throwing (a preload must not crash the app) (B9, 2026-11-02). *Ruled 2026-11-02 (owner): keep throwing after rollback; `/register` reports. Fix round: providers and pipelines are shut down at every step (M5); the report is redacted* | recorded; unit-tested (`test/setup.test.cjs`, `test/hooks.test.cjs`) |
+| The ESM-without-hooks warning (JS5) recognizes an ES module entry by `--input-type=module`, an `.mjs`/`.mts` script, or a `.js`/`.ts`/extensionless script in a `"type": "module"` package (or under `--experimental-default-type=module`). A `.js` file that Node runs as ESM only by **syntax detection** (no `type` field) is not recognized and gets no warning; nor does a CommonJS entry that `import()`s ES modules later (B9, 2026-11-02) | recorded; unit-tested in `test/hooks.test.cjs`; B12 HOW-TO item |
+| Observable callbacks registered through a meter obtained from the global MeterProvider follow every re-setup (they are moved to each new SDK provider) until the app removes them; `testing.reset()` discards the forwarders, so they do not leak across tests (B9, 2026-11-02). *Ruled 2026-11-02 (owner): `reset()` discards the forwarders. Fix round: they stay on the last provider through its final collection (H1), and only observables with callbacks are tracked (M7)* | recorded; unit-tested in `test/forwarding.test.cjs`; B12 HOW-TO item |
+| Worker threads (B9 fix round M2, 2026-11-02): Node runs a `--require` preload (also `NODE_OPTIONS=--require=…`) again in every worker thread, an `--import` preload only in the main thread (observed with `eval` workers on 22.15.0, 24.22.2, 26.13.0). `/register` therefore installs the hooks in a worker under `--require` (*silently since 2026-11-02, B9 final round: the one INFO line per worker was dropped rather than lowered to debug, the simpler of the two*), but calls `setup()` only in the main thread; a worker that calls `setup()` itself gets its own providers and **no `/metrics` listener** (one line; the main thread owns the port), as `cluster` workers get the shared-port warning. Go has no threads of this kind; Python threads share one process state | recorded; tested in `test/hooks.test.cjs` and `test/setup.test.cjs`; B12 HOW-TO item |
+| After `shutdown()` the helper's forwarders stay the API globals (pointing at nothing), so the app cannot register its **own** TracerProvider/MeterProvider/LoggerProvider/propagator without calling `trace.disable()` etc. first (the 3.0 API refuses a second registration). Go allows it (`otel.SetTracerProvider` replaces); Python cannot either (set once) (B9 fix round, 2026-11-02) | recorded; B12 HOW-TO item |
+| Shutdown deadline: only the SDK 3.0 MeterProvider takes one (`shutdown({ timeoutMillis })`, passed); the TracerProvider and LoggerProvider `shutdown()` take none, so their processors use their own export timeouts and the helper's race bounds the promise. The deadline bounds the **promise**, not process exit: a provider still exporting or any other handle can keep the process alive, so the SIGTERM pattern ends in `process.exit()` (B9 fix round, 2026-11-02). *Final round 2026-11-02:* when the deadline passes, every provider stops being the forwarders' delegate before the rejection (a hung one included). A re-setup that starts before the previous `shutdown()` settled moves the observable and batch callbacks to the new provider, so the old provider's final export lacks them (no code change; B12 HOW-TO: await `shutdown()` before `setup()` again) | recorded; `shutdown()` JSDoc; B12 HOW-TO item |
+| A failed setup that had registered the `trace`/`logs` globals for the first time undoes them through the registry and resets the API's own proxy (it reads the `logs` API's private `_proxyLoggerProvider`; `disable()` as fallback if the shape changes), so tracers and loggers obtained before `setup()` join the provider the app registers next (B9 fix round M3, 2026-11-02). A replaced foreign provider is put back with `set…Global…()`, a new API proxy: tracers the app took from the old one before setup stay on it | recorded; tested ("M3", "M4" in `test/setup.test.cjs`); re-check on API bumps (B13) |

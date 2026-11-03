@@ -30,9 +30,9 @@
  * records no metrics.
  *
  * Lifecycle: the instrumentations are built once per process and kept on the
- * shared runtime; every `setup()` re-binds them to its providers and its
- * exclusions and enables them; `shutdown()` disables them (Python
- * uninstruments at shutdown). They are not built under `OTEL_SDK_DISABLED=true`
+ * shared runtime; every `setup()` binds them to the helper's forwarding
+ * providers (or to a foreign global provider), sets its exclusions and
+ * enables them; `shutdown()` disables them (Python uninstruments at shutdown). They are not built under `OTEL_SDK_DISABLED=true`
  * (Python: no instrumentation, contract D1 row "OTEL_SDK_DISABLED").
  */
 import type * as http from 'node:http';
@@ -404,8 +404,7 @@ export function enableInstrumentations(holder: HelperInstrumentations, exclusion
       if (esmHooks && entries.every(loadedThroughEsm)) continue;
       reportOnce(
         `preloaded:${name}`,
-        // Not "use /register" until B9: register does not call setup() yet.
-        `${name} was loaded before setup(); apps, routers and clients created before setup() may lack spans or have an incomplete http.route — call setup() in a preload (e.g. \`--import ./otel.mjs\` that imports the hooks entry and calls setup()) before the app loads`,
+        `${name} was loaded before setup(); apps, routers and clients created before setup() may lack spans or have an incomplete http.route — start the process with --import @staffops/otel-helper/register (or a preload that imports @staffops/otel-helper/hooks and calls setup()) so setup() runs before the app loads`,
         { module: name },
       );
     }
@@ -419,9 +418,10 @@ export function enableInstrumentations(holder: HelperInstrumentations, exclusion
 
 /**
  * Binds every instrumentation to these providers (after they are built and
- * registered). Explicit providers, not the API proxies: the API has no proxy
- * meter, and a proxy tracer keeps the first delegate it resolved, so a
- * re-setup could not re-bind it (task B9).
+ * registered): the helper's forwarding providers, whose delegates every
+ * setup swaps (task B9), or a foreign global provider. Explicit providers,
+ * not the API proxies: the API has no proxy meter, and a proxy tracer keeps
+ * the first delegate it resolved.
  */
 export function bindProviders(holder: HelperInstrumentations, tracerProvider: TracerProvider, meterProvider: MeterProvider): void {
   for (const instrumentation of holder.instrumentations) {

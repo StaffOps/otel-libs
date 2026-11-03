@@ -34,6 +34,50 @@ export function truncateValue(value: string): string {
   return points.length > MAX_ECHOED_VALUE ? `${points.slice(0, MAX_ECHOED_VALUE).join('')}…` : value;
 }
 
+// Bounded scans only: the input is cut first (the output keeps 64 code points),
+// and every name part is length-bounded, so no input backtracks quadratically.
+const REDACT_SCAN_LIMIT = 4096;
+// URLs in free text: the scheme and authority; userinfo, query and fragment are cut below.
+const URL_IN_TEXT = /(?<![A-Za-z0-9])([a-z][a-z0-9+.-]{0,31}:\/\/)([^\s"'<>]*)/gi;
+// Schemeless `user:password@host`.
+const SCHEMELESS_USERINFO = /(?<![^\s"'(=,;])[^\s/@:"']{1,256}:[^\s/@]{1,256}@/g;
+// `name: value` / `name=value` pairs whose name looks like a credential (optionally quoted).
+const SECRET_PAIR =
+  /(?<![A-Za-z0-9])("?)([\w-]{0,64}(?:key|token|secret|passw(?:or)?d|auth|cookie|team)[\w-]{0,64})\1(\s*[:=]\s*)("[^"]*"|'[^']*'|[^\s,;]+)/gi;
+const BEARER = /(?<![A-Za-z0-9])(bearer)(\s*[:=]?\s*)[A-Za-z0-9._~+/=-]+/gi;
+// `basic` only before a base64 token of 8+ characters: prose ("basic auth failed") stays.
+const BASIC = /(?<![A-Za-z0-9])(basic)(\s+)[A-Za-z0-9+/]{8,}={0,2}(?![A-Za-z0-9+/=])/gi;
+
+/** `rest` of a URL after `scheme://` without userinfo, query and fragment (a path holding `@` is dropped). */
+function redactAuthority(rest: string): string {
+  // `dns:///user:pw@host`: an empty authority, the host in the first path segment.
+  const lead = rest.startsWith('/') ? '/' : '';
+  const body = rest.slice(lead.length);
+  const at = body.search(/[/?#]/);
+  const authority = at < 0 ? body : body.slice(0, at);
+  const tail = at < 0 ? '' : body.slice(at);
+  const host = authority.includes('@') ? authority.slice(authority.lastIndexOf('@') + 1) : authority;
+  const path = tail.split(/[?#]/, 1)[0] ?? '';
+  return `${lead}${host}${path.includes('@') ? '' : path}`;
+}
+
+/**
+ * An error message made safe to echo (B9 fix round): URL userinfo, query and
+ * fragment removed (`dns:///…` keeps its host), schemeless `user:pw@`
+ * removed, values of credential-like `name: value` pairs and bearer/basic
+ * tokens replaced by `<redacted>`, then cut ({@link truncateValue}).
+ */
+export function redactErrorText(text: string): string {
+  const scanned = text.length > REDACT_SCAN_LIMIT ? text.slice(0, REDACT_SCAN_LIMIT) : text;
+  const urls = scanned.replace(URL_IN_TEXT, (_m, scheme: string, rest: string) => `${scheme}${redactAuthority(rest)}`);
+  const users = urls.replace(SCHEMELESS_USERINFO, '');
+  // Tokens first: `Authorization: Bearer x` then leaves no token to the pair rule.
+  const tokens = users
+    .replace(BEARER, (_m, kind: string, sep: string) => `${kind}${sep === '' ? ' ' : sep}<redacted>`)
+    .replace(BASIC, (_m, kind: string, sep: string) => `${kind}${sep}<redacted>`);
+  return truncateValue(tokens.replace(SECRET_PAIR, (_m, quote: string, name: string, sep: string) => `${quote}${name}${quote}${sep}<redacted>`));
+}
+
 const KEY = /^[A-Za-z0-9_.]+$/;
 
 const defaultSink: DiagnosticSink = (line) => {

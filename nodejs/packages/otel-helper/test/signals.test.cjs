@@ -188,7 +188,8 @@ test('D1 OTEL_SDK_DISABLED=true: no providers, no exporters, no resource; the co
   // Re-setup after shutdown with the SDK enabled builds the providers again.
   delete process.env.OTEL_SDK_DISABLED;
   helper.setup();
-  assert.equal(api.trace.getTracerProvider().getDelegate().constructor.name, 'TracerProvider');
+  assert.equal(api.trace.getTracerProvider().getDelegate().constructor.name, 'ForwardingTracerProvider');
+  assert.equal(testing.getProviders().tracerProvider.constructor.name, 'TracerProvider');
 });
 
 test('R8 OTEL_SDK_DISABLED unparseable: warns and reads as false (enabled)', () => {
@@ -234,7 +235,7 @@ test('D1 OTEL_METRIC_EXPORT_INTERVAL: positive integer ms, default 30000; garbag
 
 /** The metric readers the helper installed (SDK internals, test only). */
 function readers() {
-  return api.metrics.getMeterProvider()._sharedState.metricCollectors.map((c) => c._metricReader);
+  return testing.getProviders().meterProvider._sharedState.metricCollectors.map((c) => c._metricReader);
 }
 
 test('D-JS14 reader timeout: the OTLP timeout capped at the interval; the warning names the source of the cap', () => {

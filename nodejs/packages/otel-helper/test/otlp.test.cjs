@@ -544,7 +544,7 @@ test('R8 code: only the endpoint each signal uses is checked; a schemeless code 
 test('Resolved keeps its B3 fields and adds otlp (B4a), the signal selection (B4c), the sampler/propagators/health paths (B5) and the metrics port (B7)', () => {
   const resolved = helper.setup({ otelEndpoint: 'http://c:4317' });
   assert.deepEqual(Object.keys(resolved).sort(), [
-    'debug', 'disabledMetrics', 'environment', 'healthPaths', 'logLevel', 'logsExporters', 'metricExportIntervalMs', 'metricExporters', 'otlp',
+    'debug', 'disabledMetrics', 'environment', 'healthPaths', 'inactiveSignals', 'logLevel', 'logsExporters', 'metricExportIntervalMs', 'metricExporters', 'otlp',
     'prometheusMetricsPort', 'propagators', 'sampler', 'sdkDisabled', 'serviceInstanceId', 'serviceName', 'tracesExporters',
   ]);
   assert.ok(Object.isFrozen(resolved));
