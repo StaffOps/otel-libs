@@ -2704,6 +2704,27 @@ Unsupported instrumentation versions, task A10 (P18):
   span (D-JS14); HEAD errors without a body map their status code through
   the shared table (`403` → `Forbidden`).
   *A28:* Go and Python now redact the same URL query parameters as Node.js.
+- **Node.js e2e smoke against a real Collector (Phase B, task B11a; not
+  released).** `testing/e2e/smoke.sh` now also runs the `node-smoke` compose
+  service (`node:${NODE_VERSION:-24}-slim`, no image build: the workspace is
+  copied out of the read-only mount, `npm ci --ignore-scripts`, core built in
+  the container) and `testing/e2e/node-smoke/smoke.cjs`, which emits the Go
+  smoke markers (span `e2e-smoke-span`, counter `e2e.smoke.runs`, WARN record
+  `e2e-smoke-log`) once per combination of `testing/e2e/combos.sh` — gRPC,
+  http/protobuf with an `/otlp` path prefix, a per-signal traces endpoint, and
+  TLS with the generated CA (`OTEL_EXPORTER_OTLP_CERTIFICATE`). Node has the
+  same expectation rows as Go and Python. *Review LOWs (2026-11-03), all three
+  languages:* two leak rows (per-signal metrics and logs must not reach the
+  per-signal traces receiver) and a `logs-correlated` row (every marker log
+  record carries the Trace ID of a marker span of its service, in every
+  combination; Python checks "Failed to dispatch" inside
+  `process.queue-consume`) — 16 rows per language, 48 in all, all pass (no
+  `XFAIL`). Each Go and Node smoke run is bounded by `timeout 60`, the CI job
+  by `timeout-minutes: 20`; `verify.sh`'s `node` step runs `node --check` on
+  the smoke program. The CI job `e2e-smoke` is renamed "e2e smoke
+  (Collector, Go + Python + Node, grpc/http-prefix/per-signal/tls)". The
+  whole Node workspace is installed (the core build needs the root
+  `typescript`/`@types/node`). No library code changed.
 - **Go test hygiene:** `captureDiag` (`go/config_contract_test.go`) no longer
   prints slog timestamps, which made `TestDeprecatedEnvWarnsNamingReplacement`
   (`go/deprecation_test.go`) flaky.

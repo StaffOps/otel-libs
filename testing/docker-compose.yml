@@ -277,6 +277,21 @@ services:
       - pip-cache:/root/.cache/pip
     command: ["sh", "run-python.sh"]
 
+  node-smoke:
+    # Node task B11a. Same base as node-tests; NODE_VERSION picks another line.
+    image: node:${NODE_VERSION:-24}-slim
+    profiles: ["e2e"]
+    working_dir: /src/testing/e2e
+    environment:
+      NPM_CONFIG_UPDATE_NOTIFIER: "false"
+      NPM_CONFIG_FUND: "false"
+      NPM_CONFIG_AUDIT: "false"
+    volumes:
+      - ..:/src:ro
+      - e2e-certs:/certs:ro
+      - npm-cache:/root/.npm
+    command: ["sh", "run-node.sh"]
+
 volumes:
   fakeotlp-go-out:
   fakeotlp-py-out:

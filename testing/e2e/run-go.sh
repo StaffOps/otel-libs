@@ -5,7 +5,8 @@ set -e
 # git refuses it ("dubious ownership") and VCS stamping fails the build.
 (cd go-smoke && go build -buildvcs=false -o /tmp/go-smoke .)
 echo "$COMBOS" | while IFS='|' read -r name envs; do
+  # Bounded run (60 s, as run-node.sh): a hung export must not hang the job.
   # shellcheck disable=SC2086 # $envs is a list of VAR=value words
   env OTEL_SERVICE_NAME="e2e-go-$name" ENVIRONMENT=DEV OTEL_METRIC_EXPORT_INTERVAL=1000 $envs \
-    /tmp/go-smoke || echo "go-smoke[$name] exited $? (see smoke.sh expectations)"
+    timeout 60 /tmp/go-smoke || echo "go-smoke[$name] exited $? (see smoke.sh expectations)"
 done

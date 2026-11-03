@@ -91,7 +91,10 @@ step_node() {
   # fakeotlp / fakeotlp-tls SANs the Node legs dial (design D-JS14). A running
   # fakeotlp-node keeps its old container; restart it to pick the new image up.
   "${compose[@]}" build fakeotlp-node || return 1
-  "${compose[@]}" run --rm node-tests
+  "${compose[@]}" run --rm node-tests || return 1
+  # The e2e Node smoke program is outside the workspace (not linted there).
+  docker run --rm -v "$root/testing/e2e/node-smoke:/smoke:ro" "node:${NODE_VERSION:-24}-slim" \
+    node --check /smoke/smoke.cjs
 }
 
 step_e2e() { "$root/testing/e2e/smoke.sh"; }

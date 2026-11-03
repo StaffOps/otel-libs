@@ -318,8 +318,9 @@ jobs:
       - run: sh ci/api-range-install.sh
 
   e2e-smoke:
-    name: e2e smoke (Collector, Go + Python, grpc/http-prefix/per-signal/tls)
+    name: e2e smoke (Collector, Go + Python + Node, grpc/http-prefix/per-signal/tls)
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
         with:
