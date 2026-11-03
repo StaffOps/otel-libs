@@ -182,8 +182,8 @@ What each app demonstrates:
   buckets, SIGTERM and SIGINT handled in the event loop (`add_signal_handler`,
   registered before `server.start()` → graceful `server.stop(grace=4)` →
   `shutdown_telemetry(timeout_ms=5_000)`).
-- **python-process**: `start_root_span()` per worker cycle, manual
-  `traceparent` injection into httpx headers, SIGTERM/SIGINT →
+- **python-process**: `start_root_span()` per worker cycle, httpx calls
+  (the httpx instrumentation injects `traceparent`), SIGTERM/SIGINT →
   `loop.add_signal_handler` sets an `asyncio.Event` that cancels the workers →
   `shutdown_telemetry()`. Also the program the e2e smoke runs
   (`testing/e2e/smoke.sh`).
@@ -277,5 +277,5 @@ A worker cycle is its own trace:
 ```text
 process.queue-consume  (root)
 └── process.dispatch-notification
-    └── httpx client span (traceparent injected) → POST /notify on python-api → (trace above)
+    └── httpx client span (traceparent injected by the instrumentation) → POST /notify on python-api → (trace above)
 ```

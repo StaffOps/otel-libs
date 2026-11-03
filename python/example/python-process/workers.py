@@ -13,8 +13,7 @@ import random
 import logging
 
 import httpx
-from opentelemetry import trace, context
-from opentelemetry.propagate import inject
+from opentelemetry import trace
 
 from staffops_otel_helper import setup_telemetry, shutdown_telemetry, get_tracer, get_meter, TelemetryOptions
 from staffops_otel_helper.tracing import start_root_span
@@ -22,13 +21,6 @@ from staffops_otel_helper.tracing import start_root_span
 logger = logging.getLogger(__name__)
 
 API_URL = os.getenv("API_URL", "http://python-api-stable:8000")
-
-
-def _propagation_headers() -> dict:
-    """Inject W3C trace context into headers for distributed tracing."""
-    headers = {}
-    inject(headers, context=context.get_current())
-    return headers
 
 
 # --- Health server (for liveness/readiness probes) ---
@@ -64,7 +56,7 @@ async def queue_consumer(tracer, queue_depth):
                         item_span.set_attribute("notification.channel", channel)
 
                         try:
-                            response = await client.post(f"{API_URL}/notify", headers=_propagation_headers(), json={
+                            response = await client.post(f"{API_URL}/notify", json={
                                 "recipient": recipient,
                                 "channel": channel,
                                 "template_id": random.choice(["default", "welcome", "alert"]),
@@ -95,7 +87,7 @@ async def retry_worker(tracer, retries_total):
                         retries_total.add(1)
 
                         try:
-                            await client.post(f"{API_URL}/notify", headers=_propagation_headers(), json={
+                            await client.post(f"{API_URL}/notify", json={
                                 "recipient": f"retry-{random.randint(100, 999)}@example.com",
                                 "channel": "email",
                                 "template_id": "alert",
@@ -129,7 +121,7 @@ async def health_checker(tracer):
         while True:
             with start_root_span(tracer, "process.health-check") as span:
                 try:
-                    response = await client.get(f"{API_URL}/health", headers=_propagation_headers())
+                    response = await client.get(f"{API_URL}/health")
                     span.set_attribute("health.status_code", response.status_code)
                     if response.status_code != 200:
                         span.set_status(trace.StatusCode.ERROR, "API unhealthy")

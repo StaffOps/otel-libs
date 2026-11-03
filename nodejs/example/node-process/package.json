@@ -1,0 +1,17 @@
+{
+  "name": "node-process",
+  "private": true,
+  "description": "Notification background workers example (startRootSpan per cycle, instrumented fetch to the API), Node twin of python-process. @staffops/otel-helper is installed by the Dockerfile, not listed here.",
+  "license": "Apache-2.0",
+  "type": "commonjs",
+  "main": "workers.js",
+  "engines": {
+    "node": ">=22.15.0"
+  },
+  "scripts": {
+    "start": "node workers.js"
+  },
+  "dependencies": {
+    "@opentelemetry/api": "1.10.0"
+  }
+}

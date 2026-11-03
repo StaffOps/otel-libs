@@ -1,0 +1,20 @@
+{
+  "name": "node-backend",
+  "private": true,
+  "description": "Notification gRPC backend example (with grpc.health.v1), Node twin of python-backend. @staffops/otel-helper is installed by the Dockerfile, not listed here.",
+  "license": "Apache-2.0",
+  "type": "commonjs",
+  "main": "server.js",
+  "engines": {
+    "node": ">=22.15.0"
+  },
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "@grpc/grpc-js": "1.14.7",
+    "@grpc/proto-loader": "0.8.1",
+    "@opentelemetry/api": "1.10.0",
+    "grpc-health-check": "2.1.0"
+  }
+}

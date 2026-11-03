@@ -2,8 +2,8 @@
 // the helper and exits; testing/e2e/smoke.sh checks the Collector received all
 // three. Same markers as the Go smoke program (testing/e2e/go-smoke/main.go):
 // span "e2e-smoke-span", counter "e2e.smoke.runs", WARN record "e2e-smoke-log".
-// The Node examples (task B11b) do not exist yet, so this program stands in
-// for them the way go-smoke stands in for the Go examples.
+// The Node examples (nodejs/example/, task B11b) are long-running services, so
+// this program stands in for them the way go-smoke stands in for the Go examples.
 'use strict';
 
 const { context, metrics, trace } = require('@opentelemetry/api');

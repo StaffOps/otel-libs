@@ -18,6 +18,11 @@ export default defineConfig(
     languageOptions: { sourceType: 'commonjs' },
   },
   {
+    // The example apps are CommonJS packages ("type": "commonjs") with .js entries.
+    files: ['example/**/*.js'],
+    languageOptions: { sourceType: 'commonjs' },
+  },
+  {
     files: ['**/*.ts'],
     extends: [tseslint.configs.strictTypeChecked, tseslint.configs.stylisticTypeChecked],
     languageOptions: {

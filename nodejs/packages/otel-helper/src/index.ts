@@ -9,9 +9,12 @@
  * (B5), the Prometheus `/metrics` listener and `metricsHandler()` (B7), the
  * http/undici/express/gRPC instrumentation (B6), `createLogger()` with the
  * stdout fallback (B8), the lifecycle (B9: rollback, foreign globals and
- * `replaceGlobals`, forwarding providers across re-setups, the register entry).
+ * `replaceGlobals`, forwarding providers across re-setups, the register entry),
+ * `getTracer`, `getMeter` and `startRootSpan` (B11b).
  */
 export { VERSION } from './version';
+export { getMeter, getTracer, startRootSpan } from './internal/api';
+export type { RootSpanOptions, RootSpanResult } from './internal/api';
 export { metricsHandler, setup, shutdown } from './internal/setup';
 export type { ScrapeRequest, ScrapeResponse } from './internal/metrics-endpoint';
 export { createLogger } from './internal/logging';

@@ -2725,6 +2725,66 @@ Unsupported instrumentation versions, task A10 (P18):
   (Collector, Go + Python + Node, grpc/http-prefix/per-signal/tls)". The
   whole Node workspace is installed (the core build needs the root
   `typescript`/`@types/node`). No library code changed.
+- **Node.js example apps (Phase B, task B11b; not released).**
+  `nodejs/example/node-api` (express, `:8000`: `POST /notify`,
+  `GET /notify/:notificationId`, `GET`/`POST /templates`, `GET /metrics/summary`,
+  `GET /health`; JSON 422/400/404/500 errors; a 5 s deadline on every gRPC
+  call), `node-backend` (gRPC `:50051`, `notification.NotificationService`
+  from `nodejs/example/protos/notification.proto` loaded at runtime with
+  `@grpc/proto-loader`, plus `grpc.health.v1` via `grpc-health-check`, set to
+  NOT_SERVING when shutdown starts; a failing handler answers `UNKNOWN`) and
+  `node-process` (four workers, one `startRootSpan()` per cycle, `fetch` to the
+  API with a 5 s timeout and the shutdown signal, `/health` and `/healthz` on
+  `:8080`) — the Node twins of the Python notification service: same routes,
+  env vars (`BACKEND_URL`, `API_URL`; `NOTIFICATION_PROTO` added), ports, custom
+  span names, span attributes, resource attribute `app.component` and legacy
+  metric names. Each app handles SIGTERM with a bounded drain (4 s) and a 5 s
+  flush, inside `docker stop`'s 10 s. Each has a `Dockerfile` (the helper built
+  and `npm pack`ed from the workspace source in a first stage) and a
+  `Dockerfile.demo` (installs a prebuilt tarball
+  `nodejs/tarballs/staffops-otel-helper-${HELPER_VERSION}.tgz`), both on
+  `node:24.22.2-slim`; the app dependencies are pinned by each example's
+  `package-lock.json`, the helper's own dependencies resolve within its declared
+  ranges at install time (as Python's wheel install), and the helper is not
+  named in the examples' `package.json` (the `@staffops` npm scope is not
+  claimed yet). All six Dockerfiles pass `docker build --check`; none was
+  built locally. New `nodejs/.dockerignore`; the examples are linted with the
+  workspace (`eslint.config.mjs`); the CI `example-images` job builds the three
+  `Dockerfile`s and now waits for `node-test` (the `Dockerfile.demo` wiring
+  needs the Node `npm pack` in `build-lib`, task B13; the matrix already has an
+  `artifact_path` key for it). Verified against
+  `otel/opentelemetry-collector-contrib` 0.160.0: one trace
+  `process.queue-consume` → `POST /notify` (node-api) →
+  `grpc.notification.NotificationService/SendNotification` (node-backend), the
+  `Notification sent` log record correlated with `api.send-notification`, no
+  `/health` or gRPC health span, and `docker stop` of node-process with the API
+  paused exits within the budget with its final log flushed. Found on the way
+  (design D-JS14): a hand-injected `traceparent` on an instrumented `fetch` is
+  sent twice and breaks the trace, so `node-process` does not inject it.
+- **Python example: python-process no longer injects `traceparent` by hand.**
+  The injection was a no-op (the httpx instrumentation replaces the header);
+  `_propagation_headers()` is removed from
+  `python/example/python-process/workers.py`. Emitted telemetry is unchanged.
+- **Node.js `getTracer()`, `getMeter()` and `startRootSpan()` (Phase B, task
+  B11b; not released).** `@staffops/otel-helper` now exports the Go
+  `GetTracer`/`GetMeter`/`StartRootSpan` and Python
+  `get_tracer`/`get_meter`/`start_root_span` counterparts from the design's API
+  table (owner ruling 2026-11-03). `getTracer(name?, version?)` and
+  `getMeter(name?, version?)` read the global providers, scope `otel-helper`
+  when the name is omitted or empty. `startRootSpan(name, fn, { tracer?,
+  attributes?, kind?, links? })` runs `fn(span)` in a new trace whatever span
+  is active (baggage kept, the sampler sees no parent, kind INTERNAL by
+  default, attributes set at start). A sync `fn` ends the span on return; a
+  thenable result gives a real `Promise` (typed `Promise<T>`) that settles once
+  and ends the span then. A throw, a rejection or a throwing `then` records an
+  exception event (`exception.type` is the error's name, not its `code`) and
+  ERROR `"<error name>: <message>"`, then the original value is rethrown;
+  recording never throws. A non-string name or non-function `fn` throws
+  `TypeError`. A promise that never settles leaves the span open, as in Go and
+  Python. The examples use them.
+  The return type is `RootSpanResult<T>` (`T extends PromiseLike<infer U> ?
+  Promise<U> : T`, exported); a failure always sets ERROR, even when reading
+  the error's `name` or `message` throws.
 - **Go test hygiene:** `captureDiag` (`go/config_contract_test.go`) no longer
   prints slog timestamps, which made `TestDeprecatedEnvWarnsNamingReplacement`
   (`go/deprecation_test.go`) flaky.
