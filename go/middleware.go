@@ -29,6 +29,12 @@ func NewHTTPHandler(handler http.Handler, operation string) http.Handler {
 // Requests to a health path (DefaultHealthPaths or WithHealthPaths, matched
 // like the server side: exact, case-insensitive, trailing slash and query
 // ignored) get no client span and no client metric (otelhttp filter).
+// The values of the RedactedQueryParams() (request signatures, credentials,
+// session tokens: a presigned S3 URL) are written as REDACTED in url.full
+// (contract D1 "URL query redaction", A28). Server spans carry no url.query
+// (otelhttp v0.72 records url.path only). With only a remote parent in the
+// request context, otelhttp records no client span: start a local span after
+// extracting the incoming context.
 func NewHTTPTransport(base http.RoundTripper) http.RoundTripper {
 	if base == nil {
 		base = http.DefaultTransport
@@ -37,6 +43,8 @@ func NewHTTPTransport(base http.RoundTripper) http.RoundTripper {
 		otelhttp.WithFilter(func(r *http.Request) bool {
 			return !isClientHealthPath(r.URL.Path)
 		}),
+		// url.full with the RedactedQueryParams values redacted (A28).
+		otelhttp.WithTracerProvider(redactingProvider{}),
 	)
 }
 

@@ -232,6 +232,12 @@ Runtime and operations:
     the description or the old `error.type` values must use the status code
     and the AWS codes. Spans no longer carry `aws.s3.key`,
     `aws.s3.copy_source` or `aws.s3.delete`.
+28. **BREAKING (narrow) — URL query redaction (A28).** Client spans of
+    `NewHTTPTransport` write the values of `sig`, `Signature`,
+    `AWSAccessKeyId`, `X-Goog-Signature`, `X-Amz-Signature`,
+    `X-Amz-Credential` and `X-Amz-Security-Token` as `REDACTED` in
+    `url.full` (a presigned S3 URL kept its credential, signature and session
+    token). Queries on those values in `url.full` no longer match.
 
 ### Migration guide 0.2 → 0.3 — Python
 
@@ -498,6 +504,12 @@ Telemetry and runtime:
     partition-key value). The text is still in the `exception` event. If other
     code instruments botocore before the helper, that instrumentation is kept
     and a warning says failed calls may carry the text.
+28. **BREAKING (narrow) — URL query redaction (A28).** Every span the helper's
+    TracerProvider starts writes the values of `sig`, `Signature`,
+    `AWSAccessKeyId`, `X-Goog-Signature`, `X-Amz-Signature`,
+    `X-Amz-Credential` and `X-Amz-Security-Token` as `REDACTED` in `url.full`,
+    `http.url`, `http.target` and the server `url.query` (contrib redacted
+    four names in client URLs and none in `url.query`).
 
 ### Collector / platform prerequisites (before rolling 0.3.0 out)
 
@@ -570,6 +582,16 @@ after the upgrade.
 
 ### Go — detailed changes
 
+- **BREAKING (narrow) — A28 URL query redaction (design D1 row "URL query
+  redaction" of 2026-11-03; migration item 28).** `NewHTTPTransport` passes
+  otelhttp a tracer provider wrapper (`urlredact.go`, resolving the global
+  provider at each span start) whose spans write the values of
+  `RedactedQueryParams` as `REDACTED` in `url.full`, names matched exactly,
+  every other byte kept. Tests: `TestRedactQuery`,
+  `TestNewHTTPTransportRedactsPresignedURL`. *Fix round (2026-11-03):* the
+  provider is the request span's `TracerProvider()` when there is one (as
+  otelhttp); `RedactedQueryParams()` returns a copy; a listed name without
+  `=` is kept.
 - **A27 fix round (2026-11-03).** `ext/otelaws`: `error.type` falls back to
   the modeled error's type name when `ErrorCode()` is not PascalCase
   (`QueueDoesNotExist`); the call context keeps the SDK span and the code
@@ -1057,6 +1079,18 @@ Behavior changes, with migration notes:
 
 ### Python — detailed changes
 
+- **BREAKING (narrow) — A28 URL query redaction (design D1 row "URL query
+  redaction" of 2026-11-03; migration item 28).** A
+  `UrlQueryRedactionProcessor` (`_url_redaction.py`), first on the helper's
+  TracerProvider, writes the values of `REDACTED_QUERY_PARAMS` as `REDACTED`
+  in `url.full`, `http.url`, `http.target` and `url.query` at span start
+  (contrib util-http redacts only four names in client URLs; ASGI writes
+  `url.query` as received). Tests: `tests/test_a28_url_redaction.py`. The
+  list is a superset of contrib's default. *Fix round (2026-11-03):* the
+  processor also patches the live span, so attributes written after start
+  (ASGI rewrites `url.query`), the status description and exception events
+  (a failed `requests` call) are redacted; tests go through requests, httpx
+  and FastAPI.
 - **A27 fix round (2026-11-03).** `error.type` falls back to
   `Error.QueryErrorCode`, the modeled exception class
   (`QueueDoesNotExist`) and, for an all-digit code, the HTTP reason
@@ -2669,6 +2703,7 @@ Unsupported instrumentation versions, task A10 (P18):
   semconv `aws.extended_request_id`; `getSignedUrl` records a phantom SDK
   span (D-JS14); HEAD errors without a body map their status code through
   the shared table (`403` → `Forbidden`).
+  *A28:* Go and Python now redact the same URL query parameters as Node.js.
 - **Go test hygiene:** `captureDiag` (`go/config_contract_test.go`) no longer
   prints slog timestamps, which made `TestDeprecatedEnvWarnsNamingReplacement`
   (`go/deprecation_test.go`) flaky.

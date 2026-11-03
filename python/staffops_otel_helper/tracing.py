@@ -28,6 +28,7 @@ from staffops_otel_helper.config import (
     _env,
     ascii_lower,
 )
+from staffops_otel_helper._url_redaction import UrlQueryRedactionProcessor
 from staffops_otel_helper.processors import DebugProcessor
 
 # HTTP paths whose server spans the helper drops unless TelemetryOptions.health_paths
@@ -182,6 +183,8 @@ def build_tracer_provider(resource: Resource, options: TelemetryOptions) -> Trac
             max_span_attribute_length=limits.get("span"),  # None: the SDK reads a non-zero env value
         )
     provider = TracerProvider(resource=resource, sampler=sampler, shutdown_on_exit=False, **kwargs)
+    # Before any exporting processor: URL query values redacted at span start (A28).
+    provider.add_span_processor(UrlQueryRedactionProcessor())
     try:
         exporters = options.resolved_exporters("traces")
         plan = options.otlp_export("traces")
