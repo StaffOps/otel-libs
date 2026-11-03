@@ -1,0 +1,296 @@
+# OTel Helper — Node.js
+
+OpenTelemetry helper for Node.js services. One call configures traces, metrics
+and logs with the shared cross-language contract: standard `OTEL_*` variables
+first, export through an OpenTelemetry Collector, sampling and resource
+enrichment at the Collector. The resolution rules, defaults and warnings are
+the Go and Python ones; the shared fixture `parity/cases.json` proves it.
+
+Audience: developers instrumenting a Node.js service. The practical guide is
+[HOW-TO.md](HOW-TO.md); runnable examples are in [example/](example/README.md);
+how to test the library is in [TESTS.md](TESTS.md).
+
+> **Status: not released.** The packages are at `0.3.0-dev.0` on this branch
+> and are **not published** to any registry yet (Phase B, task B13). The
+> `@staffops` npm scope is not claimed on npmjs: never install
+> `@staffops/otel-helper*` by name from the public registry until a release
+> says so. See [Installation](#installation).
+
+## Requirements
+
+- Node.js **22.15.0 or newer** (`engines`); CI tests 22.15.0, 22, 24 and 26.
+- OpenTelemetry JS stable packages `~3.0.0` and experimental `~0.300.0` (one
+  generation, pulled by the helper), with `@opentelemetry/api`
+  `>=1.10.0 <1.11.0` as a **peer dependency** — the range the 3.0 SDK
+  packages declare. npm 7 and later install it automatically; list it in your
+  own `package.json` when your code imports it.
+- CommonJS and ES modules: one implementation serves `require` and `import`
+  (the ES module entry re-exports the CommonJS one, so both share one state).
+
+## Packages
+
+| Package | What it adds | Peer dependencies |
+|---|---|---|
+| `@staffops/otel-helper` | Core: `setup()`, `shutdown()`, exporters, sampler, propagators, `/metrics`, `createLogger()`, and the `node:http`/`https`, `fetch` (undici), express and `@grpc/grpc-js` instrumentations | `@opentelemetry/api` |
+| [`@staffops/otel-helper-sql`](https://github.com/StaffOps/otel-libs/blob/main/nodejs/packages/otel-helper-sql/README.md) | `sqlInstrumentation()`: `pg` (with `pg-pool`) and `mysql2` | core (same version), `@opentelemetry/api` |
+| [`@staffops/otel-helper-redis`](https://github.com/StaffOps/otel-libs/blob/main/nodejs/packages/otel-helper-redis/README.md) | `redisInstrumentation()`: node-redis (`redis`, `@redis/client`) and `ioredis` | core (same version), `@opentelemetry/api` |
+| [`@staffops/otel-helper-aws`](https://github.com/StaffOps/otel-libs/blob/main/nodejs/packages/otel-helper-aws/README.md) | `awsInstrumentation()`: every AWS SDK for JavaScript v3 client (`@aws-sdk/client-*`) | core (same version), `@opentelemetry/api` |
+| [`@staffops/otel-helper-pino`](https://github.com/StaffOps/otel-libs/blob/main/nodejs/packages/otel-helper-pino/README.md) | `createPinoDestination()`: pino records through the helper | core (same version), `pino` `^10.0.0` |
+| [`@staffops/otel-helper-winston`](https://github.com/StaffOps/otel-libs/blob/main/nodejs/packages/otel-helper-winston/README.md) | `OtelHelperTransport`: winston records through the helper | core (same version), `winston` `^3.10.0` |
+
+The core stays lightweight: databases, Redis, the AWS SDK and the log
+libraries are opt-in packages. The instrumented libraries themselves (`pg`,
+`redis`, `@aws-sdk/client-*`, `pino`, `winston`) stay your app's own
+dependencies.
+
+## Installation
+
+Until the release (B13), install the packages from `npm pack` tarballs built
+from this repository, as the example images do:
+
+```bash
+# In a checkout of this repository (Docker; no local Node needed): tarballs in nodejs/tarballs/
+docker run --rm -v "$PWD/nodejs:/src:ro" -v "$PWD/nodejs/tarballs:/out" node:24-slim sh -ec '
+  mkdir /work && tar -C /src --exclude=node_modules --exclude=dist --exclude=tarballs -cf - . | tar -C /work -xf -
+  cd /work && npm ci --ignore-scripts && npm run build
+  for p in packages/*; do (cd "$p" && npm pack --pack-destination /out); done'
+
+# In your app: the core first, or in the same `npm install` as any opt-in package
+npm install /path/to/staffops-otel-helper-0.3.0-dev.0.tgz /path/to/staffops-otel-helper-sql-0.3.0-dev.0.tgz \
+  @opentelemetry/api@~1.10.0
+```
+
+An opt-in tarball installed alone makes npm resolve its peer
+`@staffops/otel-helper` from the registry. Add the scope mapping to your
+`.npmrc` now, so that lookup can only reach GitHub Packages and never a
+same-named package on npmjs:
+
+```ini
+@staffops:registry=https://npm.pkg.github.com
+```
+
+The tarballs land in `nodejs/tarballs/`, owned by root (the container's
+user); remove them with `sudo` or from another container. npm 11 warns
+`1 package has install scripts not yet covered by allowScripts: protobufjs@… (postinstall …)`
+(protobufjs comes with `@grpc/grpc-js` through `@grpc/proto-loader`, a dependency of the gRPC OTLP exporters): harmless — that postinstall only
+prints a warning when a project pins protobufjs with an unexpected version
+range, so leaving it unapproved, or `--ignore-scripts`, changes nothing.
+
+Registry installs (npmjs and GitHub Packages, with the `.npmrc` scope
+mapping that protects against dependency confusion) are described in
+[CONSUMING.md](../CONSUMING.md#nodejs-npm-packages-planned).
+
+## Quick start
+
+The helper must run before your app loads `express`, `@grpc/grpc-js` and the
+other libraries it instruments. Pick one of two ways.
+
+**A. Preload, configured from the environment:**
+
+```bash
+export OTEL_SERVICE_NAME=checkout-api
+export OTEL_RESOURCE_ATTRIBUTES=deployment.environment.name=PRD
+export OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
+
+node --import @staffops/otel-helper/register app.mjs   # ES modules or CommonJS
+node --require @staffops/otel-helper/register app.js   # also works; see HOW-TO §13 for worker threads
+```
+
+**B. `setup()` in code**, first thing in a CommonJS entry (code values win
+over the environment):
+
+```js
+const { setup } = require('@staffops/otel-helper');
+
+setup({ serviceName: 'checkout-api', resourceAttributes: { 'app.component': 'gateway' } });
+
+const express = require('express'); // after setup(): instrumented, full http.route
+```
+
+In an ES module app, code options need a preload file of your own (an
+`import` statement is hoisted, so `setup()` in the entry runs after the
+imports): see [HOW-TO §1](HOW-TO.md#1-getting-started).
+
+Either way, the helper installs no signal handler: flush on `SIGTERM`
+yourself.
+
+```js
+// ES modules
+import { shutdown } from '@staffops/otel-helper';
+// CommonJS: const { shutdown } = require('@staffops/otel-helper');
+
+process.once('SIGTERM', () => { shutdown().finally(() => process.exit(0)); });
+```
+
+A short-lived job that simply returns is flushed when the process ends on its
+own (the helper's `beforeExit` listener); one that calls `process.exit()`
+must `await shutdown()` first ([HOW-TO §4](HOW-TO.md#short-lived-jobs-and-scripts)).
+
+## Environment variables
+
+Precedence everywhere: **code (`setup()` options) > standard `OTEL_*`
+variable > deprecated / `OTEL_HELPER_*` variable > helper default**. An
+invalid environment value warns on stderr (`otelhelper: …`) and falls back to
+the next level; an invalid value passed in code throws a `TypeError` naming
+the option. Warnings never print header values, client keys or URL
+credentials. The OpenTelemetry JS SDK 3.0 reads no environment variable
+itself: the helper resolves every row below and passes the result to the SDK.
+
+### Service identity
+
+| Variable | Default | Notes |
+|---|---|---|
+| `OTEL_SERVICE_NAME` | _(unset)_ | Wins over `OTEL_RESOURCE_ATTRIBUTES` and `SERVICE_NAME`. Unset everywhere → SDK `unknown_service:<argv0>` (`unknown_service:node` for the usual `node` binary) + one warning. Whitespace-only = unset |
+| `OTEL_RESOURCE_ATTRIBUTES` | _(unset)_ | Any resource attribute, e.g. `deployment.environment.name=PRD`. Never overwritten by a helper default. Parsed by the helper: values percent-decoded then trimmed; an item without `=`, with an empty key or a bad `%` escape is warned by position (never by value); a blank identity value (`service.name=`) counts as unset; `telemetry.sdk.*` are ignored (the SDK sets them) |
+| `SERVICE_NAME` | _(unset)_ | **Deprecated** (removed in 1.0) → `OTEL_SERVICE_NAME`. Used only when nothing else sets `service.name` |
+| `ENVIRONMENT` | _(unset)_ | **Deprecated** alias → `OTEL_RESOURCE_ATTRIBUTES=deployment.environment.name=<value>`. Unset → attribute absent + one warning; unknown values are emitted verbatim |
+| `OTEL_NODE_RESOURCE_DETECTORS` | _(unset)_ | Not used: the helper builds the resource itself (no host, process or cloud detectors). A value other than `env`, `serviceinstance`, `none` is warned once — add those attributes in the Collector (`resourcedetection`, `k8sattributes`) |
+
+`service.instance.id`: a random UUID per process unless code or
+`OTEL_RESOURCE_ATTRIBUTES` sets one; an explicit id is never rewritten (and is
+warned in a `cluster` worker — see HOW-TO, [cluster and pm2](HOW-TO.md#cluster-and-pm2)).
+The resolved environment sets the helper's log level: `LOCAL` debug,
+`DEV`/`HML` info, `PRD` warn; unset or any other value info.
+
+### OTLP export
+
+| Variable | Default | Notes |
+|---|---|---|
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | _(unset)_ | Generic endpoint. For `http/protobuf`, `/v1/<signal>` is appended (a path prefix such as `/otlp` is kept); no port → 443/80. Schemeless `host:port` → `https://` (deprecated for `http/protobuf`) |
+| `OTEL_EXPORTER_OTLP_<SIGNAL>_ENDPOINT` | _(unset)_ | `TRACES`, `METRICS`, `LOGS`. Configures that signal only. `http/protobuf`: used as-is, path included (no `/v1/<signal>` appended). gRPC: only `scheme://host:port` is used, a path is ignored |
+| `OTEL_EXPORTER_OTLP[_<SIGNAL>]_PROTOCOL` | `grpc` | `grpc` or `http/protobuf`. Unset and endpoint port `4318` → `http/protobuf`. `http/json` is warned and ignored |
+| `OTEL_EXPORTER_OTLP[_<SIGNAL>]_INSECURE` | `false` | Only for schemeless endpoints. `true` (any case) = plaintext; any other value = false, warned unless it is `false` |
+| `OTEL_EXPORTER_OTLP[_<SIGNAL>]_TIMEOUT` | `10000` | Milliseconds, plain decimals only, clamped to [1 ms, 24 h]. The single export deadline: `OTEL_BSP_EXPORT_TIMEOUT`, `OTEL_BLRP_EXPORT_TIMEOUT` and `OTEL_METRIC_EXPORT_TIMEOUT` are not honored (warned when set). The metric reader timeout is capped at the export interval (warned) |
+| `OTEL_EXPORTER_OTLP[_<SIGNAL>]_COMPRESSION` | `gzip` | `gzip` or `none` (any case); anything else warns and uses `gzip` |
+| `OTEL_EXPORTER_OTLP[_<SIGNAL>]_HEADERS` | _(unset)_ | `key=value,...`, values percent-decoded. Keys must match `[A-Za-z0-9._-]+`, are lowercased, last one wins; malformed items are skipped with a warning naming only their position |
+| `OTEL_EXPORTER_OTLP[_<SIGNAL>]_CERTIFICATE`, `_CLIENT_CERTIFICATE`, `_CLIENT_KEY` | _(unset)_ | Read and validated by the helper (per-signal, then generic). An unreadable or non-PEM CA warns and the system roots are used; an incomplete or rejected client pair warns and the signal uses server authentication. A certificate with a plaintext endpoint is warned |
+
+Each per-signal variable falls back to the generic one, then to the default; an
+invalid per-signal value is warned and falls back the same way. A signal is
+"OTLP configured" when code, the generic endpoint or its own endpoint sets
+one; with only `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`, traces are exported,
+metrics use the Prometheus fallback and logs stay local. While the exporters
+are built, the helper hides these variables from `process.env`, so a value it
+rejected never reaches the SDK or the wire.
+
+### Signals, sampling, propagation
+
+| Variable | Default | Notes |
+|---|---|---|
+| `OTEL_SDK_DISABLED` | `false` | `true` installs the context manager and propagators only (one INFO line): no providers, exporters, `/metrics` listener or instrumentation. The helper's SDK `DiagLogger` is still installed |
+| `OTEL_CONFIG_FILE` / `OTEL_EXPERIMENTAL_CONFIG_FILE` | _(unset)_ | Declarative configuration is **not supported**: ignored with one warning per process naming the variable (never the path) |
+| `OTEL_TRACES_EXPORTER` / `OTEL_LOGS_EXPORTER` | `otlp` | `otlp`, `console`, `none` or a list (`otlp,console`). `logging` is a deprecated alias of `console` (variables only: in `metricExporters` it throws) |
+| `OTEL_METRICS_EXPORTER` | _(inferred)_ | `otlp`, `prometheus`, `console`, a list, `none`. Unset: `otlp` when a metrics endpoint is configured, else `prometheus` |
+| `OTEL_METRIC_EXPORT_INTERVAL` | `30000` | Milliseconds (the SDK default is 60000): ASCII digits with an optional `+` (any number of digits), > 0, else warned and 30 000; above 2 147 483 647 clamped with a warning |
+| `OTEL_TRACES_SAMPLER` / `OTEL_TRACES_SAMPLER_ARG` | `parentbased_always_on` | The six spec names, case-insensitive. Unknown name → warning + default; invalid `_ARG` → warning + 1.0. Across languages prefer `parentbased_traceidratio` to a bare `traceidratio` ([HOW-TO §7](HOW-TO.md#7-sampling)) |
+| `OTEL_PROPAGATORS` | `tracecontext,baggage` | `tracecontext`, `baggage`, `none`. Other values are warned and skipped. A propagator registered before `setup()` is kept (warned) unless `replaceGlobals` is set |
+| `OTEL_SEMCONV_STABILITY_OPT_IN` | _(unset)_ | Not set by the helper. HTTP: the Node.js instrumentations emit only the stable conventions, so a value without `http`, or with `http/dup`, is warned once and has no HTTP effect. Database keys (opt-in packages): both `db.system.name` and the legacy `db.system` unless the value holds `database` without `database/dup`; read once per process by the first `sqlInstrumentation()`, `redisInstrumentation()` or `awsInstrumentation()` |
+| `OTEL_BSP_*`, `OTEL_BLRP_*`, `OTEL_*_LIMIT` | spec defaults | Batch processor sizes and delays and the attribute, span, event, link and log record limits are read by the helper (SDK 3.0 no longer does). A value-length limit of `0` is invalid (warned); a batch size above the queue size warns and uses the queue size |
+| `OTEL_LOG_LEVEL` | `WARN` | **Node only.** Level of the OpenTelemetry SDK's own messages (`NONE`, `ERROR`, `WARN`, `INFO`, `DEBUG`, `VERBOSE`, `ALL`), written by the helper's `DiagLogger` to stderr. Unset → WARN (not the spec's INFO); another value warns and uses WARN. `installDiagLogger: false` leaves `diag` alone |
+| `OTEL_METRICS_EXEMPLAR_FILTER` | — | Not honored: `@opentelemetry/sdk-metrics` 3.0 exports no exemplar filter, so Node.js metric points carry no exemplars (Go and Python do) |
+
+### Helper variables
+
+| Variable | Default | Notes |
+|---|---|---|
+| `OTEL_HELPER_DEBUG_LEVEL` | `false` | Debug log level and `debug=true` on entry spans (no parent or a remote parent) for Collector tail-sampling policies ([ADR-006](https://github.com/StaffOps/otel-libs/blob/main/specs/decisions/ADR-006-debug-span-attribute.md)). Do not leave on in production |
+| `OTEL_HELPER_METRICS_PORT` | `9464` | Standalone Prometheus `/metrics` listener (dual-stack `::`, `GET`/`HEAD /metrics` only: other paths 404, other methods 405); ASCII digits with an optional `+`, in [0, 65535]; `0` disables it (mount `metricsHandler()` instead). A busy port does not fail `setup()`: it is reported |
+| `OTEL_HELPER_DISABLED_METRICS` | _(unset)_ | Comma list of patterns, each a case-sensitive glob on the instrument name (`*` any run of characters, `?` one character, everything else literal); items trimmed, blank items ignored; matching instruments are dropped from every exporter |
+| `OTEL_HELPER_SAMPLE_RATIO` | `1.0` | **Deprecated** → `OTEL_TRACES_SAMPLER=parentbased_traceidratio` + `OTEL_TRACES_SAMPLER_ARG`. Used only while `OTEL_TRACES_SAMPLER` is unset |
+| `OTEL_HELPER_DISABLED_SIGNALS` | _(unset)_ | **Deprecated** → `OTEL_{TRACES,METRICS,LOGS}_EXPORTER=none`. A standard variable with a valid entry wins for its signal, and `metricExporters` wins for metrics; unknown entries warn once |
+| `OTEL_HELPER_EXTRA_INSTRUMENTATION` | — | **No effect in Node.js** (warned once): pass `sqlInstrumentation()`, `redisInstrumentation()` or `awsInstrumentation()` in `setup({ instrumentations })` |
+
+Deprecated variables warn once per process, naming the replacement (never the
+value), also when a standard variable or code wins.
+
+## Endpoint and TLS rules
+
+| Endpoint | Transport |
+|---|---|
+| `https://host:4317` | TLS (system CA store) |
+| `http://host:4317` | Plaintext |
+| `host:4317` (schemeless) | TLS; plaintext only with `OTEL_EXPORTER_OTLP_INSECURE=true` (or `setup({ insecure: true })`). Deprecated for `http/protobuf` |
+
+- The scheme always wins over `INSECURE`; a contradiction is warned (and,
+  when both come from code, throws).
+- gRPC URL without a port → `:4317` with a warning; `http/protobuf` URL without
+  a port → 443/80.
+- URL user info, query and fragment are stripped (warned, redacted): put
+  credentials in `OTEL_EXPORTER_OTLP_HEADERS`.
+- `unix://`, `ftp://` and other schemes leave the signal unconfigured.
+- gRPC over TLS to an **IP literal** (`https://10.0.0.5:4317`) fails on
+  Node.js 26 (Node refuses an IP as the TLS server name); the helper warns on
+  every Node.js version. Use a DNS name.
+
+## What is configured automatically
+
+| Signal | Captured |
+|---|---|
+| Traces | `node:http`/`https` servers and clients, `fetch` (undici), express (route-named SERVER span plus a `request handler - <route>` span per matched handler), `@grpc/grpc-js` client and server. Health probes produce no server span |
+| Metrics | `http.server.request.duration` and `http.client.request.duration` (stable semconv, seconds), your instruments; every 30 s. No runtime metrics (Go and Python emit `go.*` / `system.*`, `process.*`) |
+| Logs | `createLogger()` records (and the pino/winston packages) with trace/span ids, exported when a logs exporter is active; single-line JSON on stdout otherwise |
+
+Without any OTLP endpoint: metrics on `http://<pod>:9464/metrics`, traces
+in-process only (propagation still works), logs as JSON on stdout.
+
+Health checks: server spans for `/health /healthz /ready /readyz /live /livez
+/ping /metrics` (exact, case-insensitive, trailing slash and query ignored)
+and every `grpc.health.v1.Health` call are not recorded, but the HTTP
+requests **are counted** in `http.server.request.duration`. Override the list
+with `setup({ healthPaths: [...] })` (`[]` traces every path).
+
+## Public API
+
+| Name | Purpose |
+|---|---|
+| `setup(options?) → Resolved` | Configure everything (synchronous); while a setup is active, later calls return its frozen result and ignore their options |
+| `shutdown(timeoutMs = 30000) → Promise<void>` | Flush and shut down under one deadline; rejects with an `AggregateError` (a provider failed) or an `Error` (deadline) |
+| `SetupOptions`, `Resolved` | Code configuration and the resolved values (types; [HOW-TO §12](HOW-TO.md#12-setupoptions-and-resolved-reference)) |
+| `getTracer(name?, version?)` / `getMeter(name?, version?)` | Tracer / Meter from the global providers (default scope name `otel-helper`, shared with Go and Python) |
+| `startRootSpan(name, fn, { tracer?, attributes?, kind?, links? })` | Run `fn(span)` in a new trace; ends the span, records a throw or rejection |
+| `createLogger({ name, level? })` | The helper's logger (`debug`, `info`, `warn`, `error`) |
+| `defaultLogLevel(environment?, debug?)` | The level an environment implies (`LOCAL` debug, `DEV`/`HML` info, `PRD` warn) |
+| `metricsHandler()` | `(req, res)` handler serving `/metrics` from the app's own server (`node:http`, express) |
+| `VERSION` | The helper version |
+| `@staffops/otel-helper/register` | Preload entry: the module hooks, then `setup()` from the environment |
+| `@staffops/otel-helper/hooks` | Preload entry: the module hooks only (then call `setup({...})` yourself) |
+| `@staffops/otel-helper/testing` | Tests only: `reset()`, `setDiagnosticSink()`, `getResource()`, `getProviders()`, `getState()` |
+
+The `@staffops/otel-helper/internal/*` entries are for the opt-in packages
+only: not a public API, no compatibility promise.
+
+## Known differences from Go and Python
+
+The configuration contract is shared; some emitted telemetry is not. The
+cross-language list is in the root README,
+[Known emitted-telemetry gaps](https://github.com/StaffOps/otel-libs/blob/main/README.md#known-emitted-telemetry-gaps); the
+full Node.js record, with the status of each item, is
+[design D-JS14](https://github.com/StaffOps/otel-libs/blob/main/specs/nodejs-otel-helper/design.md#d-js14--known-node-differences-reference-each-with-a-fixture-status).
+The ones you meet first:
+
+- gRPC spans carry the legacy `rpc.*` attributes, names `grpc.<pkg.Svc>/<Method>`,
+  and no RPC metrics; a handler that throws synchronously leaves its SERVER
+  span unended.
+- Only two HTTP metrics; `http.route` only with express; `node:http2` is not
+  instrumented.
+- No runtime metrics and no exemplars.
+- A TracerProvider, MeterProvider or propagator registered before `setup()` is
+  kept (warned) unless `replaceGlobals: true`; `setup()` after `shutdown()`
+  rebuilds all three signals and keeps earlier tracers, meters and loggers
+  working (Go keeps earlier tracers on the old provider; Python cannot
+  re-enable traces and metrics).
+
+## Architecture
+
+```text
+[ Node.js app ] --OTLP gRPC :4317 or HTTP :4318--> [ OTel Collector ] --> traces / metrics / logs backends
+```
+
+- The SDK samples parent-based always-on; tail sampling happens at the Collector.
+- The helper sets `service.name`, `deployment.environment.name` and
+  `service.instance.id`; the Collector (`k8sattributes`) adds the rest.
+- Nothing is exported directly to a backend; the only exception is the
+  Prometheus `/metrics` fallback.
+- The helper composes the SDK itself (no `NodeSDK`): one stable forwarding
+  TracerProvider, MeterProvider and LoggerProvider per process are the API
+  globals, and each `setup()` points them at its own SDK providers.

@@ -109,6 +109,18 @@ are listed in the root README "Known emitted-telemetry gaps".
   THEN it SHALL warn on the sink (later imports would stay uninstrumented). Docs state that modules
   imported before setup are not instrumented and meters obtained before
   setup are permanent no-ops.
+  > **Corrected 2026-11-03 (B12).** "Modules imported before setup are not
+  > instrumented" is not what the code does (D-JS1 report text, D-JS14 row
+  > "Routers or apps created before `setup()`"): express and grpc-js found in
+  > `require.cache` are re-patched in place on enable and reported
+  > (`<module> was loaded before setup(); …`) — apps, routers and clients built
+  > before `setup()` may still lack spans or have a truncated `http.route`; the
+  > opt-in packages patch a library loaded before them on their first enable
+  > (D-JS14 rows "A library loaded before `sqlInstrumentation()`", "AWS SDK
+  > detection and loading"). What stays uninstrumented is an ES module
+  > `import` after `setup()` without the loader hooks (the warning above).
+  > Meters obtained before setup are permanent no-ops (verified). The docs
+  > (`nodejs/HOW-TO.md` §1) state this.
 
 ### JS6 — Logging
 - `createLogger({name, level?})`: level from R4 (`defaultLogLevel(env, debug)`),
@@ -131,6 +143,16 @@ are listed in the root README "Known emitted-telemetry gaps".
   deadline, caches its result; setup after shutdown rebuilds and re-binds every
   instrumentation to the new providers.
 - No signal handlers installed; docs show the SIGTERM pattern.
+  > **Corrected 2026-11-03 (B12).** Still no signal handler, but a process
+  > that ends on its own exported nothing (dev H1): Python's SDK shuts down at
+  > interpreter exit (`atexit`), Node's has no equivalent. The first successful
+  > `setup()` of the main thread now registers one `process.once('beforeExit')`
+  > listener that calls `shutdown()` only when no shutdown has started; it is
+  > not registered after a failed setup or in a worker thread, never stacked
+  > by a re-setup, and removed by `/testing` `reset()` (design D-JS10).
+  > `beforeExit` is not a signal and is not emitted on `process.exit()` or a
+  > fatal signal, so the docs still show `await shutdown()` before
+  > `process.exit()` and the SIGTERM pattern. Tests: `test/exit.test.cjs`.
 
 ### JS8 — Opt-in instrumentation packages
 - Each of `-aws`, `-redis` (redis + ioredis), `-sql` (pg + mysql2) exports a

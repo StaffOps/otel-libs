@@ -1,6 +1,6 @@
 ---
 name: release
-description: Use when cutting a release or release candidate of otel-libs (Go, Python, .NET) — version bumps, per-language tags, GitHub Release, verification before and after tagging. Encodes the pitfalls found cutting 0.3.0-rc.1/rc.2.
+description: Use when cutting a release or release candidate of otel-libs (Go, Python, .NET; Node.js once B13 lands) — version bumps, per-language tags, GitHub Release, verification before and after tagging. Encodes the pitfalls found cutting 0.3.0-rc.1/rc.2.
 ---
 
 # Release procedure (otel-libs)
@@ -14,6 +14,7 @@ Decision record: `specs/config-contract-v0.3/design.md` D10 (+ "A11 ruling").
 | Go core | `go/vX.Y.Z[-rc.N]` | nothing (module proxy reads the tag) |
 | Go ext | `go/ext/{otelaws,otelredis,otelsql}/vX.Y.Z[-rc.N]` | same |
 | .NET | `dotnet/vX.Y.Z[-rc.N]` | CI `publish-dotnet-release` → GitHub NuGet |
+| Node.js (planned, task B13) | `nodejs/vX.Y.Z[-rc.N]` | CI `publish-nodejs-release` → npmjs + GitHub Packages (not wired yet; the owner claims the `staffops` npm org first, ADR-011) |
 
 A `v*` tag never publishes .NET.
 
@@ -22,6 +23,12 @@ A `v*` tag never publishes .NET.
    section states the version and date; migration guide current.
 2. Versions: `python/pyproject.toml` in **PEP 440** (`0.3.0rc2`, not
    `0.3.0-rc.2`); Go needs no file change; .NET takes the version from the tag.
+   Node.js (from B13): every `nodejs/packages/*/package.json` `version`, the
+   `VERSION` constants (`otel-helper/src/version.ts`, the `-sql`/`-redis`/`-aws`
+   `src/internal/*-instrumentation.ts`) and the opt-in packages' exact
+   `@staffops/otel-helper` peer move together
+   (SemVer, `0.3.0-rc.1`); `npm pack` must keep each package's `README.md`
+   (`node ci/check-pack.mjs`).
 3. Docs/consumption pages (`CONSUMING.md`, README matrix) name the new tags.
 4. `testing/verify.sh` green — it covers the CI risk corners that local runs
    used to skip (Python 3.13 + lower deps broke rc.1).

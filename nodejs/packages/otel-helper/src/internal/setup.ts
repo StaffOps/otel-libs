@@ -112,6 +112,13 @@ interface Runtime {
    * none yet (`info`). Kept after `shutdown()`, as Go's installed level.
    */
   logLevel: LogLevel | undefined;
+  /**
+   * The `beforeExit` listener registered by the first successful setup of the
+   * main thread (B12 fix round, dev H1; design D-JS10): `undefined` = none
+   * registered now. One at a time (re-setup never stacks a second); it
+   * removes itself when it fires and `/testing` `reset()` removes it.
+   */
+  exitHook?: (() => void) | undefined;
 }
 
 const DEFAULT_SHUTDOWN_TIMEOUT_MS = 30_000;
@@ -759,7 +766,37 @@ function setupFrom(origin: SetupOrigin, options: SetupOptions | undefined): Reso
   }
   rt.active = active;
   rt.logLevel = plan.resolved.logLevel;
+  registerExitHook(rt);
   return active.resolved;
+}
+
+/**
+ * Flushes a process that ends on its own (B12 fix round, dev H1; design
+ * D-JS10): Python's SDK shuts down at interpreter exit (`atexit`), Go needs a
+ * deferred Shutdown, Node gets a `process.once('beforeExit')` listener. It
+ * calls `shutdown()` only when the active setup has no shutdown yet (an app's
+ * own `shutdown()` wins and is never repeated) and removes itself, so the
+ * event loop it refills cannot bring it back. `beforeExit` is not emitted on
+ * `process.exit()` or a fatal signal, so the SIGTERM pattern stays the app's
+ * (JS7: still no signal handler). Not registered in a worker thread (the
+ * main thread owns the process exit) nor after a failed setup (the caller
+ * reaches this only after `install()` succeeded).
+ */
+function registerExitHook(rt: Runtime): void {
+  if (!isMainThread || rt.exitHook !== undefined) return;
+  const hook = (): void => {
+    if (rt.exitHook === hook) rt.exitHook = undefined;
+    const active = rt.active;
+    if (active === undefined || active.shutdown !== undefined) return;
+    // The app did not shut down: flush now. A failure is reported, never thrown at exit.
+    shutdown().catch((err: unknown) => {
+      report('shutdown() at process exit (beforeExit) failed; some telemetry was not exported', {
+        error: redactErrorText(err instanceof Error ? err.message : String(err)),
+      });
+    });
+  };
+  rt.exitHook = hook;
+  process.once('beforeExit', hook);
 }
 
 /** Releases what a failed setup built and installed (Go G1); `rt.active` was never replaced. */
@@ -1238,6 +1275,10 @@ export function resetForTests(): void {
   const state = getState();
   if (state !== null) {
     const rt = runtimeOf(state);
+    if (rt.exitHook !== undefined) {
+      process.removeListener('beforeExit', rt.exitHook);
+      rt.exitHook = undefined;
+    }
     const active = rt.active;
     if (active !== undefined) {
       void closeListener(active.listener);

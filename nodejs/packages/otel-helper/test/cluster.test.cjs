@@ -6,7 +6,9 @@
 // (fork.* cases); these tests add what the fixture cannot see: the primary's
 // own id, the code-option branch of the warning, a child_process.fork() child,
 // and the /metrics listener under cluster (shared port, a primary that also
-// set up, per-worker slot ports, a worker restarted on its slot).
+// set up, per-worker slot ports, a worker restarted on its slot), and the
+// flush of a worker the primary disconnects (beforeExit, or a disconnect
+// handler when a handle keeps it alive; B12, 2026-11-03).
 //
 // No fixed sleeps: the primary waits for real events (`cluster` 'listening',
 // worker reports, a polled "could not bind" line) under one 20 s deadline that
@@ -260,4 +262,57 @@ test('JS9 D-JS13 a crashed worker re-forked on its slot serves the same port, wi
     assert.equal(s.status, 200);
     assert.deepEqual(pidsIn(s.body), [replacement.pid], s.body);
   }
+});
+
+// D-JS13 correction of 2026-11-03 (B12) and its fix round: worker.disconnect()
+// is not a signal, so a SIGTERM-only flush does not run on it. A
+// worker with nothing else open then ends on its own and the helper's
+// beforeExit flush exports its spans (D-JS10, B12 fix round); a worker that
+// something keeps alive (a timer, a pool) needs a `process.once('disconnect',
+// …)` handler that awaits shutdown() and exits (HOW-TO §13, cluster and pm2).
+// KEEPALIVE=1 holds such a handle open; FLUSH_ON_DISCONNECT=1 adds the handler.
+const DISCONNECT_SCRIPT = (helperPath) => `'use strict';
+const cluster = require('node:cluster');
+if (cluster.isPrimary) {
+  setTimeout(() => {
+    console.log('primary deadline (20 s) exceeded');
+    for (const id in cluster.workers) cluster.workers[id].process.kill('SIGKILL');
+    process.exit(1);
+  }, 20_000).unref();
+  const w = cluster.fork();
+  w.on('message', () => w.disconnect());
+  w.on('exit', (code) => { console.log('worker-exit ' + code); });
+} else {
+  const h = require(${JSON.stringify(helperPath)});
+  h.setup({ serviceName: 'svc', metricExporters: [] });
+  h.getTracer('cluster-test').startSpan('disconnect-probe-span').end();
+  process.once('SIGTERM', () => { h.shutdown().finally(() => process.exit(0)); });
+  if (process.env.KEEPALIVE === '1') setInterval(() => {}, 1000);
+  if (process.env.FLUSH_ON_DISCONNECT === '1') process.once('disconnect', () => { h.shutdown().finally(() => process.exit(0)); });
+  process.send('ready');
+}
+`;
+
+function runDisconnect(env) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'otel-helper-cluster-'));
+  const script = path.join(dir, 'disconnect.cjs');
+  fs.writeFileSync(script, DISCONNECT_SCRIPT(require.resolve('@staffops/otel-helper')));
+  try {
+    // The console exporter behind the batch processor, its delay far beyond
+    // the run: a span reaches stdout only through a flush.
+    const res = runNode([script], { env: { ...BASE_ENV, OTEL_TRACES_EXPORTER: 'console', OTEL_BSP_SCHEDULE_DELAY: '60000', ...env } });
+    assert.equal(res.status, 0, `${res.stdout}\n${res.stderr}`);
+    assert.match(res.stdout, /^worker-exit 0$/m, res.stdout);
+    return res.stdout;
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+test('D-JS13 a worker the primary disconnects, with nothing else open, ends on its own and the beforeExit flush exports its spans', () => {
+  assert.match(runDisconnect({}), /name: 'disconnect-probe-span'/);
+});
+
+test('D-JS13 a disconnected worker kept alive by a handle exits and flushes through its disconnect handler', () => {
+  assert.match(runDisconnect({ KEEPALIVE: '1', FLUSH_ON_DISCONNECT: '1' }), /name: 'disconnect-probe-span'/);
 });

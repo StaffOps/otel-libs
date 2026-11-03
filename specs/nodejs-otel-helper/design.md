@@ -133,6 +133,16 @@ document the env fallbacks (rejected: R8 leak, rejected headers on the wire).
 | deprecations D8 (`SERVICE_NAME`, `ENVIRONMENT`, `OTEL_HELPER_SAMPLE_RATIO`, `OTEL_HELPER_DISABLED_SIGNALS`, schemeless http/protobuf; `OTEL_HELPER_EXTRA_INSTRUMENTATION` accepted, no effect, warned — as Go G9) | H | |
 | `OTEL_LOG_LEVEL`, `OTEL_CONFIG_FILE` | H | Node-only rows. *Corrected 2026-10-29 (A19): `OTEL_CONFIG_FILE` is now a contract row (design D1 "`OTEL_CONFIG_FILE`"), warned in every language; `OTEL_LOG_LEVEL` stays Node-only* |
 
+> **Corrected 2026-11-03 (B12).** Since contract task A18 (D1 row "TLS
+> files", 2026-10-29) the Choice sentence "TLS files stay visible" and the
+> row "certificates / mTLS files | S (HTTP) / H (gRPC)" are wrong: the helper
+> reads and validates `OTEL_EXPORTER_OTLP[_<SIGNAL>]_CERTIFICATE`,
+> `_CLIENT_KEY` and `_CLIENT_CERTIFICATE` for **both** protocols (per-signal,
+> then generic) and passes the result explicitly — gRPC channel credentials,
+> HTTPS agent options (`httpAgentOptions`) — and the three variables are
+> **masked** with the other helper-owned OTLP variables while the exporters
+> are built (JS2 amendment). Owner: H for both protocols.
+
 ### D-JS4 — Resource
 **Choice**: helper-resolved identity attributes + `telemetry.sdk.*`
 (`defaultResource()`) + service instance id; no detectors. **Justification**:
@@ -736,6 +746,38 @@ above:*
   (JS5) when the instrumentations are enabled; the entry format comes from
   `process.argv[1]` / `--input-type` (D-JS14 for what it misses).*
 
+> **Corrected 2026-11-03 (B12).** Natural process end (fix round, dev H1):
+> the lifecycle above flushed only on an explicit `shutdown()`, so a script or
+> job whose event loop simply empties exported nothing. `setupFrom()` now calls
+> `registerExitHook()` after a successful `install()` (`setup.ts`): one
+> `process.once('beforeExit', hook)` per process at a time
+> (`Runtime.exitHook`), skipped when `!isMainThread`. The hook clears itself,
+> and calls `shutdown()` (default deadline) only when `rt.active` exists and
+> `active.shutdown` is unset, so an app's own `shutdown()` is never repeated
+> and the event loop the flush refills cannot fire it again; a rejection is
+> reported on the sink (`shutdown() at process exit (beforeExit) failed; …`),
+> never thrown. A re-setup registers no second listener; a setup after the
+> listener fired registers one again; a failed setup registers none (the call
+> comes after `install()`); `resetForTests()` removes it. `beforeExit` is not
+> emitted on `process.exit()` or a fatal signal: the SIGTERM pattern and
+> `await shutdown()` before `process.exit()` stay the app's (JS7 correction of
+> 2026-11-03). A `cluster` worker the primary disconnects ends on its own
+> unless a handle keeps it alive, so this flush covers it too (D-JS13
+> correction below). Trade-off: a natural end now waits for the flush, up to
+> the shutdown deadline when the endpoint hangs. Tests: `test/exit.test.cjs`.
+>
+> **Corrected 2026-11-03 (B12).** Re-review additions (code-review N2, N5;
+> dev N1, N2): there is **no opt-out** of the listener (an app bounds the exit
+> by calling `await shutdown(<ms>)` itself, after which the listener does
+> nothing); the delay of a natural exit is up to the export timeout
+> (`OTEL_EXPORTER_OTLP_TIMEOUT`, 10 s measured against an unreachable
+> endpoint), bounded by the 30 s default `shutdown()` deadline; telemetry an
+> app emits from its own `beforeExit` listener, or from work that listener
+> schedules, may be dropped (the helper's listener, registered at `setup()`,
+> may already have flushed); a worker thread is not flushed when it ends
+> (no listener outside the main thread) — it must `await shutdown()` itself.
+> Documented in `nodejs/HOW-TO.md` §4 and §13.
+
 ### D-JS11 — Loading, packaging, registry
 **Spike B1c (2026-10-29, `spike-B1c.md`)**: all gates pass on 22.15.0
 (async hooks), 22.23.4, 24.22.2, 26.13.0 (sync hooks); `installHooks()` is a
@@ -798,6 +840,27 @@ two registries. **When wrong**: trusted publishing unavailable for a new
 package's first publish. **Reversal**: one bootstrap publish with a scoped
 token, then trusted. **Alternatives**: pnpm (extra tool), tsup (extra tool).
 
+> **Corrected 2026-11-03 (B12).** Wherever the spec or tasks imply that an
+> ES module app needs `--import` (tasks.md "Carried from B6 into B9", the B12
+> row's "without `--import @staffops/otel-helper/register`"): `--require
+> @staffops/otel-helper/register` installs the ES module hooks too
+> (`installHooks()` registers them from a CommonJS preload), so both preloads
+> instrument an ES module app — checked 2026-11-03 on Node 24.22.2 with an
+> express ES module app: route-named SERVER and `request handler` spans under
+> either flag, no JS5 warning. The two differ only in worker threads
+> (`--require` runs again in each, `--import` only in the main thread;
+> D-JS14 row "Worker threads") and under `--eval`/`--print` (F1 above).
+
+> **Corrected 2026-11-03 (B12).** The note above is wrong on worker threads
+> (fix round, obs M1): `--import` and `--require` preloads both run in every
+> **file-based** worker thread (`new Worker('./file.js')`); only `--require`
+> runs in an `eval` worker — checked on Node 22.15.0, 24 and 26 (a preload
+> printing `isMainThread` under each flag, a file and an `eval` worker). The
+> D-JS14 "Worker threads" row, observed with `eval` workers only, is
+> corrected below. `/register` stays correct either way (hooks only, no
+> `setup()`, outside the main thread); a custom preload must guard
+> `setup()` with `isMainThread` (HOW-TO §1, §13).
+
 ### D-JS12 — Parity runner
 **Choice**: `node:test` parent (`runner.test.cjs`) ports the Python runner:
 env reset (`OTEL_*`, `SERVICE_NAME`, `ENVIRONMENT` removed;
@@ -850,6 +913,31 @@ re-forked on its slot (D-JS14 rows of 2026-11-02). The primary waits for real
 events (`cluster` `'listening'`, worker reports, a polled "could not bind"
 line) under a 20 s deadline that kills every worker and fails the run; a
 worker that exits before reporting fails it too (B9b fix round, 2026-11-02).*
+
+> **Corrected 2026-11-03 (B12).** The documented shutdown pattern was
+> incomplete: the primary's SIGTERM handler sets `shuttingDown` and calls
+> `worker.disconnect()`, but a disconnected worker receives **no SIGTERM**
+> (only `docker stop`'s PID 1, the primary, does), so a worker that flushes
+> only in `process.once('SIGTERM', …)` exits with its batched spans unexported
+> (reproduced on Node 24: exit within ~7 ms, span lost). The worker must also
+> flush on `process.once('disconnect', () => { shutdown().finally(() =>
+> process.exit(0)); })`. Test "D-JS13 a worker the primary disconnects
+> flushes its spans only with a disconnect handler" in `test/cluster.test.cjs`
+> pins both outcomes; `nodejs/HOW-TO.md` §13 "cluster and pm2" shows it.
+
+> **Corrected 2026-11-03 (B12).** Fix round: since the `beforeExit` flush
+> (D-JS10 correction above), a disconnected worker with nothing else open
+> ends on its own and is flushed without a handler; the `'disconnect'` handler
+> is needed when a timer, pool or socket keeps the worker alive. The worker
+> also flushes on `process.once('SIGTERM')` and `process.once('SIGINT')`: pm2
+> and process-group signals (Ctrl-C) reach the workers directly (obs M4); for
+> pm2, `kill_timeout` must exceed the shutdown deadline (pm2 still untested).
+> Any preload on the primary's command line, not only `NODE_OPTIONS`, sets up
+> in the primary (obs M5); `cluster.setupPrimary({ execArgv: ['--import',
+> '@staffops/otel-helper/register'] })` preloads the workers only (checked on
+> Node 24). The test now has two cases — no handler and nothing open: flushed
+> by `beforeExit`; a keep-alive handle and the handler: flushed and exited —
+> with `OTEL_BSP_SCHEDULE_DELAY=60000` and a deadline that kills the workers.
 
 ### D-JS14 — Known Node differences (reference; each with a fixture status)
 | Difference | Status |
@@ -949,3 +1037,26 @@ worker that exits before reporting fails it too (B9b fix round, 2026-11-02).*
 | Example probe server instrumented (B11b fix round, 2026-11-03, obs M2): node-process's `/health`/`/healthz` server on `:8080` is a `node:http` server, so the helper instruments it — no span (default health paths) but a `http.server.request.duration` point per probe; python-process's aiohttp probe server is not instrumented (no aiohttp server instrumentation in the helper), so its probes record nothing. Go `go-process` serves `/health` on `:8080` with a plain `ServeMux` (`go/example/go-process/main.go:112-117`, not wrapped in `NewHTTPHandler`), so it is not instrumented either | recorded; README of `nodejs/example`; no case |
 | Integer instruments need `ValueType.INT` (B11c fix round, 2026-11-03, obs M2): the JS API's `valueType` defaults to `ValueType.DOUBLE`, so a counter, up-down counter or gauge created without it exports `1` as `Double(1)` (`Value: 1.000000` in the Collector's debug output; reproduced 2026-11-03 on collector-contrib 0.160.0), while Go's `Int64*` instruments and Python's `int` adds export ints. The examples pass `valueType: ValueType.INT` on every count instrument (`node-custom-signals`, and the 7 counters / up-down counters of node-api, node-backend and node-process). The OTLP → Prometheus translation is the same for both types; a backend that keeps the point type (`asInt` vs `asDouble`) sees the difference | recorded; examples + EXAMPLES.md (B11c); B12 HOW-TO item (custom metrics); no case |
 | Log instrumentation scope per language (B11c fix round, 2026-11-03, obs M2): the scope of a helper log record is the `createLogger({ name })` value in Node (`node-custom-signals`, `node-api`), the `logging` logger name in Python (`custom_signals`; `main` / `__main__` in the notification service), and `otel-helper` in Go for every record (`go/logging.go:92`, `otelslog.NewHandler("otel-helper", …)`; `NewLogger`/`NewSlogHandler` take no name). A log query or dashboard on the scope name is per language | recorded; EXAMPLES.md (B11c); no case |
+
+> **Corrected 2026-11-03 (B12).** Three rows above, fix round:
+> - **"Worker threads"**: "an `--import` preload only in the main thread" was
+>   observed with `eval` workers only. With a **file-based** worker both
+>   `--import` and `--require` run again in the worker; only `--require` runs
+>   in an `eval` worker (Node 22.15.0, 24, 26; obs M1). Custom preloads guard
+>   `setup()` with `isMainThread`.
+> - **"Go `CLIENT MAINT_NOTIFICATIONS` false ERROR"**: not every connection —
+>   the **first connection of each client**. go-redis's default mode is
+>   `auto`; on the error it disables the feature for that client
+>   (`maintnotifications/config.go:18-20`, `redis.go:1218-1225`, v9.23.0). Not
+>   harmless either: the ERROR `client` span sits in the trace of the request
+>   that opened the connection. Fix: `MaintNotificationsConfig:
+>   &maintnotifications.Config{Mode: maintnotifications.ModeDisabled}`
+>   (go/HOW-TO §12; obs M3).
+> - **New difference, process exit (dev H1)**: Go needs a deferred
+>   `Shutdown` (nothing flushes at exit otherwise), Python's SDK shuts down
+>   from `atexit`, Node registers a `process.once('beforeExit')` flush at the
+>   first successful setup (D-JS10 correction). None of the three flushes on
+>   an explicit `process.exit()`/`os.Exit` or a fatal signal: Python skips
+>   `atexit` on an unhandled SIGTERM, Node skips `beforeExit` on
+>   `process.exit()`. Status: recorded; `test/exit.test.cjs`; no case.
+

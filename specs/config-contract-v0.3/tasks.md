@@ -85,6 +85,7 @@ validated, so the docs describe validated behavior — never a target. Not optio
 |------|-------|------------------|
 | B — Node.js lib on the contract (spec `specs/nodejs-otel-helper/` first) | Deferred | A11 shipped (`0.3.0-rc.1` cut) |
 | C — .NET catch-up + backlog below, **then C0** (retarget to `net10.0` only, ADR-009) as the last .NET step | Deferred | B shipped, **or** a HIGH .NET item hits production, **or** .NET 8 EOL (2026-11-10) forces a release (ADR-004). Note: the EOL date is 14 days after this spec — expect at least N6 to be pulled forward as a .NET-only patch |
+| gRPC endpoint path warning (from Node B12 review dev M3, 2026-11-03): a path on a gRPC endpoint (`OTEL_EXPORTER_OTLP[_<SIGNAL>]_ENDPOINT`, code `*Endpoint`) is ignored without a diagnostic in Node and Go (Go SDK otlpconfig `options.go:303` "URLPath is ignored by gRPC exporters"; Python not checked). Decide whether every language warns once (name only, R8); a contract change, so Go + Python first | Deferred | Before the 0.3.0 final, or when a user reports a silently ignored path |
 
 ## Phase C backlog — .NET (validated 2026-10-27)
 

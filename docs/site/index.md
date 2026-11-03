@@ -2,7 +2,8 @@
 
 # OpenTelemetry Helper Libraries
 
-Standardized OpenTelemetry instrumentation for Go, Python and .NET services:
+Standardized OpenTelemetry instrumentation for Go, Python, Node.js and .NET
+services:
 one call sets up traces, metrics and logs with the same configuration
 contract and defaults in every language; emitted telemetry differs where noted
 ([known gaps](#known-emitted-telemetry-gaps)).
@@ -17,7 +18,7 @@ engineers who run the Collector it exports to.
 | Go | [`go/`](go/README.md) | `github.com/staffops/otel-libs/go` + `ext/*` modules | `0.3.0` (unreleased, this branch); latest release `go/v0.2.1` | 0.3 |
 | Python | [`python/`](python/README.md) | `staffops-otel-helper` (extras `aws`, `redis`, `sql`) | `0.3.0` (unreleased, this branch); latest release `0.2.0` | 0.3 |
 | .NET | [`dotnet/`](dotnet/README.md) | `OtelHelper` + `.AWS` / `.Redis` / `.Sql` / `.Profiling` (NuGet) | `0.2.0` | 0.2.x — the 0.3 contract lands in Phase C |
-| Node.js | `nodejs/` (planned) | — | — | 0.3 from day one (Phase B) |
+| Node.js | [`nodejs/`](nodejs/README.md) | `@staffops/otel-helper` + `-sql` / `-redis` / `-aws` / `-pino` / `-winston` (npm) | `0.3.0` (unreleased, this branch: `0.3.0-dev.0`); not published yet | 0.3 |
 
 The rollout order is Go + Python, then Node.js, then .NET
 ([ADR-004](https://github.com/StaffOps/otel-libs/blob/main/specs/decisions/ADR-004-phased-rollout-go-python-first.md)). Until a
@@ -28,7 +29,7 @@ language catches up, its differences are tracked as `xfail` cases in the
 ## Architecture
 
 ```
-[ Application (Go / Python / .NET) ]
+[ Application (Go / Python / Node.js / .NET) ]
         │ OTLP (gRPC :4317 or http/protobuf :4318)
         ▼
 [ OpenTelemetry Collector ]  ← tail sampling, k8s attributes, routing
@@ -57,7 +58,7 @@ logs as JSON on stdout, traces not exported.
    a bare AlwaysOn sampler).
 4. **Resource attributes at the Collector** — the helper sets only
    `service.name`, `deployment.environment.name` (never the legacy
-   `deployment.environment`) and, in Go/Python 0.3, a per-process
+   `deployment.environment`) and, in Go/Python/Node.js 0.3, a per-process
    `service.instance.id` when none is configured. `k8sattributes` adds the rest.
 5. **TLS by default** — `https://` and schemeless endpoints use TLS (system CA).
    The scheme decides; `OTEL_EXPORTER_OTLP_INSECURE=true` only turns a
@@ -105,6 +106,24 @@ setup_telemetry()
 shutdown_telemetry()
 ```
 
+### Node.js
+
+Either preload it (configured from the environment):
+
+```bash
+node --import @staffops/otel-helper/register server.mjs   # setup() before the app loads
+```
+
+or call `setup()` first in a CommonJS entry
+(`require('@staffops/otel-helper').setup()`; ES modules use a preload file of
+their own). Then flush on SIGTERM; a process that ends on its own is flushed
+by the helper, but `process.exit()` skips that, so `await shutdown()` first:
+
+```js
+import { shutdown } from '@staffops/otel-helper'; // CommonJS: require('@staffops/otel-helper')
+process.once('SIGTERM', () => { shutdown().finally(() => process.exit(0)); });
+```
+
 ### .NET (0.2.x)
 
 ```csharp
@@ -126,9 +145,10 @@ shutdown):
 |---|---|---|---|
 | Go | [README](go/README.md) | [HOW-TO](go/HOW-TO.md) | [examples](go/example/README.md) |
 | Python | [README](python/README.md) | [HOW-TO](python/HOW-TO.md) | [examples](python/example/README.md) |
+| Node.js | [README](nodejs/README.md) | [HOW-TO](nodejs/HOW-TO.md) | [examples](nodejs/example/README.md) |
 | .NET | [README](dotnet/README.md) | [HOW-TO](dotnet/HOW-TO.md) | [examples](dotnet/example/README.md) |
 
-## Environment variables (0.3 contract — Go and Python)
+## Environment variables (0.3 contract — Go, Python and Node.js)
 
 Precedence for every setting: **explicit code > standard `OTEL_*` env >
 legacy / `OTEL_HELPER_*` env > library default**. Per-signal variables fall
@@ -179,14 +199,29 @@ rulings are in [design D1](https://github.com/StaffOps/otel-libs/blob/main/specs
 | `OTEL_HELPER_DISABLED_METRICS` | _(unset)_ | Comma list of case-sensitive instrument-name globs to drop from every exporter: `*` any run of characters, `?` one character, everything else literal |
 | `OTEL_HELPER_SAMPLE_RATIO` | `1.0` | **Deprecated** → `OTEL_TRACES_SAMPLER=parentbased_traceidratio` + `OTEL_TRACES_SAMPLER_ARG`. Used only while `OTEL_TRACES_SAMPLER` is unset; builds `ParentBased(TraceIdRatioBased(x))`; a value that is not a plain decimal in [0, 1] warns and is ignored |
 | `OTEL_HELPER_DISABLED_SIGNALS` | _(unset)_ | **Deprecated** → `OTEL_{TRACES,METRICS,LOGS}_EXPORTER=none`. A signal whose `OTEL_<SIGNAL>_EXPORTER` holds a valid entry (`none` included; only unknown entries count as unset) is not disabled by it, nor are metrics when code sets the metric exporters; unknown entries warn once |
-| `OTEL_HELPER_EXTRA_INSTRUMENTATION` | Python: `SQL` | **Go: removed** (no effect, warns). **Python: deprecated** — call `staffops_otel_helper.ext.instrument_sql()` / `instrument_redis()` / `instrument_aws()` before `setup_telemetry()` |
+| `OTEL_HELPER_EXTRA_INSTRUMENTATION` | Python: `SQL` | **Go and Node.js: removed** (no effect, warns; Node.js: pass `sqlInstrumentation()` / `redisInstrumentation()` / `awsInstrumentation()` in `setup({ instrumentations })`). **Python: deprecated** — call `staffops_otel_helper.ext.instrument_sql()` / `instrument_redis()` / `instrument_aws()` before `setup_telemetry()` |
 
 Health checks are configured in code, not env: by default server spans for
 `/health /healthz /ready /readyz /live /livez /ping /metrics` (exact,
 case-insensitive) and the `grpc.health.v1.Health` service are not traced, but
 they **are counted** in the HTTP server metrics (and, in Go,
 `rpc.server.call.duration`) — exclude them in SLI queries. Override with
-`WithHealthPaths(...)` (Go) or `TelemetryOptions(health_paths=[...])` (Python).
+`WithHealthPaths(...)` (Go), `TelemetryOptions(health_paths=[...])` (Python)
+or `setup({ healthPaths: [...] })` (Node.js).
+
+### Node.js notes
+
+The Node.js helper resolves every row above itself (the OpenTelemetry JS SDK
+3.0 reads no environment variable). Node.js only: `OTEL_LOG_LEVEL` sets the
+level of the SDK's own messages (default `WARN`); `OTEL_NODE_RESOURCE_DETECTORS`
+is ignored (warned: the resource is built by the helper);
+`OTEL_SEMCONV_STABILITY_OPT_IN` is not set by the helper and its HTTP tokens
+have no effect (the Node.js HTTP instrumentations emit only the stable
+conventions; `http/dup` or a value without `http` warns); the batch processor
+and limit variables (`OTEL_BSP_*`, `OTEL_BLRP_*`, `OTEL_*_LIMIT`) are read by
+the helper; `OTEL_METRICS_EXEMPLAR_FILTER` is not honored (no exemplars).
+`Resolved.inactiveSignals` and `replaceGlobals` handle globals another SDK
+registered first. Full table: [`nodejs/README.md`](nodejs/README.md#environment-variables).
 
 ### .NET 0.2.x differences
 
@@ -203,12 +238,14 @@ those requests). `OTEL_HELPER_EXTRA_INSTRUMENTATION` has no effect. See
 ## Opt-in extensions
 
 AWS, Redis and SQL instrumentations are separate packages; the core stays
-lightweight.
+lightweight. Node.js also ships its pino and winston log destinations as
+`@staffops/otel-helper-pino` and `@staffops/otel-helper-winston`.
 
 | Language | AWS | Redis | SQL |
 |----------|-----|-------|-----|
 | Go | `ext/otelaws` | `ext/otelredis` | `ext/otelsql` |
 | Python | `staffops-otel-helper[aws]` | `staffops-otel-helper[redis]` | `staffops-otel-helper[sql]` |
+| Node.js | `@staffops/otel-helper-aws` | `@staffops/otel-helper-redis` | `@staffops/otel-helper-sql` |
 | .NET | `OtelHelper.AWS` | `OtelHelper.Redis` | `OtelHelper.Sql` |
 
 ## Cross-language parity
@@ -251,6 +288,10 @@ always identical:
 | Stdout log fallback `logger` field | Python and Node.js write the logger name as `logger` in every line of the stdout JSON fallback; Go's `NewLogger` / `NewSlogHandler` take no name, so a Go line has a `logger` field only when the record (or its `With` attributes) carries a top-level `logger` attribute — written once, the last one winning. Pass `"logger", "<name>"` with `With` to get it on every Go line. The other fields — `time` (UTC, `Z`), `level`, `msg`, `exception` — are present everywhere; `exception` holds each language's native text (Go `Error()`, Python traceback, Node.js stack) ([design D1](https://github.com/StaffOps/otel-libs/blob/main/specs/config-contract-v0.3/design.md), "Stdout fallback fields") |
 | Database error text in `exception.message` | Failed DB spans keep status ERROR without a description in every language (A25; Python on both `instrument_sql()` and the default `SQL` path of `setup_telemetry()`, not when other code instrumented SQLAlchemy first, which is warned), but the semconv `exception` event is kept: Go writes the driver's error text there (it can quote a statement value, e.g. a duplicate key); Node.js pg writes a sanitized message (type and SQLSTATE), Node.js mysql2 no event, Python none on statement spans (the `connect` span's event carries the error text). Redis (A26): the status rule covers it in every language (a known reply code — `WRONGTYPE`, `ERR`, `NOAUTH`, ... from a fixed allowlist — becomes `db.response.status_code` and `error.type`, anything else `_OTHER`, so a Lua `error_reply`'s first word never reaches an attribute; Python on redis-py < 8 reads it as `ERR`), and the exception event carries the server text, which for an unknown command or a Lua `error_reply` can quote arguments (`ERR unknown command 'X', with args beginning with: '<arg>'`); a Python pipeline error's event keeps the command names only (`Command # 2 (LPUSH ? ?) of pipeline caused error: …`) |
 | Redis `db.operation.name` and span names | Node.js and Go record `db.operation.name` as the client provides it (ioredis and Go `set`, node-redis `SET`); Python records none. Span names: Node.js and Python the uppercased command (`SET`; a Python pipeline is one span `SET GET`, Node.js one span per command), Go redisotel's `set` / `redis.pipeline set get` ([design D1](https://github.com/StaffOps/otel-libs/blob/main/specs/config-contract-v0.3/design.md), "Redis span names", "Redis `db.operation.name`") |
+| Node.js Redis metrics | None: `@opentelemetry/instrumentation-redis` / `-ioredis` record no metrics. Go `ext/otelredis` emits the redisotel pool metrics (`db.client.connections.*`); Python none |
+| Node.js ioredis handshake spans | ioredis traces every connect and reconnect handshake (`connect`, `HELLO`, `CLIENT`, `INFO`; Cluster `CLUSTER SLOTS`) as root traces, ERROR when the server rejects the auth or is loading. Drop them at the Collector or wrap the client's lifetime in a span ([Node.js HOW-TO §9](nodejs/HOW-TO.md#redis-staffopsotel-helper-redis)) |
+| Node.js AWS spans | No `server.address` / `server.port` (the contrib does not see the endpoint; Python writes them). The legacy `rpc.*` keys as Python (row above) |
+| Node.js runtime metrics and exemplars | Node.js emits no runtime metrics (Go `go.*`, Python `system.*` / `process.*`) and its metric points carry no exemplars (`@opentelemetry/sdk-metrics` 3.0 exports no exemplar filter) |
 | Go Redis pool metrics keep `db_system` | With `OTEL_SEMCONV_STABILITY_OPT_IN=database` (without `/dup`) Go `ext/otelredis` drops the legacy `db.system` from spans, but its pool metrics (`db_client_connections_*`) keep `db_system="redis"`: redisotel adds it to the metric attributes and Go has no meter wrapper ([design D1](https://github.com/StaffOps/otel-libs/blob/main/specs/config-contract-v0.3/design.md), "Database semconv opt-in") |
 | .NET | Still on the 0.2.x contract and instrumentation set until Phase C ([differences](#net-02x-differences)) |
 
@@ -282,12 +323,13 @@ the reason for each item, is
 7. A Collector `filterprocessor` dropping health spans, as defense in depth.
 8. An explicit `:4317` on portless gRPC URLs.
 
-## Installing (private packages)
+## Installing
 
-Packages require a GitHub token with `read:packages`. .NET uses GitHub Packages
-NuGet, Python uses GitHub Release wheel assets, Go uses `go get` from the
-repository. See [CONSUMING.md](CONSUMING.md) for auth, install commands and CI
-variants.
+Today only the .NET packages need a GitHub token with `read:packages`. .NET uses
+GitHub Packages NuGet, Python uses GitHub Release wheel assets, Go uses `go get`
+from the repository; the Node.js packages are not published yet (npmjs and
+GitHub Packages are planned; until then, `npm pack` tarballs). See
+[CONSUMING.md](CONSUMING.md) for auth, install commands and CI variants.
 
 ## Dashboards
 

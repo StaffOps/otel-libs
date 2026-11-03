@@ -557,6 +557,26 @@ if err := otelredis.Instrument(rdb); err != nil { // once per client
 }
 ```
 
+On Redis before 8, the **first connection of each client** records one
+ERROR `client` span (`error.type=ERR`): go-redis v9.23 sends
+`CLIENT MAINT_NOTIFICATIONS ON …` in its handshake (the default mode is
+`auto`), the server answers `ERR unknown subcommand`, go-redis then disables
+the feature for that client and goes on, but redisotel has recorded the
+error — in the trace of the request that opened the connection, which then
+shows an ERROR span. Turn the handshake off on such servers
+(`maintnotifications/config.go:18-20`, `redis.go:1218-1225` in go-redis v9.23.0):
+
+```go
+import "github.com/redis/go-redis/v9/maintnotifications"
+
+rdb := redis.NewClient(&redis.Options{
+    Addr:                     addr,
+    MaintNotificationsConfig: &maintnotifications.Config{Mode: maintnotifications.ModeDisabled},
+})
+```
+
+(Node.js design D-JS14, A26 fix round.)
+
 `OTEL_HELPER_EXTRA_INSTRUMENTATION` has no effect in Go (warned once).
 
 ---

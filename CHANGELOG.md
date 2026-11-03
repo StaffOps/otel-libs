@@ -638,6 +638,12 @@ after the upgrade.
   `go-test` run them against a real Redis (`OTELREDIS_TEST_ADDR`). On Redis
   before 8 every connection records a harmless `client` ERROR span (go-redis
   sends `CLIENT MAINT_NOTIFICATIONS`).
+  *Corrected 2026-11-03 (B12 fix round):* not every connection and not
+  harmless — the **first connection of each client** (Redis < 8; go-redis's
+  `auto` mode then disables the feature for that client) records the ERROR
+  `client` span in the trace of the request that opened it; turn it off with
+  `MaintNotificationsConfig: &maintnotifications.Config{Mode:
+  maintnotifications.ModeDisabled}` (`go/HOW-TO.md` §12; see Changed).
 
 - **A26 final round (2026-11-03).** `db.response.status_code`/`error.type`
   take only known Redis reply codes (an allowlist shared with Python and
@@ -1707,6 +1713,23 @@ Unsupported instrumentation versions, task A10 (P18):
   Go → `microsoft.sql_server`).
 
 ### Changed
+
+- **Node.js: a process that ends on its own now flushes its telemetry (Phase
+  B, B12 fix round, 2026-11-03; not released).** The first successful
+  `setup()` of the main thread registers one `process.once('beforeExit')`
+  listener that calls `shutdown()` when the app has not. The natural exit then
+  **waits for the flush**: up to the export timeout per signal
+  (`OTEL_EXPORTER_OTLP_TIMEOUT`, 10 s by default) when the Collector is
+  unreachable, bounded by the 30 s `shutdown()` deadline; call
+  `await shutdown(5000)` yourself to bound it (the listener then does
+  nothing). There is no opt-out. `process.exit()` and signals skip it:
+  `await shutdown()` before `process.exit()` and keep the SIGTERM handler.
+  Telemetry your own `beforeExit` listener emits may be dropped; a worker
+  thread is not flushed when it ends (design D-JS10, `nodejs/HOW-TO.md` §4).
+- **Go docs: the `CLIENT MAINT_NOTIFICATIONS` ERROR span.** On Redis < 8 it is
+  recorded on the **first connection of each client**, in the trace of the
+  request that opened it — not harmless; `go/HOW-TO.md` §12 shows the
+  `ModeDisabled` fix.
 
 - **BREAKING — Go: dependency floor raised to Go 1.26 (0.3.0 task A2, ADR-005).**
   `go.mod` is `go 1.26.0`; otel / sdk / trace / metric / log / sdk/log and the
@@ -2793,6 +2816,64 @@ Unsupported instrumentation versions, task A10 (P18):
   and Node but a `Double` in Go); the Go and Python READMEs, Python
   `EXAMPLES.md` and the twin comments name `node-custom-signals`; links to the
   `.js` file are absolute GitHub URLs (MkDocs-safe).
+- **Node.js documentation (Phase B, task B12; not released).** New
+  `nodejs/README.md` (requirements, packages, installation from `npm pack`
+  tarballs until B13, quick start, the Node.js environment-variable tables —
+  `OTEL_LOG_LEVEL`, `OTEL_NODE_RESOURCE_DETECTORS`, no semconv default,
+  `OTEL_HELPER_EXTRA_INSTRUMENTATION` without effect —, endpoint and TLS
+  rules, public API, known differences), `nodejs/HOW-TO.md` (preloads and ES
+  modules, express and outbound HTTP, gRPC, workers with `startRootSpan`,
+  `createLogger` and the pino/winston packages with their caveats and
+  overhead, custom signals with `ValueType.INT`, sampling, debug mode, the
+  `-sql`/`-redis`/`-aws` packages — including a Collector filter for ioredis
+  handshake root spans —, `/metrics`, `SetupOptions`/`Resolved`, the
+  lifecycle: SIGTERM pattern, re-setup, foreign globals and `replaceGlobals`,
+  `cluster`/pm2 per-worker ports, worker threads; testing your app,
+  troubleshooting, FAQ) and `nodejs/TESTS.md`; a `README.md` in every package
+  (npm packs it; `nodejs/ci/check-pack.mjs` now requires it). MkDocs: a
+  Node.js section (`docs/site/nodejs/` symlinks), `docs.yml` path triggers,
+  `site_description`. Root `README.md`: Node.js in the library matrix,
+  architecture, quick start, guides, environment heading ("Node.js notes"),
+  opt-in table and four gap rows (Redis metrics, ioredis handshake spans, AWS
+  `server.address`, runtime metrics and exemplars); `docs/site/index.md`
+  regenerated. `CONSUMING.md`: "Node.js (npm packages, planned)" — the
+  unclaimed `@staffops` npm scope (do not install by name from npmjs), the
+  `.npmrc` scope mapping for GitHub Packages and npmjs, peer dependencies.
+  `AGENTS.md`, the `release` and `parity-case` skills, and a Go note
+  (`go/HOW-TO.md` §12: the harmless `client` ERROR span per connection on
+  Redis before 8). No library behavior changed.
+  *Corrected 2026-11-03 (B12 fix round):* "No library behavior changed" no
+  longer holds — the fix round added the Node.js `beforeExit` flush (see
+  Changed); and the Go `client` ERROR span is recorded on the **first
+  connection of each client** (Redis < 8), not "harmless … per connection"
+  (see Changed).
+  Dated spec corrections (B12, 2026-11-03): JS5 (modules loaded before
+  `setup()` are re-patched and reported), D-JS3 (the helper reads and masks
+  the TLS files for both protocols, A18), D-JS11 (`--require …/register`
+  instruments ES module apps too), D-JS13 (a worker the primary disconnects
+  gets no SIGTERM: flush on `process.once('disconnect', …)`; new test in
+  `nodejs/packages/otel-helper/test/cluster.test.cjs`). The root README
+  heading "Installing (private packages)" is now "Installing" (no link
+  targeted the old anchor).
+  *Fix round 2026-11-03 (three reviews; one HIGH):* **a process that ends on
+  its own now flushes** — the first successful `setup()` of the main thread
+  registers one `process.once('beforeExit')` listener that calls `shutdown()`
+  when the app has not (Python's SDK does the same from `atexit`); not after
+  a failed setup, not in a worker thread, never stacked by a re-setup,
+  removed by `/testing` `reset()`; `process.exit()` and signals still need
+  `await shutdown()` / the SIGTERM handler (`test/exit.test.cjs`; design
+  D-JS10, JS7, D-JS14). Docs: short-lived jobs (HOW-TO §4, §13, quick
+  starts), `import { shutdown }` in ES module quick starts with the preload
+  and code `setup()` as alternatives (README, package README, CONSUMING),
+  worker-thread preloads (file workers run `--import` and `--require`,
+  `eval` workers only `--require`; guard custom preloads with
+  `isMainThread`), cluster workers also flush on `SIGTERM`/`SIGINT`, pm2
+  `kill_timeout`, `cluster.setupPrimary({ execArgv })`, per-library DB
+  exception events and `error.type`, gRPC endpoints use only
+  `scheme://host:port`, install order of the tarballs and the `.npmrc`
+  mapping now, the Go `CLIENT MAINT_NOTIFICATIONS` span (first connection
+  per client, with the `ModeDisabled` fix), two troubleshooting rows, and the
+  LOW items. `nodejs/ci/check-pack.mjs` reports "required files present".
 - **Python example: python-process no longer injects `traceparent` by hand.**
   The injection was a no-op (the httpx instrumentation replaces the header);
   `_propagation_headers()` is removed from

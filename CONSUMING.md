@@ -4,6 +4,7 @@ How to install and use the OTel helper packages. The repository is **public**:
 Go modules and Python wheels need no credentials. Only the .NET packages
 (GitHub Packages NuGet) need a token — GitHub requires one even for public
 packages; see [Creating a read:packages token](#creating-a-readpackages-token).
+The Node.js packages are not published yet ([Node.js](#nodejs-npm-packages-planned)).
 
 ## Versions
 
@@ -12,6 +13,7 @@ packages; see [Creating a read:packages token](#creating-a-readpackages-token).
 | .NET | `0.2.0` | 0.3 contract in Phase C (from now on .NET releases are tagged `dotnet/vX.Y.Z`) | .NET 8 (runs on .NET 10 via roll-forward) |
 | Python | `0.2.0` (`otel-helper`) | `0.3.0-rc.2` published as `otel-helper` (tag `v0.3.0-rc.2`, wheel `otel_helper-0.3.0rc2-py3-none-any.whl`); next `0.3.0-rc.3` (tag `v0.3.0-rc.3`, wheel `staffops_otel_helper-0.3.0rc3-py3-none-any.whl`) — the first under the new name (ADR-011) | Python ≥ 3.10; OpenTelemetry `>=1.42,<1.46`, contrib `>=0.63b0,<0.67b0` from 0.3 |
 | Go | `go/v0.2.1` | `v0.3.0-rc.2` (tags `go/v0.3.0-rc.2`, `go/ext/<module>/v0.3.0-rc.2`; new module path, see ADR-010) | Go ≥ 1.22 for 0.2.x, **Go ≥ 1.26 from 0.3** |
+| Node.js | — (not published) | `0.3.0` (tags `nodejs/vX.Y.Z`, task B13; packages `@staffops/otel-helper*`, version `0.3.0-dev.0` on the branch) | Node.js ≥ 22.15.0; `@opentelemetry/api` `>=1.10.0 <1.11.0` (peer) |
 
 The commands below install the latest release. When a 0.3 release candidate is
 published, replace the version (Python release `v0.3.0-rc.2`, still named `otel-helper`, or `v0.3.0-rc.3`+ named `staffops-otel-helper`; Go `@v0.3.0-rc.2`, which resolves the `go/v0.3.0-rc.2` tag) and read the
@@ -236,9 +238,118 @@ defer shutdown(context.Background()) // from 0.3: use a fresh deadline on SIGTER
 
 ---
 
+## Node.js (npm packages, planned)
+
+**Nothing is published yet.** Releases are planned for npmjs and GitHub
+Packages, with identical versions, from `nodejs/vX.Y.Z` tags (Phase B, task
+B13; npmjs with provenance through trusted publishing). Until then install
+the `npm pack` tarballs built from the repository — see
+[`nodejs/README.md`](nodejs/README.md#installation).
+
+Packages: `@staffops/otel-helper` (core), `@staffops/otel-helper-sql`,
+`@staffops/otel-helper-redis`, `@staffops/otel-helper-aws` (instrumentation)
+and `@staffops/otel-helper-pino`, `@staffops/otel-helper-winston` (log
+destinations).
+
+> **The `@staffops` scope is not claimed on npmjs yet.** Until the owner
+> claims the npm organization (ADR-011) anyone could publish a package under
+> `@staffops/…` there, and a bare `npm install @staffops/otel-helper` would
+> install it — dependency confusion. Do not install these packages by name
+> from npmjs until a release announces them there; once they are published,
+> map the scope to one registry in `.npmrc` (below), so `@staffops/*` never
+> resolves anywhere else.
+
+### Map the scope to one registry (`.npmrc`)
+
+GitHub Packages (GitHub requires a token with `read:packages` to install npm packages, public ones included; see
+[Creating a read:packages token](#creating-a-readpackages-token)). Commit the
+first line; keep the token in the environment, never in the file:
+
+```ini
+@staffops:registry=https://npm.pkg.github.com
+//npm.pkg.github.com/:_authToken=${GITHUB_PACKAGES_TOKEN}
+```
+
+npmjs, once the scope is claimed and the packages are published there:
+
+```ini
+@staffops:registry=https://registry.npmjs.org/
+```
+
+A scope mapping sends every `@staffops/*` request to that registry only.
+In GitHub Actions, `actions/setup-node` with `registry-url:
+https://npm.pkg.github.com` and `scope: '@staffops'` writes the equivalent
+lines, the token read from `NODE_AUTH_TOKEN` (set it to
+`${{ secrets.GITHUB_TOKEN }}` on the install step).
+
+Add the GitHub Packages mapping **now**, even before the release: an
+opt-in tarball installed on its own makes npm look up its peer
+`@staffops/otel-helper` in a registry, and the mapping keeps that lookup away
+from npmjs. Install the core tarball before, or in the same `npm install` as,
+any opt-in tarball.
+
+### Install packages (after the release)
+
+```bash
+npm install @staffops/otel-helper@<version> @opentelemetry/api@~1.10.0
+
+# Opt-in packages: always the same version as the core (exact peer dependency)
+npm install @staffops/otel-helper-sql@<version>
+npm install @staffops/otel-helper-redis@<version>
+npm install @staffops/otel-helper-aws@<version>
+npm install @staffops/otel-helper-pino@<version> pino
+npm install @staffops/otel-helper-winston@<version> winston
+```
+
+### Peer dependencies
+
+| Package | Peer dependencies |
+|---|---|
+| `@staffops/otel-helper` | `@opentelemetry/api` `>=1.10.0 <1.11.0` (the range the OpenTelemetry JS SDK 3.0 packages declare) |
+| `-sql`, `-redis`, `-aws` | `@staffops/otel-helper` at the **same version**, `@opentelemetry/api` |
+| `-pino` | `@staffops/otel-helper` at the same version, `pino` `^10.0.0` |
+| `-winston` | `@staffops/otel-helper` at the same version, `winston` `^3.10.0` |
+
+npm 7 and later install missing peers automatically; list
+`@opentelemetry/api` in your own `package.json` when your code imports it, so
+one copy is shared. The instrumented libraries are your app's dependencies:
+`pg`/`mysql2`, `redis`/`ioredis`, the AWS SDK clients (`@aws-sdk/client-*`
+3.x), `pino`, `winston`. `-sql` also installs `@types/pg` and
+`@types/pg-pool`: they are runtime dependencies of
+`@opentelemetry/instrumentation-pg`. The packages are CommonJS with an ES
+module entry; `engines` is `node >=22.15.0`.
+
+### Usage
+
+A. Preload, configured from the environment (ES modules or CommonJS):
+
+```bash
+OTEL_SERVICE_NAME=orders-api node --import @staffops/otel-helper/register server.mjs
+```
+
+B. `setup()` in code, first thing in a CommonJS entry (ES modules: a preload
+file of your own, see `nodejs/HOW-TO.md` §1):
+
+```js
+const { setup } = require('@staffops/otel-helper');
+setup({ serviceName: 'orders-api' });
+```
+
+Either way, flush on SIGTERM:
+
+```js
+import { shutdown } from '@staffops/otel-helper'; // CommonJS: require('@staffops/otel-helper')
+process.once('SIGTERM', () => { shutdown().finally(() => process.exit(0)); });
+```
+
+Prefer `OTEL_SERVICE_NAME` in the environment over a name in code. See
+`nodejs/HOW-TO.md` for preloads, ES modules and `cluster`.
+
+---
+
 ## Creating a read:packages token
 
-Needed only for the .NET packages (GitHub Packages NuGet requires a token even for public packages).
+Needed for the .NET packages (GitHub Packages NuGet requires a token even for public packages) and, once published, the Node.js packages from GitHub Packages npm.
 
 ### Fine-grained token (recommended)
 

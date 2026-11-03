@@ -7,7 +7,8 @@ those.
 
 > Go and Python on this branch implement the `0.3.0` contract
 > ([`specs/config-contract-v0.3/`](specs/config-contract-v0.3/), Phase A done);
-> .NET still ships the `0.2.x` behavior until Phase C. If this file conflicts
+> Node.js implements it too (Phase B, [`specs/nodejs-otel-helper/`](specs/nodejs-otel-helper/),
+> not released); .NET still ships the `0.2.x` behavior until Phase C. If this file conflicts
 > with the code, treat it as a bug in one of the two and flag it — do not
 > silently follow either side.
 
@@ -18,8 +19,9 @@ equivalent**: `go/` (module `github.com/staffops/otel-libs/go` +
 `ext/*` submodules), `python/` (`staffops-otel-helper`, import `staffops_otel_helper`, extras
 `aws`/`redis`/`sql`; `otel_helper` is a deprecated re-export until 1.0 —
 [ADR-011](specs/decisions/ADR-011-owner-prefixed-package-names.md)),
-`dotnet/` (`OtelHelper` + `.AWS`/`.Redis`/`.Sql`/`.Profiling`). Planned:
-`nodejs/`. Shared Grafana dashboards in `dashboards/`, MkDocs site in
+`dotnet/` (`OtelHelper` + `.AWS`/`.Redis`/`.Sql`/`.Profiling`), `nodejs/`
+(npm workspaces: `@staffops/otel-helper` + `-sql`/`-redis`/`-aws`/`-pino`/`-winston`;
+not published yet, task B13). Shared Grafana dashboards in `dashboards/`, MkDocs site in
 `docs/site/`, specs in [`specs/`](specs/README.md).
 
 ## Core principles
@@ -58,10 +60,14 @@ equivalent**: `go/` (module `github.com/staffops/otel-libs/go` +
 
 ## Environment variables
 
-Full table with defaults: root [`README.md`](README.md#environment-variables-03-contract--go-and-python);
+Full table with defaults: root [`README.md`](README.md#environment-variables-03-contract--go-python-and-nodejs);
 resolution rules: design D1. Summary of what differs between the two contracts:
 
-| Variable | 0.3 — Go / Python (this branch) | .NET 0.2.x |
+Node.js follows the 0.3 column; its own rows (`OTEL_LOG_LEVEL`,
+`OTEL_NODE_RESOURCE_DETECTORS`, no semconv default, `OTEL_HELPER_EXTRA_INSTRUMENTATION`
+without effect; the code option `replaceGlobals`, not an env var) are in [`nodejs/README.md`](nodejs/README.md#environment-variables).
+
+| Variable | 0.3 — Go / Python / Node.js (this branch) | .NET 0.2.x |
 |----------|----------------------------------|------------|
 | `OTEL_SERVICE_NAME` / `SERVICE_NAME` | `OTEL_SERVICE_NAME` > `OTEL_RESOURCE_ATTRIBUTES` > `SERVICE_NAME` (deprecated) > SDK `unknown_service:*` + warning | `SERVICE_NAME` > `OTEL_SERVICE_NAME` > `my-service` |
 | `ENVIRONMENT` | Deprecated alias; `OTEL_RESOURCE_ATTRIBUTES` wins; unset → attribute absent + warning, INFO; unknown → verbatim ([ADR-003](specs/decisions/ADR-003-environment-unset-not-local.md)) | Default `LOCAL`; unknown → `LOCAL` |
@@ -105,7 +111,9 @@ resolution rules: design D1. Summary of what differs between the two contracts:
 
 - **Core stays lightweight.** AWS/Redis/SQL instrumentations are opt-in:
   `ext/otel{aws,redis,sql}` (Go), `staffops-otel-helper[aws,redis,sql]` (Python — core
-  must NOT depend on them), `OtelHelper.{AWS,Redis,Sql}` (NuGet).
+  must NOT depend on them), `OtelHelper.{AWS,Redis,Sql}` (NuGet),
+  `@staffops/otel-helper-{aws,redis,sql}` (npm; peer-depend on the core at the
+  same version). Node.js log libraries likewise: `-pino`, `-winston`.
 - **Libraries use version ranges, not exact pins.** Exact pins only in
   example/demo lockfiles. Python contrib betas move in lockstep with the SDK —
   bound both sides as a matched pair.
@@ -114,6 +122,7 @@ resolution rules: design D1. Summary of what differs between the two contracts:
 
 - All builds and tests run via Docker (no local SDK dependency):
   `golang` (unreleased 0.3.0 / branch work: go.mod floor `go 1.26`, CI on 1.26.x and 1.27.x; shipped 0.2.0 was `go 1.22`), `python:3.x-slim`,
+  `node:<22.15.0|22|24|26>-slim` (`docker compose -f testing/docker-compose.yml run --rm node-tests`),
   `mcr.microsoft.com/dotnet/sdk`. Use
   `docker compose` with a real `otel/opentelemetry-collector-contrib` when a
   behavior crosses the wire (endpoints, TLS, protocols, logs).
@@ -129,7 +138,8 @@ resolution rules: design D1. Summary of what differs between the two contracts:
   4. `code-review` on the diff;
   5. a `CHANGELOG.md` (Unreleased) entry in the same change. During the 0.3
      work the full docs pass — root `README.md`, `CONSUMING.md`, per-language
-     `README`/`HOW-TO`/`TESTS`, this file, the MkDocs site (`docs/site/`,
+     `README`/`HOW-TO`/`TESTS` (Node.js also a `README.md` per package, which
+     `nodejs/ci/check-pack.mjs` requires in each tarball), this file, the MkDocs site (`docs/site/`,
      `mkdocs.yml`) and per-language examples of custom traces, metrics and
      logs — is **mandatory and runs last** (task A13 in
      `specs/config-contract-v0.3/tasks.md`), after everything is validated.
@@ -145,7 +155,9 @@ resolution rules: design D1. Summary of what differs between the two contracts:
   commit reminder, and a session-start summary of open spec tasks.
 - Helper diagnostics (config warnings, deprecations): Go → the package's stderr
   `*slog.Logger` (never `slog.Default()`, `fmt.Fprint*`, or `otel.Handle`, which
-  is for SDK pipeline errors); Python → `logging.getLogger("staffops_otel_helper…")`.
+  is for SDK pipeline errors); Python → `logging.getLogger("staffops_otel_helper…")`;
+  Node.js → the diagnostics sink (`report()`, one `otelhelper:` line on
+  `process.stderr`; never `console.*` or `process.emitWarning`).
   Never print secrets (`*_HEADERS`, `*_CLIENT_KEY`, URL userinfo/query).
 - Commit messages: Conventional Commits with a language scope, e.g.
   `fix(go): ...`, `feat(all): ...`.

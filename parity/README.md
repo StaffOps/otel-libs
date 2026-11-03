@@ -19,7 +19,7 @@ suite runs every case. **`cases.json` is hand-maintained**: edit it directly
   "code": {},
   "input": {},
   "expect": {"received": {"traces": {"port": 4318, "path": "/otlp/v1/traces"}}},
-  "status": {"go": "pass", "python": "xfail:A3", "dotnet": "xfail:phase-c", "nodejs": "skip:phase-b"}
+  "status": {"go": "pass", "python": "xfail:A3", "dotnet": "xfail:phase-c", "nodejs": "pass"}
 }
 ```
 
