@@ -11,7 +11,9 @@
   },
   "keywords": [
     "opentelemetry",
-    "otel"
+    "otel",
+    "redis",
+    "ioredis"
   ],
   "type": "commonjs",
   "engines": {
@@ -48,6 +50,15 @@
     "test": "c8 --config ../../.c8rc.json node --test \"test/*.test.cjs\" \"test/*.test.mjs\""
   },
   "peerDependencies": {
+    "@opentelemetry/api": ">=1.10.0 <1.11.0",
     "@staffops/otel-helper": "0.3.0-dev.0"
+  },
+  "dependencies": {
+    "@opentelemetry/instrumentation": "~0.300.0",
+    "@opentelemetry/instrumentation-ioredis": "~0.72.0",
+    "@opentelemetry/instrumentation-redis": "~0.72.0"
+  },
+  "devDependencies": {
+    "@opentelemetry/api": ">=1.10.0 <1.11.0"
   }
 }

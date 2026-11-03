@@ -215,6 +215,13 @@ Runtime and operations:
     padded with a non-breaking space or other Unicode whitespace is no longer
     read as `database`: write the value in plain ASCII.
 
+26. **BREAKING (narrow) — Redis error status (A26).** A failed Redis command
+    span from `ext/otelredis` keeps status Error but no longer carries the
+    server's error text as its status description (it could quote a command
+    argument: `ERR unknown command 'X', with args beginning with: '<arg>'`).
+    Alerts or queries that matched on that text must use the status code;
+    the text is still in the span's `exception` event.
+
 ### Migration guide 0.2 → 0.3 — Python
 
 **First: the package name changed** ([ADR-011](https://github.com/StaffOps/otel-libs/blob/main/specs/decisions/ADR-011-owner-prefixed-package-names.md)).
@@ -461,6 +468,15 @@ Telemetry and runtime:
     `db.system.name` as well as `db.system`; to keep only the new keys, set
     `database` without `/dup`.
 
+26. **BREAKING (narrow) — Redis spans (A26).** A failed Redis command's span
+    (`instrument_redis()` or the deprecated `REDIS` flag of
+    `setup_telemetry()`) keeps status ERROR but no longer carries
+    `"<ExceptionType>: <server text>"` as its status description (it could
+    quote a command argument). Match on the status code; the text is still in
+    the `exception` event. If other code instruments Redis before the helper,
+    that instrumentation is kept and a warning says failed commands may carry
+    the text.
+
 ### Collector / platform prerequisites (before rolling 0.3.0 out)
 
 Owned outside this repo (design D11); each item blocks the rollout, not the rc:
@@ -531,6 +547,35 @@ by Operation" panel groups by `span_name` and shows the new Go HTTP span names
 after the upgrade.
 
 ### Go — detailed changes
+
+- **BREAKING (narrow) — A26 Redis DB error status (design D1 row "DB error
+  status", amended 2026-11-03; migration item 26).** `ext/otelredis` wraps
+  each redisotel span so an Error status keeps its code and drops the
+  description (redisotel v9.23 `recordError` sets `err.Error()`). The
+  exception event keeps the text (the accepted A25 residual). New test
+  `TestErrorStatusDropsDescription` (miniredis; a real Redis with
+  `OTELREDIS_TEST_ADDR`/`OTELREDIS_TEST_PASSWORD`). Span names stay
+  redisotel's lower-case ones (`set`); Node.js and Python use the uppercased
+  command, recorded as a parity gap with a Go rename on the backlog.
+
+- **A26 fix round (2026-11-03).** `ext/otelredis`: a failed span carries the
+  reply's code (`WRONGTYPE`, `ERR`, `NOAUTH`, ...) as
+  `db.response.status_code` and `error.type` (`_OTHER` without one, e.g. a
+  dial error); command spans carry `db.operation.name` as provided (`set`);
+  `OTEL_SEMCONV_STABILITY_OPT_IN=database` (without `/dup`) drops the legacy
+  `db.system` from spans, read at each `Instrument` call (the pool metrics
+  keep it: redisotel adds it to their attributes). Tests for pipelines,
+  dials to a closed port, `EVAL` and the opt-in; compose `go-tests` and CI
+  `go-test` run them against a real Redis (`OTELREDIS_TEST_ADDR`). On Redis
+  before 8 every connection records a harmless `client` ERROR span (go-redis
+  sends `CLIENT MAINT_NOTIFICATIONS`).
+
+- **A26 final round (2026-11-03).** `db.response.status_code`/`error.type`
+  take only known Redis reply codes (an allowlist shared with Python and
+  Node.js, checked against the Redis 7.4 source); anything else, such as a
+  Lua `error_reply` whose first word is data, is `_OTHER`. The span context
+  keeps the SDK span (the wrapper is only the handle redisotel uses), and an
+  empty `db.operation.name` is skipped.
 
 - **BREAKING (narrow) — A25 database semconv opt-in parsing (design D1 row
   of 2026-11-03, "Database semconv opt-in").** `ext/otelsql` reads
@@ -986,6 +1031,40 @@ Behavior changes, with migration notes:
   dup HTTP. In dup mode the full new and full legacy attribute sets are
   emitted. The normalized value is written back to `os.environ`, so child
   processes inherit it.
+
+- **BREAKING (narrow) — A26 Redis DB error status (design D1 row "DB error
+  status", amended 2026-11-03; migration item 26).** `instrument_redis()` and
+  the `REDIS` flag of `setup_telemetry()` bind contrib redis to the same
+  TracerProvider wrapper as `ext.sql` (moved to `staffops_otel_helper._db_status`):
+  a failed command keeps status ERROR without its description. A second
+  `instrument_redis()` call returns True; a Redis instrumented elsewhere
+  without the wrapper is kept and warned once. New test-only dev dependency
+  `redis>=5.0,<9`; tests `tests/test_a26_redis.py` (an in-process RESP fake,
+  and a real Redis with `REDIS_TEST_URL`).
+
+- **BREAKING (narrow) — A26 fix round (2026-11-03).** A failed Redis span
+  carries the reply's code as `db.response.status_code` and `error.type`
+  (`_OTHER` when redis-py stripped it, e.g. `ERR`, `NOAUTH`). A Redis
+  pipeline error's `exception` event no longer carries the failing command's
+  arguments: redis-py writes `Command # N (<command and args>) of pipeline
+  caused error: …`, now recorded as `Command # N (LPUSH ? ?) …` in
+  `exception.message` and in a rebuilt `exception.stacktrace` (sync and
+  asyncio). The wrapped mark is cleared on `uninstrument()`, and the
+  `SQL`/`REDIS` flags of `setup_telemetry()` warn once when other code
+  instrumented SQLAlchemy or Redis without the helper's wrapper. The
+  test-only `redis>=5.0,<9` dependency is owner-approved; `ci/lower.txt`
+  pins `redis==5.0.0`; compose `python-tests` and CI `python-test` run the
+  real-Redis cases.
+
+- **A26 final round (2026-11-03).** The Redis reply code comes from the
+  exception's `status_code` (redis-py 8.x), an allowlisted leading code, or
+  the redis-py exception class; on redis-py < 8 a plain `ResponseError` is
+  `ERR` (redis-py strips it). Unknown codes, including a Lua `error_reply`'s
+  first word, are `_OTHER` (redis-py 8.x) or `ERR` (older). The Redis wrapper
+  never raises into the instrumented call: on an internal error it records a
+  minimal sanitized event. Chained exceptions' messages are sanitized in the
+  stacktrace too, and any text with `of pipeline` loses what is between `(`
+  and `) of pipeline`.
 
 - **BREAKING (narrow) — A25 DB error status and database semconv opt-in
   (design D1 rows of 2026-11-03: "DB error status", "Database semconv
@@ -2398,6 +2477,64 @@ Unsupported instrumentation versions, task A10 (P18):
   flushes are serialized per LoggerProvider (a new setup's flush never waits
   behind an old, hung one; `shutdown()` waits only for its own provider's
   pending flushes); flush failures are reported redacted.
+- **Node.js Redis instrumentation (Phase B, task B10b; not released).**
+  `@staffops/otel-helper-redis` implements `redisInstrumentation({ redis?, ioredis? })`
+  over the official `@opentelemetry/instrumentation-redis` and
+  `-ioredis` 0.72 (dependencies; `redis`/`ioredis` stay the app's),
+  with the `-sql` model: one shared contrib instance per process, counted
+  enables, cached files re-required so a library loaded before `setup()` is
+  patched, `coveredInstrumentations` (a raw `IORedisInstrumentation` next to
+  it is refused), the D14 rule (only a contrib module that does not load
+  throws; an unresolved library is reported, WARN when named `true`). Spans
+  carry `db.system.name=redis`, the legacy `db.system` (same opt-in rule as
+  `-sql`), `db.operation.name`, `server.address`/`server.port`, and
+  `db.query.text` as the command name and one `?` per argument (`SET ? ?`,
+  Python's format): upstream's default serializer records keys and, for many
+  commands (`GET`, `EVAL`, `SISMEMBER`, `LREM`, ...), every argument. ioredis
+  spans are created without a parent too (upstream defaults
+  `requireParentSpan` to true), as Go, Python and node-redis. A failed span
+  keeps ERROR without description and gets `error.type=_OTHER` (A25 parity
+  with `-sql`); Redis errors can quote arguments (`ERR unknown command 'X',
+  with args beginning with: '<arg>'`). The exception event is kept (the A25
+  residual). The tracer and meter wrappers and the database opt-in rule moved
+  from `-sql` into a new internal core entry,
+  `@staffops/otel-helper/internal/db` (not public API, as `internal/bridge`),
+  shared by both packages. The database mode is now read once per process by
+  the first `sqlInstrumentation()` or `redisInstrumentation()`. The
+  `OTEL_HELPER_EXTRA_INSTRUMENTATION` warning also names
+  `redisInstrumentation()`. Divergences from Go and Python (span names,
+  `db.operation.name`, no Redis metrics in Node, ioredis handshake spans) are
+  in design D-JS14 (rows of 2026-11-03). Tests: an in-process RESP fake
+  (RESP2 and RESP3) and a real Redis, new compose service `redis-test`
+  (redis:7.4.12-alpine, throwaway password, tmpfs, `REDIS_TEST_URL`,
+  `REDIS_TEST_REQUIRE=1`), also a `node-test` CI service. They cover promise
+  and callback forms, MULTI, pipeline, pub/sub, AUTH, WRONGTYPE, NOAUTH,
+  WRONGPASS, connection refused, no argument, password or URL in any span,
+  a preloaded library, a re-setup, the database mode and an ESM custom preload
+  (without the hooks, ioredis imported from ESM is not instrumented).
+  `ci/api-range-install.sh` installs `-redis` with redis 6 and ioredis 6 and
+  checks both are patched. Test-only devDependencies: `redis`, `ioredis`.
+  *Rulings 2026-11-03 (B10b Q1-Q4, contract task A26):* span names are the
+  command uppercased (`SET`, as Python and semconv `{db.operation.name}`;
+  connection spans `connect`; one span per MULTI/pipeline command, so not
+  Python's `SET GET`); the contribs' `redis-SET` / `set` names are renamed.
+  Go and Python now drop the Redis ERROR description too (A26). The
+  exception event stays the accepted residual. In dup mode Node copies only
+  `db.system` (Python also writes `db.statement`). Note: the database semconv
+  mode is read once per process by the first `sqlInstrumentation()` or
+  `redisInstrumentation()`, for both packages.
+  *A26 fix round (2026-11-03):* a failed Redis span carries the reply's code
+  as `db.response.status_code` and `error.type` (`_OTHER` without one; `-sql`
+  unchanged); the statement serializer handles an empty name, typed-array
+  names, huge argument counts and code points; `setConfig()` on `-redis` and
+  `-sql` warns once that it is ignored; the JS5 "without the module hooks"
+  warning names ioredis when `redisInstrumentation()` is passed. ioredis
+  traces each connect/reconnect handshake as root spans (recorded in design
+  D-JS14 with a mitigation). Span-name uppercasing is documented as parity
+  with Python, not semconv.
+  *A26 final round (2026-11-03):* only allowlisted Redis reply codes become
+  `error.type` (a Lua `error_reply` word is `_OTHER`); a `setConfig()` call
+  is warned on the next enable (once the DiagLogger is installed).
 - **Go test hygiene:** `captureDiag` (`go/config_contract_test.go`) no longer
   prints slog timestamps, which made `TestDeprecatedEnvWarnsNamingReplacement`
   (`go/deprecation_test.go`) flaky.

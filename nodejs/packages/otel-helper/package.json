@@ -94,6 +94,20 @@
         "default": "./dist/bridge.js"
       }
     },
+    "./internal/db": {
+      "import": {
+        "types": "./esm/db.d.mts",
+        "default": "./esm/db.mjs"
+      },
+      "require": {
+        "types": "./dist/db.d.ts",
+        "default": "./dist/db.js"
+      },
+      "default": {
+        "types": "./dist/db.d.ts",
+        "default": "./dist/db.js"
+      }
+    },
     "./package.json": "./package.json"
   },
   "files": [

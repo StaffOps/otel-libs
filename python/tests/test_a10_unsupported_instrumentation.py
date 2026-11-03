@@ -21,7 +21,7 @@ from types import ModuleType
 import pytest
 from opentelemetry.instrumentation.instrumentor import BaseInstrumentor
 
-from staffops_otel_helper import instrumentation
+from staffops_otel_helper import _db_status, _diag, instrumentation
 from staffops_otel_helper._support import unsupported_dependency, warn_if_unsupported
 from staffops_otel_helper.config import TelemetryOptions
 
@@ -188,11 +188,26 @@ class TestConfigureInstrumentations:
     def test_explicit_ext_before_setup_leaves_nothing_implicit(self, monkeypatch, caplog, fresh):
         cls = fresh([SUPPORTED])
         self._only(monkeypatch, cls, "SQL")
-        cls().instrument()  # what staffops_otel_helper.ext.sql.instrument_sql() does
+        inst = cls()
+        inst.instrument()  # what staffops_otel_helper.ext.sql.instrument_sql() does,
+        _db_status.mark_wrapped(inst)  # including the wrapper mark (A26)
         opts = self._opts(caplog)
         with caplog.at_level(logging.WARNING):
             assert instrumentation.configure_instrumentations(opts) == []
         assert _helper_warnings(caplog) == []
+
+    def test_foreign_db_instrumentation_is_kept_and_warned_on_the_flag_path(self, monkeypatch, caplog, fresh):
+        """A26 fix round (2026-11-03): SQL/REDIS instrumented elsewhere without the wrapper -> kept, warned once."""
+        cls = fresh([SUPPORTED])
+        self._only(monkeypatch, cls, "SQL")
+        cls().instrument()  # other code, no wrapper mark
+        _diag._reset()  # the warning is once per process
+        opts = self._opts(caplog)
+        with caplog.at_level(logging.WARNING):
+            assert instrumentation.configure_instrumentations(opts) == []
+            assert instrumentation.configure_instrumentations(opts) == []
+        warned = [m for m in _helper_warnings(caplog) if "already instrumented without the helper's tracer" in m]
+        assert len(warned) == 1, warned
 
     def test_always_on_instrumentor_not_reported_as_implicit(self, monkeypatch, caplog, fresh):
         self._only(monkeypatch, fresh([SUPPORTED], "FastAPIInstrumentor"), None)

@@ -13,9 +13,9 @@ import { diag, type LoggerProvider, type MeterProvider, type TracerProvider } fr
 import type { Instrumentation, InstrumentationConfig } from '@opentelemetry/instrumentation';
 import type * as Mysql2 from '@opentelemetry/instrumentation-mysql2';
 import type * as Pg from '@opentelemetry/instrumentation-pg';
+import { legacyKeysMode } from '@staffops/otel-helper/internal/db';
 import { instrumentationLoadError, type Library } from './libraries';
 import { dbMeterProvider, dbTracerProvider } from './providers';
-import { legacyKeysEnabled } from './semconv';
 
 export const NAME = '@staffops/otel-helper-sql';
 /** Version of this package; a test keeps it equal to package.json `version`. */
@@ -54,14 +54,16 @@ const reportedUnresolved = new Set<string>();
 const boundTracer = new WeakMap<Instrumentation, TracerProvider>();
 /** The current meter bind of each child: instruments of an older one record nothing (`providers.ts`). */
 const meterGeneration = new WeakMap<Instrumentation, object>();
-let legacyKeys: boolean | undefined;
+/** A `setConfig()` call is warned on the next enable, once the helper's DiagLogger is installed. */
+let setConfigCalled = false;
+let warnedSetConfig = false;
 
-/** `OTEL_SEMCONV_STABILITY_OPT_IN` database mode, read once per process (first `sqlInstrumentation()`, as Go's first `Open`). */
-export function legacyKeysMode(): boolean {
-  legacyKeys ??= legacyKeysEnabled();
-  return legacyKeys;
-}
-
+/**
+ * `OTEL_SEMCONV_STABILITY_OPT_IN` database mode, read once per process by the
+ * first `sqlInstrumentation()` or `redisInstrumentation()` (as Go's first
+ * `Open`): the core's `internal/db` keeps it since B10b (2026-11-03).
+ */
+export { legacyKeysMode };
 function build(library: Library): Instrumentation {
   // Not `exports`: in the CommonJS output that would shadow the module's own.
   let loaded: unknown;
@@ -102,7 +104,7 @@ export function shared(library: Library): Instrumentation {
 
 /** Cached files of `pkg` (every copy in `require.cache`): `file` inside it, or its main entry when that is cached. */
 function cachedFiles(pkg: string, file: string): string[] {
-  const marker = `${path.sep}node_modules${path.sep}${pkg}${path.sep}`;
+  const marker = `${path.sep}node_modules${path.sep}${pkg.split('/').join(path.sep)}${path.sep}`;
   const roots = new Set<string>();
   for (const loaded of Object.keys(require.cache)) {
     const at = loaded.lastIndexOf(marker);
@@ -145,6 +147,12 @@ function patchPreloaded(libraries: readonly Library[]): void {
   }
 }
 
+function warnSetConfig(): void {
+  if (warnedSetConfig) return;
+  warnedSetConfig = true;
+  diag.warn(`${NAME}: setConfig() is ignored; the configuration is fixed and enabled follows setup()/shutdown()`);
+}
+
 /** How a library report is emitted on the first enable (through the helper's DiagLogger). */
 export type ReportLevel = 'warn' | 'debug';
 
@@ -183,6 +191,7 @@ export class SqlInstrumentationImpl implements Instrumentation {
       if (count === 0) child.enable();
     }
     // Reported once the helper's DiagLogger is installed (setup() enables after it).
+    if (setConfigCalled) warnSetConfig();
     for (const [, message, level] of this.#unresolved) {
       const key = `${level}:${message}`;
       if (reportedUnresolved.has(key)) continue;
@@ -233,9 +242,10 @@ export class SqlInstrumentationImpl implements Instrumentation {
     for (const [, child] of this.#children) child.setLoggerProvider?.(loggerProvider);
   }
 
-  /** Ignored: the contrib configurations are fixed by this package and `enabled` follows `enable()`/`disable()`. */
+  /** Ignored (warned once per process, on the next enable): the contrib configurations are fixed by this package and `enabled` follows `enable()`/`disable()`. */
   setConfig(_config: InstrumentationConfig): void {
-    // Nothing to set.
+    setConfigCalled = true;
+    if (this.#enabled) warnSetConfig();
   }
 
   /** `{ enabled }`: the real state of this result. */

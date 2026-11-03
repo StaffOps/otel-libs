@@ -16,6 +16,7 @@ import os
 import re
 from contextlib import contextmanager
 
+from staffops_otel_helper import _db_status
 from staffops_otel_helper._diag import warn_once_per_process
 from staffops_otel_helper._support import warn_if_unsupported
 from staffops_otel_helper.config import ENV_EXTRA_INSTRUMENTATION, TelemetryOptions
@@ -34,6 +35,12 @@ _EXT_ENTRY_POINTS = {"SQL": "staffops_otel_helper.ext.sql.instrument_sql()",
                      "AWS": "staffops_otel_helper.ext.aws.instrument_aws()"}
 
 # (module, class, helper EXTRA_INSTRUMENTATION flag or None = always on)
+# DB instrumentors bound to the _db_status wrapper -> (ext kind, its logger) (A25, A26).
+_DB_EXT = {
+    "SQLAlchemyInstrumentor": ("sql", logging.getLogger("staffops_otel_helper.ext.sql")),
+    "RedisInstrumentor": ("redis", logging.getLogger("staffops_otel_helper.ext.redis")),
+}
+
 _INSTRUMENTORS = (
     ("opentelemetry.instrumentation.fastapi", "FastAPIInstrumentor", None),
     ("opentelemetry.instrumentation.httpx", "HTTPXClientInstrumentor", None),
@@ -141,11 +148,20 @@ def configure_instrumentations(options: TelemetryOptions, instrumented: list | N
                 from staffops_otel_helper.ext import sql as _sql_ext
 
                 kwargs = _sql_ext.wrapped_instrument_kwargs()
+            elif class_name == "RedisInstrumentor":
+                # The same wrapped tracer as ext.redis.instrument_redis() (A26): ERROR keeps its code, no description.
+                kwargs = _db_status.wrapped_instrument_kwargs(redis=True)
             grpc_filter = _grpc_filter() if class_name in _GRPC else None
             with _env_hidden_or_set(env):
                 instrumentor = cls(filter_=grpc_filter) if class_name in _GRPC else cls()
                 if instrumentor.is_instrumented_by_opentelemetry:
+                    # Instrumented by other code without the status wrapper: kept, warned once (A26).
+                    if class_name in _DB_EXT and not _db_status.is_wrapped(instrumentor):
+                        kind, log = _DB_EXT[class_name]
+                        _db_status.warn_foreign(log, kind)
                     continue
+                if class_name in _DB_EXT:
+                    _db_status.clear_wrapped(instrumentor)
                 instrumentor.instrument(**kwargs)
         except ImportError:
             continue
@@ -154,6 +170,8 @@ def configure_instrumentations(options: TelemetryOptions, instrumented: list | N
         if instrumentor.is_instrumented_by_opentelemetry:
             if class_name == "SQLAlchemyInstrumentor":
                 _sql_ext.mark_wrapped(instrumentor)
+            elif class_name == "RedisInstrumentor":
+                _db_status.mark_wrapped(instrumentor)
             instrumented.append(instrumentor)
             if flag is not None:
                 implicit.append(flag)
@@ -208,6 +226,7 @@ def uninstrument(instrumented: list) -> list[str]:
     for instrumentor in reversed(instrumented):
         try:
             instrumentor.uninstrument()
+            _db_status.clear_wrapped(instrumentor)  # A26: a later instrumentation is not ours
         except Exception as e:  # noqa: BLE001 - reported by the caller
             errors.append(f"{type(instrumentor).__name__}: {e}")
     instrumented.clear()

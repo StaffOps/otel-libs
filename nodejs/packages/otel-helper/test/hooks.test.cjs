@@ -210,6 +210,18 @@ test('JS5 setup() in an ES module process without the hooks warns once; with the
   assert.deepEqual(lastJson(runNode([ESM_FIXTURE], { env: { ...QUIET_SETUP, OTEL_SDK_DISABLED: 'true' } })).warnings, []);
 });
 
+test('JS5 warning names the entry-patched packages of the opt-in instrumentations passed (ioredis; B10b fix round 2026-11-03)', () => {
+  const { esmWithoutHooksMessage } = require('../dist/internal/setup.js');
+  const base = esmWithoutHooksMessage([]);
+  assert.match(base, /\(express, @grpc\/grpc-js\) are not instrumented/);
+  const composite = { instrumentationName: '@staffops/otel-helper-redis', coveredInstrumentations: ['@opentelemetry/instrumentation-redis', '@opentelemetry/instrumentation-ioredis'] };
+  assert.match(esmWithoutHooksMessage([composite]), /\(express, @grpc\/grpc-js, ioredis\) are not instrumented/);
+  const raw = { instrumentationName: '@opentelemetry/instrumentation-ioredis' };
+  assert.match(esmWithoutHooksMessage([raw, composite]), /\(express, @grpc\/grpc-js, ioredis\) are/, 'named once');
+  assert.equal(esmWithoutHooksMessage([{ instrumentationName: 'x', coveredInstrumentations: 'not-an-array' }]), base);
+  assert.equal(esmWithoutHooksMessage([{ instrumentationName: 'x', coveredInstrumentations: [1] }]), base);
+});
+
 test('JS5 entryIsEsm: eval input type, extensions, the package type and the default-type flag', () => {
   const { entryIsEsm } = require('../dist/internal/hooks.js');
   const fixtures = path.join(__dirname, 'fixtures');

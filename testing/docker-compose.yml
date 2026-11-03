@@ -4,8 +4,9 @@
 #   docker compose -f testing/docker-compose.yml run --rm python-tests
 #   PY_VERSION=3.10 PY_DEPS=lower docker compose -f testing/docker-compose.yml run --rm python-tests
 #   NODE_VERSION=22.15.0 docker compose -f testing/docker-compose.yml run --rm node-tests
-#     (also starts sql-postgres and sql-mysql for @staffops/otel-helper-sql;
-#      stop them afterwards with `docker compose -f testing/docker-compose.yml stop sql-postgres sql-mysql`)
+#     (also starts sql-postgres and sql-mysql for @staffops/otel-helper-sql and
+#      redis-test for @staffops/otel-helper-redis; stop them afterwards with
+#      `docker compose -f testing/docker-compose.yml stop sql-postgres sql-mysql redis-test`)
 #   testing/e2e/smoke.sh
 #
 # Each suite has its own receiver (fakeotlp-go / fakeotlp-py / fakeotlp-node)
@@ -62,9 +63,14 @@ services:
     depends_on:
       fakeotlp-go:
         condition: service_healthy
+      redis-test:
+        condition: service_healthy
     working_dir: /src/go
     environment:
       <<: *fakeotlp-env
+      # ext/otelredis A26 real-server tests (throwaway password).
+      OTELREDIS_TEST_ADDR: redis-test:6379
+      OTELREDIS_TEST_PASSWORD: otel-test-only
     volumes:
       - ..:/src:ro
       - fakeotlp-go-out:/fakeotlp:ro
@@ -81,6 +87,8 @@ services:
         go tool covdata textfmt -i=/tmp/covdir -o /tmp/parity.out
         tail -n +2 /tmp/parity.out >> /tmp/coverage.out
         go tool cover -func=/tmp/coverage.out | tail -1
+        # ext/otelredis against miniredis and the real redis-test (A26).
+        (cd ext/otelredis && go vet ./... && go test -count=1 -cover ./...)
 
   python-tests:
     image: python:${PY_VERSION:-3.13}-slim
@@ -88,12 +96,16 @@ services:
     depends_on:
       fakeotlp-py:
         condition: service_healthy
+      redis-test:
+        condition: service_healthy
     environment:
       <<: *fakeotlp-env
       PY_DEPS: ${PY_DEPS:-latest}
       PIP_DISABLE_PIP_VERSION_CHECK: "1"
       PARITY_CASES: /src/parity/cases.json
       PARITY_COVERAGE_DATA: /work/.coverage
+      # tests/test_a26_redis.py real-server cases (throwaway password).
+      REDIS_TEST_URL: redis://default:otel-test-only@redis-test:6379/0
     volumes:
       - ../python:/src/python:ro
       - ../parity:/src/parity:ro
@@ -141,6 +153,20 @@ services:
       retries: 60
       start_period: 10s
 
+  # Redis for @staffops/otel-helper-redis (Node task B10b) and the A26
+  # real-server tests of Go ext/otelredis and Python ext.redis; used by
+  # node-tests, go-tests and python-tests. Throwaway password (the AUTH/NOAUTH tests need one); no
+  # persistence, data on tmpfs (no volume is created).
+  redis-test:
+    image: redis:7.4.12-alpine
+    command: ["redis-server", "--requirepass", "otel-test-only", "--save", "", "--appendonly", "no"]
+    tmpfs: [/data]
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "otel-test-only", "--no-auth-warning", "ping"]
+      interval: 1s
+      timeout: 2s
+      retries: 60
+
   node-tests:
     # NODE_VERSION: CI matrix 22.15.0 (engines floor), 22, 24, 26 (spec JS1).
     image: node:${NODE_VERSION:-24}-slim
@@ -151,6 +177,8 @@ services:
       sql-postgres:
         condition: service_healthy
       sql-mysql:
+        condition: service_healthy
+      redis-test:
         condition: service_healthy
     environment:
       <<: *fakeotlp-env
@@ -171,6 +199,9 @@ services:
       SQL_TEST_POSTGRES: postgres://otel:otel-test-only@sql-postgres:5432/otel_test
       SQL_TEST_MYSQL: mysql://otel:otel-test-only@sql-mysql:3306/otel_test
       SQL_TEST_REQUIRE: ${SQL_TEST_REQUIRE:-1}
+      # @staffops/otel-helper-redis tests (throwaway password); the same REQUIRE rule.
+      REDIS_TEST_URL: redis://default:otel-test-only@redis-test:6379/0
+      REDIS_TEST_REQUIRE: ${REDIS_TEST_REQUIRE:-1}
     volumes:
       - ..:/src:ro
       - fakeotlp-node-out:/fakeotlp:ro

@@ -1,7 +1,7 @@
 #!/bin/sh
-# Install test (spec JS1, D-JS2): pack the built core (and the opt-in -sql
-# package, task B10a: its contrib instrumentations must share the core's
-# @opentelemetry/instrumentation and core), install them in a fresh
+# Install test (spec JS1, D-JS2): pack the built core (and the opt-in -sql and
+# -redis packages, tasks B10a/B10b: their contrib instrumentations must share
+# the core's @opentelemetry/instrumentation and core), install them in a fresh
 # consumer next to the NEWEST @opentelemetry/api its peer range admits and the
 # app's own @grpc/grpc-js, check the tree is valid, that the packages which
 # must be shared have exactly one copy (`npm ls` exits 0 with duplicates, so
@@ -27,13 +27,13 @@ echo "api peer range: $range -> newest admitted: $newest"
 
 dir="$(mktemp -d)"
 trap 'rm -rf "$dir"' EXIT
-npm pack ./packages/otel-helper ./packages/otel-helper-sql ./packages/otel-helper-pino ./packages/otel-helper-winston \
+npm pack ./packages/otel-helper ./packages/otel-helper-sql ./packages/otel-helper-redis ./packages/otel-helper-pino ./packages/otel-helper-winston \
   --pack-destination "$dir" --loglevel=error >/dev/null
 cd "$dir"
 printf '{ "name": "api-range-consumer", "private": true }\n' > package.json
 npm install --ignore-scripts --no-audit --no-fund --loglevel=error ./staffops-otel-helper-[0-9]*.tgz ./staffops-otel-helper-sql-*.tgz \
-  ./staffops-otel-helper-pino-*.tgz ./staffops-otel-helper-winston-*.tgz \
-  "@opentelemetry/api@$newest" "@grpc/grpc-js@^1.14.5" "pg@^8" "pino@10.0.0" "winston@3.10.0"
+  ./staffops-otel-helper-redis-*.tgz ./staffops-otel-helper-pino-*.tgz ./staffops-otel-helper-winston-*.tgz \
+  "@opentelemetry/api@$newest" "@grpc/grpc-js@^1.14.5" "pg@^8" "redis@^6" "ioredis@^6" "pino@10.0.0" "winston@3.10.0"
 npm ls --all >/dev/null
 # The api package does not export ./package.json; read the installed file.
 installed="$(node -p "JSON.parse(require('fs').readFileSync('node_modules/@opentelemetry/api/package.json', 'utf8')).version")"
@@ -64,6 +64,20 @@ OTEL_HELPER_METRICS_PORT=0 node -e "
   shutdown().then(() => console.log('-sql instruments pg: OK'));
 "
 node --input-type=module -e "import { sqlInstrumentation } from '@staffops/otel-helper-sql'; if (typeof sqlInstrumentation !== 'function') process.exit(1)"
+# The installed -redis really instruments the installed redis and ioredis (B10b):
+# node-redis is patched in @redis/client (client/index.js), ioredis in its entry.
+OTEL_HELPER_METRICS_PORT=0 node -e "
+  const { setup, shutdown } = require('@staffops/otel-helper');
+  const i = require('@staffops/otel-helper-redis').redisInstrumentation({ redis: true, ioredis: true });
+  setup({ serviceName: 'api-range', instrumentations: [i] });
+  require('redis');
+  const client = require(require.resolve('@redis/client/dist/lib/client/index.js', { paths: [require.resolve('redis')] })).default;
+  const IORedis = require('ioredis');
+  if (client.prototype.sendCommand.__wrapped !== true) { console.error('FAIL: redis not instrumented'); process.exit(1); }
+  if (IORedis.prototype.sendCommand.__wrapped !== true) { console.error('FAIL: ioredis not instrumented'); process.exit(1); }
+  shutdown().then(() => console.log('-redis instruments redis and ioredis: OK'));
+"
+node --input-type=module -e "import { redisInstrumentation } from '@staffops/otel-helper-redis'; if (typeof redisInstrumentation !== 'function') process.exit(1)"
 # The log bridges at their peer floors write one stdout line each (no setup: the stdout fallback).
 lines="$(node -e "
   const v = (p) => require(p + '/package.json').version;

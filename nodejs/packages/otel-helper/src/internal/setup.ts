@@ -659,8 +659,34 @@ function withInactiveSignals(resolved: Resolved, inactiveSignals: readonly Signa
   return Object.freeze({ ...resolved, inactiveSignals: Object.freeze([...inactiveSignals]) });
 }
 
-const ESM_WITHOUT_HOOKS =
-  'setup() runs in an ES module process without the module hooks; packages imported after setup() (express, @grpc/grpc-js) are not instrumented — start the process with --import @staffops/otel-helper/register, or import @staffops/otel-helper/hooks first in the preload that calls setup()';
+/**
+ * Opt-in contrib instrumentations that patch a package's entry file, which an
+ * ES module `import` loads without require(): without the loader hooks they
+ * miss it, like express and grpc-js (B10b fix round, 2026-11-03).
+ */
+const ESM_ENTRY_PATCHED: Readonly<Record<string, string>> = Object.freeze({
+  '@opentelemetry/instrumentation-ioredis': 'ioredis',
+});
+
+/**
+ * The JS5 warning, naming the packages imported after setup() that are not
+ * instrumented: the core's, plus those of the opt-in instrumentations passed
+ * (their own name or `coveredInstrumentations`).
+ *
+ * @internal
+ */
+export function esmWithoutHooksMessage(optIn: readonly Instrumentation[]): string {
+  const packages = ['express', '@grpc/grpc-js'];
+  for (const instrumentation of optIn) {
+    const covered: unknown = (instrumentation as { coveredInstrumentations?: unknown }).coveredInstrumentations;
+    const names: unknown[] = [instrumentation.instrumentationName, ...(Array.isArray(covered) ? (covered as unknown[]) : [])];
+    for (const name of names) {
+      const pkg = typeof name === 'string' ? ESM_ENTRY_PATCHED[name] : undefined;
+      if (pkg !== undefined && !packages.includes(pkg)) packages.push(pkg);
+    }
+  }
+  return `setup() runs in an ES module process without the module hooks; packages imported after setup() (${packages.join(', ')}) are not instrumented — start the process with --import @staffops/otel-helper/register, or import @staffops/otel-helper/hooks first in the preload that calls setup()`;
+}
 
 /**
  * Configures OpenTelemetry for this process and returns what it resolved,
@@ -862,7 +888,7 @@ function install(rt: Runtime, plan: Plan, options: SetupOptions, base: Resource,
     attempt.instrumented = tryEnableInstrumentations(instrumentations, plan, bound, loadedBeforeSetup);
     // Spec JS5: in an ES module process, import-in-the-middle only sees later
     // imports through the loader hooks (require-in-the-middle never does).
-    if (attempt.instrumented && hooksMode() === undefined && entryIsEsm()) reportOnce('esm-without-hooks', ESM_WITHOUT_HOOKS);
+    if (attempt.instrumented && hooksMode() === undefined && entryIsEsm()) reportOnce('esm-without-hooks', esmWithoutHooksMessage(options.instrumentations ?? []));
   }
   // The opt-in instrumentations (task B10a), on the same providers and under
   // the same conditions; otherwise left disabled (one built enabled by its

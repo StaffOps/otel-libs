@@ -3,102 +3,25 @@
 from __future__ import annotations
 
 import logging
-from contextlib import contextmanager
-from typing import Any, Iterator
 
 from opentelemetry import trace
-from opentelemetry.trace import Span, Status, StatusCode
 
+from staffops_otel_helper._db_status import (  # noqa: F401  (moved to _db_status in A26; names kept for tests and instrumentation)
+    _WRAPPED_MARK,
+    _drop_error_description,
+    _ErrorDescriptionDroppingTracer,
+    _ErrorDescriptionDroppingTracerProvider,
+    clear_wrapped,
+    mark_wrapped,
+    warn_foreign,
+    wrapped_instrument_kwargs,
+)
 from staffops_otel_helper._semconv import ensure_semconv_default
 from staffops_otel_helper._diag import warn_once_per_process
 from staffops_otel_helper._support import missing_dependency_hint as _missing_hint
 from staffops_otel_helper._support import warn_if_unsupported
 
-
-def _drop_error_description(span: Span) -> Span:
-    """Make ``span.set_status`` keep the ERROR code and drop its description (A25 R1).
-
-    contrib sqlalchemy sets ``Status(ERROR, str(exc))`` (``engine.py``
-    ``_handle_error``), and ``trace.use_span`` sets ``"<type>: <exc>"`` on the
-    ``connect`` span: database error text can quote a statement value. Go
-    (XSAM otelsql) and Node (``@staffops/otel-helper-sql``) leave the
-    description empty too. An exception event, when one is recorded, is kept
-    (semconv ``exception.message``).
-    """
-    original = span.set_status
-
-    def set_status(status: Status | StatusCode, description: str | None = None) -> None:
-        code = status.status_code if isinstance(status, Status) else status
-        if code is StatusCode.ERROR:
-            original(Status(StatusCode.ERROR))
-        else:
-            original(status, description)
-
-    try:
-        span.set_status = set_status  # type: ignore[method-assign]
-    except AttributeError:  # a span type with __slots__: left as it is
-        pass
-    return span
-
-
-class _ErrorDescriptionDroppingTracer(trace.Tracer):
-    """Tracer for the SQLAlchemy instrumentation: its spans drop the ERROR description."""
-
-    def __init__(self, tracer: trace.Tracer) -> None:
-        self._tracer = tracer
-
-    def start_span(self, *args: Any, **kwargs: Any) -> Span:
-        return _drop_error_description(self._tracer.start_span(*args, **kwargs))
-
-    @contextmanager
-    def start_as_current_span(  # type: ignore[override]
-        self,
-        name: str,
-        context: Any = None,
-        kind: trace.SpanKind = trace.SpanKind.INTERNAL,
-        attributes: Any = None,
-        links: Any = None,
-        start_time: int | None = None,
-        record_exception: bool = True,
-        set_status_on_exception: bool = True,
-        end_on_exit: bool = True,
-    ) -> Iterator[Span]:
-        span = self.start_span(name=name, context=context, kind=kind, attributes=attributes, links=links,
-                               start_time=start_time, record_exception=record_exception,
-                               set_status_on_exception=set_status_on_exception)
-        with trace.use_span(span, end_on_exit=end_on_exit, record_exception=record_exception,
-                            set_status_on_exception=set_status_on_exception) as current:
-            yield current
-
-
-class _ErrorDescriptionDroppingTracerProvider(trace.TracerProvider):
-    """Wraps the global TracerProvider (resolved lazily by the API proxy when it is not set yet)."""
-
-    def __init__(self, provider: trace.TracerProvider) -> None:
-        self._provider = provider
-
-    def get_tracer(self, *args: Any, **kwargs: Any) -> trace.Tracer:
-        return _ErrorDescriptionDroppingTracer(self._provider.get_tracer(*args, **kwargs))
-
-
 _log = logging.getLogger("staffops_otel_helper.ext.sql")
-# Set on the SQLAlchemyInstrumentor singleton when the helper instrumented it with the wrapper.
-_WRAPPED_MARK = "_staffops_error_status_dropped"
-
-
-def wrapped_instrument_kwargs() -> dict:
-    """``instrument()`` kwargs every helper path uses for contrib sqlalchemy (A25 R1).
-
-    Shared by ``instrument_sql()`` and the deprecated ``SQL`` flag of
-    ``setup_telemetry()`` (``instrumentation.configure_instrumentations``), so
-    neither path instruments SQLAlchemy without the status wrapper.
-    """
-    return {"tracer_provider": _ErrorDescriptionDroppingTracerProvider(trace.get_tracer_provider())}
-
-
-def mark_wrapped(instrumentor) -> None:
-    """Record that ``instrumentor`` was instrumented with :func:`wrapped_instrument_kwargs`."""
-    setattr(instrumentor, _WRAPPED_MARK, True)
 
 
 def _attach_engine(engine) -> bool:
@@ -188,14 +111,10 @@ def instrument_sql(engine=None) -> bool:
     instrumentor = SQLAlchemyInstrumentor()
     if instrumentor.is_instrumented_by_opentelemetry:
         if not getattr(instrumentor, _WRAPPED_MARK, False):
-            warn_once_per_process(
-                _log, "sql:instrumented-without-wrapper",
-                "[OtelHelper] SQLAlchemy is already instrumented without the helper's tracer: failed "
-                "statements may carry the database error text in their span status. Call "
-                "instrument_sql() (or setup_telemetry()) before instrumenting SQLAlchemy elsewhere.",
-            )
+            warn_foreign(_log, "sql")
             return True
         return _attach_engine(engine) if engine else True
+    clear_wrapped(instrumentor)  # a mark left by an earlier, since uninstrumented, helper call
     kwargs = wrapped_instrument_kwargs()
     if engine:
         instrumentor.instrument(engine=engine, **kwargs)

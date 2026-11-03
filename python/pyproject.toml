@@ -48,6 +48,9 @@ dev = [
     # matrix. Capped at the contrib sqlalchemy range (< 2.1.0, P18). Floor 2.0.31:
     # the first release that imports on Python 3.13 (TypingOnly __firstlineno__).
     "sqlalchemy>=2.0.31,<2.1",
+    # Test-only (A26, 2026-11-03): real redis-py spans for the DB error-status rule
+    # (tests/test_a26_redis.py, against an in-process RESP fake). MIT.
+    "redis>=5.0,<9",
 ]
 
 [tool.hatch.build.targets.wheel]

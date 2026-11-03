@@ -75,8 +75,9 @@ function checkOptions(options: unknown): SqlInstrumentationOptions {
 /**
  * SQL instrumentation for `setup({ instrumentations: [sqlInstrumentation()] })`.
  * Call it — and `setup()` — before the app loads `pg` or `mysql2` (a library
- * loaded earlier is still patched on the first enable). The first call reads
- * `OTEL_SEMCONV_STABILITY_OPT_IN` for the whole process.
+ * loaded earlier is still patched on the first enable). The first call of
+ * this or `redisInstrumentation()` reads `OTEL_SEMCONV_STABILITY_OPT_IN` for
+ * the whole process (core `internal/db`, since B10b).
  *
  * @throws TypeError on invalid options; Error (D14 wording) when the contrib
  *   instrumentation of a library named `true` does not load, or when none of

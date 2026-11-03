@@ -173,8 +173,10 @@ class TestExtraInstalled:
     def test_redis_instruments(self, monkeypatch):
         cls = _fake_instrumentor_module(
             monkeypatch, "opentelemetry.instrumentation.redis", "RedisInstrumentor")
+        cls.return_value.is_instrumented_by_opentelemetry = False
         instrument_redis()
-        cls.return_value.instrument.assert_called_once_with()
+        # A26: bound to the error-status wrapper, as instrument_sql().
+        cls.return_value.instrument.assert_called_once_with(tracer_provider=ANY)
 
     def test_sql_instruments_globally(self, monkeypatch):
         cls = _fake_instrumentor_module(

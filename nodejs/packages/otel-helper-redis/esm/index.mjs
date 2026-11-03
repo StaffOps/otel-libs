@@ -2,4 +2,4 @@
 // names in sync with src/index.ts; test/esm.test.mjs fails on drift.
 import cjs from '../dist/index.js';
 
-export const { redisInstrumentation } = cjs;
+export const { VERSION, redisInstrumentation } = cjs;
