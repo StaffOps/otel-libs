@@ -218,6 +218,11 @@ func TestSemconvStabilityOptIn(t *testing.T) {
 		{"database,database/dup", true},
 		{"database", false},
 		{" http , Database ", false},
+		// A25 (2026-11-03): the contract trim set and ASCII folding, as Python and Node.
+		{"DATABASE", false},
+		{"\tdatabase\n", false},
+		{"database\u00a0", true}, // NBSP is not trimmed: not a database token
+		{"databaſe", true},       // U+017F does not fold to s
 	}
 	for _, tt := range tests {
 		t.Run(tt.env, func(t *testing.T) {

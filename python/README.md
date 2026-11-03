@@ -136,7 +136,7 @@ metrics use the Prometheus fallback and logs stay local.
 | `OTEL_METRIC_EXPORT_INTERVAL` | `30000` | Milliseconds (the SDK default is 60000): ASCII digits with an optional `+` (any number of digits; leading zeros ignored), > 0, else warned and 30 000; above 2 147 483 647 clamped with a warning |
 | `OTEL_TRACES_SAMPLER` / `OTEL_TRACES_SAMPLER_ARG` | `parentbased_always_on` | Spec names, case-insensitive. Unknown name → warning + default; invalid `_ARG` → warning + 1.0 |
 | `OTEL_PROPAGATORS` | `tracecontext,baggage` | `tracecontext`, `baggage`, `none`. Other values are warned and skipped (needs the import order above) |
-| `OTEL_SEMCONV_STABILITY_OPT_IN` | `http,database/dup` | Set by the helper when unset, before any instrumentation: stable HTTP metrics/attributes and both DB attribute generations. Your value wins (`http/dup` = both HTTP generations) |
+| `OTEL_SEMCONV_STABILITY_OPT_IN` | `http,database/dup` | Set by the helper when unset, before any instrumentation: stable HTTP metrics/attributes and both DB attribute generations. Your value wins for HTTP (`http/dup` = both HTTP generations); for the DB keys it is ASCII-folded and gets `database/dup` appended when it names no database mode, so only `database` without `/dup` drops the legacy `db.system` (A25, as Go and Node.js) |
 | `OTEL_PYTHON_LOG_CODE_ATTRIBUTES` | `false` | Upstream variable: `true` adds `code.*` attributes to log records |
 
 ### Helper variables

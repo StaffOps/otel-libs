@@ -53,13 +53,30 @@ func Open(driverName, dataSourceName string) (db *sql.DB, closeDB func() error, 
 	return db, func() error { return errors.Join(reg.Unregister(), db.Close()) }, nil
 }
 
+// trimChars is the contract trim set (design D1 "Trimmed character set"): not
+// Unicode whitespace, which strings.TrimSpace would also remove (U+00A0).
+const trimChars = " \t\n\r\v\f"
+
+// asciiLower lowercases A-Z only (design D1 "ASCII case folding"):
+// strings.ToLower maps non-ASCII letters too (U+0130 to i).
+func asciiLower(s string) string {
+	b := []byte(s)
+	for i, c := range b {
+		if 'A' <= c && c <= 'Z' {
+			b[i] = c + ('a' - 'A')
+		}
+	}
+	return string(b)
+}
+
 // legacyKeysEnabled reports whether the legacy db.system key is emitted:
 // yes unless OTEL_SEMCONV_STABILITY_OPT_IN contains "database" without
-// "database/dup" (the semantic-convention migration contract).
+// "database/dup" (the semantic-convention migration contract). Tokens are
+// trimmed with the contract set and ASCII-folded (A25, as Python and Node).
 func legacyKeysEnabled() bool {
 	var stable, dup bool
 	for _, v := range strings.Split(os.Getenv(envSemconvOptIn), ",") {
-		switch strings.ToLower(strings.TrimSpace(v)) {
+		switch asciiLower(strings.Trim(v, trimChars)) {
 		case "database":
 			stable = true
 		case "database/dup":

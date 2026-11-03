@@ -4,6 +4,8 @@
 #   docker compose -f testing/docker-compose.yml run --rm python-tests
 #   PY_VERSION=3.10 PY_DEPS=lower docker compose -f testing/docker-compose.yml run --rm python-tests
 #   NODE_VERSION=22.15.0 docker compose -f testing/docker-compose.yml run --rm node-tests
+#     (also starts sql-postgres and sql-mysql for @staffops/otel-helper-sql;
+#      stop them afterwards with `docker compose -f testing/docker-compose.yml stop sql-postgres sql-mysql`)
 #   testing/e2e/smoke.sh
 #
 # Each suite has its own receiver (fakeotlp-go / fakeotlp-py / fakeotlp-node)
@@ -107,12 +109,48 @@ services:
         pip list 2>/dev/null | grep -E '^opentelemetry-(sdk|instrumentation) '
         python -m pytest tests/ -p no:cacheprovider -q --cov=staffops_otel_helper --cov=otel_helper --cov-report=term --cov-fail-under=90
 
+  # Databases for @staffops/otel-helper-sql (Node task B10a), used only by
+  # node-tests. Throwaway credentials; data on tmpfs (no volume is created).
+  # node-tests reaches them by service name through fakeotlp-node's network.
+  sql-postgres:
+    image: postgres:17.11-alpine
+    environment:
+      POSTGRES_USER: otel
+      POSTGRES_PASSWORD: otel-test-only
+      POSTGRES_DB: otel_test
+    tmpfs: [/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "otel", "-d", "otel_test"]
+      interval: 1s
+      timeout: 2s
+      retries: 60
+
+  sql-mysql:
+    image: mysql:8.4.11
+    environment:
+      MYSQL_RANDOM_ROOT_PASSWORD: "yes"
+      MYSQL_USER: otel
+      MYSQL_PASSWORD: otel-test-only
+      MYSQL_DATABASE: otel_test
+    tmpfs: [/var/lib/mysql]
+    # TCP only answers once the init server (no networking) has been replaced.
+    healthcheck:
+      test: ["CMD", "mysql", "-h", "127.0.0.1", "-uotel", "-potel-test-only", "-e", "SELECT 1", "otel_test"]
+      interval: 2s
+      timeout: 3s
+      retries: 60
+      start_period: 10s
+
   node-tests:
     # NODE_VERSION: CI matrix 22.15.0 (engines floor), 22, 24, 26 (spec JS1).
     image: node:${NODE_VERSION:-24}-slim
     network_mode: "service:fakeotlp-node"
     depends_on:
       fakeotlp-node:
+        condition: service_healthy
+      sql-postgres:
+        condition: service_healthy
+      sql-mysql:
         condition: service_healthy
     environment:
       <<: *fakeotlp-env
@@ -126,6 +164,13 @@ services:
       NPM_CONFIG_AUDIT: "false"
       # 1 = skip the registry-dependent api-range install test (offline runs).
       NODE_TESTS_OFFLINE: ${NODE_TESTS_OFFLINE:-}
+      # @staffops/otel-helper-sql database tests (throwaway credentials); REQUIRE
+      # (default 1) makes a missing database URL fail the suite instead of
+      # skipping. NODE_TESTS_OFFLINE does not stop the databases from starting:
+      # their images must be present locally (pulled once).
+      SQL_TEST_POSTGRES: postgres://otel:otel-test-only@sql-postgres:5432/otel_test
+      SQL_TEST_MYSQL: mysql://otel:otel-test-only@sql-mysql:3306/otel_test
+      SQL_TEST_REQUIRE: ${SQL_TEST_REQUIRE:-1}
     volumes:
       - ..:/src:ro
       - fakeotlp-node-out:/fakeotlp:ro

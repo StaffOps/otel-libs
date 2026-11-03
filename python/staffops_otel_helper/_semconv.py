@@ -6,8 +6,10 @@ first ``instrument()`` call, and default to the old HTTP generation
 Go can only emit stable HTTP and its ext/otelsql emits both ``db.system.name``
 and ``db.system``, so the helper defaults the variable to ``http,database/dup``
 before any instrumentor runs (verified on contrib sqlalchemy 0.63b0 and 0.66b1:
-both keys). A value set by the user always wins (``http`` alone keeps only the
-legacy database keys; ``database`` without ``/dup`` emits only the new ones).
+both keys). A value set by the user wins for HTTP; for the database keys it is
+normalized (A25, ``normalize_semconv_opt_in``): ASCII-folded, and ``database/dup``
+appended when it names no database mode, so only ``database`` without ``/dup``
+drops the legacy ``db.system`` (Go and Node rule).
 """
 
 from __future__ import annotations
@@ -45,12 +47,41 @@ def _late_initialized_old_http() -> bool:
         return False
 
 
+_DATABASE_TOKENS = frozenset({"database", "database/dup"})
+
+
+def normalize_semconv_opt_in(value: str | None) -> str:
+    """The value contrib should read (contract design D1 row "Database semconv opt-in", A25).
+
+    Unset, empty or whitespace-only (the contract trim set) → ``http,database/dup``
+    (empty = unset, as in Node and the contract). A set value is ASCII-folded —
+    every token, so ``HTTP`` / ``HTTP/DUP`` now select stable / dup HTTP too
+    (contrib compares tokens case-sensitively; Go and Node fold) — and one
+    without a ``database`` or ``database/dup`` token gets ``database/dup``
+    appended, so the legacy ``db.system`` is kept unless ``database`` is chosen
+    without ``/dup``, as Go ``ext/otelsql`` and Node ``-sql`` do. In dup mode
+    contrib emits the full new attribute set and the full legacy set. Before
+    A25 a value such as ``http`` switched contrib to the legacy database keys only.
+    """
+    if value is None or not value.strip(TRIM_CHARS):
+        return DEFAULT_SEMCONV_OPT_IN
+    folded = ascii_lower(value)
+    tokens = {t.strip(TRIM_CHARS) for t in folded.split(",")}
+    if tokens & _DATABASE_TOKENS:
+        return folded
+    return f"{folded},database/dup"
+
+
 def ensure_semconv_default() -> None:
-    """Default ``OTEL_SEMCONV_STABILITY_OPT_IN`` to ``http,database/dup``; warn once if HTTP stays old."""
+    """Normalize ``OTEL_SEMCONV_STABILITY_OPT_IN`` (default ``http,database/dup``); warn once if HTTP stays old.
+
+    Writes the normalized value back to ``os.environ``: contrib reads it from
+    there, and child processes started afterwards inherit the rewritten value.
+    """
     global _warned
-    os.environ.setdefault(ENV_SEMCONV_OPT_IN, DEFAULT_SEMCONV_OPT_IN)
+    os.environ[ENV_SEMCONV_OPT_IN] = normalize_semconv_opt_in(os.environ.get(ENV_SEMCONV_OPT_IN))
     value = os.environ[ENV_SEMCONV_OPT_IN]
-    tokens = {ascii_lower(t.strip(TRIM_CHARS)) for t in value.split(",")}
+    tokens = {t.strip(TRIM_CHARS) for t in value.split(",")}
     if not tokens & _STABLE_HTTP_TOKENS:
         reason = f"{ENV_SEMCONV_OPT_IN}={value!r} does not include 'http'"
     elif _late_initialized_old_http():

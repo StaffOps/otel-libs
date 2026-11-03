@@ -38,13 +38,13 @@
 import type * as http from 'node:http';
 import { syncBuiltinESMExports } from 'node:module';
 import * as path from 'node:path';
-import type { MeterProvider, TracerProvider } from '@opentelemetry/api';
+import type { LoggerProvider, MeterProvider, TracerProvider } from '@opentelemetry/api';
 import type { Instrumentation } from '@opentelemetry/instrumentation';
 import type * as Express from '@opentelemetry/instrumentation-express';
 import type * as Grpc from '@opentelemetry/instrumentation-grpc';
 import type * as Http from '@opentelemetry/instrumentation-http';
 import type * as Undici from '@opentelemetry/instrumentation-undici';
-import { reportOnce } from './diagnostics';
+import { redactErrorText, report, reportOnce, truncateValue } from './diagnostics';
 import { isHelperServer } from './metrics-endpoint';
 import { getState } from './state';
 import type { OtlpPlan } from './otlp';
@@ -444,4 +444,48 @@ export function disableInstrumentations(holder: HelperInstrumentations | undefin
     }
   }
   syncBuiltinESMExports();
+}
+
+/** The providers an opt-in instrumentation is bound to (the same choice as the core ones). */
+export interface OptInProviders {
+  readonly tracerProvider: TracerProvider;
+  readonly meterProvider: MeterProvider;
+  readonly loggerProvider: LoggerProvider;
+}
+
+/**
+ * Binds and enables the opt-in instrumentations of `setup({ instrumentations })`
+ * (task B10a): the same providers as the core ones, then `enable()`. One that
+ * throws is reported, disabled again and left out (R8: telemetry failures
+ * never fail `setup()`); the others carry on. Returns the enabled ones.
+ */
+export function enableOptIn(list: readonly Instrumentation[], providers: OptInProviders): Instrumentation[] {
+  const enabled: Instrumentation[] = [];
+  for (const instrumentation of list) {
+    try {
+      instrumentation.setTracerProvider(providers.tracerProvider);
+      instrumentation.setMeterProvider(providers.meterProvider);
+      instrumentation.setLoggerProvider?.(providers.loggerProvider);
+      instrumentation.enable();
+      enabled.push(instrumentation);
+    } catch (err) {
+      disableOptIn([instrumentation]);
+      report('an opt-in instrumentation could not be enabled; its library is not instrumented', {
+        instrumentation: truncateValue(instrumentation.instrumentationName),
+        error: redactErrorText(err instanceof Error ? err.message : String(err)),
+      });
+    }
+  }
+  return enabled;
+}
+
+/** Disables opt-in instrumentations, ignoring their errors (an unpatch failure is harmless, as for the core ones). */
+export function disableOptIn(list: Iterable<Instrumentation>): void {
+  for (const instrumentation of list) {
+    try {
+      instrumentation.disable();
+    } catch {
+      // Left patched and bound to a shut-down provider: harmless.
+    }
+  }
 }

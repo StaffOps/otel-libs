@@ -490,7 +490,18 @@ setup_telemetry()
 - **Database attributes:** with the helper's default
   `OTEL_SEMCONV_STABILITY_OPT_IN=http,database/dup`, SQL spans carry
   `db.system.name` and the legacy `db.system`, like Go's `ext/otelsql`. Your
-  value wins (`database` → new keys only; `http` alone → legacy only). Known
+  value is normalized (A25): `database` → new keys only; anything without a
+  database token (`http`) → both, as Go and Node.js; an empty value is unset
+  (`http,database/dup`); every token is ASCII-folded (`HTTP/DUP` = `http/dup`).
+  The helper writes the normalized value back to `os.environ`, so child
+  processes started afterwards inherit it. A failed statement's span keeps
+  status ERROR without the database error text — through `instrument_sql()`
+  and the default `SQL` path of `setup_telemetry()` alike; if other code
+  instrumented SQLAlchemy first, the helper keeps that and warns. In that case
+  the only way to get the wrapper is to turn the deprecated default off
+  (`OTEL_HELPER_EXTRA_INSTRUMENTATION=`, empty) and call `instrument_sql()`
+  **before** the other code instruments SQLAlchemy. An engine created before
+  `setup_telemetry()` is traced by `instrument_sql(engine)` (2026-11-03). Known
   gap: Python copies the dialect name unmapped (SQL Server → `mssql`, Go
   emits `microsoft.sql_server`); filter on both in cross-language queries.
 

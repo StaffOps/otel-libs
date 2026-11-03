@@ -210,6 +210,11 @@ Runtime and operations:
     dashboard or pipeline read such an attribute from Go's stdout lines,
     rename it (e.g. `msg` → `message_detail`).
 
+25. **BREAKING (narrow) — `OTEL_SEMCONV_STABILITY_OPT_IN` tokens (A25).**
+    Only the contract trim set is trimmed and only A–Z fold, so a token
+    padded with a non-breaking space or other Unicode whitespace is no longer
+    read as `database`: write the value in plain ASCII.
+
 ### Migration guide 0.2 → 0.3 — Python
 
 **First: the package name changed** ([ADR-011](https://github.com/StaffOps/otel-libs/blob/main/specs/decisions/ADR-011-owner-prefixed-package-names.md)).
@@ -448,6 +453,14 @@ Telemetry and runtime:
     and Node.js: a parser is unaffected, a grep or regex that expects
     `"level": "ERROR"` must drop the space (or allow both: `"level": ?"ERROR"`).
 
+25. **BREAKING (narrow) — SQLAlchemy spans (A25).** A failed statement's span
+    keeps status ERROR but no longer carries the database error text as
+    its status description; alerts or queries that matched on that text must
+    use the status code (the statement text is still recorded).
+    `OTEL_SEMCONV_STABILITY_OPT_IN=http` (or an empty value) now emits
+    `db.system.name` as well as `db.system`; to keep only the new keys, set
+    `database` without `/dup`.
+
 ### Collector / platform prerequisites (before rolling 0.3.0 out)
 
 Owned outside this repo (design D11); each item blocks the rollout, not the rc:
@@ -518,6 +531,14 @@ by Operation" panel groups by `span_name` and shows the new Go HTTP span names
 after the upgrade.
 
 ### Go — detailed changes
+
+- **BREAKING (narrow) — A25 database semconv opt-in parsing (design D1 row
+  of 2026-11-03, "Database semconv opt-in").** `ext/otelsql` reads
+  `OTEL_SEMCONV_STABILITY_OPT_IN` tokens with the contract trim set and ASCII
+  folding, as Python and Node.js. A token with a non-breaking space
+  (`database\u00a0`) is no longer trimmed into `database`, so the legacy
+  `db.system` stays. Failed DB spans already had an empty status description
+  (A25 ruling, no change).
 
 - **BREAKING (narrow) — A23 stdout fallback rulings from the Node B8 work
   (design D1 rows of 2026-11-02: "Stdout fallback time zone", "Stdout
@@ -943,6 +964,39 @@ Behavior changes, with migration notes:
   (Apache-2.0). `aws-sdk-go-v2` v1.47.1 → v1.47.5.
 
 ### Python — detailed changes
+
+- **A25: `instrument_sql(engine)` after `setup_telemetry()` (2026-11-03).** An
+  engine created before `setup_telemetry()` was never traced, and
+  `instrument_sql(engine)` still returned True. It now attaches the wrapped
+  per-engine tracer, built the same way contrib's `instrument(engine=...)`
+  builds it (`EngineTracer`, 0.63b0 and 0.66b2). An engine already traced is
+  left alone. If the contrib layout is not the expected one, it warns and
+  returns False.
+
+- **A25 second fix round (2026-11-03).** The default `SQL` path of
+  `setup_telemetry()`, the deprecated `OTEL_HELPER_EXTRA_INSTRUMENTATION`
+  default, now instruments SQLAlchemy through the same status wrapper as
+  `instrument_sql()`. Before this round it still wrote the database error
+  text as the status description, and a later `instrument_sql()` did nothing.
+  If other code instrumented SQLAlchemy first, `instrument_sql()` keeps that
+  instrumentation and warns once; re-instrumenting would drop the listeners
+  of engines already created. An empty or whitespace-only
+  `OTEL_SEMCONV_STABILITY_OPT_IN` is treated as unset (`http,database/dup`).
+  Every token is ASCII-folded, so `HTTP` and `HTTP/DUP` now select stable and
+  dup HTTP. In dup mode the full new and full legacy attribute sets are
+  emitted. The normalized value is written back to `os.environ`, so child
+  processes inherit it.
+
+- **BREAKING (narrow) — A25 DB error status and database semconv opt-in
+  (design D1 rows of 2026-11-03: "DB error status", "Database semconv
+  opt-in").** `instrument_sql()` binds contrib sqlalchemy to a TracerProvider
+  wrapper. A failed statement's span (and a failed `connect`) keeps status
+  ERROR **without its description**, which was the database error text
+  (`str(exc)`). `OTEL_SEMCONV_STABILITY_OPT_IN` is normalized before contrib
+  reads it: the value is ASCII-folded, and an empty or database-less value
+  gets `database/dup` appended. So `http` (or an empty value) now emits both
+  `db.system.name` and `db.system`, not `db.system` only, and `DATABASE`
+  means `database`. The rule is now the same in Go and Node.js.
 
 - **A24 explicit instance id in a worker (design D1 row of 2026-11-02,
   "Explicit instance id in a worker").** The warning for a
@@ -2210,6 +2264,76 @@ Unsupported instrumentation versions, task A10 (P18):
   deadline and cover shared-port round-robin, a worker restarted on its slot
   and a `child_process.fork()` child (not a cluster worker, not warned).
   New `test/cluster.test.cjs`; HOW-TO items for cluster/pm2 added to B12.
+- **Node.js SQL instrumentation (Phase B, task B10a; not released).** New
+  core option `setup({ instrumentations: [...] })` takes opt-in
+  `Instrumentation` objects. Each setup binds them to the helper's providers
+  (or to a foreign global provider, as the core instrumentations) and enables
+  them; `shutdown()`, a failed setup's rollback and `/testing` `reset()`
+  disable them. Under `OTEL_SDK_DISABLED=true` or another API version's
+  registry they stay disabled. One that throws while being enabled is
+  reported and left out; `setup()` carries on. `@staffops/otel-helper-sql`
+  implements `sqlInstrumentation({ pg?, mysql2? })` over the official
+  `@opentelemetry/instrumentation-pg` 0.77 and `-mysql2` 0.70 (dependencies;
+  `pg`/`mysql2` stay the app's). Each library is instrumented when it
+  resolves from the app. One named `true`, or the only one left, that is
+  missing throws the D14-worded error, and so does the absence of both.
+  Spans and synchronous measurements (`db.client.operation.duration`) carry
+  `db.system.name` and, until 1.0, the legacy `db.system`, unless
+  `OTEL_SEMCONV_STABILITY_OPT_IN` holds `database` without `database/dup`
+  (Go's rule; design D-JS9). The helper wraps the tracer and meter for this,
+  not a span processor. Never recorded: bound values (pg
+  `enhancedDatabaseReporting` off; mysql2 records the statement as written,
+  where upstream would format its values into `db.query.text`), connection
+  strings and users. A library loaded before `setup()` is still patched. The
+  core now warns once about an `OTEL_SEMCONV_STABILITY_OPT_IN` value without
+  `http` or with `http/dup` (Node HTTP is stable-only), and the
+  `OTEL_HELPER_EXTRA_INSTRUMENTATION` warning names `sqlInstrumentation()`,
+  `redisInstrumentation()`, `awsInstrumentation()` and the option. Pool
+  metrics: Node emits what upstream emits (pg `db.client.connection.*`;
+  mysql2 none). Go and Python use other names; recorded with the other
+  divergences in design D-JS14 (rows of 2026-11-02). Tests run against real
+  PostgreSQL and MySQL: new compose services `sql-postgres`
+  (postgres:17.11-alpine) and `sql-mysql` (mysql:8.4.11), data on tmpfs, used
+  by `node-tests`. They include the D-JS11 ESM custom-preload test (hooks
+  plus `setup({ instrumentations })`, a pg span). `ci/api-range-install.sh`
+  also installs `-sql` and checks the shared packages are single copies.
+  Test-only devDependencies: `pg`, `mysql2`.
+- **Node.js SQL instrumentation fix round (task B10a, 2026-11-03; not
+  released).** Failed DB spans keep status ERROR with no description, since
+  the database's error text can quote a bound value (contract task A25). The
+  `-sql` tracer wraps `setStatus`; the `exception` event is kept. mysql2 span
+  names now come from the statement: the first word, uppercased, after
+  whitespace and comments. Library detection: every library whose contrib
+  module loads is instrumented. One the app does not resolve is reported once
+  and still patched when loaded, and `{ pg: true }` no longer throws on
+  resolution; only a contrib module that does not load throws. The pool max
+  now survives a re-setup (a generation guard on the meter wrapper). The
+  database mode is read once per process, and the shared contrib
+  instrumentations count enables. Core: `setup({ instrumentations })` rejects,
+  by name, two instrumentations for one library and those the core installs
+  (http, undici, express, grpc), so a raw `MySQL2Instrumentation` next to
+  `sqlInstrumentation()` is refused. A rollback at any step, an inactive copy
+  and an ignored `setup()` call turn off the opt-in objects they did not
+  enable, and the ignored call names them. Enable errors are redacted. The
+  `OTEL_HELPER_EXTRA_INSTRUMENTATION` warning names only
+  `sqlInstrumentation()` until B10b/B10c. Tests: R1 error cases, pool
+  re-setup and two-pool numbers, a stub-`pg` preload, nested `pg`, a mysql2
+  preload. `SQL_TEST_REQUIRE` defaults to 1, and `ci/api-range-install.sh`
+  now installs pg and calls `sqlInstrumentation()`.
+- **CI: database services for the Node.js `node-test` job (task B10a,
+  2026-11-03).** The job now runs `postgres:17.11-alpine` and `mysql:8.4.11`
+  service containers, with the compose credentials and health checks, and
+  sets `SQL_TEST_POSTGRES`, `SQL_TEST_MYSQL` and `SQL_TEST_REQUIRE=1`. The
+  `@staffops/otel-helper-sql` database tests therefore run in CI instead of
+  being skipped. In default mode, a library the app does not resolve is
+  reported at `diag` debug level; only one named `true` gets the WARN.
+- **Node.js `-sql` second fix round (2026-11-03; not released).** A span
+  whose ERROR description is dropped now gets `error.type=_OTHER` when it
+  carries no `error.type`. The WARN for an unresolved library named `true`
+  names only the entry directory and the cwd; the full lookup chain goes on a
+  debug line. A meter bind that throws restores the previous generation.
+  `ci/api-range-install.sh` now proves that the installed `-sql` instruments
+  the installed `pg`.
 - **Go test hygiene:** `captureDiag` (`go/config_contract_test.go`) no longer
   prints slog timestamps, which made `TestDeprecatedEnvWarnsNamingReplacement`
   (`go/deprecation_test.go`) flaky.

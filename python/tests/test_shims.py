@@ -440,13 +440,15 @@ class TestSemconvDefault:
         _semconv.ensure_semconv_default()
         assert os.environ["OTEL_SEMCONV_STABILITY_OPT_IN"] == "http,database/dup"
 
-    @pytest.mark.parametrize("value", ["http/dup", "database,http"])
-    def test_user_value_with_http_wins_silently(self, value, monkeypatch, caplog):
+    # A25 (2026-11-03): the HTTP part of a user value wins; a value without a
+    # database token gets database/dup appended.
+    @pytest.mark.parametrize("value, stored", [("http/dup", "http/dup,database/dup"), ("database,http", "database,http")])
+    def test_user_value_with_http_wins_silently(self, value, stored, monkeypatch, caplog):
         monkeypatch.setattr(_semconv, "_late_initialized_old_http", lambda: False)
         os.environ["OTEL_SEMCONV_STABILITY_OPT_IN"] = value
         with caplog.at_level(logging.WARNING, logger="staffops_otel_helper"):
             _semconv.ensure_semconv_default()
-        assert os.environ["OTEL_SEMCONV_STABILITY_OPT_IN"] == value
+        assert os.environ["OTEL_SEMCONV_STABILITY_OPT_IN"] == stored
         assert caplog.text == ""
 
     def test_user_value_without_http_warns_once(self, monkeypatch, caplog):

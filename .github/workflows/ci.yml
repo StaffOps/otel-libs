@@ -170,6 +170,30 @@ jobs:
     defaults:
       run:
         working-directory: nodejs
+    # Databases for @staffops/otel-helper-sql (task B10a): the same throwaway
+    # credentials and images as testing/docker-compose.yml.
+    services:
+      postgres:
+        image: postgres:17.11-alpine
+        env:
+          POSTGRES_USER: otel
+          POSTGRES_PASSWORD: otel-test-only
+          POSTGRES_DB: otel_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -h 127.0.0.1 -U otel -d otel_test"
+          --health-interval 2s --health-timeout 3s --health-retries 60
+      mysql:
+        image: mysql:8.4.11
+        env:
+          MYSQL_RANDOM_ROOT_PASSWORD: 'yes'
+          MYSQL_USER: otel
+          MYSQL_PASSWORD: otel-test-only
+          MYSQL_DATABASE: otel_test
+        ports: ['3306:3306']
+        options: >-
+          --health-cmd "mysql -h 127.0.0.1 -uotel -potel-test-only -e 'SELECT 1' otel_test"
+          --health-interval 2s --health-timeout 3s --health-retries 60 --health-start-period 10s
     steps:
       - uses: actions/checkout@v4
         with:
@@ -206,6 +230,10 @@ jobs:
       # Includes the parity runner (test/parity/runner.test.cjs, strict xfail), run
       # by the core package's test script so its children count towards the gate.
       - name: Test + parity + coverage gate (c8 >= 90% lines, per package)
+        env:
+          SQL_TEST_POSTGRES: postgres://otel:otel-test-only@localhost:5432/otel_test
+          SQL_TEST_MYSQL: mysql://otel:otel-test-only@localhost:3306/otel_test
+          SQL_TEST_REQUIRE: '1'
         run: npm test
       - name: Fake receiver logs
         if: failure()

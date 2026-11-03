@@ -138,6 +138,12 @@ are listed in the root README "Known emitted-telemetry gaps".
   at the same version, emits DB semconv per R10 (design D-JS9), never records
   command values or connection strings, and throws the D14-worded error when
   the instrumented library (resolved from the app) is missing.
+  *Amended 2026-11-03 (B10a fix round; applies to B10b and B10c too):* the
+  factory throws only when a **contrib instrumentation module fails to load**
+  (for a library named `true`, or when none loads). A library missing from the
+  app is not an error — a nested, non-hoisted copy is invisible to resolution —
+  but is reported once: `diag` debug in default mode, WARN when named `true`
+  (contract design D14, "Node `@staffops/otel-helper-sql`" paragraph).
 - Tests run against real protocol endpoints in Docker (postgres, mysql, a RESP
   fake, a local HTTP endpoint for the AWS SDK).
 

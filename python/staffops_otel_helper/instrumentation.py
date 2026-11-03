@@ -136,6 +136,11 @@ def configure_instrumentations(options: TelemetryOptions, instrumented: list | N
                 env = {_ENV_HTTPX_EXCLUDED_URLS: _client_excluded_urls(_ENV_HTTPX_EXCLUDED_URLS, health)}
             elif class_name == "RequestsInstrumentor":
                 kwargs = {"excluded_urls": _client_excluded_urls(_ENV_REQUESTS_EXCLUDED_URLS, health)}
+            elif class_name == "SQLAlchemyInstrumentor":
+                # The same wrapped tracer as ext.sql.instrument_sql() (A25 R1): ERROR keeps its code, no description.
+                from staffops_otel_helper.ext import sql as _sql_ext
+
+                kwargs = _sql_ext.wrapped_instrument_kwargs()
             grpc_filter = _grpc_filter() if class_name in _GRPC else None
             with _env_hidden_or_set(env):
                 instrumentor = cls(filter_=grpc_filter) if class_name in _GRPC else cls()
@@ -147,6 +152,8 @@ def configure_instrumentations(options: TelemetryOptions, instrumented: list | N
         # instrument() is a no-op when the library is missing (skipped silently) or
         # installed in a version the instrumentor refuses (warned, P18).
         if instrumentor.is_instrumented_by_opentelemetry:
+            if class_name == "SQLAlchemyInstrumentor":
+                _sql_ext.mark_wrapped(instrumentor)
             instrumented.append(instrumentor)
             if flag is not None:
                 implicit.append(flag)

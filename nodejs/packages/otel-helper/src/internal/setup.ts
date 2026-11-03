@@ -10,7 +10,7 @@
  * express, gRPC); task B9 the lifecycle: the stable forwarding providers and
  * propagator of D-JS10 (registered once per process, their delegates swapped
  * by every setup and shutdown), foreign globals and `replaceGlobals`, and the
- * rollback of a failed setup (Go G1).
+ * rollback of a failed setup (Go G1); task B10a the opt-in `instrumentations`.
  */
 import cluster from 'node:cluster';
 import type * as http from 'node:http';
@@ -29,7 +29,8 @@ import { createForwarders, type Forwarders } from './forwarding';
 import { foreignRegistry, registeredGlobal, removeGlobal, type ApiGlobal } from './globals';
 import { entryIsEsm, hooksMode } from './hooks';
 import type { LogLevel } from './log-level';
-import { bindProviders, clientExclusions, createInstrumentations, disableInstrumentations, enableInstrumentations, loadedPackages, otlpTargets, type HelperInstrumentations } from './instrumentation';
+import type { Instrumentation } from '@opentelemetry/instrumentation';
+import { bindProviders, clientExclusions, createInstrumentations, disableInstrumentations, disableOptIn, enableInstrumentations, enableOptIn, loadedPackages, otlpTargets, type HelperInstrumentations } from './instrumentation';
 import { closeListener, createPrometheusReader, dropPredicate, droppingExporter, ENV_METRICS_PORT, serveMetrics, startListener, type DropPredicate, type ScrapeRequest, type ScrapeResponse, type ScrapeTarget } from './metrics-endpoint';
 import type { OtlpEndpoint } from './otlp';
 import type { Signal } from './otlp-settings';
@@ -70,6 +71,8 @@ interface Active {
   readonly drop: DropPredicate | undefined;
   /** Whether this setup enabled the instrumentations (disabled again by `shutdown()`). */
   readonly instrumented: boolean;
+  /** The opt-in instrumentations this setup enabled (`setup({ instrumentations })`; disabled by `shutdown()`). */
+  readonly optIn: readonly Instrumentation[];
   /** `register`: built by `@staffops/otel-helper/register`; later code options are then warned about. */
   readonly origin: SetupOrigin;
   /** Cached result of the first `shutdown()`. */
@@ -102,6 +105,8 @@ interface Runtime {
    * next setup; each failure is reported).
    */
   instrumentations: HelperInstrumentations | undefined;
+  /** The opt-in instrumentations enabled now (for `/testing` `reset()`, which disables them all); `shutdown()` removes its own. */
+  optIn: Set<Instrumentation>;
   /**
    * The log level the last successful setup resolved (R4); `undefined` =
    * none yet (`info`). Kept after `shutdown()`, as Go's installed level.
@@ -121,7 +126,7 @@ const SHORT_READER_TIMEOUT_MS = 1000;
 const MAX_TIMER_MS = 2 ** 31 - 1;
 
 function runtimeOf(state: HelperState): Runtime {
-  state.runtime ??= { active: undefined, forwarders: undefined, registered: {}, diagLogger: undefined, instrumentations: undefined, logLevel: undefined } satisfies Runtime;
+  state.runtime ??= { active: undefined, forwarders: undefined, registered: {}, diagLogger: undefined, instrumentations: undefined, optIn: new Set(), logLevel: undefined } satisfies Runtime;
   return state.runtime as Runtime;
 }
 
@@ -559,6 +564,7 @@ interface Attempt {
   built: Providers | undefined;
   listener: http.Server | undefined;
   instrumented: boolean;
+  optIn: Instrumentation[];
 }
 
 /**
@@ -688,17 +694,25 @@ function setupFrom(origin: SetupOrigin, options: SetupOptions | undefined): Reso
   const state = getState();
   const base = defaultResource();
   if (state === null) {
-    // Inactive copy (getState() already reported why): resolve, install nothing.
+    // Inactive copy (getState() already reported why): resolve, install nothing;
+    // an opt-in instrumentation its constructor enabled is turned off.
+    disableOptIn(validated.instrumentations ?? []);
     return withInactiveSignals(resolvePlan(validated, defaultServiceName(base), true).resolved, ALL_SIGNALS);
   }
   const rt = runtimeOf(state);
   if (rt.active !== undefined && rt.active.shutdown === undefined) {
+    // Opt-in instrumentations of this ignored call that the active setup does
+    // not use are turned off (their constructor may have enabled them) and named.
+    const activeOptIn = rt.active.optIn;
+    const ignored = (validated.instrumentations ?? []).filter((i) => !activeOptIn.includes(i));
+    disableOptIn(ignored);
+    const ignoredAttrs = ignored.length > 0 ? { instrumentations: truncateValue(ignored.map((i) => i.instrumentationName).join(',')) } : undefined;
     if (Object.keys(validated).length > 0) {
       if (rt.active.origin === 'register') {
         // The app expects its options to apply: they silently would not (B9 fix round).
-        report('setup() already ran from @staffops/otel-helper/register, so these options are ignored; to pass options in code, preload your own file (import @staffops/otel-helper/hooks, then setup({...})) instead of /register');
+        report('setup() already ran from @staffops/otel-helper/register, so these options are ignored; to pass options in code, preload your own file (import @staffops/otel-helper/hooks, then setup({...})) instead of /register', ignoredAttrs);
       } else {
-        report('setup() already ran; these options are ignored and the first result is returned', undefined, {
+        report('setup() already ran; these options are ignored and the first result is returned', ignoredAttrs, {
           origin: 'helper',
           level: 'info',
         });
@@ -709,12 +723,12 @@ function setupFrom(origin: SetupOrigin, options: SetupOptions | undefined): Reso
   // Resolution first: it can still throw for an invalid code option (code
   // `metricExporters` with `otlp` and no endpoint), before anything is installed.
   const plan = resolvePlan(validated, defaultServiceName(base));
-  const attempt: Attempt = { replace: validated.replaceGlobals === true, undo: [], built: undefined, listener: undefined, instrumented: false };
+  const attempt: Attempt = { replace: validated.replaceGlobals === true, undo: [], built: undefined, listener: undefined, instrumented: false, optIn: [] };
   let active: Active;
   try {
     active = install(rt, plan, validated, base, attempt, origin);
   } catch (err) {
-    rollback(rt, attempt);
+    rollback(rt, attempt, validated.instrumentations ?? []);
     throw err;
   }
   rt.active = active;
@@ -723,8 +737,12 @@ function setupFrom(origin: SetupOrigin, options: SetupOptions | undefined): Reso
 }
 
 /** Releases what a failed setup built and installed (Go G1); `rt.active` was never replaced. */
-function rollback(rt: Runtime, attempt: Attempt): void {
+function rollback(rt: Runtime, attempt: Attempt, optIn: readonly Instrumentation[]): void {
   if (attempt.instrumented) disableInstrumentations(rt.instrumentations);
+  // Every opt-in one of this call, also when the failure came before the
+  // instrumentations step (a constructor may have enabled it).
+  disableOptIn(optIn);
+  for (const instrumentation of optIn) rt.optIn.delete(instrumentation);
   void closeListener(attempt.listener);
   for (const undo of attempt.undo.reverse()) {
     try {
@@ -831,15 +849,30 @@ function install(rt: Runtime, plan: Plan, options: SetupOptions, base: Resource,
   // foreign provider), so instrumentation spans join the app's own; every
   // setup binds them again, so a later `replaceGlobals` setup moves them to
   // the helper's (task B9).
-  const instrumentations = foreignApi === undefined && built !== undefined ? instrumentationsOf(rt) : undefined;
-  if (instrumentations !== undefined) {
-    attempt.instrumented = tryEnableInstrumentations(instrumentations, plan, {
-      tracerProvider: ownsTracerProvider ? fw.tracerProvider : trace.getTracerProvider(),
-      meterProvider: ownsMeterProvider ? fw.meterProvider : metrics.getMeterProvider(),
-    }, loadedBeforeSetup);
+  const instrumenting = foreignApi === undefined && built !== undefined;
+  const bound = instrumenting
+    ? {
+        tracerProvider: ownsTracerProvider ? fw.tracerProvider : trace.getTracerProvider(),
+        meterProvider: ownsMeterProvider ? fw.meterProvider : metrics.getMeterProvider(),
+        loggerProvider: ownsLoggerProvider ? fw.loggerProvider : logs.getLoggerProvider(),
+      }
+    : undefined;
+  const instrumentations = bound !== undefined ? instrumentationsOf(rt) : undefined;
+  if (bound !== undefined && instrumentations !== undefined) {
+    attempt.instrumented = tryEnableInstrumentations(instrumentations, plan, bound, loadedBeforeSetup);
     // Spec JS5: in an ES module process, import-in-the-middle only sees later
     // imports through the loader hooks (require-in-the-middle never does).
     if (attempt.instrumented && hooksMode() === undefined && entryIsEsm()) reportOnce('esm-without-hooks', ESM_WITHOUT_HOOKS);
+  }
+  // The opt-in instrumentations (task B10a), on the same providers and under
+  // the same conditions; otherwise left disabled (one built enabled by its
+  // constructor is turned off: no instrumentation under OTEL_SDK_DISABLED=true).
+  const optIn = options.instrumentations ?? [];
+  if (bound !== undefined) {
+    attempt.optIn = enableOptIn(optIn, bound);
+    for (const instrumentation of attempt.optIn) rt.optIn.add(instrumentation);
+  } else {
+    disableOptIn(optIn);
   }
   step('instrumentations');
   // The listener serves only a reader whose MeterProvider is the global one
@@ -886,6 +919,7 @@ function install(rt: Runtime, plan: Plan, options: SetupOptions, base: Resource,
     listener: attempt.listener,
     drop: dropPredicate(plan.resolved.disabledMetrics),
     instrumented: attempt.instrumented,
+    optIn: attempt.optIn,
     origin,
     shutdown: undefined,
   };
@@ -1013,6 +1047,8 @@ async function runShutdown(rt: Runtime, active: Active, timeoutMs: number): Prom
     // Instrumentations off first (Python uninstruments first): no new spans or
     // measurements from them reach providers that are shutting down.
     if (active.instrumented) disableInstrumentations(rt.instrumentations);
+    disableOptIn(active.optIn);
+    for (const instrumentation of active.optIn) rt.optIn.delete(instrumentation);
     // The listener first (Go): scrapes stop, then the MeterProvider flushes.
     const listenerClosed = closeListener(active.listener);
     // The forwarders keep each provider as their delegate until its shutdown
@@ -1113,6 +1149,8 @@ export function resetForTests(): void {
     rt.registered = {};
     // Unconditionally: whatever a setup left enabled (B6 review).
     disableInstrumentations(rt.instrumentations);
+    disableOptIn(rt.optIn);
+    rt.optIn.clear();
     if (helperOwnsDiag(rt)) diag.disable();
     rt.diagLogger = undefined;
     rt.logLevel = undefined;

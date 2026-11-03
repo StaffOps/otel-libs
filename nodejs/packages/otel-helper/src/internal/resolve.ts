@@ -9,13 +9,14 @@
  * `otlp-settings.ts`, `sdk-settings.ts`), the exporter lists,
  * `OTEL_SDK_DISABLED` and the metric export interval (task B4c,
  * `signals.ts`), the sampler, propagators and health paths (task B5,
- * `tracing.ts`), the `/metrics` port (task B7, `metrics-endpoint.ts`); later
- * tasks add theirs.
+ * `tracing.ts`), the `/metrics` port (task B7, `metrics-endpoint.ts`), the
+ * opt-in `instrumentations` option and the `OTEL_SEMCONV_STABILITY_OPT_IN` HTTP
+ * warning (task B10a, design D-JS9); later tasks add theirs.
  */
 import cluster from 'node:cluster';
 import { randomUUID } from 'node:crypto';
 import { report, reportOnce, type DiagnosticValue } from './diagnostics';
-import { envBool, envValue, trimWS, typeName, type Warn } from './env';
+import { asciiLower, envBool, envValue, trimWS, typeName, type Warn } from './env';
 import { checkCodeOtlp, resolveOtlp, type OtlpHeaders, type OtlpPlan, type Reporter } from './otlp';
 import type { Signal } from './otlp-settings';
 import { resolveSdkSettings, type SdkSettings } from './sdk-settings';
@@ -24,6 +25,7 @@ import { checkCodeDisabledMetrics, checkCodeMetricsPort, resolveDisabledMetrics,
 import { defaultLogLevel, knownEnvironment, LOG_LEVELS, type LogLevel } from './log-level';
 import { parseResourceAttributes } from './resource-attributes';
 import { checkCodeTracing, DEFAULT_HEALTH_PATHS, DEFAULT_SAMPLER, ENV_SAMPLE_RATIO, resolvePropagators, resolveSampler, type PropagatorName, type SamplerConfig } from './tracing';
+import type { Instrumentation } from '@opentelemetry/instrumentation';
 import type { SpanProcessor } from '@opentelemetry/sdk-trace';
 
 export const ENV_OTEL_SERVICE_NAME = 'OTEL_SERVICE_NAME';
@@ -37,6 +39,8 @@ export const ENV_NODE_RESOURCE_DETECTORS = 'OTEL_NODE_RESOURCE_DETECTORS';
 export const ENV_CONFIG_FILE = 'OTEL_CONFIG_FILE';
 /** Deprecated name of `OTEL_CONFIG_FILE`, warned the same way (contract D1 row "OTEL_CONFIG_FILE"). */
 export const ENV_EXPERIMENTAL_CONFIG_FILE = 'OTEL_EXPERIMENTAL_CONFIG_FILE';
+/** Semantic-convention migration switch (design D-JS9); its database tokens are read by the opt-in packages. */
+export const ENV_SEMCONV_OPT_IN = 'OTEL_SEMCONV_STABILITY_OPT_IN';
 
 export const ATTR_SERVICE_NAME = 'service.name';
 export const ATTR_ENVIRONMENT = 'deployment.environment.name';
@@ -55,7 +59,7 @@ const BUILTIN_DETECTORS: ReadonlySet<string> = new Set(['env', 'serviceinstance'
  * `insecure` options, task B4b `exportTimeoutMs` and `compression`, task B4c
  * `metricExporters`, `exportIntervalMs` and `disabledSignals`, task B5
  * `sampleRatio` and `healthPaths`, task B7 `prometheusMetricsPort`, A21
- * `disabledMetrics`; the other documented options land with their tasks and
+ * `disabledMetrics`, task B10a `instrumentations`; the other documented options land with their tasks and
  * are rejected as unknown until then. Pass a plain object (or
  * a null-prototype one); class instances are rejected. `setup()` reads each
  * property once.
@@ -155,6 +159,15 @@ export interface SetupOptions {
    * provider keep using it.
    */
   readonly replaceGlobals?: boolean | undefined;
+  /**
+   * Opt-in instrumentations, e.g. `sqlInstrumentation()` from
+   * `@staffops/otel-helper-sql`, or any `@opentelemetry/instrumentation`
+   * `Instrumentation`. Each setup binds them to the helper's providers and
+   * enables them; `shutdown()` disables them. Not enabled under
+   * `OTEL_SDK_DISABLED=true` or into another API version's registry. Create
+   * them before the app loads the libraries they instrument.
+   */
+  readonly instrumentations?: readonly Instrumentation[] | undefined;
   /** Test/advanced: extra span processors, added after the helper's own (design D-JS7). */
   readonly spanProcessors?: readonly SpanProcessor[] | undefined;
 }
@@ -267,6 +280,7 @@ const OPTION_KEYS: ReadonlySet<string> = new Set([
   'sampleRatio',
   'healthPaths',
   'replaceGlobals',
+  'instrumentations',
   'spanProcessors',
 ]);
 
@@ -295,6 +309,57 @@ function checkBoolean(option: string, value: unknown): void {
 }
 
 const SPAN_PROCESSOR_METHODS = ['onStart', 'onEnd', 'forceFlush', 'shutdown'] as const;
+const INSTRUMENTATION_METHODS = ['enable', 'disable', 'setTracerProvider', 'setMeterProvider'] as const;
+
+function isInstrumentation(value: unknown): value is Instrumentation {
+  if (typeof value !== 'object' || value === null) return false;
+  const o = value as Record<string, unknown>;
+  return typeof o.instrumentationName === 'string' && INSTRUMENTATION_METHODS.every((m) => typeof o[m] === 'function');
+}
+
+/** Instrumentation names the core installs itself (`instrumentation.ts`): an opt-in one with these would patch twice. */
+export const CORE_INSTRUMENTATION_NAMES: ReadonlySet<string> = new Set([
+  '@opentelemetry/instrumentation-http',
+  '@opentelemetry/instrumentation-undici',
+  '@opentelemetry/instrumentation-express',
+  '@opentelemetry/instrumentation-grpc',
+]);
+
+/**
+ * The instrumentation names one opt-in object covers: its own and, for a
+ * composite such as `sqlInstrumentation()`, the `coveredInstrumentations` it
+ * wraps (a string array; anything else is rejected).
+ */
+function coveredNames(instrumentation: Instrumentation): string[] {
+  const covered: unknown = (instrumentation as { coveredInstrumentations?: unknown }).coveredInstrumentations;
+  if (covered === undefined) return [instrumentation.instrumentationName];
+  if (!Array.isArray(covered) || !covered.every((n) => typeof n === 'string')) {
+    fail('instrumentations', `has ${JSON.stringify(instrumentation.instrumentationName)} with coveredInstrumentations that is not an array of strings`);
+  }
+  return [instrumentation.instrumentationName, ...(covered)];
+}
+
+/**
+ * Two instrumentations for the same library would patch it twice (and a raw
+ * contrib one next to its helper wrapper would undo the wrapper's settings,
+ * e.g. the mysql2 statement mask): duplicates are found by name, as are the
+ * names the core owns.
+ */
+function checkInstrumentationNames(list: readonly Instrumentation[]): void {
+  const seen = new Map<string, string>();
+  for (const instrumentation of list) {
+    for (const name of coveredNames(instrumentation)) {
+      if (CORE_INSTRUMENTATION_NAMES.has(name)) {
+        fail('instrumentations', `has ${JSON.stringify(name)}, which the helper installs itself; remove it`);
+      }
+      const owner = seen.get(name);
+      if (owner !== undefined) {
+        fail('instrumentations', `has two instrumentations for ${JSON.stringify(name)} (${JSON.stringify(owner)} and ${JSON.stringify(instrumentation.instrumentationName)}); pass one`);
+      }
+      seen.set(name, instrumentation.instrumentationName);
+    }
+  }
+}
 
 /**
  * Rejects invalid code options (R8: fail fast, naming the option) and returns
@@ -356,6 +421,16 @@ export function validateOptions(options: unknown): SetupOptions {
     }
     o.spanProcessors = Object.freeze(processors);
   }
+  if (o.instrumentations !== undefined) {
+    if (!Array.isArray(o.instrumentations)) fail('instrumentations', `must be an array, got ${typeName(o.instrumentations)}`);
+    // The same object twice is enabled once; two objects for one library are rejected below.
+    const list = [...new Set(o.instrumentations as unknown[])];
+    if (!list.every(isInstrumentation)) {
+      fail('instrumentations', 'must contain Instrumentation objects (instrumentationName, enable, disable, setTracerProvider, setMeterProvider)');
+    }
+    checkInstrumentationNames(list);
+    o.instrumentations = Object.freeze(list);
+  }
   return Object.freeze(o);
 }
 
@@ -400,10 +475,32 @@ function warnDeprecatedEnv(): void {
   if (envValue(ENV_EXTRA_INSTRUMENTATION) !== undefined) {
     reportOnce(
       `unused:${ENV_EXTRA_INSTRUMENTATION}`,
-      `${ENV_EXTRA_INSTRUMENTATION} has no effect in Node.js and is ignored; database, Redis and AWS instrumentation come from the opt-in @staffops/otel-helper-sql, -redis and -aws packages`,
+      // B10b/B10c add redisInstrumentation() and awsInstrumentation() when they exist.
+      `${ENV_EXTRA_INSTRUMENTATION} has no effect in Node.js and is ignored; pass sqlInstrumentation() (@staffops/otel-helper-sql) in setup({ instrumentations })`,
       { variable: ENV_EXTRA_INSTRUMENTATION },
     );
   }
+  warnSemconvOptIn();
+}
+
+/**
+ * `OTEL_SEMCONV_STABILITY_OPT_IN` (design D-JS9): the Node.js HTTP
+ * instrumentations emit only the stable HTTP conventions (instrumentation-http
+ * 0.300 has no old generation), so a value asking for the old ones — no
+ * `http` token, or `http/dup` — is warned once and has no HTTP effect. Tokens
+ * are trimmed and ASCII case-folded (contract D1 row "ASCII case folding").
+ * The database tokens are read by the opt-in packages (`-sql`).
+ */
+function warnSemconvOptIn(): void {
+  const value = envValue(ENV_SEMCONV_OPT_IN);
+  if (value === undefined) return;
+  const tokens = new Set(value.split(',').map((t) => asciiLower(trimWS(t))));
+  if (tokens.has('http') && !tokens.has('http/dup')) return;
+  reportOnce(
+    `semconv:${ENV_SEMCONV_OPT_IN}`,
+    `${ENV_SEMCONV_OPT_IN} asks for the old HTTP semantic conventions (no 'http' token, or 'http/dup'); the Node.js HTTP instrumentations emit only the stable ones, so HTTP telemetry is unchanged`,
+    { variable: ENV_SEMCONV_OPT_IN },
+  );
 }
 
 function envResourceAttributes(warn: boolean): Readonly<Record<string, string>> {

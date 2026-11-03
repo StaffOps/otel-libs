@@ -7,6 +7,8 @@ installed (it is not part of the default test env — no new dev dependency; the
 A10 validation run installs ``sqlalchemy==2.0.x`` explicitly). Re-validated
 2026-10-28 on contrib 0.63b0 and 0.66b1: unset/``http`` → ``db.system`` only;
 ``http,database/dup`` → both; ``http,database`` → ``db.system.name`` only.
+Since A25 (2026-11-03) the helper normalizes a set value (ASCII fold,
+``database/dup`` appended without a database token), so ``http`` gives both.
 """
 
 import os
@@ -52,8 +54,9 @@ def test_default_selects_database_dup_mode(monkeypatch):
 @pytest.mark.parametrize("opt_in, expected", [
     ("-", {"db.system": "sqlite", "db.system.name": "sqlite"}),   # helper default
     ("http,database", {"db.system.name": "sqlite"}),               # user value wins
-    ("http", {"db.system": "sqlite"}),
-], ids=["default_dup", "database_new_only", "http_only_legacy"])
+    ("http", {"db.system": "sqlite", "db.system.name": "sqlite"}),  # A25: database/dup appended
+    ("HTTP,DATABASE", {"db.system.name": "sqlite"}),                 # A25: ASCII-folded
+], ids=["default_dup", "database_new_only", "http_only_dup_a25", "uppercase_database_a25"])
 def test_sqlalchemy_db_system_keys(opt_in, expected):
     pytest.importorskip("sqlalchemy")
     pytest.importorskip("opentelemetry.instrumentation.sqlalchemy")

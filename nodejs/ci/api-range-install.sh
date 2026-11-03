@@ -1,5 +1,7 @@
 #!/bin/sh
-# Install test (spec JS1, D-JS2): pack the built core, install it in a fresh
+# Install test (spec JS1, D-JS2): pack the built core (and the opt-in -sql
+# package, task B10a: its contrib instrumentations must share the core's
+# @opentelemetry/instrumentation and core), install them in a fresh
 # consumer next to the NEWEST @opentelemetry/api its peer range admits and the
 # app's own @grpc/grpc-js, check the tree is valid, that the packages which
 # must be shared have exactly one copy (`npm ls` exits 0 with duplicates, so
@@ -22,11 +24,11 @@ echo "api peer range: $range -> newest admitted: $newest"
 
 dir="$(mktemp -d)"
 trap 'rm -rf "$dir"' EXIT
-npm pack ./packages/otel-helper --pack-destination "$dir" --loglevel=error >/dev/null
+npm pack ./packages/otel-helper ./packages/otel-helper-sql --pack-destination "$dir" --loglevel=error >/dev/null
 cd "$dir"
 printf '{ "name": "api-range-consumer", "private": true }\n' > package.json
-npm install --ignore-scripts --no-audit --no-fund --loglevel=error ./staffops-otel-helper-*.tgz \
-  "@opentelemetry/api@$newest" "@grpc/grpc-js@^1.14.5"
+npm install --ignore-scripts --no-audit --no-fund --loglevel=error ./staffops-otel-helper-[0-9]*.tgz ./staffops-otel-helper-sql-*.tgz \
+  "@opentelemetry/api@$newest" "@grpc/grpc-js@^1.14.5" "pg@^8"
 npm ls --all >/dev/null
 # The api package does not export ./package.json; read the installed file.
 installed="$(node -p "JSON.parse(require('fs').readFileSync('node_modules/@opentelemetry/api/package.json', 'utf8')).version")"
@@ -46,4 +48,15 @@ done
 [ "$status" = 0 ] || { echo "FAIL: a package that must be shared is not installed exactly once"; exit 1; }
 node -e "const h = require('@staffops/otel-helper'); if (!h.VERSION) process.exit(1)"
 node --input-type=module -e "import { VERSION } from '@staffops/otel-helper'; if (!VERSION) process.exit(1)"
+# The installed -sql really instruments the installed pg (L-g, 2026-11-03).
+OTEL_HELPER_METRICS_PORT=0 node -e "
+  require.resolve('pg');
+  const { setup, shutdown } = require('@staffops/otel-helper');
+  const i = require('@staffops/otel-helper-sql').sqlInstrumentation({ pg: true });
+  setup({ serviceName: 'api-range', instrumentations: [i] });
+  const pg = require('pg');
+  if (pg.Client.prototype.query.__wrapped !== true) { console.error('FAIL: pg not instrumented'); process.exit(1); }
+  shutdown().then(() => console.log('-sql instruments pg: OK'));
+"
+node --input-type=module -e "import { sqlInstrumentation } from '@staffops/otel-helper-sql'; if (typeof sqlInstrumentation !== 'function') process.exit(1)"
 echo "api-range install test: OK (workspace $ws)"

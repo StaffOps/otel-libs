@@ -7,7 +7,7 @@ import fail; a fake module stands in for an installed instrumentor.
 
 import sys
 from types import ModuleType
-from unittest.mock import MagicMock
+from unittest.mock import ANY, MagicMock
 
 import pytest
 
@@ -179,12 +179,14 @@ class TestExtraInstalled:
     def test_sql_instruments_globally(self, monkeypatch):
         cls = _fake_instrumentor_module(
             monkeypatch, "opentelemetry.instrumentation.sqlalchemy", "SQLAlchemyInstrumentor")
+        cls.return_value.is_instrumented_by_opentelemetry = False
         instrument_sql()
-        cls.return_value.instrument.assert_called_once_with()
+        cls.return_value.instrument.assert_called_once_with(tracer_provider=ANY)
 
     def test_sql_instruments_specific_engine(self, monkeypatch):
         cls = _fake_instrumentor_module(
             monkeypatch, "opentelemetry.instrumentation.sqlalchemy", "SQLAlchemyInstrumentor")
+        cls.return_value.is_instrumented_by_opentelemetry = False
         engine = object()
         instrument_sql(engine=engine)
-        cls.return_value.instrument.assert_called_once_with(engine=engine)
+        cls.return_value.instrument.assert_called_once_with(engine=engine, tracer_provider=ANY)
