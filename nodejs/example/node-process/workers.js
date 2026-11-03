@@ -9,16 +9,17 @@ setup({ resourceAttributes: { 'app.component': 'notification-workers' } });
 
 const http = require('node:http');
 const { setTimeout: sleep } = require('node:timers/promises');
-const { SpanStatusCode } = require('@opentelemetry/api');
+const { SpanStatusCode, ValueType } = require('@opentelemetry/api');
 
 const logger = createLogger({ name: 'node-process' });
 const tracer = getTracer('node-process');
 const meter = getMeter('node-process');
 
 // Legacy instrument names, kept identical to python-process.
-const queueDepth = meter.createUpDownCounter('notifications.queue_depth');
-const retriesTotal = meter.createCounter('notifications.retries_total');
-const cleanupTotal = meter.createCounter('notifications.cleaned_total');
+// Integer counts (ValueType.INT), as Python's int adds; the JS default is a double (design D-JS14).
+const queueDepth = meter.createUpDownCounter('notifications.queue_depth', { valueType: ValueType.INT });
+const retriesTotal = meter.createCounter('notifications.retries_total', { valueType: ValueType.INT });
+const cleanupTotal = meter.createCounter('notifications.cleaned_total', { valueType: ValueType.INT });
 
 const API_URL = process.env.API_URL ?? 'http://node-api-stable:8000';
 const HEALTH_PORT = Number(process.env.HEALTH_PORT ?? 8080);

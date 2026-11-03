@@ -3,10 +3,68 @@
 Runnable apps showing `@staffops/otel-helper` in use: a notification service,
 the Node twin of the Python one (`python/example/`). Same routes, ports, env
 vars, custom span names, span attributes and metric names (instrumentation span
-names differ per language: see the end of this page). The custom-signals twin
-(`node-custom-signals`) and `EXAMPLES.md` are task B11c.
+names differ per language: see the end of this page).
+
+| Example | Shows |
+|---|---|
+| [`node-custom-signals/`](#custom-signals) | custom spans, metrics and logs correlated with the trace — a short job that exits; same names and trace shape as the Go and Python twins |
+| `node-api/`, `node-backend/`, `node-process/` | a notification service: express → gRPC distributed tracing, workers with root spans, health probes, graceful shutdown |
+
+Per-endpoint telemetry, Grafana queries and the differences from the Python
+and Go examples: [EXAMPLES.md](EXAMPLES.md).
 
 Prerequisites: Docker. Commands run from the repository root.
+
+## Custom signals
+
+[`node-custom-signals/custom-signals.js`](https://github.com/StaffOps/otel-libs/blob/main/nodejs/example/node-custom-signals/custom-signals.js)
+processes a batch of three simulated orders (`ord-3` fails) and exits, as
+`go-custom-signals` and `python-custom-signals`: a root span
+(`startRootSpan`) with one child span per order (attributes, an event, an
+error recorded with its status), a counter, a histogram with second-based
+buckets, an up-down counter and an observable gauge, and `createLogger()`
+records correlated with the active span. What it emits, signal by signal:
+[EXAMPLES.md](EXAMPLES.md#custom-signals-node-custom-signals).
+
+```bash
+docker build -t node-custom-signals -f nodejs/example/node-custom-signals/Dockerfile nodejs
+
+# Against the repo's test Collector (testing/docker-compose.yml, debug exporter
+# with verbosity: detailed, which prints everything it receives)
+docker compose -f testing/docker-compose.yml --profile e2e up -d collector
+docker run --rm --network otel-libs-testing_default \
+  -e OTEL_SERVICE_NAME=node-custom-signals \
+  -e OTEL_RESOURCE_ATTRIBUTES=deployment.environment.name=DEV \
+  -e OTEL_EXPORTER_OTLP_ENDPOINT=http://collector:4317 \
+  node-custom-signals
+
+# The Collector log keeps every earlier run: filter on the printed trace_id
+# (or recreate the Collector first with `up -d --force-recreate collector`).
+docker compose -f testing/docker-compose.yml --profile e2e logs --no-log-prefix --tail 2000 collector \
+  | grep -B 4 -A 30 <trace_id>
+docker compose -f testing/docker-compose.yml --profile e2e stop collector
+
+# Without a Collector: JSON log lines on stdout, no traces
+docker run --rm -e OTEL_SERVICE_NAME=node-custom-signals node-custom-signals
+```
+
+The job prints `trace_id=<id>` first (filter the Collector log on it) and
+flushes everything through `shutdown(5000)` before it exits. Without a
+Collector (recorded 2026-11-03, stack trimmed):
+
+```text
+otelhelper: deployment.environment.name is not set; set it in OTEL_RESOURCE_ATTRIBUTES (e.g. deployment.environment.name=PRD); log level defaults to INFO using=absent
+trace_id=2a1bca8bf62a7b40b865f0c8c9f4190f
+{"time":"2026-11-03T22:07:17.225Z","level":"INFO","msg":"order processed","logger":"node-custom-signals","order.id":"ord-1","order.amount":42.5}
+{"time":"2026-11-03T22:07:17.248Z","level":"INFO","msg":"order processed","logger":"node-custom-signals","order.id":"ord-2","order.amount":99.9}
+{"time":"2026-11-03T22:07:17.274Z","level":"ERROR","msg":"order failed","logger":"node-custom-signals","order.id":"ord-3","exception":"PaymentDeclinedError: card declined by issuer\n    at charge (…/custom-signals.js:99:25)\n    …"}
+{"time":"2026-11-03T22:07:17.274Z","level":"INFO","msg":"batch finished","logger":"node-custom-signals","batch.size":3,"orders.failed":1}
+```
+
+The first line is a diagnostic (stderr). The JSON lines are the stdout
+fallback: no trace IDs, as Python. Metrics are served on `:9464/metrics` only
+while the process runs (`order_processed_total`,
+`order_duration_seconds_bucket`, `order_active`, `order_queue_depth`).
 
 ## Notification service
 

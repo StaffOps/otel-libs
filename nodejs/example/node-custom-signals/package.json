@@ -1,0 +1,17 @@
+{
+  "name": "node-custom-signals",
+  "private": true,
+  "description": "Custom spans, metrics and correlated logs on top of the helper (a short job that exits), Node twin of go-custom-signals and python-custom-signals. @staffops/otel-helper is installed by the Dockerfile, not listed here.",
+  "license": "Apache-2.0",
+  "type": "commonjs",
+  "main": "custom-signals.js",
+  "engines": {
+    "node": ">=22.15.0"
+  },
+  "scripts": {
+    "start": "node custom-signals.js"
+  },
+  "dependencies": {
+    "@opentelemetry/api": "1.10.0"
+  }
+}

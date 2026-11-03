@@ -93,7 +93,9 @@ written to stdout as JSON and metrics are served on `:9464/metrics`.
 three simulated orders (`ord-3` fails) and exits. Its Python twin,
 [`python-custom-signals`](https://github.com/StaffOps/otel-libs/blob/main/python/example/python-custom-signals/custom_signals.py),
 uses the same names and the same trace shape, so the two outputs can be
-compared side by side.
+compared side by side; so does the Node.js twin,
+[`node-custom-signals`](https://github.com/StaffOps/otel-libs/blob/main/nodejs/example/node-custom-signals/custom-signals.js)
+(added 2026-11-03).
 
 | Signal | Code |
 |--------|------|
@@ -155,7 +157,7 @@ orders.process-batch  26299b17894dd960  no parent   Error "1 of 3 orders failed"
 ├── order.process     02b2799c7db33272  ord-1 standard  Unset  event order.validated (order.amount=42.5)
 ├── order.process     32706bd3b2a4e771  ord-2 express   Unset  event order.validated (order.amount=99.9)
 └── order.process     ec4a689e7efdbafb  ord-3 standard  Error "payment declined"
-                      events order.validated (order.amount=10),
+                      events order.validated (order.amount=10; 10.5 since 2026-11-03),
                              exception (exception.type=*main.PaymentDeclinedError,
                                         exception.message="card declined by issuer")
 ```

@@ -12,7 +12,7 @@ const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
 const { setTimeout: sleep } = require('node:timers/promises');
-const { SpanStatusCode } = require('@opentelemetry/api');
+const { SpanStatusCode, ValueType } = require('@opentelemetry/api');
 const grpc = require('@grpc/grpc-js');
 const protoLoader = require('@grpc/proto-loader');
 const { HealthImplementation } = require('grpc-health-check');
@@ -25,7 +25,8 @@ const meter = getMeter('node-backend');
 const deliveryDuration = meter.createHistogram('notification.delivery_duration_seconds', {
   advice: { explicitBucketBoundaries: [0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5] },
 });
-const deliveryAttempts = meter.createCounter('notification.delivery_attempts_total');
+// Integer counts (ValueType.INT), as Python's int adds; the JS default is a double (design D-JS14).
+const deliveryAttempts = meter.createCounter('notification.delivery_attempts_total', { valueType: ValueType.INT });
 
 const logger = createLogger({ name: 'node-backend' });
 

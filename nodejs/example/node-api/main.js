@@ -11,7 +11,7 @@ setup({ resourceAttributes: { 'app.component': 'notification-api' } });
 const fs = require('node:fs');
 const http = require('node:http');
 const path = require('node:path');
-const { SpanStatusCode } = require('@opentelemetry/api');
+const { SpanStatusCode, ValueType } = require('@opentelemetry/api');
 const express = require('express');
 const grpc = require('@grpc/grpc-js');
 const protoLoader = require('@grpc/proto-loader');
@@ -20,10 +20,11 @@ const tracer = getTracer('node-api');
 const meter = getMeter('node-api');
 
 // Legacy instrument names, kept identical to python-api (see the README).
-const notificationsSent = meter.createCounter('notifications.sent_total');
-const notificationsFailed = meter.createCounter('notifications.failed_total');
-const templateRenders = meter.createCounter('templates.rendered_total');
-const activeRequests = meter.createUpDownCounter('notifications.active_requests');
+// Integer counts (ValueType.INT), as Python's int adds; the JS default is a double (design D-JS14).
+const notificationsSent = meter.createCounter('notifications.sent_total', { valueType: ValueType.INT });
+const notificationsFailed = meter.createCounter('notifications.failed_total', { valueType: ValueType.INT });
+const templateRenders = meter.createCounter('templates.rendered_total', { valueType: ValueType.INT });
+const activeRequests = meter.createUpDownCounter('notifications.active_requests', { valueType: ValueType.INT });
 
 const logger = createLogger({ name: 'node-api' });
 

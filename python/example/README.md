@@ -5,7 +5,7 @@ see the helper's output before instrumenting their own service.
 
 | Example | Shows |
 |---|---|
-| [`python-custom-signals/`](#custom-signals) | custom spans, metrics and logs correlated with the trace — a short job that exits; same names and trace shape as the Go twin |
+| [`python-custom-signals/`](#custom-signals) | custom spans, metrics and logs correlated with the trace — a short job that exits; same names and trace shape as the Go and Node.js twins |
 | `python-api/`, `python-backend/`, `python-process/` | a notification service: FastAPI → gRPC distributed tracing, workers with root spans, health probes, graceful shutdown |
 
 Per-endpoint telemetry and Grafana queries for the notification service:
@@ -21,7 +21,9 @@ Prerequisites: Docker. Commands run from the repository root.
 processes a batch of three simulated orders (`ord-3` fails) and exits. Its Go
 twin, [`go-custom-signals`](https://github.com/StaffOps/otel-libs/blob/main/go/example/go-custom-signals/main.go),
 uses the same names and the same trace shape, so the two outputs can be
-compared side by side.
+compared side by side; so does the Node.js twin,
+[`node-custom-signals`](https://github.com/StaffOps/otel-libs/blob/main/nodejs/example/node-custom-signals/custom-signals.js)
+(added 2026-11-03).
 
 | Signal | What the code does |
 |---|---|
@@ -114,7 +116,7 @@ orders.process-batch  83295ff7022e6302  no parent   Error "1 of 3 orders failed"
 ├── order.process     19d681aa6b89f24b  ord-1 standard  Unset  event order.validated (order.amount=42.5)
 ├── order.process     ca364c82b554ad15  ord-2 express   Unset  event order.validated (order.amount=99.9)
 └── order.process     66a61162c7e890a7  ord-3 standard  Error "payment declined"
-                      events order.validated (order.amount=10),
+                      events order.validated (order.amount=10; 10.5 since 2026-11-03),
                              exception (exception.type=__main__.PaymentDeclinedError,
                                         exception.message="card declined by issuer",
                                         exception.stacktrace=…)

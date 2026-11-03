@@ -3,7 +3,8 @@
 A short-lived job that processes one batch of three simulated orders (ord-3
 fails) and exits. It shows the three custom-signal APIs an application uses on
 top of the helper's automatic instrumentation, with the same names and trace
-shape as the Go twin (go/example/go-custom-signals):
+shape as the Go and Node.js twins (go/example/go-custom-signals,
+nodejs/example/node-custom-signals):
 
 - spans: a batch root span (``start_root_span``) with one child span per order,
   attributes, an event, status and exception recording;
@@ -62,7 +63,7 @@ class Order:
 ORDERS = [
     Order("ord-1", "standard", 42.5),
     Order("ord-2", "express", 99.9),
-    Order("ord-3", "standard", 10, fail=True),
+    Order("ord-3", "standard", 10.5, fail=True),
 ]
 
 # Set by SIGTERM / SIGINT: the loop stops taking new orders, the flush still runs.

@@ -21,7 +21,7 @@ Query conventions:
 
 ## Custom signals (`python-custom-signals`)
 
-Same names as the Go twin (`go-custom-signals`).
+Same names as the Go and Node.js twins (`go-custom-signals`, `node-custom-signals`; the Node twin since 2026-11-03).
 
 | Signal | Name | Kind | Attributes |
 |---|---|---|---|

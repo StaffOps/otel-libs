@@ -5,9 +5,9 @@
 // span.
 //
 // It processes one batch of three simulated orders (ord-3 fails), flushes
-// everything with Shutdown and exits. The Python twin,
-// python/example/python-custom-signals, emits the same names and the same trace
-// shape. Point it at a Collector with OTEL_EXPORTER_OTLP_ENDPOINT; without one,
+// everything with Shutdown and exits. The Python and Node.js twins,
+// python/example/python-custom-signals and nodejs/example/node-custom-signals,
+// emit the same names and the same trace shape. Point it at a Collector with OTEL_EXPORTER_OTLP_ENDPOINT; without one,
 // logs go to stdout as JSON and metrics to the Prometheus /metrics listener
 // (gone when the process exits).
 package main
@@ -96,7 +96,7 @@ func run() error {
 	orders := []order{
 		{id: "ord-1", kind: "standard", amount: 42.5},
 		{id: "ord-2", kind: "express", amount: 99.9},
-		{id: "ord-3", kind: "standard", amount: 10, fail: true},
+		{id: "ord-3", kind: "standard", amount: 10.5, fail: true},
 	}
 	queueDepth.Store(int64(len(orders)))
 

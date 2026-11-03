@@ -2761,6 +2761,38 @@ Unsupported instrumentation versions, task A10 (P18):
   paused exits within the budget with its final log flushed. Found on the way
   (design D-JS14): a hand-injected `traceparent` on an instrumented `fetch` is
   sent twice and breaks the trace, so `node-process` does not inject it.
+- **Node.js custom-signals example and `EXAMPLES.md` (Phase B, task B11c; not
+  released).** `nodejs/example/node-custom-signals/custom-signals.js` is the
+  Node twin of `go-custom-signals` and `python-custom-signals`: one batch of
+  three orders (`ord-3` fails), root span `orders.process-batch`
+  (`startRootSpan`, `batch.size`, ERROR `1 of 3 orders failed`), child spans
+  `order.process` (`order.id`, `order.type`, event `order.validated` with
+  `order.amount`, exception event + ERROR `payment declined`), the instruments
+  `order.processed` (Counter), `order.duration` (Histogram, `s`, buckets 5 ms –
+  1 s), `order.active` (UpDownCounter) and `order.queue.depth` (observable
+  gauge, `queue.name`) on scope `orders`, with `error.type` on failures only,
+  and the `order processed` / `order failed` / `batch finished` log records
+  correlated with the active span. The counts use `valueType: ValueType.INT`
+  (integers, as Go and Python; the JS default is a double). `Dockerfile` and
+  `Dockerfile.demo` as the other Node examples. `nodejs/example/EXAMPLES.md`
+  mirrors `python/example/EXAMPLES.md` (custom signals, the notification
+  service per app, cross-service trace, PromQL/TraceQL) and adds "Differences
+  from Python and Go": `exception.type` (`PaymentDeclinedError`,
+  `__main__.PaymentDeclinedError`, `*main.PaymentDeclinedError`), log scopes,
+  no exemplars in Node, express `http.route` syntax, the extra express and
+  ASGI spans, gRPC span names, error response shapes vs FastAPI, the Node-only
+  log records, the instrumented probe server, and the backend that finishes a
+  call after the client's deadline. Verified against collector-contrib 0.160.0
+  side by side with the Go and Python twins: the same span, metric and log
+  names, attribute keys, units and instrument kinds. No library code changed.
+  *Fix round 2026-11-03:* the 7 counters and up-down counters of node-api,
+  node-backend and node-process also pass `valueType: ValueType.INT` (integer
+  points, as Python; design D-JS14 rows "Integer instruments need
+  `ValueType.INT`" and "Log instrumentation scope per language"); `ord-3`
+  costs `10.5` in the Go, Python and Node twins (was `10`, an `Int` in Python
+  and Node but a `Double` in Go); the Go and Python READMEs, Python
+  `EXAMPLES.md` and the twin comments name `node-custom-signals`; links to the
+  `.js` file are absolute GitHub URLs (MkDocs-safe).
 - **Python example: python-process no longer injects `traceparent` by hand.**
   The injection was a no-op (the httpx instrumentation replaces the header);
   `_propagation_headers()` is removed from
