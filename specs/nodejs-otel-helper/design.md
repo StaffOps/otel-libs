@@ -1015,6 +1015,15 @@ environment approval is ever bypassed or automated, or npm makes staged
 publishing the only path for trusted publishers — then switch to staged
 publishing and approve on npmjs after each CI publish.*
 
+*Amended 2026-11-04 (B14, after the rc.1 publish): the owner removed the
+required reviewer from the `nodejs-release` environment (rules now
+`branch_policy` only: tags `nodejs/v*`, `can_admins_bypass=false`). The human
+gate is now the tag push itself — only admins can create `nodejs/v*` (tag
+ruleset) and the org requires 2FA; there is no approval click. This is the
+"environment approval is ever bypassed or automated" case above: the
+trade-off is accepted (a tag pushed by mistake publishes; fix forward with
+the next rc), staged publishing stays the documented alternative.*
+
 ### D-JS12 — Parity runner
 **Choice**: `node:test` parent (`runner.test.cjs`) ports the Python runner:
 env reset (`OTEL_*`, `SERVICE_NAME`, `ENVIRONMENT` removed;

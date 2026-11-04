@@ -121,13 +121,15 @@ normalization (`v0.3.0-rc.3` = `0.3.0rc3`), .NET with every project
   runs in it; the owner created it, this repository does not): the
   deployment rule admits **only tags matching `nodejs/v*`** — it must include
   `nodejs/v*`, or every Node release job waits forever or is rejected — and
-  the owner is a required reviewer, and `can_admins_bypass` is **false** (no
-  admin can skip the review). A tag ruleset protects `nodejs/v*`, `v*`,
+  `can_admins_bypass` is **false**. **No required reviewer** (owner decision,
+  2026-11-04, after the rc.1 publish): pushing a `nodejs/v*` tag publishes
+  with no approval click; the gate is who can create the tag (the ruleset,
+  admins only) and the org's required 2FA. A tag ruleset protects `nodejs/v*`, `v*`,
   `dotnet/v*` and `go/**/*` (`refs/tags/go/**/*`, the Go core and ext tags).
   Check before every Node release:
   ```bash
   gh api repos/StaffOps/otel-libs/environments/nodejs-release \
-    --jq '{rules: [.protection_rules[].type], policy: .deployment_branch_policy}'
+    --jq '{rules: [.protection_rules[].type], policy: .deployment_branch_policy}'   # expect rules ["branch_policy"]
   gh api repos/StaffOps/otel-libs/environments/nodejs-release/deployment-branch-policies \
     --jq '.branch_policies[] | {name, type}'        # expect {"name":"nodejs/v*","type":"tag"}
   gh api repos/StaffOps/otel-libs/environments/nodejs-release --jq .can_admins_bypass   # expect false
@@ -243,7 +245,8 @@ enabled is required"; `docker` works. The image is pinned by digest:
    Delete), even though it expires in a day, and `unset NPM_BOOTSTRAP_TOKEN`
    on the host. Keep the container open.
 7. **Environment protection**: already in place (created by the owner,
-   2026-11-04: `can_admins_bypass=false`, the owner as required reviewer,
+   2026-11-04: `can_admins_bypass=false`, the owner as required reviewer
+   until the rc.1 publish, then removed (see "Required protection"),
    tag policy `nodejs/v*`; org 2FA required; ruleset `release-tags` with
    `refs/tags/go/**/*`). Re-run the `gh api` checks of the section above.
 8. **Trusted publisher, per package** (all six): npmjs → package → Settings
@@ -255,7 +258,8 @@ enabled is required"; `docker` works. The image is pinned by digest:
    dist-tag`. npm shows "Not recommended" next to "Allow npm publish" and
    recommends staged publishing; the owner's decision (2026-11-04, design
    D-JS11 amendment): no manual npm approval per release — the human gate is
-   the `nodejs-release` environment approval plus the tag ruleset and org
+   the tag push itself (admins only, by the tag ruleset; the environment
+   reviewer was removed the same day) plus the org
    2FA.
 9. **Lock publishing**: in the same page, Publishing access → "Require
    two-factor authentication and disallow tokens" — from now on only the
@@ -326,7 +330,7 @@ D-JS2) or the `@opentelemetry/api` peer range:
 - `gh release view vX.Y.Z… --json isPrerelease,assets`: pre-release tags must
   be **Pre-release**, not Latest (the job passes `--prerelease
   --latest=false` for tags containing `-`; check anyway).
-- **Node.js** (after the owner approves the `nodejs-release` deployment):
+- **Node.js** (after the tag's publish jobs finish; no approval step):
   - attestations: `npm view @staffops/otel-helper@<v> dist.attestations` is
     present for all six, and each npmjs page shows "Provenance";
   - dist-tags: `npm view @staffops/otel-helper dist-tags` — an rc on `next`,
