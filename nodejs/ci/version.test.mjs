@@ -23,6 +23,7 @@ function fixture() {
   const root = tmp('version-mjs-');
   cpSync(path.join(ws, 'package-lock.json'), path.join(root, 'package-lock.json'));
   cpSync(path.join(ws, 'README.md'), path.join(root, 'README.md'));
+  cpSync(path.join(ws, 'HOW-TO.md'), path.join(root, 'HOW-TO.md'));
   for (const dir of PACKAGES) {
     mkdirSync(path.join(root, 'packages', dir), { recursive: true });
     for (const f of ['package.json', 'README.md']) cpSync(path.join(ws, 'packages', dir, f), path.join(root, 'packages', dir, f));
@@ -129,6 +130,27 @@ describe('check', () => {
     const w = docWarnings(root, '9.9.9');
     assert.ok(w.length > 0 && w.every((x) => x.includes('(by hand)')), w.join('\n'));
   });
+
+  it('flags a stale release-candidate, install-spec or tag mention as a warning (check still passes)', () => {
+    const root = fixture();
+    writeFileSync(path.join(root, 'HOW-TO.md'), 'Release candidate `0.0.1-rc.1`; `nodejs/v0.0.1-rc.1`; npm install @staffops/otel-helper-redis@0.0.1-rc.1.\n');
+    const w = docWarnings(root, current);
+    assert.equal(w.length, 3, w.join('\n'));
+    assert.ok(w.every((x) => x.startsWith('HOW-TO.md: mentions "0.0.1-rc.1"') && x.endsWith('(by hand)')), w.join('\n'));
+    assert.deepEqual(check(root, current), []);
+  });
+
+  it('warns when a stable version is still described as a release candidate', () => {
+    const root = fixture();
+    set(root, '1.2.3-rc.4');
+    assert.ok(!docWarnings(root, '1.2.3-rc.4').some((x) => x.includes('stable release')));
+    set(root, '1.2.3');
+    const w = docWarnings(root, '1.2.3');
+    assert.ok(w.length > 0, 'the shipped READMEs say "Release candidate"');
+    assert.ok(w.every((x) => x.includes('says "release candidate" ("1.2.3"), but "1.2.3" is a stable release (by hand)')), w.join('\n'));
+    // The version itself was rewritten everywhere: no stale-version warning.
+    assert.ok(!w.some((x) => x.includes(': mentions ')), w.join('\n'));
+  });
 });
 
 describe('set', () => {
@@ -149,6 +171,25 @@ describe('set', () => {
     set(root, '4.0.0');
     assert.equal(readFileSync(file, 'utf8'),
       `> **Not released yet** (\`4.0.0\`)\nnpm install ./staffops-otel-helper-pino-4.0.0.tgz\nChangelog: since ${current} the API is stable.\n`);
+  });
+
+  it('rewrites every release-candidate mention (rc.N -> rc.N+1), HOW-TO.md included, and keeps other versions', () => {
+    const root = fixture();
+    const text = (v) => [
+      `> **Release candidate \`${v}\`**, the first npm release (tag`,
+      `> \`nodejs/v${v}\`); install it with`,
+      `> \`npm install @staffops/otel-helper@${v} @staffops/otel-helper-sql@${v} pino\`.`,
+      `Prerequisites: the helper (release candidate`,
+      `\`${v}\`, dist-tag \`next\`); a bare npm install @staffops/otel-helper-pino@${v}.`,
+      'Floor: @staffops/otel-helper@1.0.0 and `nodejs/v1.0.0` and Release candidate `1.0.0-rc.9` stay.',
+      '',
+    ].join('\n');
+    const files = ['README.md', 'HOW-TO.md', 'packages/otel-helper-winston/README.md'].map((f) => path.join(root, f));
+    for (const f of files) writeFileSync(f, text(current));
+    const next = '7.0.0-rc.2';
+    set(root, next);
+    for (const f of files) assert.equal(readFileSync(f, 'utf8'), text(next), f);
+    assert.deepEqual(docWarnings(root, next).filter((w) => !w.includes('"1.0.0')), [], 'only the fixed floor mentions remain');
   });
 
   it('is idempotent', () => {

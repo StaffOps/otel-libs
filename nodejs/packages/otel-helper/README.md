@@ -8,8 +8,13 @@ Collector, sampling and resource enrichment at the Collector. Instruments
 `/metrics` when no OTLP endpoint is configured; a logger that exports
 through OpenTelemetry or writes JSON lines on stdout.
 
-> **Not released yet** (`0.3.0-dev.0`). Do not install this package by name
-> from the public registry until a release says so.
+> **Release candidate `0.3.0-rc.1`**, published to npmjs (dist-tag `next`, with
+> provenance) and to GitHub Packages. Install an exact version:
+> `npm install @staffops/otel-helper@0.3.0-rc.1 @opentelemetry/api@~1.10.0`.
+> Never a bare `npm install @staffops/otel-helper`: until the first stable
+> release, `latest` is a deprecated `0.0.0-bootstrap.0` placeholder. Registry
+> setup (`.npmrc`, GitHub Packages token):
+> [CONSUMING.md](https://github.com/StaffOps/otel-libs/blob/main/CONSUMING.md#nodejs-npm-packages).
 
 Requires Node.js 22.15.0 or newer and the peer dependency
 `@opentelemetry/api` `>=1.10.0 <1.11.0`.

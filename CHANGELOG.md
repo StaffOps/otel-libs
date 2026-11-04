@@ -25,6 +25,18 @@ ADR-008). **.NET is unchanged and stays on 0.2.x**: it adopts the same contract
 in Phase C (ADR-004); until then its differences are `xfail` cases in
 `parity/cases.json`.
 
+**Node.js release candidate: `0.3.0-rc.1`** (2026-11-04) — tag
+`nodejs/v0.3.0-rc.1`, the first npm release of the six packages
+`@staffops/otel-helper`, `-sql`, `-redis`, `-aws`, `-pino` and `-winston`,
+all at `0.3.0-rc.1` (the opt-in packages pin the core at that exact
+version). Published by CI to npmjs with dist-tag `next` and provenance
+through trusted publishing (OIDC, no token), then to GitHub Packages with
+the same bytes. It implements the same 0.3 contract (Phase B,
+[`specs/nodejs-otel-helper/`](https://github.com/StaffOps/otel-libs/tree/main/specs/nodejs-otel-helper)).
+Install an exact version (`npm install @staffops/otel-helper@0.3.0-rc.1`):
+until the first stable release, npm `latest` points at the deprecated
+`0.0.0-bootstrap.0` placeholder that trusted publishing needed.
+
 Read the migration guide for your language first; the sections after it are
 the detailed record of every change.
 
@@ -2917,6 +2929,15 @@ Unsupported instrumentation versions, task A10 (P18):
   `node-packages` artifact is kept 30 days on a `nodejs/v*` tag run, and
   Dependabot waits 7 days (`cooldown`) before proposing an action release.
   No library behavior changed.
+- **`nodejs/ci/version.mjs` follows the release-candidate wording (task
+  B14, 2026-11-04).** `set` now also rewrites, and `check` warns about,
+  "Release candidate `<v>`", `@staffops/otel-helper[-x]@<v>` install specs
+  and the tag `` `nodejs/v<v>` `` when they carry the previous core version,
+  in `nodejs/README.md`, the package READMEs and now `nodejs/HOW-TO.md`;
+  `check` also warns when a stable version is still described as a
+  "release candidate" (by hand). The repository-root `README.md` and
+  `CONSUMING.md` stay by-hand items (release skill, "Before tagging" step 3).
+  Tests in `nodejs/ci/version.test.mjs`.
 - **Node.js whole-package review fixes (Phase B, task B14; not released,
   2026-11-04).** `@staffops/otel-helper`: the warnings of the opt-in
   instrumentation packages (`setConfig()` ignored, a library that does not

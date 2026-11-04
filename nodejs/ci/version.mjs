@@ -6,10 +6,15 @@
 //   - the `VERSION` constants (core, -pino and -winston src/version.ts, -sql/-redis/-aws src/internal/*-instrumentation.ts);
 //   - package-lock.json, the `packages/<dir>` entries (version and core peer);
 //   - example/*/Dockerfile.demo `ARG HELPER_VERSION=` (the default tarball name).
-// The version mentions in README.md and packages/*/README.md that match DOC_RES
-// ("Not released yet (`<version>`)", tarball names) are rewritten by `set` and
-// only warned about by `check`: their wording changes at release time. Other
-// README text is never touched.
+// The version mentions in README.md, HOW-TO.md and packages/*/README.md that
+// match DOC_RES ("Not released yet (`<version>`)", "Release candidate `<version>`",
+// tarball names, `@staffops/otel-helper[-x]@<version>` install specs, the tag
+// `nodejs/v<version>` in backticks) are rewritten by `set` when they carry the
+// previous core version, and only warned about by `check`: their wording changes
+// at release time. `check` also warns when a stable version (no prerelease part)
+// is still described as a "release candidate" (by hand). Other README text is
+// never touched; the repository-root docs (README.md, CONSUMING.md) are outside
+// this tool and are updated by hand (release skill, "Before tagging" step 3).
 //
 // Run from nodejs/ (or pass --root <dir>):
 //   node ci/version.mjs check <version | nodejs/vX.Y.Z> [--tarballs <dir>]
@@ -59,7 +64,17 @@ const USAGE = 'usage: node ci/version.mjs <check | set | dist-tag | tarballs | v
 const SEMVER = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\.(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?$/;
 const CONST_RE = /export const VERSION = '([^']*)';/;
 const ARG_RE = /^ARG HELPER_VERSION=(.*)$/m;
-const DOC_RES = [/Not released yet\*?\*? \(`([^`]+)`\)/g, /staffops-otel-helper(?:-[a-z]+)?-(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+?)?)\.tgz/g];
+// A SemVer version (no build metadata) as it appears in prose: a trailing "." ends the match.
+const DOC_VERSION = String.raw`(\d+\.\d+\.\d+(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?)`;
+/** "Release candidate `<v>`" (any case of the first letter, any whitespace, a line break included). */
+const RC_RE = /[Rr]elease candidate\s+`([^`]+)`/g;
+const DOC_RES = [
+  /Not released yet\*?\*? \(`([^`]+)`\)/g,
+  RC_RE,
+  /staffops-otel-helper(?:-[a-z]+)?-(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+?)?)\.tgz/g,
+  new RegExp(String.raw`@staffops/otel-helper(?:-[a-z]+)?@` + DOC_VERSION, 'g'),
+  new RegExp('`nodejs/v' + DOC_VERSION + '`', 'g'),
+];
 
 /** Error carrying usage semantics (exit 2). */
 class UsageError extends Error {}
@@ -107,7 +122,7 @@ const dockerfiles = (root) =>
     .map((d) => path.join(root, 'example', d, 'Dockerfile.demo'))
     .filter((f) => existsSync(f));
 const readmes = (root) =>
-  [path.join(root, 'README.md'), ...PACKAGES.map((d) => path.join(root, 'packages', d, 'README.md'))].filter((f) => existsSync(f));
+  [path.join(root, 'README.md'), path.join(root, 'HOW-TO.md'), ...PACKAGES.map((d) => path.join(root, 'packages', d, 'README.md'))].filter((f) => existsSync(f));
 
 /** Every version-carrying location as [label, found, want?] rows (found: the string read, or undefined). */
 export function collect(root) {
@@ -149,6 +164,11 @@ export function docWarnings(root, version) {
     for (const re of DOC_RES) {
       for (const m of text.matchAll(re)) {
         if (m[1] !== version) out.push(`${path.relative(root, file)}: mentions ${JSON.stringify(m[1])}, the release is ${JSON.stringify(version)} (by hand)`);
+      }
+    }
+    if (!version.includes('-')) {
+      for (const m of text.matchAll(RC_RE)) {
+        out.push(`${path.relative(root, file)}: says "release candidate" (${JSON.stringify(m[1])}), but ${JSON.stringify(version)} is a stable release (by hand)`);
       }
     }
   }
@@ -241,8 +261,8 @@ export function set(root, version) {
     changed.push(file);
   }
   if (previous && previous !== version) {
-    // Only the DOC_RES mentions ("Not released yet (`<v>`)", tarball names) that
-    // carry the previous version; any other text in a README is left alone.
+    // Only the DOC_RES mentions (see the header) that carry the previous
+    // version; any other text in a README is left alone.
     for (const file of readmes(root)) {
       const text = readText(file);
       let out = text;

@@ -39,14 +39,23 @@ normalization (`v0.3.0-rc.3` = `0.3.0rc3`), .NET with every project
    `-sql`/`-redis`/`-aws` `src/internal/*-instrumentation.ts`), the
    `packages/*` entries of `package-lock.json`, the `ARG HELPER_VERSION`
    default of every `example/*/Dockerfile.demo`, and the mentions of the
-   previous version in `nodejs/README.md` and the package READMEs. `check`
+   previous version in `nodejs/README.md`, `nodejs/HOW-TO.md` and the package
+   READMEs ("Not released yet (`<v>`)", "Release candidate `<v>`", tarball
+   names, `@staffops/otel-helper[-x]@<v>`, `` `nodejs/v<v>` ``). `check`
    fails on any mismatch and warns (`WARN … (by hand)`) about README
-   mentions it cannot rewrite; CI runs the same check against the tag.
+   mentions it cannot rewrite, and about "release candidate" wording left
+   on a stable version; CI runs the same check against the tag.
    (`--user` keeps the files owned by you; `HOME=/tmp` gives npm a writable home.)
    `npm pack` must keep each package's `README.md` (`node ci/check-pack.mjs`).
    Before an SDK or API bump, walk the **Node.js SDK-bump checklist** below.
-3. Docs/consumption pages (`CONSUMING.md`, README matrix) name the new tags;
-   then regenerate the site index from the README:
+3. Docs/consumption pages (`CONSUMING.md`, README matrix) name the new tags.
+   **By hand for Node.js** — `ci/version.mjs` scans only `nodejs/README.md`,
+   `nodejs/HOW-TO.md` and the package READMEs: the repository-root
+   `README.md` (matrix row, gaps table, Installing), `CONSUMING.md` (intro,
+   Versions row, Node.js section install commands), `AGENTS.md` (Repository)
+   and the `nodejs/example/README.md` wording; on a stable release also every
+   "release candidate" / dist-tag `next` sentence (`check` warns only about
+   "release candidate" in the scanned files). Then regenerate the site index from the README:
    `docker run --rm --user "$(id -u):$(id -g)" -v "$PWD:/repo" -w /repo python:3.12-slim python tools/regen_index.py`
    (CI's `spec-checks` runs it with `--check`).
 4. `testing/verify.sh --release` green — it covers the CI risk corners that
@@ -129,16 +138,28 @@ normalization (`v0.3.0-rc.3` = `0.3.0rc3`), .NET with every project
   Expect `required_reviewers` among the rules and a custom policy.
 
 ## Node.js first publish — one-time owner bootstrap
+**DONE 2026-11-04** (owner; verified the same day): the six packages exist
+on npmjs with `0.0.0-bootstrap.0` (dist-tags `latest` + `bootstrap`,
+deprecated), each has its trusted publisher (checked with `npm trust list`)
+and "Require two-factor authentication and disallow tokens". Each package
+also shows `0.0.0-stage`, a placeholder npm itself creates on a new
+package's first publish ("Temporary package placeholder for staged
+publishing"): leave it alone. Do not run these steps again; they stay here
+for a new package or a new scope.
+
 npm accepts a trusted publisher only for a package that already exists. The
 bootstrap publishes a throwaway version, `0.0.0-bootstrap.0`, of each of the
-six packages by hand and deprecates it at once; every real version is then
-published by CI only, through OIDC and with provenance. Do this once. The
-agent never runs these steps and never sees the token.
+six packages by hand and deprecates it; every real version is then
+published by CI only, through OIDC and with provenance. The agent never runs
+these steps and never sees a credential.
 
 **Preconditions.** The repository `StaffOps/otel-libs` is **public**
 (npmjs rejects provenance from a private repository with E422, so the CI
 publish would fail); the environment `nodejs-release` and the tag ruleset
-exist (above); `docker` works. The image is pinned by digest:
+exist (above; owner, 2026-11-04); the npm account has 2FA in
+**"authorization and writes"** mode — without it every publish fails with
+E403 "Two-factor authentication or granular access token with bypass 2fa
+enabled is required"; `docker` works. The image is pinned by digest:
 `node:24.22.2-slim@sha256:c86ecead9e55a5210ac1727de38a4ca840bf03dcaf34dc9749addbf383b1920c`.
 
 1. **Scratch clone of the branch or commit that will be tagged** — not your
@@ -168,48 +189,94 @@ exist (above); `docker` works. The image is pinned by digest:
      npm pack --workspaces --pack-destination tarballs
      node ci/version.mjs check 0.0.0-bootstrap.0 --tarballs tarballs'
    ```
-4. **Token.** On npmjs (owner account, 2FA on): Access Tokens → Generate New
-   Token → Granular: packages and scopes read and write, scope `@staffops`
-   only; organizations none; expiry **1 day**; bypass 2FA off (npm asks for
-   the OTP). It lives in the shell environment only — never in a file, the
-   repository, a CI secret or a chat.
-5. **Publish ×6 with `--tag bootstrap`, then deprecate ×6**, in one
-   container. The npmrc holds only `${NPM_BOOTSTRAP_TOKEN}`, the variable
-   name, which npm expands itself. **Expect 12 OTP / web-authentication
-   prompts** (one per publish, one per deprecate):
+4. **Log in — web login, no token.** Open one interactive `--rm` container
+   and keep it open until step 10; run it under `script` so every prompt
+   keeps a TTY (macOS `script -q <log> <cmd…>`; util-linux
+   `script -q -c '<cmd>' <log>`). The log holds the login URLs, never a
+   credential; delete it at the end.
    ```bash
-   read -rs NPM_BOOTSTRAP_TOKEN && export NPM_BOOTSTRAP_TOKEN   # paste; not echoed
-   docker run --rm -it --user "$(id -u):$(id -g)" -e HOME=/tmp -e NPM_BOOTSTRAP_TOKEN -v "$PWD:/repo" -w /repo/nodejs "$IMG" bash -ec '
-     printf "%s\n" "//registry.npmjs.org/:_authToken=\${NPM_BOOTSTRAP_TOKEN}" > /tmp/npmrc
-     reg=--@staffops:registry=https://registry.npmjs.org/
-     for t in $(node ci/version.mjs tarballs 0.0.0-bootstrap.0); do
-       npm publish "./tarballs/$t" --access public --tag bootstrap --userconfig /tmp/npmrc "$reg"
-     done
-     for p in otel-helper otel-helper-sql otel-helper-redis otel-helper-aws otel-helper-pino otel-helper-winston; do
-       npm deprecate "@staffops/$p@0.0.0-bootstrap.0" "bootstrap placeholder for trusted publishing; do not install" \
-         --userconfig /tmp/npmrc "$reg"
-     done'
-   unset NPM_BOOTSTRAP_TOKEN
+   script -q /tmp/otel-libs-bootstrap.log \
+     docker run --rm -it --user "$(id -u):$(id -g)" -e HOME=/tmp -v "$PWD:/repo" -w /repo/nodejs "$IMG" bash
+   # inside the container:
+   cfg=/tmp/npmrc; npmjs=https://registry.npmjs.org/; reg=--@staffops:registry=$npmjs
+   npm login --auth-type=web --registry="$npmjs" --userconfig="$cfg"   # open the URL, approve with 2FA
+   npm whoami --registry="$npmjs" --userconfig="$cfg"                  # must print the owner account; stop otherwise
    ```
-6. **Revoke the token** on npmjs right away (Access Tokens → Delete), even
-   though it expires in a day.
+   Always `--userconfig="$cfg"` (with `=`): `npm trust list` rejects
+   `--userconfig <path>` with a space ("Unknown positional argument").
+   **Token only as a fallback** (the token path failed twice in the 2026-11-04
+   bootstrap: ENEEDAUTH when a pasted `read` swallowed the next line, then
+   E401). If you must: npmjs → Access Tokens → Granular, packages and scopes
+   read and write, scope `@staffops` only, organizations none, expiry
+   **1 day**, bypass 2FA off. Paste it into `read` on a line of its own, check
+   the length before anything else, then pass it to the container
+   (`-e NPM_BOOTSTRAP_TOKEN`) and use it instead of `npm login`; never write
+   the value to a file, the repository, a CI secret or a chat:
+   ```bash
+   read -rs NPM_BOOTSTRAP_TOKEN && export NPM_BOOTSTRAP_TOKEN   # its own line; paste; not echoed
+   echo ${#NPM_BOOTSTRAP_TOKEN}                                 # the length only; 0 or a short number = stop
+   # inside the container, instead of npm login (npm expands the variable name itself):
+   printf "%s\n" "//registry.npmjs.org/:_authToken=\${NPM_BOOTSTRAP_TOKEN}" > "$cfg"
+   npm whoami --registry="$npmjs" --userconfig="$cfg"
+   ```
+5. **Publish ×6 with `--tag bootstrap`, wait until readable, then deprecate
+   ×6**, in the same container. Each write asks for a web 2FA confirmation
+   (expect 12: one per publish, one per deprecate). A freshly published
+   package can return 404 on read for a few minutes, so `npm deprecate`
+   right after the publish fails E404: wait until all six answer 200.
+   ```bash
+   pkgs='otel-helper otel-helper-sql otel-helper-redis otel-helper-aws otel-helper-pino otel-helper-winston'
+   for t in $(node ci/version.mjs tarballs 0.0.0-bootstrap.0); do
+     npm publish "./tarballs/$t" --access public --tag bootstrap --userconfig="$cfg" "$reg"
+   done
+   for p in $pkgs; do   # same as: curl -so /dev/null -w '%{http_code}' https://registry.npmjs.org/@staffops%2f<p>
+     until node -e "fetch('https://registry.npmjs.org/@staffops%2f$p').then(r=>process.exit(r.status===200?0:1),()=>process.exit(1))"; do
+       echo "waiting for @staffops/$p"; sleep 30
+     done
+   done
+   for p in $pkgs; do
+     npm deprecate "@staffops/$p@0.0.0-bootstrap.0" "bootstrap placeholder for trusted publishing; do not install" \
+       --userconfig="$cfg" "$reg"
+   done
+   ```
+6. **Token fallback only: revoke it** on npmjs right away (Access Tokens →
+   Delete), even though it expires in a day, and `unset NPM_BOOTSTRAP_TOKEN`
+   on the host. Keep the container open.
 7. **Environment protection**: already in place (created by the owner,
-   2026-11-04). Re-run the three `gh api` checks of the section above.
+   2026-11-04: `can_admins_bypass=false`, the owner as required reviewer,
+   tag policy `nodejs/v*`; org 2FA required; ruleset `release-tags` with
+   `refs/tags/go/**/*`). Re-run the `gh api` checks of the section above.
 8. **Trusted publisher, per package** (all six): npmjs → package → Settings
    → Trusted Publisher → GitHub Actions: organization or user `StaffOps`,
    repository `otel-libs`, workflow filename `ci.yml`, environment
-   `nodejs-release`.
+   `nodejs-release`. **Tick "Allow npm publish"**; leave "Allow npm
+   dist-tag" off. CI runs `npm publish --provenance --access public --tag
+   <latest|next>` (`ci.yml` `publish-nodejs-npmjs`) and never `npm
+   dist-tag`. npm shows "Not recommended" next to "Allow npm publish" and
+   recommends staged publishing; the owner's decision (2026-11-04, design
+   D-JS11 amendment): no manual npm approval per release — the human gate is
+   the `nodejs-release` environment approval plus the tag ruleset and org
+   2FA.
 9. **Lock publishing**: in the same page, Publishing access → "Require
    two-factor authentication and disallow tokens" — from now on only the
    trusted publisher (and the owner with 2FA) can publish.
-10. **Check**:
+10. **Check**, still in the container (each `npm trust list` asks for a web
+    2FA confirmation; do not add `--json`: npm then masks the web-auth URL
+    as `***` and you cannot approve it):
     ```bash
-    docker run --rm "$IMG" sh -c 'for p in otel-helper otel-helper-sql otel-helper-redis otel-helper-aws otel-helper-pino otel-helper-winston; do
-      npm view "@staffops/$p" dist-tags deprecated --@staffops:registry=https://registry.npmjs.org/; done'
+    for p in $pkgs; do
+      npm trust list "@staffops/$p" --userconfig="$cfg" "$reg"
+      npm view "@staffops/$p" dist-tags deprecated "$reg"
+    done
+    npm logout --registry="$npmjs" --userconfig="$cfg"
+    exit
     ```
-    Each package shows `latest` and `bootstrap` = `0.0.0-bootstrap.0`
-    (npm points `latest` at a package's first version whatever `--tag`
-    says) and the deprecation message. Then delete the scratch clone.
+    Each trust list shows github, file `ci.yml`, repository
+    `StaffOps/otel-libs`, environment `nodejs-release`, permissions
+    "publish, stage publish". Each package shows `latest` and `bootstrap` =
+    `0.0.0-bootstrap.0` (npm points `latest` at a package's first version
+    whatever `--tag` says) and the deprecation message. Then delete the log
+    and the scratch clone.
 
 **Until the first stable (non-rc) release, `latest` is the deprecated
 bootstrap version** (release candidates go to `next`): a bare `npm install

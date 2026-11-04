@@ -13,7 +13,7 @@ RUN npm ci --omit=dev --ignore-scripts --no-audit --no-fund && npm cache clean -
 
 # The prebuilt @staffops/otel-helper tarball (npm pack, built once in CI, passed
 # via artifact). An exact file name: a stale tarball of another version is never picked.
-ARG HELPER_VERSION=0.3.0-dev.0
+ARG HELPER_VERSION=0.3.0-rc.1
 COPY tarballs/staffops-otel-helper-${HELPER_VERSION}.tgz /tmp/tarballs/
 RUN npm install --no-save --omit=dev --ignore-scripts --no-audit --no-fund /tmp/tarballs/staffops-otel-helper-${HELPER_VERSION}.tgz \
  && npm cache clean --force && rm -rf /tmp/tarballs

@@ -1,10 +1,13 @@
 # Consuming otel-libs Packages
 
 How to install and use the OTel helper packages. The repository is **public**:
-Go modules and Python wheels need no credentials. Only the .NET packages
-(GitHub Packages NuGet) need a token — GitHub requires one even for public
-packages; see [Creating a read:packages token](#creating-a-readpackages-token).
-The Node.js packages are not published yet ([Node.js](#nodejs-npm-packages-planned)).
+Go modules, Python wheels and the Node.js packages from npmjs need no
+credentials. Only GitHub Packages needs a token — the .NET packages (NuGet),
+and the Node.js packages when installed from there instead of npmjs; GitHub
+requires one even for public packages; see
+[Creating a read:packages token](#creating-a-readpackages-token). Node.js is at
+release candidate `0.3.0-rc.1`, always installed at an exact version
+([Node.js](#nodejs-npm-packages)).
 
 ## Versions
 
@@ -13,7 +16,7 @@ The Node.js packages are not published yet ([Node.js](#nodejs-npm-packages-plann
 | .NET | `0.2.0` | 0.3 contract in Phase C (from now on .NET releases are tagged `dotnet/vX.Y.Z`) | .NET 8 (runs on .NET 10 via roll-forward) |
 | Python | `0.2.0` (`otel-helper`) | `0.3.0-rc.2` published as `otel-helper` (tag `v0.3.0-rc.2`, wheel `otel_helper-0.3.0rc2-py3-none-any.whl`); next `0.3.0-rc.3` (tag `v0.3.0-rc.3`, wheel `staffops_otel_helper-0.3.0rc3-py3-none-any.whl`) — the first under the new name (ADR-011) | Python ≥ 3.10; OpenTelemetry `>=1.42,<1.46`, contrib `>=0.63b0,<0.67b0` from 0.3 |
 | Go | `go/v0.2.1` | `v0.3.0-rc.2` (tags `go/v0.3.0-rc.2`, `go/ext/<module>/v0.3.0-rc.2`; new module path, see ADR-010) | Go ≥ 1.22 for 0.2.x, **Go ≥ 1.26 from 0.3** |
-| Node.js | — (not published) | `0.3.0` (tags `nodejs/vX.Y.Z`, task B13; packages `@staffops/otel-helper*`, version `0.3.0-dev.0` on the branch) | Node.js ≥ 22.15.0; `@opentelemetry/api` `>=1.10.0 <1.11.0` (peer) |
+| Node.js | — (no stable release; npm `latest` is the deprecated `0.0.0-bootstrap.0` placeholder) | `0.3.0-rc.1` (tag `nodejs/v0.3.0-rc.1`, npm dist-tag `next`; packages `@staffops/otel-helper*` on npmjs and GitHub Packages), then `0.3.0` | Node.js ≥ 22.15.0; `@opentelemetry/api` `>=1.10.0 <1.11.0` (peer) |
 
 The commands below install the latest release. When a 0.3 release candidate is
 published, replace the version (Python release `v0.3.0-rc.2`, still named `otel-helper`, or `v0.3.0-rc.3`+ named `staffops-otel-helper`; Go `@v0.3.0-rc.2`, which resolves the `go/v0.3.0-rc.2` tag) and read the
@@ -238,18 +241,19 @@ defer shutdown(context.Background()) // from 0.3: use a fresh deadline on SIGTER
 
 ---
 
-## Node.js (npm packages, planned)
+## Node.js (npm packages)
 
-**Nothing is published yet.** On each `nodejs/vX.Y.Z` tag the CI jobs
-`publish-nodejs-npmjs` and `publish-nodejs-ghp` (task B13) publish the six
-packages with identical versions and identical bytes to npmjs (trusted
-publishing, with provenance) and to GitHub Packages; release candidates
-(`X.Y.Z-rc.N`) carry the npm dist-tag `next`. **A bare `npm install
-@staffops/otel-helper` is not safe until the first stable release**: on
-npmjs `latest` points at a deprecated `0.0.0-bootstrap.0` placeholder (npm
-needs a package to exist before CI can publish it) — always install an
-exact version. Until the first release install the `npm pack` tarballs
-built from the repository
+**Release candidate `0.3.0-rc.1`** (tag `nodejs/v0.3.0-rc.1`), the first
+npm release. On each `nodejs/vX.Y.Z` tag the CI jobs `publish-nodejs-npmjs`
+and `publish-nodejs-ghp` publish the six packages with identical versions
+and identical bytes to npmjs (trusted publishing, with provenance) and then
+to GitHub Packages (no provenance); release candidates (`X.Y.Z-rc.N`) carry
+the npm dist-tag `next`. **A bare `npm install @staffops/otel-helper` is not
+safe until the first stable release**: on npmjs `latest` points at a
+deprecated `0.0.0-bootstrap.0` placeholder (npm needs a package to exist
+before CI can publish it) — always install an exact version, e.g.
+`npm install @staffops/otel-helper@0.3.0-rc.1`. To try an unreleased commit,
+install `npm pack` tarballs built from the repository
 (`staffops-otel-helper-<version>.tgz`, `staffops-otel-helper-sql-<version>.tgz`,
 …) — see [`nodejs/README.md`](nodejs/README.md#installation).
 
@@ -258,13 +262,18 @@ Packages: `@staffops/otel-helper` (core), `@staffops/otel-helper-sql`,
 and `@staffops/otel-helper-pino`, `@staffops/otel-helper-winston` (log
 destinations).
 
-> **The `@staffops` scope is claimed on npmjs** (the `staffops` npm
-> organization, ADR-011, 2026-11-04), so nobody else can publish under it.
-> Still, do not install these packages by name from npmjs until a release
-> announces them there, and map the scope to one registry in `.npmrc`
-> (below), so `@staffops/*` never resolves anywhere else.
+> **The `@staffops` scope belongs to the `staffops` npm organization**
+> (ADR-011, 2026-11-04), so nobody else can publish under it. Still map the
+> scope to one registry in `.npmrc` (below), so `@staffops/*` never resolves
+> anywhere else.
 
 ### Map the scope to one registry (`.npmrc`)
+
+npmjs (public, no token):
+
+```ini
+@staffops:registry=https://registry.npmjs.org/
+```
 
 GitHub Packages (GitHub requires a token with `read:packages` to install npm packages, public ones included; see
 [Creating a read:packages token](#creating-a-readpackages-token)). Commit the
@@ -275,25 +284,20 @@ first line; keep the token in the environment, never in the file:
 //npm.pkg.github.com/:_authToken=${GITHUB_PACKAGES_TOKEN}
 ```
 
-npmjs (the scope is claimed; use it once the packages are published there):
+A scope mapping sends every `@staffops/*` request to that registry only;
+pick one registry per project. In GitHub Actions, `actions/setup-node` with
+`registry-url: https://npm.pkg.github.com` and `scope: '@staffops'` writes
+the equivalent lines, the token read from `NODE_AUTH_TOKEN` (set it to
+`${{ secrets.GITHUB_TOKEN }}` on the install step; the workflow needs
+`packages: read`). For npmjs, `registry-url: https://registry.npmjs.org/`
+with the same `scope` needs no token.
 
-```ini
-@staffops:registry=https://registry.npmjs.org/
-```
+When you install `npm pack` tarballs, install the core tarball before, or
+in the same `npm install` as, any opt-in tarball: an opt-in tarball
+installed on its own makes npm look up its peer `@staffops/otel-helper` (that
+exact version) in the mapped registry.
 
-A scope mapping sends every `@staffops/*` request to that registry only.
-In GitHub Actions, `actions/setup-node` with `registry-url:
-https://npm.pkg.github.com` and `scope: '@staffops'` writes the equivalent
-lines, the token read from `NODE_AUTH_TOKEN` (set it to
-`${{ secrets.GITHUB_TOKEN }}` on the install step).
-
-Add the GitHub Packages mapping **now**, even before the release: an
-opt-in tarball installed on its own makes npm look up its peer
-`@staffops/otel-helper` in a registry, and the mapping keeps that lookup away
-from npmjs. Install the core tarball before, or in the same `npm install` as,
-any opt-in tarball.
-
-### Install packages (after the release)
+### Install packages
 
 Always pin the exact version: until the first stable release `latest` is
 the deprecated bootstrap placeholder, and a release candidate is only
@@ -302,14 +306,16 @@ reachable by version or by the `next` dist-tag. Packages installed from npmjs ca
 provenance attestations.
 
 ```bash
-npm install @staffops/otel-helper@<version> @opentelemetry/api@~1.10.0
+npm install @staffops/otel-helper@0.3.0-rc.1 @opentelemetry/api@~1.10.0
 
 # Opt-in packages: always the same version as the core (exact peer dependency)
-npm install @staffops/otel-helper-sql@<version>
-npm install @staffops/otel-helper-redis@<version>
-npm install @staffops/otel-helper-aws@<version>
-npm install @staffops/otel-helper-pino@<version> pino
-npm install @staffops/otel-helper-winston@<version> winston
+npm install @staffops/otel-helper-sql@0.3.0-rc.1
+npm install @staffops/otel-helper-redis@0.3.0-rc.1
+npm install @staffops/otel-helper-aws@0.3.0-rc.1
+npm install @staffops/otel-helper-pino@0.3.0-rc.1 pino
+npm install @staffops/otel-helper-winston@0.3.0-rc.1 winston
+
+npm audit signatures   # npmjs only
 ```
 
 ### Peer dependencies

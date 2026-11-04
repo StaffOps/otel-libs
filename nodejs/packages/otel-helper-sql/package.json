@@ -1,6 +1,6 @@
 {
   "name": "@staffops/otel-helper-sql",
-  "version": "0.3.0-dev.0",
+  "version": "0.3.0-rc.1",
   "description": "SQL (pg, mysql2) instrumentation for @staffops/otel-helper (opt-in).",
   "license": "Apache-2.0",
   "author": "StaffOps",
@@ -53,7 +53,7 @@
   },
   "peerDependencies": {
     "@opentelemetry/api": ">=1.10.0 <1.11.0",
-    "@staffops/otel-helper": "0.3.0-dev.0"
+    "@staffops/otel-helper": "0.3.0-rc.1"
   },
   "dependencies": {
     "@opentelemetry/instrumentation": "~0.300.0",

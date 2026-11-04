@@ -7,8 +7,12 @@ exporter is active, otherwise as one stdout JSON line of the helper's shape
 (`time`, `level`, `msg`, `logger`, the fields, `exception`) — never
 both.
 
-> **Not released yet** (`0.3.0-dev.0`); install it from the same release as
-> the core (the peer dependency pins the same version).
+> **Release candidate `0.3.0-rc.1`**, published to npmjs (dist-tag `next`, with
+> provenance) and to GitHub Packages. Install an exact version, the same as
+> the core's (the peer dependency pins it):
+> `npm install @staffops/otel-helper@0.3.0-rc.1 @staffops/otel-helper-winston@0.3.0-rc.1 winston`.
+> Never a bare `npm install @staffops/otel-helper-winston`: until the first
+> stable release, `latest` is a deprecated `0.0.0-bootstrap.0` placeholder.
 
 ```js
 const winston = require('winston');

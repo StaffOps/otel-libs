@@ -992,6 +992,29 @@ packages' root exports are listed in each package README and in README "API
 stability (0.x)"; `-pino` and `-winston` export `VERSION` too, kept by
 `ci/version.mjs` with the other four constants.*
 
+*Amended 2026-11-04 (B14 release prep, owner decision): **allow-publish, not
+staged publishing.** The bootstrap (the Reversal above) is done: the six
+packages exist on npmjs, each with a trusted publisher (GitHub Actions,
+`StaffOps/otel-libs`, `ci.yml`, environment `nodejs-release`; verified with
+`npm trust list`) and publishing access "Require two-factor authentication
+and disallow tokens". npm offers staged publishing (the CI publish is staged and a maintainer
+approves it on npmjs: a manual npm approval per release) and marks
+"Allow npm publish" — the trusted publisher publishing directly — as "Not
+recommended". The owner ticked "Allow npm publish" and left "Allow npm
+dist-tag" off. **Justification**: the human gate already sits before the
+publish job — the required reviewer of the `nodejs-release` environment
+(`can_admins_bypass=false`, tags `nodejs/v*` only), the tag ruleset and the
+org's required 2FA; a second, manual npm approval per release adds a step
+with no new check (the tarballs are the CI-tested bytes, `registry-state`
+refuses other bytes). CI runs `npm publish --provenance --tag <latest|next>`
+only (`ci.yml` `publish-nodejs-npmjs`), never `npm dist-tag`, so the
+dist-tag permission is not needed. **Trade-off**: a compromised workflow run
+that passes the environment approval publishes with no further stop; a
+published version cannot be replaced (fix forward). **When wrong**: the
+environment approval is ever bypassed or automated, or npm makes staged
+publishing the only path for trusted publishers — then switch to staged
+publishing and approve on npmjs after each CI publish.*
+
 ### D-JS12 — Parity runner
 **Choice**: `node:test` parent (`runner.test.cjs`) ports the Python runner:
 env reset (`OTEL_*`, `SERVICE_NAME`, `ENVIRONMENT` removed;

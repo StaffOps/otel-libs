@@ -10,11 +10,14 @@ Audience: developers instrumenting a Node.js service. The practical guide is
 [HOW-TO.md](HOW-TO.md); runnable examples are in [example/](example/README.md);
 how to test the library is in [TESTS.md](TESTS.md).
 
-> **Status: not released.** The packages are at `0.3.0-dev.0` on this branch
-> and are **not published** to any registry yet (the release CI exists since
-> task B13; the first release follows B14). The `@staffops` npm scope is
-> claimed on npmjs, but never install `@staffops/otel-helper*` by name from
-> the public registry until a release says so. See [Installation](#installation).
+> **Status: release candidate `0.3.0-rc.1`**, the first npm release (tag
+> `nodejs/v0.3.0-rc.1`): the six packages at the same version, published to
+> npmjs (dist-tag `next`, with provenance through trusted publishing) and to
+> GitHub Packages. Install an exact version, e.g.
+> `npm install @staffops/otel-helper@0.3.0-rc.1`; never a bare
+> `npm install @staffops/otel-helper`: until the first stable release,
+> `latest` on npmjs is a deprecated `0.0.0-bootstrap.0` placeholder. See
+> [Installation](#installation).
 
 ## Requirements
 
@@ -45,8 +48,34 @@ dependencies.
 
 ## Installation
 
-Until the first release, install the packages from `npm pack` tarballs built
-from this repository, as the example images do:
+From npmjs, always at an exact version; every opt-in package at the core's
+version (its peer dependency pins it):
+
+```bash
+npm install @staffops/otel-helper@0.3.0-rc.1 @staffops/otel-helper-sql@0.3.0-rc.1 \
+  @opentelemetry/api@~1.10.0
+npm audit signatures   # registry signatures and provenance attestations
+```
+
+A release candidate is reachable only by version or by the dist-tag `next`;
+until the first stable release `latest` is the deprecated bootstrap
+placeholder, so a bare `npm install @staffops/otel-helper` is never right.
+GitHub Packages carries the same version with the same bytes (no provenance,
+and GitHub requires a `read:packages` token even for public packages). The
+`.npmrc` scope mapping that keeps every `@staffops/*` request on one
+registry, the token and the `actions/setup-node` settings are in
+[CONSUMING.md](../CONSUMING.md#nodejs-npm-packages).
+
+npm 11 warns
+`1 package has install scripts not yet covered by allowScripts: protobufjs@… (postinstall …)`
+(protobufjs comes with `@grpc/grpc-js` through `@grpc/proto-loader`, a dependency of the gRPC OTLP exporters): harmless — that postinstall only
+prints a warning when a project pins protobufjs with an unexpected version
+range, so leaving it unapproved, or `--ignore-scripts`, changes nothing.
+
+### From `npm pack` tarballs (an unreleased commit)
+
+To try a commit that is not published, install tarballs built from this
+repository, as the example images do:
 
 ```bash
 # In a checkout of this repository (Docker; no local Node needed): tarballs in nodejs/tarballs/
@@ -56,29 +85,16 @@ docker run --rm -v "$PWD/nodejs:/src:ro" -v "$PWD/nodejs/tarballs:/out" node:24-
   for p in packages/*; do (cd "$p" && npm pack --pack-destination /out); done'
 
 # In your app: the core first, or in the same `npm install` as any opt-in package
-npm install /path/to/staffops-otel-helper-0.3.0-dev.0.tgz /path/to/staffops-otel-helper-sql-0.3.0-dev.0.tgz \
+npm install /path/to/staffops-otel-helper-0.3.0-rc.1.tgz /path/to/staffops-otel-helper-sql-0.3.0-rc.1.tgz \
   @opentelemetry/api@~1.10.0
 ```
 
-An opt-in tarball installed alone makes npm resolve its peer
-`@staffops/otel-helper` from the registry. Add the scope mapping to your
-`.npmrc` now, so that lookup can only reach GitHub Packages and never a
-same-named package on npmjs:
-
-```ini
-@staffops:registry=https://npm.pkg.github.com
-```
-
-The tarballs land in `nodejs/tarballs/`, owned by root (the container's
-user); remove them with `sudo` or from another container. npm 11 warns
-`1 package has install scripts not yet covered by allowScripts: protobufjs@… (postinstall …)`
-(protobufjs comes with `@grpc/grpc-js` through `@grpc/proto-loader`, a dependency of the gRPC OTLP exporters): harmless — that postinstall only
-prints a warning when a project pins protobufjs with an unexpected version
-range, so leaving it unapproved, or `--ignore-scripts`, changes nothing.
-
-Registry installs (npmjs and GitHub Packages, with the `.npmrc` scope
-mapping that protects against dependency confusion) are described in
-[CONSUMING.md](../CONSUMING.md#nodejs-npm-packages-planned).
+Install the core tarball before, or in the same `npm install` as, any opt-in
+tarball: an opt-in tarball installed alone makes npm resolve its peer
+`@staffops/otel-helper` (that exact version) from the registry — the
+published bytes, not your build, or an error for a version that was never
+published. The tarballs land in `nodejs/tarballs/`, owned by root (the
+container's user); remove them with `sudo` or from another container.
 
 ## Quick start
 

@@ -5,8 +5,8 @@ Practical guide for Node.js developers instrumenting a service with
 [README.md](README.md#environment-variables); runnable examples are in
 [example/](example/README.md).
 
-Prerequisites: Node.js 22.15.0+, the helper installed (not released yet — see
-[README, Installation](README.md#installation)), and an OpenTelemetry
+Prerequisites: Node.js 22.15.0+, the helper installed at an exact version (release candidate
+`0.3.0-rc.1`, dist-tag `next`: see [README, Installation](README.md#installation)), and an OpenTelemetry
 Collector reachable over OTLP (or none, for the Prometheus fallback).
 
 - [1. Getting started](#1-getting-started)

@@ -1,6 +1,6 @@
 {
   "name": "@staffops/otel-helper",
-  "version": "0.3.0-dev.0",
+  "version": "0.3.0-rc.1",
   "description": "OpenTelemetry helper for Node.js: OTLP via the Collector, one env-var contract shared with the Go and Python helpers.",
   "license": "Apache-2.0",
   "author": "StaffOps",

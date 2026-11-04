@@ -18,7 +18,7 @@ import { dbMeterProvider, dbTracerProvider } from './providers';
 
 export const NAME = '@staffops/otel-helper-sql';
 /** Version of this package; a test keeps it equal to package.json `version`. */
-export const VERSION = '0.3.0-dev.0';
+export const VERSION = '0.3.0-rc.1';
 
 /** The contrib module and its `instrumentationName` per library. */
 export const CONTRIB: Readonly<Record<Library, string>> = Object.freeze({

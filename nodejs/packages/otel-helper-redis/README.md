@@ -4,8 +4,12 @@ Redis instrumentation for [`@staffops/otel-helper`](https://github.com/StaffOps/
 node-redis (`redis`, `@redis/client`) and `ioredis`, through the official
 `@opentelemetry/instrumentation-redis` and `-ioredis`.
 
-> **Not released yet** (`0.3.0-dev.0`); install it from the same release as
-> the core (the peer dependency pins the same version).
+> **Release candidate `0.3.0-rc.1`**, published to npmjs (dist-tag `next`, with
+> provenance) and to GitHub Packages. Install an exact version, the same as
+> the core's (the peer dependency pins it):
+> `npm install @staffops/otel-helper@0.3.0-rc.1 @staffops/otel-helper-redis@0.3.0-rc.1`.
+> Never a bare `npm install @staffops/otel-helper-redis`: until the first
+> stable release, `latest` is a deprecated `0.0.0-bootstrap.0` placeholder.
 
 ```js
 const { setup } = require('@staffops/otel-helper');

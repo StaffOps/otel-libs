@@ -18,7 +18,7 @@ engineers who run the Collector it exports to.
 | Go | [`go/`](go/README.md) | `github.com/staffops/otel-libs/go` + `ext/*` modules | `0.3.0` (unreleased, this branch); latest release `go/v0.2.1` | 0.3 |
 | Python | [`python/`](python/README.md) | `staffops-otel-helper` (extras `aws`, `redis`, `sql`) | `0.3.0` (unreleased, this branch); latest release `0.2.0` | 0.3 |
 | .NET | [`dotnet/`](dotnet/README.md) | `OtelHelper` + `.AWS` / `.Redis` / `.Sql` / `.Profiling` (NuGet) | `0.2.0` | 0.2.x — the 0.3 contract lands in Phase C |
-| Node.js | [`nodejs/`](nodejs/README.md) | `@staffops/otel-helper` + `-sql` / `-redis` / `-aws` / `-pino` / `-winston` (npm) | `0.3.0` (unreleased, this branch: `0.3.0-dev.0`); not published yet | 0.3 |
+| Node.js | [`nodejs/`](nodejs/README.md) | `@staffops/otel-helper` + `-sql` / `-redis` / `-aws` / `-pino` / `-winston` (npm) | `0.3.0` (unreleased); release candidate `0.3.0-rc.1` (tag `nodejs/v0.3.0-rc.1`, npm dist-tag `next`; install the exact version) | 0.3 |
 
 The rollout order is Go + Python, then Node.js, then .NET
 ([ADR-004](https://github.com/StaffOps/otel-libs/blob/main/specs/decisions/ADR-004-phased-rollout-go-python-first.md)). Until a
@@ -267,7 +267,7 @@ always identical:
 
 | Area | Gap |
 |------|-----|
-| Python and Node.js gRPC | Spans carry the legacy `rpc.system`, `rpc.service`, `rpc.method` and `rpc.grpc.status_code` attributes, and no RPC metrics are emitted (upstream `opentelemetry-instrumentation-grpc`; `@opentelemetry/instrumentation-grpc` 0.300 in the Node.js helper, which is not released yet). Go emits the current RPC semconv and `rpc.server.call.duration` / `rpc.client.call.duration`. Node.js error spans also carry the non-semconv `grpc.error_name` / `grpc.error_message` and no `error.type` |
+| Python and Node.js gRPC | Spans carry the legacy `rpc.system`, `rpc.service`, `rpc.method` and `rpc.grpc.status_code` attributes, and no RPC metrics are emitted (upstream `opentelemetry-instrumentation-grpc`; `@opentelemetry/instrumentation-grpc` 0.300 in the Node.js helper, release candidate `0.3.0-rc.1`). Go emits the current RPC semconv and `rpc.server.call.duration` / `rpc.client.call.duration`. Node.js error spans also carry the non-semconv `grpc.error_name` / `grpc.error_message` and no `error.type` |
 | Node.js gRPC handler that throws synchronously | Its SERVER span is never ended or exported (upstream `@opentelemetry/instrumentation-grpc`); Go and Python record the call with status UNKNOWN. Return errors through the callback or a rejected promise |
 | Node.js routers created before `setup()` | An express app or router built before `setup()` gets a truncated `http.route` (`GET /api`) or none; require routes modules after `setup()` (the helper warns when express or grpc-js was loaded first) |
 | gRPC span names | Different in every language: Go `pkg.Svc/Method` (semconv), Python `/pkg.Svc/Method`, Node.js `grpc.pkg.Svc/Method`. Queries and dashboards on gRPC span names must match all three until a ruling (contract task A22 follow-up) |
@@ -325,10 +325,14 @@ the reason for each item, is
 
 ## Installing
 
-Today only the .NET packages need a GitHub token with `read:packages`. .NET uses
-GitHub Packages NuGet, Python uses GitHub Release wheel assets, Go uses `go get`
-from the repository; the Node.js packages are not published yet (npmjs and
-GitHub Packages are planned; until then, `npm pack` tarballs). See
+Only GitHub Packages needs a GitHub token with `read:packages`: .NET always
+(GitHub Packages NuGet), Node.js only when installed from GitHub Packages
+instead of npmjs. Python uses GitHub Release wheel assets, Go uses `go get`
+from the repository. The Node.js packages are on npmjs (no token; release
+candidate `0.3.0-rc.1`, dist-tag `next`, always installed at an exact
+version such as `npm install @staffops/otel-helper@0.3.0-rc.1`, because
+`latest` is a deprecated bootstrap placeholder until the first stable
+release) and on GitHub Packages with the same version. See
 [CONSUMING.md](CONSUMING.md) for auth, install commands and CI variants.
 
 ## Dashboards

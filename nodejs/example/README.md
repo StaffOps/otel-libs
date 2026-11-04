@@ -150,9 +150,12 @@ tarballs, `example-images` passes `--build-arg HELPER_VERSION=<core version>`).
 Each example's own dependencies are
 pinned by its `package-lock.json`; the helper's dependencies resolve within the
 helper's declared ranges at install time, as Python's wheel install. The helper is not listed in the examples'
-`package.json` on purpose: nothing is published yet, and a `file:` tarball
-entry would pin one build's bytes in the lockfile (npm records the tarball's
-`integrity`).
+`package.json` on purpose: the examples run the helper built from this
+workspace (a commit under development has no published version), and a
+`file:` tarball entry would pin one build's bytes in the lockfile (npm records
+the tarball's `integrity`). Depending on the published version
+(from the first release candidate on) instead is an open follow-up, task B14 in
+[`specs/nodejs-otel-helper/tasks.md`](https://github.com/StaffOps/otel-libs/blob/main/specs/nodejs-otel-helper/tasks.md).
 
 ### Run
 

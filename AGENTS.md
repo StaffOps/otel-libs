@@ -8,7 +8,7 @@ those.
 > Go and Python on this branch implement the `0.3.0` contract
 > ([`specs/config-contract-v0.3/`](specs/config-contract-v0.3/), Phase A done);
 > Node.js implements it too (Phase B, [`specs/nodejs-otel-helper/`](specs/nodejs-otel-helper/),
-> not released); .NET still ships the `0.2.x` behavior until Phase C. If this file conflicts
+> release candidate `0.3.0-rc.1`); .NET still ships the `0.2.x` behavior until Phase C. If this file conflicts
 > with the code, treat it as a bug in one of the two and flag it — do not
 > silently follow either side.
 
@@ -21,7 +21,7 @@ equivalent**: `go/` (module `github.com/staffops/otel-libs/go` +
 [ADR-011](specs/decisions/ADR-011-owner-prefixed-package-names.md)),
 `dotnet/` (`OtelHelper` + `.AWS`/`.Redis`/`.Sql`/`.Profiling`), `nodejs/`
 (npm workspaces: `@staffops/otel-helper` + `-sql`/`-redis`/`-aws`/`-pino`/`-winston`;
-not published yet: the release pipeline exists, the first release is pending). Shared Grafana dashboards in `dashboards/`, MkDocs site in
+release candidate `0.3.0-rc.1`, tag `nodejs/v0.3.0-rc.1`, on npmjs with dist-tag `next` and on GitHub Packages; `latest` stays the deprecated bootstrap placeholder until the first stable release). Shared Grafana dashboards in `dashboards/`, MkDocs site in
 `docs/site/`, specs in [`specs/`](specs/README.md).
 
 ## Core principles
