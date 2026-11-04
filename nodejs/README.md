@@ -11,10 +11,10 @@ Audience: developers instrumenting a Node.js service. The practical guide is
 how to test the library is in [TESTS.md](TESTS.md).
 
 > **Status: not released.** The packages are at `0.3.0-dev.0` on this branch
-> and are **not published** to any registry yet (Phase B, task B13). The
-> `@staffops` npm scope is not claimed on npmjs: never install
-> `@staffops/otel-helper*` by name from the public registry until a release
-> says so. See [Installation](#installation).
+> and are **not published** to any registry yet (the release CI exists since
+> task B13; the first release follows B14). The `@staffops` npm scope is
+> claimed on npmjs, but never install `@staffops/otel-helper*` by name from
+> the public registry until a release says so. See [Installation](#installation).
 
 ## Requirements
 

@@ -9,6 +9,10 @@
 # failures (XFAIL <task>); an expected failure that passes is an error (XPASS).
 #
 #   testing/e2e/smoke.sh
+#   SMOKE_LANGS=node NODE_VERSION=22.15.0 testing/e2e/smoke.sh   # one language, another Node line
+#
+# SMOKE_LANGS (default "go python node") picks the languages run and checked;
+# NODE_VERSION picks the node-smoke image line (docker-compose.yml, default 24).
 #
 # The Collector is stopped at exit only when this run started it. A Collector
 # that was already running is reused as is (not recreated, not stopped) and
@@ -18,6 +22,18 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 . e2e/combos.sh
 compose=(docker compose -f docker-compose.yml --profile e2e)
+# Normalized to " a b c " (tabs, newlines and commas count as separators).
+langs=" $(printf '%s' "${SMOKE_LANGS:-go python node}" | tr -s ' \t\n,' '    ' | sed 's/^ *//; s/ *$//') "
+if [ "$langs" = "  " ]; then
+  echo "smoke: SMOKE_LANGS names no language (go, python, node)" >&2
+  exit 2
+fi
+for lang in $langs; do
+  case "$lang" in
+    go | python | node) ;;
+    *) echo "smoke: unknown language in SMOKE_LANGS: $lang (go, python, node)" >&2; exit 2 ;;
+  esac
+done
 
 collector_running() {
   "${compose[@]}" ps --status running --services 2>/dev/null | grep -qx collector
@@ -41,9 +57,9 @@ else
   "${compose[@]}" up -d --force-recreate --quiet-pull collector
   logs_since=()
 fi
-"${compose[@]}" run --rm --quiet-pull go-smoke
-"${compose[@]}" run --rm --quiet-pull python-smoke
-"${compose[@]}" run --rm --quiet-pull node-smoke
+for lang in go python node; do
+  case "$langs" in *" $lang "*) "${compose[@]}" run --rm --quiet-pull "$lang-smoke" ;; esac
+done
 sleep 3 # let the debug exporter print the last batches
 logs=$("${compose[@]}" logs --no-color --no-log-prefix ${logs_since[@]+"${logs_since[@]}"} collector)
 stop_collector
@@ -132,6 +148,7 @@ node   all         logs-correlated -     ok'
 
 status=0
 while read -r lang combo signal receiver want; do
+  case "$langs" in *" $lang "*) ;; *) continue ;; esac
   if [ "$combo" = all ]; then
     got=ok
     while IFS='|' read -r name _; do

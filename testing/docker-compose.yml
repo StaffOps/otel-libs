@@ -225,6 +225,9 @@ services:
         npm run typecheck
         npm run check
         node ci/check-pack.mjs
+        # Release version tool (task B13): its tests also check that every
+        # version location of the workspace agrees.
+        node --test 'ci/*.test.mjs'
         # Includes the parity runner (test/parity/runner.test.cjs, run by the core
         # package's test script so its children count towards the coverage gate).
         npm test

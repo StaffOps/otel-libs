@@ -3,7 +3,9 @@ name: CI
 on:
   push:
     branches: [main]
-    tags: ['v*', 'dotnet/v*']   # v* = Python release; dotnet/v* = .NET (design D10 A11 ruling)
+    # v* = Python release; dotnet/v* = .NET (design D10 A11 ruling); nodejs/v* =
+    # Node.js (task B13, JS10). `*` never matches `/`, so v* misses the prefixed tags.
+    tags: ['v*', 'dotnet/v*', 'nodejs/v*']
   pull_request:
     branches: [main]
 
@@ -318,7 +320,8 @@ jobs:
       - run: sh ci/api-range-install.sh
 
   e2e-smoke:
-    name: e2e smoke (Collector, Go + Python + Node, grpc/http-prefix/per-signal/tls)
+    # Go and Python; the Node rows run in e2e-smoke-node (two Node lines).
+    name: e2e smoke (Collector, Go + Python, grpc/http-prefix/per-signal/tls)
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -326,6 +329,29 @@ jobs:
         with:
           persist-credentials: false
       - run: testing/e2e/smoke.sh
+        env:
+          SMOKE_LANGS: go python
+      - name: Collector logs
+        if: failure()
+        run: docker compose -f testing/docker-compose.yml --profile e2e logs collector || true
+
+  e2e-smoke-node:
+    # Node 24 and the engines floor 22.15.0 (spec JS1, task B13).
+    name: e2e smoke (Collector, Node.js ${{ matrix.node }}, grpc/http-prefix/per-signal/tls)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ['24', '22.15.0']
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - run: testing/e2e/smoke.sh
+        env:
+          SMOKE_LANGS: node
+          NODE_VERSION: ${{ matrix.node }}
       - name: Collector logs
         if: failure()
         run: docker compose -f testing/docker-compose.yml --profile e2e logs collector || true
@@ -393,12 +419,91 @@ jobs:
           path: packages/
           retention-days: 1
 
-  example-images:
-    name: Build example images (.NET/Python consume the prebuilt package; Go and Node build from source)
+  build-lib-node:
+    # Its own job, not a build-lib step: build-lib waits for the Go/.NET/Python
+    # tests, and a Node release must not wait on (or be blocked by) another
+    # language's suite — versions diverge per language (ADR-004).
+    name: Build Node.js packages (once; version check + publish dry-run)
     runs-on: ubuntu-latest
-    # node-test: the Node images build the helper from the workspace source, so
-    # they wait for its tests as the other languages wait for theirs (via build-lib).
-    needs: [build-lib, node-test]
+    needs: [node-test]
+    outputs:
+      # sha256sum lines of the six tarballs: the publish jobs check them (M2).
+      sha256: ${{ steps.pack.outputs.sha256 }}
+    defaults:
+      run:
+        working-directory: nodejs
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: nodejs/package-lock.json
+      - run: npm ci --ignore-scripts
+      - name: Version tool tests
+        run: node --test "ci/*.test.mjs"
+      - name: Every version location agrees (package.json, peers, VERSION constants, lockfile, Dockerfile.demo)
+        id: version
+        env:
+          REF: ${{ github.ref }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          version=$(node -p "require('./packages/otel-helper/package.json').version")
+          # On a nodejs/v* tag the tag is the reference; elsewhere the core's own version.
+          case "$REF" in refs/tags/nodejs/v*) version=${REF_NAME#nodejs/v} ;; esac
+          node ci/version.mjs check "$version"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - run: npm run build
+      - name: npm pack every package into tarballs/
+        id: pack
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          rm -rf tarballs && mkdir tarballs
+          npm pack --workspaces --pack-destination tarballs --loglevel=error
+          node ci/version.mjs check "$VERSION" --tarballs tarballs
+          # shellcheck disable=SC2046 # one word per tarball name
+          sums=$(cd tarballs && sha256sum $(node ../ci/version.mjs tarballs "$VERSION"))
+          printf '%s\n' "$sums"
+          { echo 'sha256<<EOF_SHA256'; printf '%s\n' "$sums"; echo 'EOF_SHA256'; } >> "$GITHUB_OUTPUT"
+      # What `npm publish` would send, without a registry login or provenance
+      # (no OIDC token outside the release job). Same dist-tag rule and the same
+      # exists-check as the release: a version already on npmjs (after its
+      # publish) is reported and not dry-run, so the job stays green.
+      # "./": npm reads a bare "tarballs/x.tgz" as a GitHub "user/repo" spec.
+      - name: npm publish --dry-run (every tarball, publish order)
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          reg=https://registry.npmjs.org/
+          tag=$(node ci/version.mjs dist-tag "$VERSION")
+          for t in $(node ci/version.mjs tarballs "$VERSION"); do
+            state=$(node ci/version.mjs registry-state "./tarballs/$t" --registry "$reg")
+            case "$state" in
+              absent) ;;
+              same) echo "::notice::$t: this version is already on npmjs with these bytes; dry-run skipped"; continue ;;
+              different) echo "::warning::$t: npmjs already holds this version with other bytes; bump the version before tagging"; continue ;;
+              *) echo "::error::$t: unexpected registry state '$state'"; exit 1 ;;
+            esac
+            npm publish "./tarballs/$t" --dry-run --access public --tag "$tag" --@staffops:registry="$reg"
+          done
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: node-packages
+          path: nodejs/tarballs/*.tgz
+          if-no-files-found: error
+          # A tag run keeps the tarballs 30 days: the publish jobs wait for the
+          # nodejs-release approval and must download them (re-runs too).
+          retention-days: ${{ startsWith(github.ref, 'refs/tags/nodejs/v') && 30 || 1 }}
+
+  # One job for every language: a matrix cannot carry per-entry needs, and a
+  # separate Node images job would duplicate these steps (review L8, 2026-11-04).
+  example-images:
+    name: Build example images (.NET/Python/Node consume the prebuilt packages; Go builds from source)
+    runs-on: ubuntu-latest
+    needs: [build-lib, build-lib-node]
     strategy:
       fail-fast: false
       matrix:
@@ -426,20 +531,22 @@ jobs:
           - context: go
             dockerfile: go/example/go-process/Dockerfile.demo
             source: true
-          # Node examples build the helper from the workspace source (Dockerfile);
-          # their Dockerfile.demo (npm pack tarballs, downloaded to artifact_path)
-          # joins once build-lib packs the Node packages (task B13).
+          # Node examples install the npm pack tarballs of build-lib-node
+          # (downloaded to artifact_path, HELPER_VERSION from the core's
+          # package.json). Their Dockerfile (helper built from the workspace
+          # source) is the local path; node-custom-signals is not built here, as
+          # python-custom-signals is not (task B13, owner 2026-11-04).
           - context: nodejs
-            dockerfile: nodejs/example/node-api/Dockerfile
-            source: true
+            dockerfile: nodejs/example/node-api/Dockerfile.demo
+            artifact: node-packages
             artifact_path: nodejs/tarballs
           - context: nodejs
-            dockerfile: nodejs/example/node-backend/Dockerfile
-            source: true
+            dockerfile: nodejs/example/node-backend/Dockerfile.demo
+            artifact: node-packages
             artifact_path: nodejs/tarballs
           - context: nodejs
-            dockerfile: nodejs/example/node-process/Dockerfile
-            source: true
+            dockerfile: nodejs/example/node-process/Dockerfile.demo
+            artifact: node-packages
             artifact_path: nodejs/tarballs
     steps:
       - uses: actions/checkout@v4
@@ -448,14 +555,21 @@ jobs:
       - uses: actions/download-artifact@v4
         if: ${{ !matrix.source }}
         with:
-          name: packages
+          name: ${{ matrix.artifact || 'packages' }}
           # Node keeps its workspace in packages/: its tarballs go to artifact_path.
           path: ${{ matrix.artifact_path || format('{0}/packages', matrix.context) }}
+      # Dockerfile.demo copies tarballs/staffops-otel-helper-${HELPER_VERSION}.tgz:
+      # the version comes from the source, never from the Dockerfile default.
+      - name: Helper version (Node)
+        id: helper
+        if: ${{ matrix.context == 'nodejs' }}
+        run: echo "version=$(node -p "require('./nodejs/packages/otel-helper/package.json').version")" >> "$GITHUB_OUTPUT"
       - uses: docker/setup-buildx-action@v3
       - uses: docker/build-push-action@v6
         with:
           context: ${{ matrix.context }}
           file: ${{ matrix.dockerfile }}
+          build-args: ${{ matrix.context == 'nodejs' && format('HELPER_VERSION={0}', steps.helper.outputs.version) || '' }}
           push: false
           cache-from: type=gha
           cache-to: type=gha,mode=max
@@ -474,10 +588,10 @@ jobs:
       run:
         working-directory: dotnet
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4.3.1
         with:
           dotnet-version: '8.0.x'
       - name: Pack with dev version
@@ -491,10 +605,12 @@ jobs:
               /p:RepositoryUrl="https://github.com/StaffOps/otel-libs"
           done
       - name: Push to GitHub Packages
+        env:
+          NUGET_API_KEY: ${{ secrets.GITHUB_TOKEN }}
         run: |
           dotnet nuget push nupkgs/*.nupkg \
             --source "https://nuget.pkg.github.com/StaffOps/index.json" \
-            --api-key ${{ secrets.GITHUB_TOKEN }} \
+            --api-key "$NUGET_API_KEY" \
             --skip-duplicate
 
   publish-dotnet-release:
@@ -510,29 +626,49 @@ jobs:
       run:
         working-directory: dotnet
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4.3.1
         with:
           dotnet-version: '8.0.x'
       - name: Extract version from tag
         id: version
-        run: echo "VERSION=${GITHUB_REF_NAME#dotnet/v}" >> "$GITHUB_OUTPUT"
+        env:
+          REF_NAME: ${{ github.ref_name }}
+        run: echo "VERSION=${REF_NAME#dotnet/v}" >> "$GITHUB_OUTPUT"
+      # The tag must match the <Version> of every project, so the published
+      # version is the one the source declares (task B13 fix round).
+      - name: Tag matches every project <Version>
+        env:
+          VERSION: ${{ steps.version.outputs.VERSION }}
+        run: |
+          status=0
+          for proj in OtelHelper OtelHelper.AWS OtelHelper.Redis OtelHelper.Sql OtelHelper.Profiling; do
+            declared=$(sed -n 's:.*<Version>\(.*\)</Version>.*:\1:p' "$proj/$proj.csproj" | head -n 1)
+            if [ "$declared" != "$VERSION" ]; then
+              echo "::error::$proj/$proj.csproj <Version> is '$declared', the tag says '$VERSION'"; status=1
+            fi
+          done
+          exit $status
       - name: Pack release version
+        env:
+          VERSION: ${{ steps.version.outputs.VERSION }}
         run: |
           for proj in OtelHelper OtelHelper.AWS OtelHelper.Redis OtelHelper.Sql OtelHelper.Profiling; do
             dotnet pack "$proj/$proj.csproj" \
               -c Release \
               -o nupkgs \
-              /p:Version="${{ steps.version.outputs.VERSION }}" \
+              /p:Version="$VERSION" \
               /p:RepositoryUrl="https://github.com/StaffOps/otel-libs"
           done
       - name: Push to GitHub Packages
+        env:
+          NUGET_API_KEY: ${{ secrets.GITHUB_TOKEN }}
         run: |
           dotnet nuget push nupkgs/*.nupkg \
             --source "https://nuget.pkg.github.com/StaffOps/index.json" \
-            --api-key ${{ secrets.GITHUB_TOKEN }} \
+            --api-key "$NUGET_API_KEY" \
             --skip-duplicate
 
   publish-python-release:
@@ -546,19 +682,184 @@ jobs:
       run:
         working-directory: python
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: '3.11'
+      - run: pip install build -q
+      # The tag (SemVer, v0.3.0-rc.3) must name the pyproject.toml version
+      # (PEP 440, 0.3.0rc3): compared after PEP 440 normalization (task B13 fix round).
+      - name: Tag matches pyproject.toml version
+        env:
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          python - <<'EOF'
+          import os, sys, tomllib
+          from packaging.version import InvalidVersion, Version
+          tag = os.environ["REF_NAME"]
+          declared = tomllib.load(open("pyproject.toml", "rb"))["project"]["version"]
+          try:
+              ok = Version(tag.removeprefix("v")) == Version(declared)
+          except InvalidVersion as err:
+              sys.exit(f"::error::tag {tag!r}: {err}")
+          if not ok:
+              sys.exit(f"::error::pyproject.toml version is {declared!r}, the tag {tag!r} says otherwise")
+          print(f"ok: tag {tag} = pyproject.toml {declared}")
+          EOF
       - name: Build wheel and sdist
-        run: pip install build -q && python -m build
+        run: python -m build
       - name: Upload to GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REF_NAME: ${{ github.ref_name }}
         run: |
           # A tag with a SemVer pre-release part (v0.3.0-rc.2) must not become "Latest".
-          pre=(); case "${{ github.ref_name }}" in *-*) pre=(--prerelease --latest=false);; esac
-          gh release upload "${{ github.ref_name }}" dist/* --clobber \
-            || gh release create "${{ github.ref_name }}" dist/* --generate-notes "${pre[@]}"
+          pre=(); case "$REF_NAME" in *-*) pre=(--prerelease --latest=false);; esac
+          gh release upload "$REF_NAME" dist/* --clobber \
+            || gh release create "$REF_NAME" dist/* --generate-notes "${pre[@]}"
+
+  # Requirement JS10, design D-JS11: the same six tarballs (built once by
+  # build-lib-node) go to npmjs — trusted publishing (OIDC, no token) with
+  # provenance — and then to GitHub Packages (GITHUB_TOKEN), in two jobs so the
+  # OIDC token and the packages token never share a job (security M3). The
+  # first publish of each package is the one-time owner bootstrap in the
+  # release skill ("Node.js first publish", .claude/skills/release/SKILL.md).
+  publish-nodejs-npmjs:
+    name: Publish Node.js release to npmjs (trusted publishing, provenance)
+    permissions:
+      contents: read
+      id-token: write   # npmjs trusted publishing + provenance
+    runs-on: ubuntu-latest
+    needs: [node-test, node-api-range, e2e-smoke-node, build-lib-node]
+    if: startsWith(github.ref, 'refs/tags/nodejs/v')
+    # Required protection (created by the owner, not by this file): the
+    # environment's deployment rule admits only tags matching nodejs/v* and
+    # needs the owner's review; each package's npmjs trusted publisher names
+    # this environment. Check: gh api repos/StaffOps/otel-libs/environments/nodejs-release
+    # (protection_rules: required_reviewers + branch_policy) and
+    # gh api repos/StaffOps/otel-libs/environments/nodejs-release/deployment-branch-policies
+    # (a tag policy named nodejs/v*).
+    environment: nodejs-release
+    defaults:
+      run:
+        working-directory: nodejs
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      # No registry-url: setup-node would write an .npmrc with a placeholder
+      # NODE_AUTH_TOKEN; npmjs trusted publishing needs no token at all.
+      # An exact Node patch: its bundled npm (11.19.1 with 24.22.2) is the one
+      # that publishes; no npm self-upgrade in the OIDC job.
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '24.22.2'
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: node-packages
+          path: nodejs/tarballs
+      # M2: exactly the six tarballs build-lib-node packed, byte for byte, then
+      # the tag against every version location and inside each tarball.
+      - name: Tarballs are the ones build-lib-node recorded; tag matches every version
+        id: version
+        env:
+          REF_NAME: ${{ github.ref_name }}
+          SHA256: ${{ needs.build-lib-node.outputs.sha256 }}
+        run: |
+          printf '%s\n' "$SHA256" > "$RUNNER_TEMP/SHA256SUMS"
+          (cd tarballs && sha256sum --strict -c "$RUNNER_TEMP/SHA256SUMS")
+          # check rejects anything but nodejs/vX.Y.Z[-pre] (SemVer) before comparing.
+          node ci/version.mjs verify-sums "$REF_NAME" --tarballs tarballs --sums "$RUNNER_TEMP/SHA256SUMS"
+          node ci/version.mjs check "$REF_NAME" --tarballs tarballs
+          version=${REF_NAME#nodejs/v}
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=$(node ci/version.mjs dist-tag "$version")" >> "$GITHUB_OUTPUT"
+      - name: npm supports trusted publishing (>= 11.5.1)
+        run: |
+          npm -v
+          node -e "const [a,b,c]=process.argv[1].split('.').map(Number); process.exit(a>11||(a===11&&(b>5||(b===5&&c>=1)))?0:1)" "$(npm -v)"
+      # Core first: every opt-in package peer-depends on it at the same version.
+      # A version already on npmjs with this tarball's sha512 is skipped, so a
+      # re-run completes a partial publish; the same version with other bytes
+      # fails the job (security M1).
+      - name: Publish to npmjs
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          DIST_TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          reg=https://registry.npmjs.org/
+          for t in $(node ci/version.mjs tarballs "$VERSION"); do
+            state=$(node ci/version.mjs registry-state "./tarballs/$t" --registry "$reg")
+            case "$state" in
+              same) echo "skip $t: already on npmjs with the same sha512"; continue ;;
+              different) echo "::error::$t: npmjs already holds $VERSION with other bytes; fix forward with a new version"; exit 1 ;;
+              absent) ;;
+              *) echo "::error::$t: unexpected registry state '$state'"; exit 1 ;;
+            esac
+            npm publish "./tarballs/$t" --provenance --access public --tag "$DIST_TAG" --@staffops:registry="$reg"
+          done
+
+  publish-nodejs-ghp:
+    name: Publish Node.js release to GitHub Packages
+    permissions:
+      contents: read
+      packages: write   # GitHub Packages npm; no id-token here
+    runs-on: ubuntu-latest
+    needs: [publish-nodejs-npmjs, build-lib-node]
+    if: startsWith(github.ref, 'refs/tags/nodejs/v')
+    defaults:
+      run:
+        working-directory: nodejs
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      # No registry-url: this job writes its own userconfig for GitHub Packages
+      # (token from the environment) below.
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '24.22.2'
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: node-packages
+          path: nodejs/tarballs
+      # M2: exactly the six tarballs build-lib-node packed, byte for byte, then
+      # the tag against every version location and inside each tarball.
+      - name: Tarballs are the ones build-lib-node recorded; tag matches every version
+        id: version
+        env:
+          REF_NAME: ${{ github.ref_name }}
+          SHA256: ${{ needs.build-lib-node.outputs.sha256 }}
+        run: |
+          printf '%s\n' "$SHA256" > "$RUNNER_TEMP/SHA256SUMS"
+          (cd tarballs && sha256sum --strict -c "$RUNNER_TEMP/SHA256SUMS")
+          # check rejects anything but nodejs/vX.Y.Z[-pre] (SemVer) before comparing.
+          node ci/version.mjs verify-sums "$REF_NAME" --tarballs tarballs --sums "$RUNNER_TEMP/SHA256SUMS"
+          node ci/version.mjs check "$REF_NAME" --tarballs tarballs
+          version=${REF_NAME#nodejs/v}
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=$(node ci/version.mjs dist-tag "$version")" >> "$GITHUB_OUTPUT"
+      - name: Publish to GitHub Packages
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          DIST_TAG: ${{ steps.version.outputs.tag }}
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          reg=https://npm.pkg.github.com
+          userconfig="$RUNNER_TEMP/npmrc-github-packages"
+          # The file holds the variable name; npm expands ${NODE_AUTH_TOKEN} itself.
+          # shellcheck disable=SC2016
+          printf '%s\n' '//npm.pkg.github.com/:_authToken=${NODE_AUTH_TOKEN}' > "$userconfig"
+          for t in $(node ci/version.mjs tarballs "$VERSION"); do
+            state=$(node ci/version.mjs registry-state "./tarballs/$t" --registry "$reg" --userconfig "$userconfig")
+            case "$state" in
+              same) echo "skip $t: already on GitHub Packages with the same sha512"; continue ;;
+              different) echo "::error::$t: GitHub Packages already holds $VERSION with other bytes"; exit 1 ;;
+              absent) ;;
+              *) echo "::error::$t: unexpected registry state '$state'"; exit 1 ;;
+            esac
+            # No --provenance: GitHub Packages does not store npm provenance.
+            npm publish "./tarballs/$t" --tag "$DIST_TAG" --@staffops:registry="$reg" --userconfig "$userconfig"
+          done

@@ -17,7 +17,11 @@ CI (`.github/workflows/ci.yml`) splits them across jobs: `node-test` runs the
 unit tests, the parity fixture and the package checks on Node 22.15.0 (the
 `engines` floor), 22, 24 and 26 with the database services;
 `node-api-range` runs `ci/api-range-install.sh` once, on Node 24 (it needs
-the npm registry); `e2e-smoke` runs the Collector smoke on Node 24. The
+the npm registry); `e2e-smoke-node` runs the Collector smoke's Node rows on
+Node 24 and 22.15.0 (`e2e-smoke` keeps Go and Python); `build-lib-node`
+runs the release version tool's tests (`ci/version.test.mjs`), packs the six
+tarballs, records their sha256 sums and runs `npm publish --dry-run` on the
+versions not yet on npmjs. The
 compose `node-tests` service below runs the first two jobs' steps in one
 container. Coverage gates (c8, every
 line of `dist/` and `esm/`): **≥ 90%** lines for the core and for `-sql` and
@@ -115,7 +119,12 @@ run by `run-node.sh` in the `node-smoke` service) emits the shared markers
 (`e2e-smoke-span`, `e2e.smoke.runs`, `e2e-smoke-log`); 16 expectation rows per
 language check each signal reached the expected receiver, no per-signal leak,
 and that the log record carries the marker span's trace id. Output: one `OK` /
-`MISS` / `LEAK` / `XFAIL` / `XPASS` line per expectation.
+`MISS` / `LEAK` / `XFAIL` / `XPASS` line per expectation. One language on
+another Node line, as the CI floor leg:
+
+```bash
+SMOKE_LANGS=node NODE_VERSION=22.15.0 testing/e2e/smoke.sh
+```
 
 The example apps run against the same Collector: see
 [example/README.md](example/README.md).

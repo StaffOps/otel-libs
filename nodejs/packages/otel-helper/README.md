@@ -8,9 +8,8 @@ Collector, sampling and resource enrichment at the Collector. Instruments
 `/metrics` when no OTLP endpoint is configured; a logger that exports
 through OpenTelemetry or writes JSON lines on stdout.
 
-> **Not released yet** (`0.3.0-dev.0`). The `@staffops` npm scope is not
-> claimed on npmjs: do not install this package by name from the public
-> registry until a release says so.
+> **Not released yet** (`0.3.0-dev.0`). Do not install this package by name
+> from the public registry until a release says so.
 
 Requires Node.js 22.15.0 or newer and the peer dependency
 `@opentelemetry/api` `>=1.10.0 <1.11.0`.

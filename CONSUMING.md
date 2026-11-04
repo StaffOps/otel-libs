@@ -240,24 +240,29 @@ defer shutdown(context.Background()) // from 0.3: use a fresh deadline on SIGTER
 
 ## Node.js (npm packages, planned)
 
-**Nothing is published yet.** Releases are planned for npmjs and GitHub
-Packages, with identical versions, from `nodejs/vX.Y.Z` tags (Phase B, task
-B13; npmjs with provenance through trusted publishing). Until then install
-the `npm pack` tarballs built from the repository — see
-[`nodejs/README.md`](nodejs/README.md#installation).
+**Nothing is published yet.** On each `nodejs/vX.Y.Z` tag the CI jobs
+`publish-nodejs-npmjs` and `publish-nodejs-ghp` (task B13) publish the six
+packages with identical versions and identical bytes to npmjs (trusted
+publishing, with provenance) and to GitHub Packages; release candidates
+(`X.Y.Z-rc.N`) carry the npm dist-tag `next`. **A bare `npm install
+@staffops/otel-helper` is not safe until the first stable release**: on
+npmjs `latest` points at a deprecated `0.0.0-bootstrap.0` placeholder (npm
+needs a package to exist before CI can publish it) — always install an
+exact version. Until the first release install the `npm pack` tarballs
+built from the repository
+(`staffops-otel-helper-<version>.tgz`, `staffops-otel-helper-sql-<version>.tgz`,
+…) — see [`nodejs/README.md`](nodejs/README.md#installation).
 
 Packages: `@staffops/otel-helper` (core), `@staffops/otel-helper-sql`,
 `@staffops/otel-helper-redis`, `@staffops/otel-helper-aws` (instrumentation)
 and `@staffops/otel-helper-pino`, `@staffops/otel-helper-winston` (log
 destinations).
 
-> **The `@staffops` scope is not claimed on npmjs yet.** Until the owner
-> claims the npm organization (ADR-011) anyone could publish a package under
-> `@staffops/…` there, and a bare `npm install @staffops/otel-helper` would
-> install it — dependency confusion. Do not install these packages by name
-> from npmjs until a release announces them there; once they are published,
-> map the scope to one registry in `.npmrc` (below), so `@staffops/*` never
-> resolves anywhere else.
+> **The `@staffops` scope is claimed on npmjs** (the `staffops` npm
+> organization, ADR-011, 2026-11-04), so nobody else can publish under it.
+> Still, do not install these packages by name from npmjs until a release
+> announces them there, and map the scope to one registry in `.npmrc`
+> (below), so `@staffops/*` never resolves anywhere else.
 
 ### Map the scope to one registry (`.npmrc`)
 
@@ -270,7 +275,7 @@ first line; keep the token in the environment, never in the file:
 //npm.pkg.github.com/:_authToken=${GITHUB_PACKAGES_TOKEN}
 ```
 
-npmjs, once the scope is claimed and the packages are published there:
+npmjs (the scope is claimed; use it once the packages are published there):
 
 ```ini
 @staffops:registry=https://registry.npmjs.org/
@@ -289,6 +294,12 @@ from npmjs. Install the core tarball before, or in the same `npm install` as,
 any opt-in tarball.
 
 ### Install packages (after the release)
+
+Always pin the exact version: until the first stable release `latest` is
+the deprecated bootstrap placeholder, and a release candidate is only
+reachable by version or by the `next` dist-tag. Packages installed from npmjs can be checked with
+`npm audit signatures`, which verifies their registry signatures and
+provenance attestations.
 
 ```bash
 npm install @staffops/otel-helper@<version> @opentelemetry/api@~1.10.0

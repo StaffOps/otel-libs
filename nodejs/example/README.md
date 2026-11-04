@@ -145,11 +145,14 @@ docker build -t node-process -f nodejs/example/node-process/Dockerfile nodejs
 
 `Dockerfile` builds the helper from the workspace source and installs the
 `npm pack` tarball; `Dockerfile.demo` installs a prebuilt tarball from
-`nodejs/tarballs/` instead (the CI artifact). Each example's own dependencies are
+`nodejs/tarballs/` instead — what CI builds (`build-lib-node` packs the
+tarballs, `example-images` passes `--build-arg HELPER_VERSION=<core version>`).
+Each example's own dependencies are
 pinned by its `package-lock.json`; the helper's dependencies resolve within the
 helper's declared ranges at install time, as Python's wheel install. The helper is not listed in the examples'
-`package.json` on purpose: the `@staffops` npm scope is not claimed yet, so a
-registry name could resolve to someone else's package.
+`package.json` on purpose: nothing is published yet, and a `file:` tarball
+entry would pin one build's bytes in the lockfile (npm records the tarball's
+`integrity`).
 
 ### Run
 

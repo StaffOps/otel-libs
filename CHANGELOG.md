@@ -2874,6 +2874,49 @@ Unsupported instrumentation versions, task A10 (P18):
   mapping now, the Go `CLIENT MAINT_NOTIFICATIONS` span (first connection
   per client, with the `ModeDisabled` fix), two troubleshooting rows, and the
   LOW items. `nodejs/ci/check-pack.mjs` reports "required files present".
+- **Node.js release CI (Phase B, task B13; nothing published yet).** A
+  `nodejs/vX.Y.Z[-rc.N]` tag now runs `publish-nodejs-npmjs` and then
+  `publish-nodejs-ghp` (`.github/workflows/ci.yml`): after `node-test`,
+  `node-api-range`, the new `e2e-smoke-node` (Node 24 and the 22.15.0
+  floor; `e2e-smoke` keeps Go and Python) and the new `build-lib-node` job,
+  each checks that the tarballs are byte for byte the six `build-lib-node`
+  packed (`sha256sum`, recorded as a job output) and that the tag matches
+  every version location and every tarball manifest, then publishes them,
+  core first — to npmjs through trusted publishing (OIDC, `--provenance`,
+  environment `nodejs-release`, no token in the repository or in CI
+  secrets), and in a separate job without `id-token` to GitHub Packages
+  with `GITHUB_TOKEN`. Release candidates get the dist-tag `next`. A version
+  already on a registry is skipped only when its `dist.integrity` equals the
+  tarball's sha512 (so a re-run completes a partial publish); other bytes,
+  or an unreadable registry answer, fail the job. `build-lib-node` packs
+  the six packages once, runs `npm publish --dry-run` on every pull request
+  and push for versions not yet on npmjs, and feeds the Node example images,
+  which now build their `Dockerfile.demo` from those tarballs
+  (`HELPER_VERSION` from the core's `package.json`). `testing/e2e/smoke.sh`
+  gains a `SMOKE_LANGS` filter. New `nodejs/ci/version.mjs` (`check`, `set`,
+  `dist-tag`, `tarballs`, `verify-sums`, `registry-state`) keeps the six
+  `package.json` versions, the exact core peer pins, the `VERSION`
+  constants, the lockfile entries, the `Dockerfile.demo` defaults and the
+  README version mentions identical, with tests in
+  `nodejs/ci/version.test.mjs`. The Python and .NET release jobs now fail
+  when the tag does not match `pyproject.toml` (after PEP 440
+  normalization) or every project `<Version>`; tag names and tokens reach
+  their scripts through `env:` only. Every action in the publish jobs and
+  in `build-lib-node` is pinned to a full commit SHA (`# vX.Y.Z` comment),
+  kept current by the new `.github/dependabot.yml` (GitHub Actions,
+  weekly). The `release` skill documents the Node publish, the required
+  `nodejs-release` environment protection (tags `nodejs/v*` only, the owner
+  as reviewer) and how to check it, the one-time first-publish bootstrap
+  the owner runs (a throwaway `0.0.0-bootstrap.0`, deprecated at once: npm
+  accepts a trusted publisher only for an existing package), the Node
+  after-tagging checks and an SDK-bump checklist. `CONSUMING.md`: the
+  `@staffops` npm scope is claimed (2026-11-04); until the first stable
+  release `latest` is the deprecated bootstrap version, so always install
+  an exact version. Both Node publish jobs pin Node 24.22.2 (its bundled npm
+  11.19.1 publishes; no npm self-upgrade in the OIDC job), the
+  `node-packages` artifact is kept 30 days on a `nodejs/v*` tag run, and
+  Dependabot waits 7 days (`cooldown`) before proposing an action release.
+  No library behavior changed.
 - **Python example: python-process no longer injects `traceparent` by hand.**
   The injection was a no-op (the httpx instrumentation replaces the header);
   `_propagation_headers()` is removed from
