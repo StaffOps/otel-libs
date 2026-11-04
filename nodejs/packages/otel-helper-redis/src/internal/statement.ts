@@ -1,7 +1,7 @@
 /**
  * The `db.query.text`, span name and error code the helper records for a
- * Redis command (task B10b; JS8 "never records command values"; contract D14
- * `otelredis` bullet, D1 "DB error status" amended for A26).
+ * Redis command (JS8 "never records command values"; contract D14
+ * `otelredis` bullet, D1 "DB error status").
  *
  * Upstream's default serializer (`@opentelemetry/redis-common`
  * `defaultDbStatementSerializer`) keeps arguments for many commands: every
@@ -41,8 +41,7 @@ export function sanitizedStatement(commandName: unknown, commandArgs: unknown): 
 }
 
 /**
- * The span name for a contrib span (ruling 2026-11-03, B10b Q3; reworded in
- * the fix round): the command uppercased (ASCII) — a **parity choice with
+ * The span name for a contrib span: the command uppercased (ASCII) — a **parity choice with
  * Python**, not semconv (semconv: `{db.operation.name} {target}`, with
  * `db.operation.name` as provided, so ioredis `set`; the helper keeps
  * `db.operation.name` as provided and has no `{target}`). node-redis names its
@@ -59,8 +58,7 @@ export function commandSpanName(requested: string): string {
 }
 
 /**
- * Known Redis reply codes (contract D1 "DB error status", A26 final round
- * 2026-11-03): the error codes Redis 7.4 sends (`src/*.c`, e.g. server.c:1875
+ * Known Redis reply codes (contract D1 "DB error status"): the error codes Redis 7.4 sends (`src/*.c`, e.g. server.c:1875
  * NOSCRIPT, cluster.c:1186 CROSSSLOT, cluster.c:1205 MOVED/ASK) plus redis-py's
  * `BaseParser.EXCEPTION_CLASSES` keys. The same set in Go and Python.
  */
@@ -73,7 +71,7 @@ export const REPLY_CODES: ReadonlySet<string> = new Set([
 
 /**
  * The reply's leading code in a Redis error message when it is a known one
- * ({@link REPLY_CODES}): `db.response.status_code` and `error.type` (A26).
+ * ({@link REPLY_CODES}): `db.response.status_code` and `error.type`.
  * Anything else — a Lua `error_reply` whose first word is data, a client-side
  * error (`connect ECONNREFUSED ...`) — gives none (`_OTHER`).
  */

@@ -22,6 +22,8 @@ import type { DestinationStream, Logger } from 'pino';
 import type { LogLevel } from '@staffops/otel-helper';
 import { emitBridgeRecord, flushBridgeRecords, LOG_LEVELS, recordEnabled, type RecordLevel } from '@staffops/otel-helper/internal/bridge';
 
+export { VERSION } from './version';
+
 /** Options of {@link createPinoDestination}. */
 export interface PinoDestinationOptions {
   /**
@@ -156,7 +158,9 @@ export function createPinoDestination(options?: PinoDestinationOptions): PinoDes
     },
     flush(cb?: (err?: Error) => void): void {
       void flushBridgeRecords().then(() => {
-        if (typeof cb === 'function') cb();
+        // On the next tick, outside the promise chain: a throwing callback is
+        // an uncaught exception, as from any Node callback, not an unhandled rejection.
+        if (typeof cb === 'function') process.nextTick(cb);
       });
     },
   };

@@ -138,7 +138,7 @@
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p test/types/tsconfig.json",
     "check": "publint --strict . && attw --pack . --profile node16",
-    "test": "c8 --config ../../.c8rc.json node --test \"test/*.test.cjs\" \"test/*.test.mjs\" \"../../test/parity/*.test.cjs\""
+    "test": "c8 --config ../../.c8rc.json --lines 90 --branches 90 --functions 90 --statements 90 node --test \"test/*.test.cjs\" \"test/*.test.mjs\" \"../../test/parity/*.test.cjs\""
   },
   "peerDependencies": {
     "@opentelemetry/api": ">=1.10.0 <1.11.0"

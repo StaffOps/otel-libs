@@ -49,8 +49,23 @@ normalization (`v0.3.0-rc.3` = `0.3.0rc3`), .NET with every project
    then regenerate the site index from the README:
    `docker run --rm --user "$(id -u):$(id -g)" -v "$PWD:/repo" -w /repo python:3.12-slim python tools/regen_index.py`
    (CI's `spec-checks` runs it with `--check`).
-4. `testing/verify.sh` green — it covers the CI risk corners that local runs
-   used to skip (Python 3.13 + lower deps broke rc.1).
+4. `testing/verify.sh --release` green — it covers the CI risk corners that
+   local runs used to skip (Python 3.13 + lower deps broke rc.1), and
+   `--release` sets `PARITY_RELEASE=1`, so the parity release gate runs: Go
+   `TestParityNoTaskSkipsAtRelease` and Python `test_no_task_skips_at_release`
+   fail while a case is still `skip:A…`, the Node runner's `release gate`
+   test while a `nodejs` status is still `skip:B…`. CI sets the same
+   variable on release tags (`go-test`/`python-test` on `v*`, `node-test` on
+   `nodejs/v*`), so a pending skip fails the tag's run before any publish job.
+   **`--release` is not scoped to one language** (2026-11-04): it exports
+   `PARITY_RELEASE=1` for every step the run executes, so a plain
+   `--release` before a Node.js tag also fails on a Go/Python case still
+   `skip:A…` (and before a `v*` tag on a Node case still `skip:B…`), which
+   that tag's CI would not check. Scope it with `--only`: before a
+   `nodejs/v*` tag `testing/verify.sh --release --only node` (plus the
+   non-gating steps you want, e.g. `--only spec-lint --only trace`); before a
+   `v*` tag `--release --only go --only go-ext --only py-3.10-lower --only
+   py-3.13-lower --only py-3.13-latest`, then a plain run for the rest.
 5. Commit, push the branch, open/update the PR to `main` and wait for its CI
    (the CI push trigger covers only `main` and tags — a pushed feature branch
    alone runs nothing).
@@ -126,12 +141,19 @@ publish would fail); the environment `nodejs-release` and the tag ruleset
 exist (above); `docker` works. The image is pinned by digest:
 `node:24.22.2-slim@sha256:c86ecead9e55a5210ac1727de38a4ca840bf03dcaf34dc9749addbf383b1920c`.
 
-1. **Scratch clone** — not your working copy (the containers write Linux
-   `node_modules/` and `tarballs/`, and the version change must never be
-   committed):
+1. **Scratch clone of the branch or commit that will be tagged** — not your
+   working copy (the containers write Linux `node_modules/` and `tarballs/`,
+   and the version change must never be committed). Set `BRANCH` to the
+   branch that carries `nodejs/` and will be tagged (`main` once `nodejs/` is
+   merged; until then the release branch — `git ls-remote --heads origin`
+   lists them) and, optionally, `COMMIT` to the exact commit you will tag:
    ```bash
-   git clone https://github.com/StaffOps/otel-libs.git /tmp/otel-libs-bootstrap
+   BRANCH='<branch to be tagged>'   # e.g. main, once it holds nodejs/
+   COMMIT=''                        # optional: the exact commit to tag
+   git clone -b "$BRANCH" https://github.com/StaffOps/otel-libs.git /tmp/otel-libs-bootstrap
    cd /tmp/otel-libs-bootstrap
+   [ -z "$COMMIT" ] || git checkout --detach "$COMMIT"
+   test -d nodejs || { echo "no nodejs/ on $BRANCH: wrong branch, stop here" >&2; false; }
    IMG='node:24.22.2-slim@sha256:c86ecead9e55a5210ac1727de38a4ca840bf03dcaf34dc9749addbf383b1920c'
    ```
 2. **Set the throwaway version** (uncommitted):

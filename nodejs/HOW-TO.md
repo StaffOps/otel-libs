@@ -648,6 +648,16 @@ redisInstrumentation({ ioredis: true, redis: false });
   `connect`; as Python — Go writes `set`), with `db.system.name=redis`, `db.operation.name`,
   `server.address`/`server.port` and `db.query.text` as the command and one
   `?` per argument (`SET ? ?`): **no keys, values or `AUTH` passwords**.
+- `db.operation.name` is the command **as the client provides it**, not
+  normalized: node-redis `SET`, `MULTI`, `PIPELINE`; ioredis `set`,
+  `MULTI set`, `PIPELINE set` (Go `set`, Python none). Semconv recommends
+  capturing it "as provided by the application without attempting to do any
+  case normalization"; group by the span name (always uppercased) or compare
+  case-insensitively when one dashboard mixes both clients.
+- One span per command, also for an ioredis command issued before the
+  connection is `ready` (queued offline, then replayed by ioredis): the span
+  starts when your code issues the command and so includes the wait for the
+  connection; a command ioredis resends after a reconnect stays one span too.
 - MULTI and pipelines: one span per command.
 - `error.type` and `db.response.status_code` are the Redis reply code
   (`WRONGTYPE`, `ERR`, `NOAUTH`); without one (`connect ECONNREFUSED`,
@@ -1045,12 +1055,52 @@ repository. pm2 signals the workers itself (`SIGINT`, then `SIGKILL` after
 | A `setup()` option (wrong type, `sampleRatio` outside [0, 1], port outside [0, 65535], unknown exporter or signal, `insecure` contradicting a code URL, `http/json`) | `TypeError` naming the option; nothing is installed |
 | An environment variable | one line on stderr naming the variable, fallback to the next level |
 | A deprecated variable | one line per process naming the replacement |
-| An OpenTelemetry SDK message | stderr through the helper's `DiagLogger`, level `OTEL_LOG_LEVEL` (default WARN) |
+| An OpenTelemetry SDK message | stderr through the helper's `DiagLogger`, level `OTEL_LOG_LEVEL` (default WARN), with the redaction described below |
+| An opt-in package report (`setConfig()` ignored, a library that does not load or resolve) or a `/metrics` collection error | one helper line on stderr (WARN, or ERROR for a collection error); the debug-level ones only with `OTEL_LOG_LEVEL=debug` |
 
 Lines start with `otelhelper:` and are written to `process.stderr` directly
 (never `console.*`), so an app that patches `console` does not change them.
-They never print header values, client keys, certificate paths or URL
-credentials. Call `setup()` where a startup failure is visible, not lazily
+The helper's own lines never print header values, client keys, certificate
+paths or URL credentials. A forwarded SDK message (`opentelemetry diag`) is
+text the helper did not write, so it is cleaned in three layers before it is
+written (a message that cannot be rendered — a throwing getter or
+`inspect.custom` — is written as `<diag message could not be rendered>`):
+(1) the response body of an exporter error (`OTLPExporterError` `data`, a raw
+response buffer) is replaced by its size — a collector or proxy that echoes
+the request would otherwise print every header; (2) the values of
+`OTEL_EXPORTER_OTLP_HEADERS` and `OTEL_EXPORTER_OTLP_<SIGNAL>_HEADERS` (4
+characters or more, raw and percent-decoded, plain, JSON- and
+`util.inspect`-escaped) are replaced by `<redacted>` wherever they appear;
+(3) URL userinfo, query and fragment, `Bearer`/`Basic`/`Digest` credentials,
+whole `Cookie`/`Set-Cookie` values (up to a line end or a comma) and the
+values of `name: value` / `name=value` pairs whose name contains `key`,
+`token`, `secret`, `password`/`passwd`, `pwd`, `jwt`, `auth`, `cookie`,
+`team`, `credential`, `session` or `signature` (plain, JSON, escaped-JSON and
+`util.inspect` forms) are redacted. A status word — `(un)authenticated`,
+`(un)authorized`, unquoted and followed by `:` — is never a credential name,
+so the text after it is scanned like any other: `16 UNAUTHENTICATED: denied`
+stays readable and `unauthorized: token=x` becomes `unauthorized:
+token=<redacted>`. A credential name in value position is a name, not a
+value: `Authorization: x-api-key: v` becomes `Authorization: x-api-key:
+<redacted>`. A quoted value the text cuts open is redacted to the end. The text is
+redacted before it is cut at 2048 characters.
+
+What this does not cover: layer 3 is pattern-based, so a secret that is not
+an OTLP header value, under a name outside that list, in some other SDK
+message, is not recognised; and in a `Set-Cookie` value joined to the next
+cookie by a comma, the pairs after the comma are kept unless their names are
+in the list. Known pattern limits: a name right after a letter and an
+escaped quote (`a\"token\":…`) is not matched; a `"` inside a secret value
+ends the value there, so the rest of it is kept; escaped separators
+(`token\=…`, `token\:…`) are not separators; an unquoted value ends at
+whitespace, so when another `name: ` sits between a credential name and the
+secret (`Authorization: x-custom: …`), the secret is kept; and a quoted value with no
+closing quote is redacted to the end of the scanned text, which can remove
+more than the secret (the safe direction). Exporter errors — the case that carried request headers, logged
+at ERROR, so also at the default WARN — have their bodies dropped by layer 1
+at every level. DEBUG and VERBOSE add SDK detail (the items being exported,
+configuration objects) that only layer 3 inspects, by pattern: keep
+`OTEL_LOG_LEVEL` at WARN or ERROR in production. Call `setup()` where a startup failure is visible, not lazily
 inside a request. `installDiagLogger: false` leaves `diag` to your own
 logger.
 

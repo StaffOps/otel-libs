@@ -18,7 +18,12 @@ Citations (word-bounded id, T-D4):
   * Go test files: **/*_test.go
   * Python tests: python/tests/**/*.py
   * tools/tests/**/*.py (tests of these tools)
-  * Node.js tests: nodejs/**/test/**/*.{cjs,mjs,js,ts} (node_modules excluded)
+  * Node.js tests: nodejs/**/test/**/*.{cjs,mjs,js,ts} and
+    nodejs/**/*.test.{cjs,mjs,js,ts} (e.g. nodejs/ci/version.test.mjs;
+    node_modules excluded)
+
+Agent tooling directories (.claude/, holding worktree copies of the repo) and
+.git/ are never searched.
   * parity/cases.json: a case's "id", "requirement" or "note" field, counted
     only when the case passes in at least one language (an xfail/skip-only
     case is not evidence)
@@ -114,9 +119,18 @@ def parse_requirements(root: Path) -> dict[str, Requirement]:
     return reqs
 
 
+# Never searched for citations: agent worktrees (.claude/worktrees/ holds
+# copies of the repo, whose tests would cite ids twice), VCS data, packages.
+SKIPPED_DIRS = {".claude", ".git", "node_modules", "vendor"}
+
+
+def _skipped(root: Path, path: Path) -> bool:
+    return any(part in SKIPPED_DIRS for part in path.relative_to(root).parts[:-1])
+
+
 def test_files(root: Path) -> set[Path]:
     """Unit-test files, where only lines inside test definitions count."""
-    files = {p for p in root.rglob("*_test.go") if "/vendor/" not in p.as_posix()}
+    files = {p for p in root.rglob("*_test.go") if not _skipped(root, p)}
     files |= set((root / "python" / "tests").rglob("*.py"))
     files |= set((root / "tools" / "tests").rglob("*.py"))
     files |= node_test_files(root / "nodejs")
@@ -124,14 +138,16 @@ def test_files(root: Path) -> set[Path]:
 
 
 def node_test_files(nodejs: Path) -> set[Path]:
-    """nodejs/**/test/**/*.{cjs,mjs,js,ts}; node_modules is never descended into."""
+    """nodejs/**/test/**/*.{cjs,mjs,js,ts} and nodejs/**/*.test.*; SKIPPED_DIRS never descended into."""
     found: set[Path] = set()
     for dirpath, dirnames, filenames in os.walk(nodejs):
-        dirnames[:] = [d for d in dirnames if d != "node_modules"]
+        dirnames[:] = [d for d in dirnames if d not in SKIPPED_DIRS]
         here = Path(dirpath)
-        if "test" not in here.relative_to(nodejs).parts:
-            continue
-        found |= {here / f for f in filenames if Path(f).suffix in NODE_TEST_SUFFIXES}
+        in_test_dir = "test" in here.relative_to(nodejs).parts
+        for f in filenames:
+            suffix = Path(f).suffix
+            if suffix in NODE_TEST_SUFFIXES and (in_test_dir or f.endswith(f".test{suffix}")):
+                found.add(here / f)
     return found
 
 

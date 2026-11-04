@@ -31,6 +31,9 @@ const { S3Client } = require('@aws-sdk/client-s3'); // every send() produces a s
 - The AWS SDK stays your app's dependency; ES module apps need no loader
   hooks for it.
 
+Exports (the 0.x API contract, [API stability](https://github.com/StaffOps/otel-libs/blob/main/nodejs/README.md#api-stability-0x)):
+`awsInstrumentation(options?)`, `VERSION`; types `AwsInstrumentationOptions`, `AwsInstrumentation`.
+
 Details and caveats: [HOW-TO §9](https://github.com/StaffOps/otel-libs/blob/main/nodejs/HOW-TO.md#aws-sdk-v3-staffopsotel-helper-aws).
 Peer dependencies: `@staffops/otel-helper` (same version),
 `@opentelemetry/api` `>=1.10.0 <1.11.0`. Node.js 22.15.0 or newer.

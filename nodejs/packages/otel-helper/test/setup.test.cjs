@@ -877,6 +877,121 @@ test('JS3 DiagLogger: installed at WARN by default, SDK messages forwarded with 
   assert.match(diagRecords[1].line, /kaput/);
 });
 
+test('JS3 DiagLogger: credentials in a forwarded SDK message are redacted, the rest kept uncut (2026-11-04)', () => {
+  helper.setup({ serviceName: 'svc' });
+  const long = 'x'.repeat(200);
+  api.diag.warn(`export to https://user:s3cr3t@collector:4318/v1/traces?token=abc failed; Authorization: Bearer t0k3n; api_key=k3y ${long}`);
+  const [record] = records.filter((r) => r.origin === 'diag');
+  assert.ok(record, JSON.stringify(records));
+  for (const secret of ['s3cr3t', 'token=abc', 't0k3n', 'k3y']) assert.ok(!record.line.includes(secret), `${secret}: ${record.line}`);
+  assert.ok(record.line.includes('https://collector:4318/v1/traces failed'), record.line);
+  assert.ok(record.line.includes('Authorization: <redacted> <redacted>') && record.line.includes('api_key=<redacted>'), record.line);
+  assert.ok(record.line.includes(long), 'not cut to the 64-character limit of echoed values');
+});
+
+test('JS3 DiagLogger: exporter response bodies are dropped, configured header values masked, inspect/JSON forms redacted (B14 re-probe M1)', () => {
+  setEnv({ OTEL_SERVICE_NAME: 'svc', OTEL_EXPORTER_OTLP_HEADERS: 'x-anything=SECRETLIT1,api-key=SECRET%20LIT2', OTEL_EXPORTER_OTLP_TRACES_HEADERS: 'x-t=SECRETLIT3' });
+  try {
+    helper.setup();
+    // An OTLPExporterError-shaped Error (message, code, data = response body) as an argument…
+    const err = Object.assign(new Error('Bad Request'), { name: 'OTLPExporterError', code: 400, data: '{"echoed":{"x-custom":"SECRETBODY"}}' });
+    api.diag.error('export failed', err);
+    // …the SDK global error handler's JSON string of the flattened error…
+    api.diag.error(JSON.stringify({ stack: 'OTLPExporterError: Bad Request', message: 'Bad Request', code: '400', name: 'OTLPExporterError', data: JSON.stringify({ echoed: { 'x-custom': 'SECRETBODY' } }) }));
+    // …a raw response buffer, an error nested in a plain object…
+    api.diag.warn('could not deserialize', new Error('x'), Buffer.from('SECRETBUF'));
+    api.diag.warn('result', { error: err, keep: 'k' });
+    // …configured header values appearing verbatim, and inspect-form credential keys.
+    api.diag.warn('echo SECRETLIT1 SECRET LIT2 "SECRETLIT3"', { 'x-api-key': 'SECRETINSPECT' });
+    // A JSON message without an error shape keeps its `data`.
+    api.diag.warn(JSON.stringify({ data: 'kept' }));
+    const out = records.filter((r) => r.origin === 'diag').map((r) => r.line);
+    assert.equal(out.length, 6, out.join('\n'));
+    for (const line of out) assert.ok(!/SECRET/.test(line), line);
+    assert.match(out[0], /OTLPExporterError: Bad Request \(code 400\) <response body omitted: 36 characters>/);
+    assert.match(out[1], /response body omitted: 36 characters/);
+    assert.match(out[1], /OTLPExporterError/);
+    assert.match(out[2], /response body omitted: 9 bytes/);
+    assert.match(out[3], /response body omitted: 36 characters/);
+    assert.match(out[3], /keep: 'k'/);
+    assert.match(out[4], /echo <redacted> <redacted>/);
+    assert.match(out[5], /kept/);
+  } finally {
+    for (const k of ['OTEL_EXPORTER_OTLP_HEADERS', 'OTEL_EXPORTER_OTLP_TRACES_HEADERS']) delete process.env[k];
+  }
+});
+
+test('JS3 DiagLogger never throws into the SDK: unrenderable arguments give one fallback record each (B14 round 3)', () => {
+  helper.setup({ serviceName: 'svc' });
+  const getter = { get boom() { throw new Error('getter'); } };
+  const custom = { [require('node:util').inspect.custom]() { throw new Error('inspect'); } };
+  const symbolName = Object.assign(new Error('x'), { name: Symbol('n'), data: 'body' });
+  const { proxy, revoke } = Proxy.revocable({}, {});
+  revoke();
+  for (const arg of [getter, custom, symbolName, proxy]) assert.doesNotThrow(() => api.diag.error('bad', arg));
+  const out = records.filter((r) => r.origin === 'diag').map((r) => r.line);
+  assert.deepEqual(out, Array(4).fill('otelhelper: opentelemetry diag level=error msg="<diag message could not be rendered>"'));
+});
+
+test('JS3 DiagLogger: redaction runs before the 2048-character cut (a quoted value is never cut open first) (B14 round 3)', () => {
+  helper.setup({ serviceName: 'svc' });
+  api.diag.warn(`${'x'.repeat(2030)} token="a b SECRETQ c" ${'y'.repeat(100)}`);
+  const [line] = records.filter((r) => r.origin === 'diag').map((r) => r.line);
+  assert.ok(!line.includes('SECR') && !line.includes(' c\\"'), line.slice(-200));
+  assert.match(line, /… \(\d+ more characters\)"$/);
+});
+
+test('configuredHeaderValues is memoized on the raw variables and re-read when one changes (B14 round 3)', () => {
+  const { configuredHeaderValues } = require('../dist/internal/diag-logger.js');
+  try {
+    process.env.OTEL_EXPORTER_OTLP_HEADERS = 'a=v1111';
+    const first = configuredHeaderValues();
+    assert.equal(configuredHeaderValues(), first, 'same object while the variables are unchanged');
+    assert.ok(first.has('v1111'));
+    process.env.OTEL_EXPORTER_OTLP_LOGS_HEADERS = 'b=v2222';
+    const second = configuredHeaderValues();
+    assert.notEqual(second, first);
+    assert.ok(second.has('v2222') && second.has('v1111'));
+  } finally {
+    delete process.env.OTEL_EXPORTER_OTLP_HEADERS;
+    delete process.env.OTEL_EXPORTER_OTLP_LOGS_HEADERS;
+  }
+});
+
+test('JS3 DiagLogger end to end: an OTLP/HTTP endpoint answering 400/500 with the request headers echoed leaks no header value (B14 re-probe M1)', () => {
+  for (const status of [400, 500]) {
+    const res = runCjs(`
+      const http = require('node:http');
+      const srv = http.createServer((req, res) => {
+        req.resume();
+        req.on('end', () => {
+          res.statusCode = ${status};
+          res.setHeader('content-type', 'application/json');
+          res.end(JSON.stringify({ echoed: req.headers, url: req.url }));
+        });
+      });
+      srv.listen(0, '127.0.0.1', async () => {
+        process.env.OTEL_EXPORTER_OTLP_ENDPOINT = 'http://127.0.0.1:' + srv.address().port;
+        const h = require('@staffops/otel-helper');
+        h.setup();
+        h.getTracer().startSpan('s').end();
+        h.createLogger({ name: 'l' }).info('hello');
+        await h.shutdown(5000).catch(() => undefined);
+        srv.close();
+      });
+    `, {
+      env: {
+        OTEL_SERVICE_NAME: 'svc', ENVIRONMENT: 'DEV', OTEL_METRICS_EXPORTER: 'none',
+        OTEL_EXPORTER_OTLP_PROTOCOL: 'http/protobuf', OTEL_LOG_LEVEL: 'all',
+        OTEL_EXPORTER_OTLP_HEADERS: 'api-key=SECRETH1,x-tenant-token=SECRETH2,x-custom=SECRETH3,authorization=Basic%20dXNlcjpwYXNzd29yZA%3D%3D',
+      },
+    });
+    assert.equal(res.status, 0, res.stderr);
+    assert.match(res.stderr, /response body omitted/, `status ${status}: the exporter error reached diag`);
+    for (const secret of ['SECRETH1', 'SECRETH2', 'SECRETH3', 'dXNlcjpwYXNzd29yZA']) assert.ok(!res.stderr.includes(secret), `status ${status} leaked ${secret}`);
+  }
+});
+
 test('JS3 OTEL_LOG_LEVEL sets the DiagLogger level; an unknown value warns and uses WARN', () => {
   setEnv({ OTEL_SERVICE_NAME: 'svc', OTEL_LOG_LEVEL: ' debug ' });
   helper.setup();

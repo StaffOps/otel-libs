@@ -5,6 +5,8 @@
 #   testing/verify.sh                 # every step
 #   testing/verify.sh --quick         # skip e2e and the extra Python legs
 #   testing/verify.sh --only <step>   # one step (repeatable)
+#   testing/verify.sh --release       # also run the parity release gate (PARITY_RELEASE=1)
+#                                     # in EVERY step run: scope with --only (e.g. --release --only node)
 #   testing/verify.sh --list          # step names
 #
 # Steps: go, go-ext, py-3.10-lower, py-3.13-lower, py-3.13-latest, node, e2e,
@@ -28,13 +30,16 @@ TOOLS_IMAGE="python:3.12-slim"
 ALL_STEPS=(go go-ext py-3.10-lower py-3.13-lower py-3.13-latest node e2e mkdocs spec-lint trace index tools-tests)
 QUICK_SKIP=" e2e py-3.10-lower py-3.13-lower "
 
-usage() { sed -n '2,19p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,21p' "$0" | sed 's/^# \{0,1\}//'; }
 
 quick=0
 only=()
 while [ $# -gt 0 ]; do
   case "$1" in
     --quick) quick=1 ;;
+    # The go, py-* and node steps then fail while a parity case is still
+    # skipped pending a task (CI does the same on release tags).
+    --release) export PARITY_RELEASE=1 ;;
     --only)
       [ $# -ge 2 ] || { echo "--only needs a step name" >&2; exit 2; }
       only+=("$2"); shift ;;

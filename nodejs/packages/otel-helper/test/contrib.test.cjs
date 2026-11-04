@@ -14,9 +14,10 @@ const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const api = require('@opentelemetry/api');
 const contrib = require('@staffops/otel-helper/internal/contrib');
+const testing = require('@staffops/otel-helper/testing');
 
 test('internal/contrib exports exactly what the opt-in packages use', () => {
-  assert.deepEqual(Object.keys(contrib).filter((k) => k !== '__esModule').sort(), ['appDirectories', 'contribLoadError', 'contribRegistry', 'resolvesFromApp']);
+  assert.deepEqual(Object.keys(contrib).filter((k) => k !== '__esModule').sort(), ['appDirectories', 'contribLoadError', 'contribRegistry', 'report', 'reportOnce', 'resolvesFromApp']);
 });
 
 /** A fake contrib instrumentation recording what the registry does to it. */
@@ -39,19 +40,38 @@ function fakeChild(name) {
 }
 
 let diagLines;
+let records;
+let savedLogLevel;
+/**
+ * The registry reports on the helper's diagnostics sink (origin helper), not
+ * through `diag` (2026-11-04): captured there, with a `diag` logger that must
+ * stay silent.
+ */
 function captureDiag() {
   diagLines = [];
-  const logger = {
-    // Only the registry's own lines (the API logs its global registration at debug).
-    warn: (m) => m.startsWith('@staffops/') && diagLines.push(`warn ${m}`),
-    debug: (m) => m.startsWith('@staffops/') && diagLines.push(`debug ${m}`),
-    info: () => undefined,
-    error: () => undefined,
-    verbose: () => undefined,
+  records = [];
+  testing.reset();
+  testing.setDiagnosticSink((line, meta) => {
+    records.push({ line, ...meta });
+    // Only the registry's own lines.
+    const text = line.replace(/^otelhelper: /, '');
+    if (text.startsWith('@staffops/')) diagLines.push(`${meta.level} ${text}`);
+  });
+  const viaDiag = (m) => {
+    if (String(m).startsWith('@staffops/')) diagLines.push(`diag ${m}`);
   };
-  api.diag.setLogger(logger, { logLevel: api.DiagLogLevel.ALL, suppressOverrideMessage: true });
+  api.diag.setLogger({ warn: viaDiag, debug: viaDiag, info: viaDiag, error: viaDiag, verbose: viaDiag }, { logLevel: api.DiagLogLevel.ALL, suppressOverrideMessage: true });
 }
-test.afterEach(() => api.diag.disable());
+test.beforeEach(() => {
+  savedLogLevel = process.env.OTEL_LOG_LEVEL;
+  delete process.env.OTEL_LOG_LEVEL;
+});
+test.afterEach(() => {
+  api.diag.disable();
+  testing.reset();
+  if (savedLogLevel === undefined) delete process.env.OTEL_LOG_LEVEL;
+  else process.env.OTEL_LOG_LEVEL = savedLogLevel;
+});
 
 /** A registry over libraries `a` and `b` with fake children; `failing` libraries throw on build. */
 function registryOf({ failing = [], packages = { a: ['node:fs'], b: ['node:path'] }, patchedFiles = { a: [], b: [] } } = {}) {
@@ -130,6 +150,7 @@ test('setConfig() is ignored and warned once per registry, on the next enable (o
   assert.deepEqual(diagLines.filter((l) => l.includes('setConfig() is ignored')), [
     'warn @staffops/otel-helper-test: setConfig() is ignored; the configuration is fixed and enabled follows setup()/shutdown()',
   ]);
+  assert.ok(records.every((r) => r.origin === 'helper'), 'helper-authored, so the parity helper_log sees it');
   const other = registryOf().registry.instrument({});
   other.enable();
   other.setConfig({});
@@ -183,20 +204,92 @@ test('instrument(): a failed build throws when named true, else is skipped and r
   r.enable();
   r.disable();
   r.enable();
-  assert.deepEqual(diagLines, ["warn @staffops/otel-helper-test: 'a' is not instrumented: a boom"], 'reported once, on the first enable');
+  assert.deepEqual(diagLines, ['warn @staffops/otel-helper-test: a library is not instrumented library=a error="a boom"'], 'reported once, on the first enable');
   const thrown = registryOf({ failing: ['b', 'string'] });
   thrown.registry.instrument({ a: true, b: undefined }).enable();
-  assert.ok(diagLines.some((l) => l.endsWith("'b' is not instrumented: b thrown string")), 'a non-Error throw is reported as a string');
+  assert.ok(diagLines.some((l) => l.endsWith('a library is not instrumented library=b error="b thrown string"')), 'a non-Error throw is reported as a string');
+});
+
+function failingRegistry(error) {
+  return contrib.contribRegistry({
+    name: '@staffops/otel-helper-test',
+    version: '9.9.9',
+    libraries: ['a', 'b'],
+    contrib: { a: 'contrib-a', b: 'contrib-b' },
+    packages: { a: ['node:fs'], b: ['node:path'] },
+    build: (library) => {
+      if (library === 'a') throw error;
+      return fakeChild('contrib-b');
+    },
+    patchedFiles: { a: [], b: [] },
+    tracerProvider: (_l, p) => p,
+    meterProvider: (_l, p) => p,
+  });
+}
+
+test('the error attribute is the load error\'s first line, redacted and capped at 512 code points (B14 round 4)', () => {
+  captureDiag();
+  const loadError = contrib.contribLoadError('A', '@staffops/otel-helper-a', 'contrib-a', Object.assign(new Error("Cannot find module 'contrib-a'\nRequire stack:\n- /srv/app/x.js"), { code: 'MODULE_NOT_FOUND' }));
+  failingRegistry(loadError).instrument({}).enable();
+  assert.deepEqual(diagLines, ['warn @staffops/otel-helper-test: a library is not instrumented library=a error="A instrumentation not installed: contrib-a is missing. Reinstall @staffops/otel-helper-a (it depends on contrib-a)."']);
+  captureDiag();
+  failingRegistry(new Error(`${'x'.repeat(600)} token=abc\nsecond line`)).instrument({}).enable();
+  assert.equal(diagLines.length, 1);
+  assert.equal(diagLines[0], `warn @staffops/otel-helper-test: a library is not instrumented library=a error=${'x'.repeat(512)}…`);
+  captureDiag();
+  failingRegistry(new Error('boom token=abc')).instrument({}).enable();
+  assert.deepEqual(diagLines, ['warn @staffops/otel-helper-test: a library is not instrumented library=a error="boom token=<redacted>"']);
+});
+
+test('a load error holding control characters is reported on one line (it cannot split the record)', () => {
+  captureDiag();
+  const registry = contrib.contribRegistry({
+    name: '@staffops/otel-helper-test',
+    version: '9.9.9',
+    libraries: ['a', 'b'],
+    contrib: { a: 'contrib-a', b: 'contrib-b' },
+    packages: { a: ['node:fs'], b: ['node:path'] },
+    build: (library) => {
+      if (library === 'a') throw new Error('first\nsecond\u2028third');
+      return fakeChild('contrib-b');
+    },
+    patchedFiles: { a: [], b: [] },
+    tracerProvider: (_l, p) => p,
+    meterProvider: (_l, p) => p,
+  });
+  registry.instrument({}).enable();
+  // First line only (the rest of a load error is a require stack).
+  assert.deepEqual(diagLines, ['warn @staffops/otel-helper-test: a library is not instrumented library=a error=first']);
+  assert.equal(records.length, 1);
+  assert.ok(!records[0].line.includes('\n'));
+});
+
+test('report/reportOnce: the opt-in packages write to the helper sink with origin helper (once per key per process)', () => {
+  captureDiag();
+  contrib.report('@staffops/otel-helper-test: plain');
+  contrib.report('@staffops/otel-helper-test: failed', { error: 'x' }, { origin: 'helper', level: 'error' });
+  assert.equal(contrib.reportOnce('contrib-test:once', '@staffops/otel-helper-test: once'), true);
+  assert.equal(contrib.reportOnce('contrib-test:once', '@staffops/otel-helper-test: once'), false);
+  assert.deepEqual(records, [
+    { line: 'otelhelper: @staffops/otel-helper-test: plain', origin: 'helper', level: 'warn' },
+    { line: 'otelhelper: @staffops/otel-helper-test: failed error=x', origin: 'helper', level: 'error' },
+    { line: 'otelhelper: @staffops/otel-helper-test: once', origin: 'helper', level: 'warn' },
+  ]);
+  assert.ok(!diagLines.some((l) => l.startsWith('diag ')), 'nothing through diag');
 });
 
 test('instrument(): an unresolved library is instrumented and reported once: WARN when named true, debug in default mode', () => {
   captureDiag();
   const packages = { a: ['no-such-package-otel-contrib-test'], b: ['node:path'] };
+  const hidden = registryOf({ packages }).registry.instrument({});
+  hidden.enable();
+  assert.deepEqual(diagLines, [], 'debug records only when OTEL_LOG_LEVEL asks for them');
+  process.env.OTEL_LOG_LEVEL = 'debug';
   const quiet = registryOf({ packages }).registry.instrument({});
   quiet.enable();
   assert.deepEqual([...quiet.libraries], ['a', 'b']);
   assert.equal(diagLines.length, 1, diagLines.join('\n'));
-  assert.match(diagLines[0], /^debug @staffops\/otel-helper-test: 'a' could not be resolved from .+; instrumented if it loads$/);
+  assert.match(diagLines[0], /^debug @staffops\/otel-helper-test: a library could not be resolved from the app directories; instrumented if it loads library=a dirs=.+$/);
   diagLines = [];
   const named = registryOf({ packages }).registry.instrument({ a: true });
   named.enable();

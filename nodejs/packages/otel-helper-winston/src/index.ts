@@ -37,6 +37,8 @@ import {
   type RecordLevel,
 } from '@staffops/otel-helper/internal/bridge';
 
+export { VERSION } from './version';
+
 /**
  * winston's transport options. The types come through winston's re-export of
  * `winston-transport` (`winston.transport`: its instance type), so only the
@@ -104,12 +106,39 @@ interface Registry {
 
 const REGISTRY_KEY = Symbol.for('@staffops/otel-helper-winston.registry.v1');
 
+/** Whether `value` has the registry's shape (another copy's, or anything else left at the key). Never throws. */
+function isRegistry(value: unknown): value is Registry {
+  if (typeof value !== 'object' || value === null) return false;
+  try {
+    const { stamps, loggers } = value as Partial<Registry>;
+    return stamps instanceof WeakMap && loggers instanceof WeakMap;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The shared registry, created on first use. Something else at the key (not
+ * registry-shaped, or unreadable) is left alone: this copy then keeps a
+ * registry of its own (its stamps and counts are not shared with other copies).
+ */
 function registry(): Registry {
-  const existing = (globalThis as Record<symbol, unknown>)[REGISTRY_KEY];
-  if (typeof existing === 'object' && existing !== null) return existing as Registry;
+  let existing: unknown;
+  try {
+    existing = (globalThis as Record<symbol, unknown>)[REGISTRY_KEY];
+  } catch {
+    existing = null; // an unreadable slot: not ours to replace
+  }
+  if (isRegistry(existing)) return existing;
   const created: Registry = { stamps: new WeakMap(), loggers: new WeakMap() };
-  // Not enumerable, not writable: the stamps hold Contexts and must not show up in a dump of globalThis.
-  Object.defineProperty(globalThis, REGISTRY_KEY, { value: created });
+  if (existing === undefined) {
+    try {
+      // Not enumerable, not writable: the stamps hold Contexts and must not show up in a dump of globalThis.
+      Object.defineProperty(globalThis, REGISTRY_KEY, { value: created });
+    } catch {
+      // A frozen or non-extensible globalThis: a local registry.
+    }
+  }
   return created;
 }
 

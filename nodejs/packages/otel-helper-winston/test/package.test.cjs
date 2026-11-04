@@ -6,9 +6,10 @@ const assert = require('node:assert/strict');
 const pkg = require('../package.json');
 const mod = require('@staffops/otel-helper-winston');
 
-test('@staffops/otel-helper-winston exports OtelHelperTransport only', () => {
-  assert.deepEqual(Object.keys(mod).filter((k) => k !== '__esModule'), ['OtelHelperTransport']);
+test('@staffops/otel-helper-winston exports OtelHelperTransport and VERSION', () => {
+  assert.deepEqual(Object.keys(mod).filter((k) => k !== '__esModule').sort(), ['OtelHelperTransport', 'VERSION']);
   assert.equal(typeof mod.OtelHelperTransport, 'function');
+  assert.equal(mod.VERSION, pkg.version);
 });
 
 test('peer dependencies: the core at the same version, winston by range', () => {

@@ -1,11 +1,10 @@
 /**
  * The TracerProvider and MeterProvider `@staffops/otel-helper-sql` binds each
- * contrib instrumentation to (task B10a, fix round 2026-11-03).
+ * contrib instrumentation to.
  *
  * The wrappers themselves live in the core's internal entry
- * `@staffops/otel-helper/internal/db` (shared with `-redis` since B10b,
- * 2026-11-03): an ERROR status keeps its code and drops the description
- * (contract D1 row "DB error status", A25: the database's error text can quote
+ * `@staffops/otel-helper/internal/db` (shared with `-redis`): an ERROR status keeps its code and drops the description
+ * (contract D1 row "DB error status": the database's error text can quote
  * a statement value; Go XSAM otelsql sets an empty description, Python's
  * `ext.sql` drops it the same way; the `exception` event is semconv-defined
  * and kept), `error.type` `_OTHER` when absent, the legacy `db.system`

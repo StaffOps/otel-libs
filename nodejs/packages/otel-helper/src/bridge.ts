@@ -1,6 +1,6 @@
 /**
- * `@staffops/otel-helper/internal/bridge` — NOT public API (design D-JS6,
- * task B10d). The entry the opt-in log bridges `@staffops/otel-helper-pino`
+ * `@staffops/otel-helper/internal/bridge` — NOT public API (design D-JS6).
+ * The entry the opt-in log bridges `@staffops/otel-helper-pino`
  * and `@staffops/otel-helper-winston` write their records through, so they
  * apply the core's per-record rule (D6) and stdout shape instead of a copy
  * of them. Those packages peer-depend on the core at the same version; this

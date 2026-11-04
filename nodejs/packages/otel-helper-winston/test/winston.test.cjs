@@ -814,3 +814,25 @@ test('final round: _transform is wrapped while attached and restored on detach; 
   assert.equal(Object.hasOwn(log, '_transform'), false);
   assert.equal(log._transform, ownTransform);
 });
+
+// ── the shared registry (code-review L8, 2026-11-04) ───────────────────
+
+test('registry: a foreign or unreadable value at the registry key is left alone; the transport still writes (child process)', () => {
+  const key = "Symbol.for('@staffops/otel-helper-winston.registry.v1')";
+  const cases = {
+    foreign: `globalThis[${key}] = { stamps: 'not a WeakMap' };`,
+    throwingSlot: `Object.defineProperty(globalThis, ${key}, { get() { throw new Error('slot'); } });`,
+    throwingField: `Object.defineProperty(globalThis, ${key}, { value: { get stamps() { throw new Error('field'); } } });`,
+    nonExtensible: 'Object.preventExtensions(globalThis);',
+  };
+  for (const [name, pre] of Object.entries(cases)) {
+    const res = spawnSync(process.execPath, ['-e', `${pre}
+      const winston = require('winston');
+      const { OtelHelperTransport } = require('@staffops/otel-helper-winston');
+      const log = winston.createLogger({ transports: [new OtelHelperTransport()] });
+      log.warn('still-written');
+    `], { cwd: path.join(__dirname, '..'), encoding: 'utf8' });
+    assert.equal(res.status, 0, `${name}: ${res.stderr}`);
+    assert.match(res.stdout, /still-written/, `${name}: ${res.stdout}`);
+  }
+});

@@ -51,7 +51,7 @@ function safeString(value: unknown): string {
 /**
  * Records `err` on `span` (exception event + ERROR) and ends it; never throws,
  * so the caller always rethrows the original value. Each step is guarded on
- * its own (fix round 2026-11-03): a throwing `name` or `message` getter, or a
+ * its own: a throwing `name` or `message` getter, or a
  * failing `recordException`, still leaves the span ERROR and ended. The event
  * gets a plain `{ name, message, stack }`: the SDK prefers an error's `code`
  * for `exception.type` (a gRPC status number, an errno string), the helper

@@ -1,16 +1,16 @@
 /**
- * `setup()` / `shutdown()` (spec JS2, JS5, JS7; design D-JS1, D-JS10). Task B3
- * builds the resource, the context manager and the DiagLogger; task B4b the
- * OTLP exporters and the three providers (batch span processor, periodic
- * metric reader, batch log record processor); task B4c the exporter lists
- * (console exporters), `OTEL_SDK_DISABLED` and the export interval; task B5
- * the sampler (with the health sampler around it), the propagators and the
- * debug marker; task B7 the Prometheus reader, the `/metrics` listener and
- * `metricsHandler()`; task B6 the core instrumentations (http, undici,
- * express, gRPC); task B9 the lifecycle: the stable forwarding providers and
+ * `setup()` / `shutdown()` (spec JS2, JS5, JS7; design D-JS1, D-JS10). Setup
+ * builds the resource, the context manager and the DiagLogger; the OTLP
+ * exporters and the three providers (batch span processor, periodic metric
+ * reader, batch log record processor); the exporter lists (console
+ * exporters), `OTEL_SDK_DISABLED` and the export interval; the sampler (with
+ * the health sampler around it), the propagators and the debug marker; the
+ * Prometheus reader, the `/metrics` listener and `metricsHandler()`; the core
+ * instrumentations (http, undici, express, gRPC) and the opt-in
+ * `instrumentations`. The lifecycle: the stable forwarding providers and
  * propagator of D-JS10 (registered once per process, their delegates swapped
  * by every setup and shutdown), foreign globals and `replaceGlobals`, and the
- * rollback of a failed setup (Go G1); task B10a the opt-in `instrumentations`.
+ * rollback of a failed setup (as Go).
  */
 import cluster from 'node:cluster';
 import type * as http from 'node:http';
@@ -67,7 +67,7 @@ interface Active {
   readonly prometheusInactive: boolean;
   /** The helper's `/metrics` listener; `undefined` with port 0 or without a scrapable reader. */
   readonly listener: http.Server | undefined;
-  /** Disabled metrics (A21); `undefined` = none. */
+  /** Disabled metrics; `undefined` = none. */
   readonly drop: DropPredicate | undefined;
   /** Whether this setup enabled the instrumentations (disabled again by `shutdown()`). */
   readonly instrumented: boolean;
@@ -114,11 +114,18 @@ interface Runtime {
   logLevel: LogLevel | undefined;
   /**
    * The `beforeExit` listener registered by the first successful setup of the
-   * main thread (B12 fix round, dev H1; design D-JS10): `undefined` = none
+   * main thread (design D-JS10): `undefined` = none
    * registered now. One at a time (re-setup never stacks a second); it
    * removes itself when it fires and `/testing` `reset()` removes it.
    */
   exitHook?: (() => void) | undefined;
+  /**
+   * The bridge flushes running or queued now, per LoggerProvider: a flush for
+   * a new setup's provider never waits behind one of an older (perhaps hung)
+   * provider, and `shutdown()` waits only for its own provider's flushes. On
+   * the shared state, so every copy of this version serializes on one map.
+   */
+  bridgeFlushes: Map<LoggerProvider, BridgeFlushes>;
 }
 
 const DEFAULT_SHUTDOWN_TIMEOUT_MS = 30_000;
@@ -133,7 +140,7 @@ const SHORT_READER_TIMEOUT_MS = 1000;
 const MAX_TIMER_MS = 2 ** 31 - 1;
 
 function runtimeOf(state: HelperState): Runtime {
-  state.runtime ??= { active: undefined, forwarders: undefined, registered: {}, diagLogger: undefined, instrumentations: undefined, optIn: new Set(), logLevel: undefined } satisfies Runtime;
+  state.runtime ??= { active: undefined, forwarders: undefined, registered: {}, diagLogger: undefined, instrumentations: undefined, optIn: new Set(), logLevel: undefined, bridgeFlushes: new Map() } satisfies Runtime;
   return state.runtime as Runtime;
 }
 
@@ -264,12 +271,12 @@ export function tryBuild<E extends { shutdown(): Promise<void> }, P>(
 
 /**
  * The exporters, processors and metric readers of every signal, from its
- * exporter list (task B4c): `otlp` (only while the signal has an endpoint),
+ * exporter list: `otlp` (only while the signal has an endpoint),
  * `console` (the SDK console exporters, printing to stdout, as Go and Python
  * do) and `prometheus` (the reader `/metrics` collects, design D-JS8). The OTLP exporters are built
  * with the helper-owned OTLP variables hidden (spec JS2). The resolved OTLP
  * timeout of a signal is its single export deadline (contract D1 ruling
- * "Export deadline", A18): the batch processors get it; the metric reader
+ * "Export deadline"): the batch processors get it; the metric reader
  * gets it capped at the export interval (the SDK requires timeout <=
  * interval), with a warning naming where the timeout and the interval came
  * from. The diagnostics are written after the environment is restored, so a
@@ -510,9 +517,9 @@ const DISABLE: Readonly<Record<OwnedGlobal, () => void>> = {
  * entry). For `trace` and `logs` the registry entry is removed directly and
  * the API's own proxy is pointed at nothing, instead of `disable()`, which
  * replaces that proxy: tracers and Logs API loggers the app obtained before
- * `setup()` hold it, and must join the provider the app registers next (B9
- * fix round M3). Falls back to `disable()` when the API's shape differs
- * (re-check on API bumps, B13).
+ * `setup()` hold it, and must join the provider the app registers next.
+ * Falls back to `disable()` when the API's shape differs
+ * (re-check on API bumps).
  */
 function releaseGlobal(type: OwnedGlobal): void {
   if (type === 'trace') {
@@ -669,7 +676,7 @@ function withInactiveSignals(resolved: Resolved, inactiveSignals: readonly Signa
 /**
  * Opt-in contrib instrumentations that patch a package's entry file, which an
  * ES module `import` loads without require(): without the loader hooks they
- * miss it, like express and grpc-js (B10b fix round, 2026-11-03).
+ * miss it, like express and grpc-js.
  */
 const ESM_ENTRY_PATCHED: Readonly<Record<string, string>> = Object.freeze({
   '@opentelemetry/instrumentation-ioredis': 'ioredis',
@@ -771,7 +778,7 @@ function setupFrom(origin: SetupOrigin, options: SetupOptions | undefined): Reso
 }
 
 /**
- * Flushes a process that ends on its own (B12 fix round, dev H1; design
+ * Flushes a process that ends on its own (design
  * D-JS10): Python's SDK shuts down at interpreter exit (`atexit`), Go needs a
  * deferred Shutdown, Node gets a `process.once('beforeExit')` listener. It
  * calls `shutdown()` only when the active setup has no shutdown yet (an app's
@@ -1011,18 +1018,11 @@ export function logDestination(): LogDestination {
   return { provider: exporting ? active.loggerProvider : undefined, level: rt.logLevel ?? 'info' };
 }
 
-/** A provider's bridge flush running now, and the one queued behind it (B10d fix round 2, 2026-11-03). */
+/** A provider's bridge flush running now, and the one queued behind it. */
 interface BridgeFlushes {
   current: Promise<void> | undefined;
   queued: Promise<void> | undefined;
 }
-
-/**
- * Per LoggerProvider (final round, 2026-11-03): a flush for a new setup's
- * provider never waits behind one of an older (perhaps hung) provider, and
- * `shutdown()` waits only for its own provider's flushes.
- */
-const bridgeFlushes = new Map<LoggerProvider, BridgeFlushes>();
 
 /**
  * Flushes the active setup's logs pipeline (a bridge's `flush(cb)` /
@@ -1037,14 +1037,16 @@ const bridgeFlushes = new Map<LoggerProvider, BridgeFlushes>();
  * meanwhile waits for it and then runs one more `forceFlush` (requests
  * arriving during the same wait share it).
  *
- * @internal For `@staffops/otel-helper-pino` / `-winston` only (B10d).
+ * @internal For `@staffops/otel-helper-pino` / `-winston` only.
  */
 export function flushBridgeRecords(): Promise<void> {
   const provider = logDestination().provider;
-  return provider === undefined ? Promise.resolve() : flushProvider(provider);
+  const state = getState();
+  // A provider is only returned while the shared state is readable.
+  return provider === undefined || state === null ? Promise.resolve() : flushProvider(runtimeOf(state).bridgeFlushes, provider);
 }
 
-function flushProvider(provider: LoggerProvider): Promise<void> {
+function flushProvider(bridgeFlushes: Map<LoggerProvider, BridgeFlushes>, provider: LoggerProvider): Promise<void> {
   let entry = bridgeFlushes.get(provider);
   if (entry === undefined) {
     entry = { current: undefined, queued: undefined };
@@ -1060,7 +1062,7 @@ function flushProvider(provider: LoggerProvider): Promise<void> {
   }
   flushes.queued ??= flushes.current.then(() => {
     flushes.queued = undefined;
-    return flushProvider(provider);
+    return flushProvider(bridgeFlushes, provider);
   });
   return flushes.queued;
 }
@@ -1091,8 +1093,8 @@ function flushFailureReason(err: unknown): string {
  * would otherwise return early. Flushes requested later are not waited for (no
  * starvation by a steady stream of flushes).
  */
-function bridgeFlushesSettled(provider: LoggerProvider): Promise<void> {
-  const flushes = bridgeFlushes.get(provider);
+function bridgeFlushesSettled(rt: Runtime, provider: LoggerProvider): Promise<void> {
+  const flushes = rt.bridgeFlushes.get(provider);
   return (flushes?.queued ?? flushes?.current ?? Promise.resolve()).then(() => undefined);
 }
 
@@ -1218,7 +1220,7 @@ async function runShutdown(rt: Runtime, active: Active, timeoutMs: number): Prom
         ? listenerClosed.then(() => (provider as MeterProvider).shutdown({ timeoutMillis: timeoutMs }))
         : name === PROVIDER_NAMES.logs
           // An in-flight bridge flush first: during it the SDK's shutdown flush would return early (D-JS14).
-          ? bridgeFlushesSettled(provider as LoggerProvider).then(() => provider.shutdown())
+          ? bridgeFlushesSettled(rt, provider as LoggerProvider).then(() => provider.shutdown())
           : Promise.resolve().then(() => provider.shutdown());
       return run.finally(() => {
         releaseDelegate(slots[name], provider);

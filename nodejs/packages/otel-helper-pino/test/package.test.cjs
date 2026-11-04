@@ -6,9 +6,10 @@ const assert = require('node:assert/strict');
 const pkg = require('../package.json');
 const mod = require('@staffops/otel-helper-pino');
 
-test('@staffops/otel-helper-pino exports createPinoDestination and the unsupported pino.transport target (default)', () => {
-  assert.deepEqual(Object.keys(mod).filter((k) => k !== '__esModule').sort(), ['createPinoDestination', 'default']);
+test('@staffops/otel-helper-pino exports createPinoDestination, VERSION and the unsupported pino.transport target (default)', () => {
+  assert.deepEqual(Object.keys(mod).filter((k) => k !== '__esModule').sort(), ['VERSION', 'createPinoDestination', 'default']);
   assert.equal(typeof mod.createPinoDestination, 'function');
+  assert.equal(mod.VERSION, pkg.version);
 });
 
 test('peer dependencies: the core at the same version, pino by range', () => {

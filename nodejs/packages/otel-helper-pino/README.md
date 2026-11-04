@@ -27,6 +27,9 @@ log.info({ order: 'o1' }, 'order received');
 - `logger.flush(cb)` flushes the OTLP records: call it before
   `process.exit()`.
 
+Exports (the 0.x API contract, [API stability](https://github.com/StaffOps/otel-libs/blob/main/nodejs/README.md#api-stability-0x)):
+`createPinoDestination(options?)`, `VERSION`; types `PinoDestinationOptions`, `PinoDestination`. The default export is the `pino.transport({ target })` entry point, which always throws (unsupported): it is not part of the API contract.
+
 Details and caveats: [HOW-TO §5](https://github.com/StaffOps/otel-libs/blob/main/nodejs/HOW-TO.md#pino). Peer dependencies:
 `@staffops/otel-helper` (same version), `pino` `^10.0.0`. Node.js 22.15.0
 or newer. License: Apache-2.0.

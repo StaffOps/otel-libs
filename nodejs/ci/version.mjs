@@ -3,7 +3,7 @@
 // are always published with identical versions and exact peer pins on the core:
 //   - packages/*/package.json `version`;
 //   - the opt-in packages' `peerDependencies["@staffops/otel-helper"]` (exact);
-//   - the `VERSION` constants (core src/version.ts, -sql/-redis/-aws src/internal/*-instrumentation.ts);
+//   - the `VERSION` constants (core, -pino and -winston src/version.ts, -sql/-redis/-aws src/internal/*-instrumentation.ts);
 //   - package-lock.json, the `packages/<dir>` entries (version and core peer);
 //   - example/*/Dockerfile.demo `ARG HELPER_VERSION=` (the default tarball name).
 // The version mentions in README.md and packages/*/README.md that match DOC_RES
@@ -49,6 +49,8 @@ export const VERSION_CONSTANTS = {
   'otel-helper-sql': 'src/internal/sql-instrumentation.ts',
   'otel-helper-redis': 'src/internal/redis-instrumentation.ts',
   'otel-helper-aws': 'src/internal/aws-instrumentation.ts',
+  'otel-helper-pino': 'src/version.ts',
+  'otel-helper-winston': 'src/version.ts',
 };
 
 const USAGE = 'usage: node ci/version.mjs <check | set | dist-tag | tarballs | verify-sums | registry-state> <version | nodejs/vX.Y.Z | tarball> [--root <dir>] [--tarballs <dir>] [--sums <file>] [--registry <url>] [--userconfig <file>]';

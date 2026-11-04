@@ -18,7 +18,9 @@ const endpoint = require('../dist/internal/metrics-endpoint.js');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { once } = require('node:events');
 const { runCjs, runNode, lastJson } = require('./helpers.cjs');
+const { classify } = require('../../../test/parity/driver.cjs');
 
 const { prometheusName, unitSuffix, resolveMetricsPort, checkCodeMetricsPort, serializeMetrics, CONTENT_TYPE, globMatch, droppingExporter, resolveDisabledMetrics } = endpoint;
 
@@ -99,7 +101,41 @@ function get(port, path, host = '127.0.0.1', method = 'GET') {
   });
 }
 
-const tick = () => new Promise((resolve) => setTimeout(resolve, 50));
+/**
+ * Settles once the helper's listener is bound or failed to bind (never a
+ * fixed sleep): resolves with the bind error, or `undefined` once listening.
+ */
+async function listenerSettled() {
+  const listener = testing.getState().runtime.active.listener;
+  assert.ok(listener !== undefined, 'setup() started a listener');
+  if (listener.listening) return undefined;
+  const [err] = await Promise.race([once(listener, 'error'), once(listener, 'listening').then(() => [undefined])]);
+  return err;
+}
+
+/**
+ * `start(port)` on a port `freePort()` found, until the listener binds:
+ * another process may take the port between the probe and the bind, so an
+ * EADDRINUSE is retried once (with a fresh setup).
+ */
+async function setupOnFreePort(start) {
+  for (let attempt = 1; ; attempt += 1) {
+    const port = await freePort();
+    start(port);
+    const err = await listenerSettled();
+    if (err === undefined) return port;
+    if (err.code !== 'EADDRINUSE' || attempt === 2) throw err;
+    await helper.shutdown();
+    resetAndCapture();
+  }
+}
+
+/** Runs `run(port)` on a free port; once more on a fresh port when the child reported EADDRINUSE. */
+async function onFreePort(run) {
+  const first = await run(await freePort());
+  const busy = `${first.stderr ?? ''}${first.stdout ?? ''}`.includes('EADDRINUSE');
+  return busy ? run(await freePort()) : first;
+}
 
 test('D-JS8 unit suffix: names and units translated as the Go and Python exporters do', () => {
   const cases = [
@@ -278,14 +314,42 @@ test('mounted handler: a failed collection answers 500 while active, 503 once sh
   assert.equal(sent.body, undefined, 'headers already sent: end() only');
 });
 
-test('mounted handler: collection errors are forwarded to diag and the scrape still answers', async () => {
+test('mounted handler: collection errors are a helper ERROR on the sink (redacted, in the parity helper_log) and the scrape still answers', async () => {
   helper.setup();
   api.metrics.getMeter('parity').createObservableGauge('parity.broken').addCallback(() => {
-    throw new Error('callback failed');
+    throw new Error('callback failed token=s3cr3t');
+  });
+  api.metrics.getMeter('parity').createObservableGauge('parity.broken2').addCallback(() => {
+    throw 'plain string';
   });
   const res = await mockScrape();
   assert.equal(res.status, 200);
-  assert.ok(records.some((r) => r.origin === 'diag' && r.line.includes('metric collection errors')), JSON.stringify(records));
+  const errors = records.filter((r) => r.line.includes('metric collection errors'));
+  assert.equal(errors.length, 1, JSON.stringify(records));
+  assert.equal(errors[0].origin, 'helper');
+  assert.equal(errors[0].level, 'error');
+  assert.equal(
+    errors[0].line,
+    'otelhelper: metric collection errors; the scrape answered with the metrics that were collected count=2 error="callback failed token=<redacted>"',
+  );
+  assert.ok(!records.some((r) => r.line.includes('s3cr3t')), 'the secret never reaches the sink');
+  assert.deepEqual(classify(errors[0]), { diagnostics: true, helperLog: true }, 'the parity driver puts it in helper_log');
+});
+
+test('mounted handler: a failed collection with a non-Error reason or a credential answers a redacted 500 body', async () => {
+  helper.setup();
+  const reader = testing.getState().runtime.active.prometheus;
+  const collect = reader.collect;
+  try {
+    reader.collect = () => Promise.reject(new Error('fetch https://user:pw@collector:4318/v1?api_key=abc failed'));
+    const failed = await mockScrape();
+    assert.equal(failed.status, 500);
+    assert.equal(failed.body, 'otelhelper: metric collection failed: fetch https://collector:4318/v1 failed\n');
+    reader.collect = () => Promise.reject('plain reason');
+    assert.equal((await mockScrape()).body, 'otelhelper: metric collection failed: plain reason\n');
+  } finally {
+    reader.collect = collect;
+  }
 });
 
 test('mounted handler on a real node:http server (the mock alone could drift from ServerResponse)', async () => {
@@ -307,11 +371,11 @@ test('mounted handler on a real node:http server (the mock alone could drift fro
 });
 
 test('D-JS8 listener: serves only /metrics on OTEL_HELPER_METRICS_PORT, closed by shutdown, bound again by the next setup', async () => {
-  const port = await freePort();
-  process.env.OTEL_HELPER_METRICS_PORT = String(port);
-  helper.setup();
+  const port = await setupOnFreePort((p) => {
+    process.env.OTEL_HELPER_METRICS_PORT = String(p);
+    helper.setup();
+  });
   api.metrics.getMeter('parity').createCounter('parity.requests').add(2);
-  await tick();
   const ok = await get(port, '/metrics?x=1');
   assert.equal(ok.status, 200);
   assert.match(ok.body, /\nparity_requests_total\{otel_scope_name="parity",otel_scope_schema_url="",otel_scope_version=""\} 2\n/);
@@ -327,15 +391,13 @@ test('D-JS8 listener: serves only /metrics on OTEL_HELPER_METRICS_PORT, closed b
   await assert.rejects(get(port, '/metrics'), { code: 'ECONNREFUSED' });
   resetAndCapture();
   helper.setup();
-  await tick();
-  assert.equal((await get(port, '/metrics')).status, 200, 'the port was released by shutdown');
+  assert.equal(await listenerSettled(), undefined, 'the port was released by shutdown');
+  assert.equal((await get(port, '/metrics')).status, 200);
   assert.ok(!records.some((r) => r.level === 'error'), JSON.stringify(records));
 });
 
 test('D-JS8 listener: absolute-form and malformed request targets', async () => {
-  const port = await freePort();
-  helper.setup({ prometheusMetricsPort: port });
-  await tick();
+  const port = await setupOnFreePort((p) => helper.setup({ prometheusMetricsPort: p }));
   const raw = (line) =>
     new Promise((resolve, reject) => {
       const sock = net.connect(port, '127.0.0.1');
@@ -360,7 +422,7 @@ test('D-JS14 busy port: setup does not throw, the bind error is reported at ERRO
   try {
     process.env.OTEL_HELPER_METRICS_PORT = String(port);
     helper.setup();
-    await tick();
+    assert.equal((await listenerSettled())?.code, 'EADDRINUSE');
     const errors = records.filter((r) => r.level === 'error');
     assert.equal(errors.length, 1, JSON.stringify(records));
     assert.equal(errors[0].origin, 'helper');
@@ -376,9 +438,8 @@ test('D-JS14 busy port: setup does not throw, the bind error is reported at ERRO
 });
 
 test('D-JS8 listener: unref()d — a script that calls setup() and returns exits by itself', async () => {
-  const port = await freePort();
   const started = Date.now();
-  const res = runCjs(
+  const res = await onFreePort((port) => runCjs(
     `const h = require('@staffops/otel-helper');
      h.setup({ serviceName: 'svc', environment: 'DEV' });
      setTimeout(() => {
@@ -388,7 +449,7 @@ test('D-JS8 listener: unref()d — a script that calls setup() and returns exits
        });
      }, 100);`,
     { env: { OTEL_HELPER_METRICS_PORT: String(port), OTEL_TRACES_EXPORTER: 'none', OTEL_LOGS_EXPORTER: 'none' } },
-  );
+  ));
   assert.equal(res.status, 0, res.stderr);
   assert.deepEqual(lastJson(res), { status: 200 });
   assert.equal(res.stderr, '');
@@ -396,7 +457,6 @@ test('D-JS8 listener: unref()d — a script that calls setup() and returns exits
 });
 
 test('D-JS8 cluster worker with a non-zero port: warned (each scrape reaches one worker)', async () => {
-  const port = await freePort();
   // cluster.fork() re-runs a script file (not an -e snippet): write one to a temp dir.
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'otel-helper-cluster-'));
   const script = path.join(dir, 'cluster.cjs');
@@ -417,7 +477,11 @@ test('D-JS8 cluster worker with a non-zero port: warned (each scrape reaches one
      }`,
   );
   try {
-    const res = runNode([script], { env: { OTEL_HELPER_METRICS_PORT: String(port), OTEL_TRACES_EXPORTER: 'none', OTEL_LOGS_EXPORTER: 'none' } });
+    let port;
+    const res = await onFreePort((p) => {
+      port = p;
+      return runNode([script], { env: { OTEL_HELPER_METRICS_PORT: String(p), OTEL_TRACES_EXPORTER: 'none', OTEL_LOGS_EXPORTER: 'none' } });
+    });
     assert.equal(res.status, 0, res.stderr);
     assert.deepEqual(lastJson(res), [
       `otelhelper: cluster worker serving /metrics on port ${port}: if several workers use this port, each scrape reaches one of them at random; give each worker its own port (e.g. base + a per-worker slot) or use OTLP only variable=OTEL_HELPER_METRICS_PORT`,
@@ -524,9 +588,7 @@ test('A21 disabled metrics: dropped from the console (push) exporter too', () =>
 });
 
 test('A21 listener: GET and HEAD /metrics only; other methods 405 with Allow', async () => {
-  const port = await freePort();
-  helper.setup({ prometheusMetricsPort: port });
-  await tick();
+  const port = await setupOnFreePort((p) => helper.setup({ prometheusMetricsPort: p }));
   assert.equal((await get(port, '/metrics', '127.0.0.1', 'HEAD')).status, 200);
   const post = await get(port, '/metrics', '127.0.0.1', 'POST');
   assert.equal(post.status, 405);
@@ -553,9 +615,7 @@ test('D1 colliding label names: merged, sorted values joined with ";" (data poin
 });
 
 test('A21 fix round: listener 404/405 carry text bodies', async () => {
-  const port = await freePort();
-  helper.setup({ prometheusMetricsPort: port });
-  await tick();
+  const port = await setupOnFreePort((p) => helper.setup({ prometheusMetricsPort: p }));
   const missing = await get(port, '/other');
   assert.equal(missing.body, '404 page not found\n');
   assert.equal(missing.headers['content-type'], 'text/plain; charset=utf-8');
@@ -564,11 +624,12 @@ test('A21 fix round: listener 404/405 carry text bodies', async () => {
 });
 
 test('A21 fix round: a client holding a connection (partial request, keep-alive) never keeps the process alive', async () => {
-  const port = await freePort();
   // The child sets up, then a stalled client sends half a request and a
   // keep-alive agent scrapes; the child returns from its script right after.
   const net = require('node:net');
-  const script = `
+  const { spawn } = require('node:child_process');
+  const attempt = async (port) => {
+    const script = `
     const h = require('@staffops/otel-helper');
     h.setup({ serviceName: 'svc', environment: 'DEV' });
     process.stdout.write('ready\\n');
@@ -580,46 +641,69 @@ test('A21 fix round: a client holding a connection (partial request, keep-alive)
         r.on('end', () => process.stdout.write('scraped\\n'));
       });
     }, 300);`;
-  const { spawn } = require('node:child_process');
-  const started = Date.now();
-  const child = spawn(process.execPath, ['-e', script], {
-    cwd: require('node:path').resolve(__dirname, '..'),
-    env: { ...process.env, OTEL_HELPER_METRICS_PORT: String(port), OTEL_TRACES_EXPORTER: 'none', OTEL_LOGS_EXPORTER: 'none' },
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
-  let out = '';
-  // Measured from the end of setup(): module loading and setup (which builds
-  // the instrumentations since B6) are not what this test is about.
-  let readyAt;
-  child.stdout.on('data', (d) => {
-    out += d;
-    if (readyAt === undefined && out.includes('ready')) readyAt = Date.now();
-  });
-  // The stalled client: connects once the listener is up and sends half a request.
-  let stalled;
-  const stalledClosed = new Promise((resolve) => {
-    const tryConnect = () => {
-      let connected = false;
-      stalled = net.connect(port, '127.0.0.1');
-      stalled.on('connect', () => {
-        connected = true;
-        stalled.write('GET /metrics HTTP/1.1\r\nHost: x\r\n');
-      });
-      stalled.on('error', () => {
-        if (!connected) setTimeout(tryConnect, 20);
-      });
-      stalled.on('close', () => {
-        if (connected) resolve(Date.now() - started);
-      });
-    };
-    tryConnect();
-  });
-  const exitedAfter = await new Promise((resolve) => child.on('exit', (code) => resolve({ code, ms: Date.now() - started })));
-  assert.equal(exitedAfter.code, 0);
-  const afterReady = Date.now() - readyAt;
-  assert.ok(afterReady < 2_000, `the child exited ${afterReady} ms after setup() returned (${exitedAfter.ms} ms after spawn)`);
-  assert.match(out, /scraped/);
-  const closedAfter = await Promise.race([stalledClosed, new Promise((resolve) => setTimeout(() => resolve(Infinity), 6_500))]);
-  stalled.destroy();
+    const started = Date.now();
+    const child = spawn(process.execPath, ['-e', script], {
+      cwd: require('node:path').resolve(__dirname, '..'),
+      env: { ...process.env, OTEL_HELPER_METRICS_PORT: String(port), OTEL_TRACES_EXPORTER: 'none', OTEL_LOGS_EXPORTER: 'none' },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let out = '';
+    let stderr = '';
+    // Measured from the end of setup(): module loading and setup (which
+    // builds the instrumentations) are not what this test is about.
+    let readyAt;
+    child.stdout.on('data', (d) => {
+      out += d;
+      if (readyAt === undefined && out.includes('ready')) readyAt = Date.now();
+    });
+    child.stderr.on('data', (d) => {
+      stderr += d;
+    });
+    // The stalled client: connects once the listener is up and sends half a request.
+    let stalled;
+    const stalledClosed = new Promise((resolve) => {
+      const tryConnect = () => {
+        let connected = false;
+        stalled = net.connect(port, '127.0.0.1');
+        stalled.on('connect', () => {
+          connected = true;
+          stalled.write('GET /metrics HTTP/1.1\r\nHost: x\r\n');
+        });
+        stalled.on('error', () => {
+          if (!connected) setTimeout(tryConnect, 20);
+        });
+        stalled.on('close', () => {
+          if (connected) resolve(Date.now() - started);
+        });
+      };
+      tryConnect();
+    });
+    const exitedAfter = await new Promise((resolve) => child.on('exit', (code) => resolve({ code, ms: Date.now() - started })));
+    if (stderr.includes('EADDRINUSE')) stalled.destroy();
+    return { stderr, out, readyAt, exitedAfter, stalledClosed, stalled: () => stalled };
+  };
+  const res = await onFreePort(attempt);
+  assert.equal(res.exitedAfter.code, 0, res.stderr);
+  const afterReady = Date.now() - res.readyAt;
+  assert.ok(afterReady < 2_000, `the child exited ${afterReady} ms after setup() returned (${res.exitedAfter.ms} ms after spawn)`);
+  assert.match(res.out, /scraped/);
+  const closedAfter = await Promise.race([res.stalledClosed, new Promise((resolve) => setTimeout(() => resolve(Infinity), 6_500))]);
+  res.stalled().destroy();
   assert.ok(closedAfter < 6_500, `the stalled client was closed after ${closedAfter} ms`);
+});
+
+test('errorText never throws: a throwing toString or message getter, a revoked Proxy, a non-string message (B14 round 3)', () => {
+  const { errorText, UNPRINTABLE_ERROR } = require('../dist/internal/metrics-endpoint.js');
+  assert.equal(errorText(new Error('boom')), 'boom');
+  assert.equal(errorText('plain'), 'plain');
+  assert.equal(errorText({ toString() { throw new Error('x'); } }), UNPRINTABLE_ERROR);
+  const getter = new Error('x');
+  Object.defineProperty(getter, 'message', { get() { throw new Error('y'); } });
+  assert.equal(errorText(getter), UNPRINTABLE_ERROR);
+  const { proxy, revoke } = Proxy.revocable({}, {});
+  revoke();
+  assert.equal(errorText(proxy), UNPRINTABLE_ERROR);
+  assert.equal(errorText(Object.assign(new Error('x'), { message: 42 })), '42');
+  assert.equal(errorText(Object.assign(new Error('x'), { message: { a: 1 } })), UNPRINTABLE_ERROR);
+  assert.equal(errorText(Symbol('s')), 'Symbol(s)');
 });

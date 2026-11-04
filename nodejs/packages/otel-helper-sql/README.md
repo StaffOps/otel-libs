@@ -30,6 +30,9 @@ const pg = require('pg'); // after setup()
   dependencies. This package installs `@types/pg` and `@types/pg-pool`
   (runtime dependencies of `@opentelemetry/instrumentation-pg`).
 
+Exports (the 0.x API contract, [API stability](https://github.com/StaffOps/otel-libs/blob/main/nodejs/README.md#api-stability-0x)):
+`sqlInstrumentation(options?)`, `VERSION`; types `SqlInstrumentationOptions`, `SqlInstrumentation`.
+
 Details and caveats: [HOW-TO §9](https://github.com/StaffOps/otel-libs/blob/main/nodejs/HOW-TO.md#sql-staffopsotel-helper-sql).
 Peer dependencies: `@staffops/otel-helper` (same version),
 `@opentelemetry/api` `>=1.10.0 <1.11.0`. Node.js 22.15.0 or newer.

@@ -1,6 +1,6 @@
 /**
  * `@staffops/otel-helper-aws` — AWS SDK for JavaScript v3 instrumentation for
- * `@staffops/otel-helper` (opt-in; task B10c, spec JS8, design D-JS9). Go
+ * `@staffops/otel-helper` (opt-in, spec JS8, design D-JS9). Go
  * `ext/otelaws`, Python `staffops_otel_helper.ext.aws`.
  *
  * ```js
@@ -27,10 +27,10 @@
  * request and response bodies (object contents, item values, message bodies,
  * Lambda payloads; DynamoDB `ItemCollectionMetrics` keys), an SNS phone
  * number in attributes or the span name (`phone_number:**`, as Python), and
- * the error text in the span status (contract D1 row "DB error status", A25, extended to AWS by design
+ * the error text in the span status (contract D1 row "DB error status", extended to AWS by design
  * D-JS14): `error.type` is the AWS error code (`NoSuchKey`,
  * `ThrottlingException`) or `_OTHER`. The semconv `exception` event keeps the
- * AWS error message, as for SQL and Redis (the A25 residual): an SNS
+ * AWS error message, as for SQL and Redis (a recorded residual): an SNS
  * `InvalidParameter` error quotes the phone number there. A streamed
  * response body (S3 `GetObject`) emits its events in the SDK's suppressed
  * HTTP context: to trace a call made in its listeners, save

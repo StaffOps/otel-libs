@@ -1,7 +1,6 @@
 /**
  * The `Instrumentation` returned by `sqlInstrumentation()` and the per-process
- * state it shares (task B10a; fix round 2026-11-03; on the core
- * `internal/contrib` registry since B10c, 2026-11-03).
+ * state it shares (on the core `internal/contrib` registry).
  *
  * One per process: the contrib instrumentations are built once and shared by
  * every result, and so are their enable state and bindings. Several results
@@ -47,7 +46,7 @@ const PATCHED_FILES: Readonly<Record<Library, readonly (readonly [string, string
 /**
  * `OTEL_SEMCONV_STABILITY_OPT_IN` database mode, read once per process by the
  * first `sqlInstrumentation()` or `redisInstrumentation()` (as Go's first
- * `Open`): the core's `internal/db` keeps it since B10b (2026-11-03).
+ * `Open`): the core's `internal/db` keeps it.
  */
 export { legacyKeysMode };
 
@@ -74,7 +73,7 @@ function build(library: Library): Instrumentation {
 /**
  * The per-process state: shared contrib instances, counted enables, bindings,
  * the re-require of preloaded files and the one-time reports (core
- * `internal/contrib`, extracted from this file in B10c, 2026-11-03).
+ * `internal/contrib`).
  */
 export const registry = contribRegistry<Library>({
   name: NAME,

@@ -107,7 +107,10 @@ release. `PARITY_RELEASE=1` enables `TestParityNoTaskSkipsAtRelease` (Go) and
 `test_no_task_skips_at_release` (Python), which fail while any remain; the
 release task (A11) runs them. For Node the same variable enables
 `release gate: no nodejs case still skipped pending a task`, which fails while
-any `nodejs` status starts with `skip:B` (B14).
+any `nodejs` status starts with `skip:B` (B14). *Wired 2026-11-04 (B14):*
+CI sets `PARITY_RELEASE=1` on release tags — `go-test` and `python-test` on
+`v*`, `node-test` on `nodejs/v*` — and `testing/verify.sh --release` sets it
+locally (the compose test services pass it through).
 
 ## Running
 

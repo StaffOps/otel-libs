@@ -30,7 +30,7 @@ export function envValue(name: string): string | undefined {
  * Lowercases A-Z only. Environment enum values (sampler, exporter and
  * propagator names, protocol, compression, booleans) are ASCII
  * case-insensitive in every language (contract design D1 row "ASCII case
- * folding", A20): `toLowerCase()` maps U+212A (Kelvin) to `k`, and
+ * folding"): `toLowerCase()` maps U+212A (Kelvin) to `k`, and
  * `toUpperCase()` maps U+0131 to `I`, which would accept a non-ASCII spelling.
  */
 export function asciiLower(value: string): string {

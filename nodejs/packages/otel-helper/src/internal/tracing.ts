@@ -1,5 +1,5 @@
 /**
- * Sampling, propagation and the debug marker (task B5; contract R6, R7, R8,
+ * Sampling, propagation and the debug marker (contract R6, R7, R8,
  * R9; contract design D1 rows "Sampler" and "Propagators", D3, D5, ADR-002,
  * ADR-006; Node design D-JS3, D-JS7). Same rules as the Go helper
  * (`go/tracing.go` buildSampler, `go/health.go`, `go/config.go`
@@ -128,7 +128,7 @@ export function checkCodeTracing(code: Readonly<Record<string, unknown>>): Parti
 
 /**
  * The sampler (R6, contract D3, ADR-002). Precedence: a code `sampleRatio`
- * (any value, 1.0 included — D1 A13 ruling) → `parentbased_traceidratio`;
+ * (any value, 1.0 included — a D1 ruling) → `parentbased_traceidratio`;
  * else `OTEL_TRACES_SAMPLER` / `_ARG`; else, while `OTEL_TRACES_SAMPLER` is
  * unset, the deprecated `OTEL_HELPER_SAMPLE_RATIO` → `parentbased_traceidratio`;
  * else `parentbased_always_on`. Names are trimmed and case-insensitive; an
@@ -199,7 +199,7 @@ export function buildSampler(config: SamplerConfig): Sampler {
 
 /**
  * `OTEL_PROPAGATORS` (R8, contract D1 rows "Propagators", "casing / empty
- * tokens" and "Propagator diagnostics", A20): comma-separated, trimmed, ASCII
+ * tokens" and "Propagator diagnostics"): comma-separated, trimmed, ASCII
  * case-insensitive, empty tokens and duplicates dropped; every token is
  * scanned. `tracecontext` and `baggage` are linked; `none` disables
  * propagation; spec values the helper does not link warn as "not supported",
@@ -250,7 +250,7 @@ function cutQuery(path: string): string {
  * Strips the query and fragment, percent-decodes, lowercases and drops
  * trailing slashes (`/` stays `/`). Decoding follows Go, whose sampler sees
  * the decoded `req.URL.Path` (contract design D1 row "Percent-encoded health
- * paths", A22, 2026-11-02): `/%68ealth` and `/health%2F` are health paths. A
+ * paths"): `/%68ealth` and `/health%2F` are health paths. A
  * malformed escape keeps the raw path (Go's server rejects such a request).
  * The decoded path is cut again, as Go's normalization of a decoded `?` does.
  */
@@ -384,8 +384,8 @@ interface MutableStatus {
 }
 
 /**
- * Normalizes gRPC SERVER span status before the span ends (contract task
- * A22, 2026-11-02): instrumentation-grpc 0.300 marks every non-OK status
+ * Normalizes gRPC SERVER span status before the span ends (contract D1,
+ * 2026-11-02): instrumentation-grpc 0.300 marks every non-OK status
  * ERROR, Go and Python only the six codes of {@link GRPC_SERVER_ERROR_CODES}.
  * A SERVER span with `rpc.system=grpc` and another `rpc.grpc.status_code`
  * (NOT_FOUND, INVALID_ARGUMENT, …: the client's fault) ends with status

@@ -57,6 +57,13 @@ Precedence: **explicit code > standard `OTEL_*` env > legacy / `OTEL_HELPER_*` e
 | Metrics exporters / interval / exemplars | `OTEL_METRICS_EXPORTER` (existing contract + `console`; env `otlp` without endpoint warns — R2), `OTEL_METRIC_EXPORT_INTERVAL` (default 30000), `OTEL_METRICS_EXEMPLAR_FILTER` (never set in code) | helper / SDK |
 | Propagators | `OTEL_PROPAGATORS` > `tracecontext,baggage`. Supported values in every language: `tracecontext`, `baggage`, `none`; any other value (`b3`, `jaeger`, `xray`, `ottrace`, …) warns and is skipped — no extra propagator dependencies (decided 2026-10-28, A3) | helper |
 
+> **Node.js owners** (note added 2026-11-04, B14 obs L9): the Owner column
+> describes Go and Python. Node.js: helper-owned, see
+> [nodejs design D-JS3](../nodejs-otel-helper/design.md#d-js3--resolution-and-ownership-go-model)
+> — the helper composes the SDK itself and hides the OTLP variables it owns
+> while the exporters are built; where a Node owner differs (an SDK-owned
+> row, a gap), D-JS3 and D-JS14 record it.
+
 **Parsing rule:** unknown/unparseable **env** values warn and fall back to the
 default; invalid **code** values fail fast. Warnings name the variable and
 never print `*_HEADERS`, `*_CLIENT_KEY` or URL userinfo/query values.

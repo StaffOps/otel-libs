@@ -1,5 +1,5 @@
 /**
- * The Prometheus `/metrics` endpoint (task B7; spec JS7; design D-JS8, ADR-007;
+ * The Prometheus `/metrics` endpoint (spec JS7; design D-JS8, ADR-007;
  * contract design D1 rows on the Prometheus fallback and "Mounted /metrics
  * handler status"). The reader is the `@opentelemetry/exporter-prometheus`
  * `PrometheusExporter` with its own server never started; the text is written
@@ -14,11 +14,10 @@
  * `0.0.0.0`), serving only `/metrics`, `unref()`'d.
  */
 import * as http from 'node:http';
-import { diag } from '@opentelemetry/api';
 import { PrometheusExporter, PrometheusSerializer } from '@opentelemetry/exporter-prometheus';
 import type { ExportResult } from '@opentelemetry/core';
 import { DataPointType, type MetricData, type PushMetricExporter, type ResourceMetrics } from '@opentelemetry/sdk-metrics';
-import { report, truncateValue } from './diagnostics';
+import { redactErrorText, report, truncateValue } from './diagnostics';
 import { envValue, trimWS, typeName, type Warn } from './env';
 
 export const ENV_METRICS_PORT = 'OTEL_HELPER_METRICS_PORT';
@@ -69,7 +68,7 @@ export function resolveMetricsPort(code: number | undefined, warn: Warn): number
  * Disabled-metric patterns from code (`disabledMetrics`, `[]` = none, wins) or
  * `OTEL_HELPER_DISABLED_METRICS` (comma-separated): every item trimmed with the
  * contract set, blank items ignored (contract design D1 row "Disabled-metric
- * patterns", A21).
+ * patterns").
  */
 export function resolveDisabledMetrics(code: readonly string[] | undefined): readonly string[] {
   const items = code ?? (envValue(ENV_DISABLED_METRICS) ?? '').split(',');
@@ -87,7 +86,7 @@ export function checkCodeDisabledMetrics(value: unknown): readonly string[] | un
 
 /**
  * Whether `name` matches the glob `pattern` (contract design D1 row
- * "Disabled-metric patterns", A21): case-sensitive; `*` matches any run of
+ * "Disabled-metric patterns"): case-sensitive; `*` matches any run of
  * characters (`.` and `/` included), `?` exactly one, every other character is
  * literal (no `[...]` classes, no escapes). The SDK View wildcard cannot do it
  * (it expands only the first `*` and escapes `?`).
@@ -345,6 +344,42 @@ function respond(req: ScrapeRequest, res: ScrapeResponse, status: number, body: 
   else res.end(body);
 }
 
+/** Placeholder for a collection error whose text cannot be read. */
+export const UNPRINTABLE_ERROR = '<unprintable error>';
+
+/**
+ * Text of one collection error (an `Error` or anything a callback threw).
+ * Never throws: a throwing `toString`/getter, a revoked Proxy or a non-string
+ * `message` gives {@link UNPRINTABLE_ERROR} (or the message coerced when it is
+ * a number or boolean).
+ */
+export function errorText(err: unknown): string {
+  try {
+    if (err instanceof Error) {
+      const message: unknown = err.message;
+      if (typeof message === 'string') return message;
+      if (typeof message === 'number' || typeof message === 'boolean') return String(message);
+      return UNPRINTABLE_ERROR;
+    }
+    return String(err);
+  } catch {
+    return UNPRINTABLE_ERROR;
+  }
+}
+
+/**
+ * Collection errors of one scrape (a throwing observable callback, …) as one
+ * helper ERROR record on the diagnostics sink: how many, and the first one
+ * redacted. The scrape still answers with what was collected.
+ */
+function reportCollectionErrors(errors: readonly unknown[]): void {
+  report(
+    'metric collection errors; the scrape answered with the metrics that were collected',
+    { count: errors.length, error: redactErrorText(errorText(errors[0])) },
+    { origin: 'helper', level: 'error' },
+  );
+}
+
 /**
  * Answers one scrape for `target()` (design "Mounted /metrics handler
  * status"): 503 without a reader (before setup, failed, foreign meter
@@ -365,7 +400,7 @@ export function serveMetrics(target: () => ScrapeTarget, req: ScrapeRequest, res
   // Serializing inside the chain: a throw there answers too, never an unhandled rejection.
   current.reader.collect().then(
     ({ resourceMetrics, errors }) => {
-      if (errors.length > 0) diag.error('otelhelper: metric collection errors', ...errors);
+      if (errors.length > 0) reportCollectionErrors(errors);
       return serializeMetrics(withoutDropped(resourceMetrics, current.drop));
     },
   ).then(
@@ -374,14 +409,15 @@ export function serveMetrics(target: () => ScrapeTarget, req: ScrapeRequest, res
     },
     (err: unknown) => {
       const gone = target().kind !== 'active';
-      const why = truncateValue(err instanceof Error ? err.message : String(err));
+      // The body reaches whoever can scrape: redacted as the diagnostics are.
+      const why = redactErrorText(errorText(err));
       respond(req, res, gone ? 503 : 500, gone ? UNAVAILABLE_BODY : `otelhelper: metric collection failed: ${why}\n`);
     },
   );
 }
 
 /**
- * The helper's own servers. Task B6's `ignoreIncomingRequestHook` checks it so
+ * The helper's own servers. The HTTP instrumentation's `ignoreIncomingRequestHook` checks it so
  * a scrape is neither traced nor counted in the HTTP server metrics (Go's
  * listener has no otelhttp, Python's is an uninstrumented wsgiref).
  */

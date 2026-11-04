@@ -27,6 +27,9 @@ log.info('order received', { order: 'o2' });
 - Records written before the transport was attached arrive uncorrelated.
 - `logger.end()` flushes the OTLP records: call it before `process.exit()`.
 
+Exports (the 0.x API contract, [API stability](https://github.com/StaffOps/otel-libs/blob/main/nodejs/README.md#api-stability-0x)):
+`OtelHelperTransport` (class), `VERSION`; type `OtelHelperTransportOptions`.
+
 Details and caveats: [HOW-TO §5](https://github.com/StaffOps/otel-libs/blob/main/nodejs/HOW-TO.md#winston). Peer dependencies:
 `@staffops/otel-helper` (same version), `winston` `^3.10.0`. Node.js
 22.15.0 or newer. License: Apache-2.0.

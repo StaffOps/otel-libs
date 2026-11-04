@@ -46,3 +46,51 @@ test('every command form against a real Redis: sanitized statements, no secrets,
     testing.reset();
   }
 });
+
+test('one span per command issued before ready (ioredis offline queue replay), and after ready; node-redis before connect resolves', opts, async () => {
+  for (const k of Object.keys(process.env)) if (k.startsWith('OTEL_')) delete process.env[k];
+  process.env.OTEL_SERVICE_NAME = 'svc';
+  process.env.OTEL_HELPER_METRICS_PORT = '0';
+  testing.reset();
+  testing.setDiagnosticSink(() => undefined);
+  const exporter = new InMemorySpanExporter();
+  helper.setup({ instrumentations: [instrumentation], spanProcessors: [new SimpleSpanProcessor({ exporter })] });
+  const IORedis = require('ioredis');
+  const { createClient } = require('redis');
+  const sets = () => exporter.getFinishedSpans().filter((s) => s.name === 'SET');
+  try {
+    // Before ready: queued offline, replayed through sendCommand on ready.
+    const early = new IORedis(URL_);
+    let readyAt;
+    early.once('ready', () => { readyAt = process.hrtime.bigint(); });
+    const issuedAt = process.hrtime.bigint();
+    await early.set('b14-offline', '1');
+    await early.quit();
+    assert.ok(readyAt !== undefined && readyAt > issuedAt, 'the command was issued before ready');
+    assert.equal(sets().length, 1, `ioredis before ready: ${sets().length} SET spans`);
+    // The kept span is the first one: it starts before ready (queueing included).
+    const [span] = sets();
+    const startNs = BigInt(span.startTime[0]) * 1_000_000_000n + BigInt(span.startTime[1]);
+    const endNs = BigInt(span.endTime[0]) * 1_000_000_000n + BigInt(span.endTime[1]);
+    assert.ok(endNs - startNs >= readyAt - issuedAt - 1_000_000n, 'the span covers the wait for ready');
+
+    exporter.reset();
+    const late = new IORedis(URL_);
+    await new Promise((resolve) => late.once('ready', resolve));
+    await late.set('b14-online', '1');
+    await late.set('b14-online', '2');
+    await late.quit();
+    assert.equal(sets().length, 2, 'ioredis after ready: one span per command');
+
+    exporter.reset();
+    const nodeRedis = createClient({ url: URL_ });
+    const connecting = nodeRedis.connect();
+    await nodeRedis.set('b14-node', '1');
+    await connecting;
+    await nodeRedis.quit();
+    assert.equal(sets().length, 1, 'node-redis before connect resolves: one span');
+  } finally {
+    await helper.shutdown();
+    testing.reset();
+  }
+});

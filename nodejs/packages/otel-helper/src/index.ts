@@ -1,16 +1,26 @@
 /**
- * `@staffops/otel-helper` — OpenTelemetry helper for Node.js at parity with
- * the Go and Python helpers (specs/nodejs-otel-helper). Implemented so far:
- * `setup()` identity/resource/log-level resolution and diagnostics (task B3),
- * OTLP endpoint/protocol/TLS-setting resolution (B4a), OTLP exporters for
- * traces, metrics and logs (B4b), exporter lists with the console exporters,
- * `OTEL_SDK_DISABLED` and the metric export interval (B4c), the sampler
- * (ParentBased, health sampler around it), propagators and the debug marker
- * (B5), the Prometheus `/metrics` listener and `metricsHandler()` (B7), the
- * http/undici/express/gRPC instrumentation (B6), `createLogger()` with the
- * stdout fallback (B8), the lifecycle (B9: rollback, foreign globals and
- * `replaceGlobals`, forwarding providers across re-setups, the register entry),
- * `getTracer`, `getMeter` and `startRootSpan` (B11b).
+ * `@staffops/otel-helper` — OpenTelemetry for Node.js services with the same
+ * environment-variable contract as the Go and Python helpers.
+ *
+ * - {@link setup} reads the standard `OTEL_*` variables (and the helper's
+ *   own), builds the trace, metric and log pipelines (OTLP to the Collector;
+ *   a Prometheus `/metrics` endpoint when no endpoint is set) and installs
+ *   the http, undici, express and gRPC instrumentations; {@link shutdown}
+ *   flushes and stops them. Both are safe to call again.
+ * - {@link getTracer}, {@link getMeter} and {@link startRootSpan} for custom
+ *   spans and metrics; {@link createLogger} for logs correlated with the
+ *   active span; {@link metricsHandler} to serve `/metrics` from your own server.
+ * - `@staffops/otel-helper/register` sets up from the environment before the
+ *   app loads (`node --import @staffops/otel-helper/register app.js`);
+ *   `@staffops/otel-helper/hooks` installs only the module hooks, for a
+ *   custom preload that calls `setup()` itself.
+ *
+ * Start with the README (configuration, environment variables, API
+ * stability) and HOW-TO (recipes) in `nodejs/` of the repository:
+ * https://github.com/StaffOps/otel-libs/blob/main/nodejs/README.md and
+ * https://github.com/StaffOps/otel-libs/blob/main/nodejs/HOW-TO.md.
+ *
+ * @packageDocumentation
  */
 export { VERSION } from './version';
 export { getMeter, getTracer, startRootSpan } from './internal/api';

@@ -137,3 +137,119 @@ test('B9 final round: redactErrorText key names, generic credential names, schem
     assert.ok(Date.now() - started < 1000, `slow on ${big.slice(0, 8)}…`);
   }
 });
+
+test('redactText applies the redactErrorText rules without the 64-character cut', () => {
+  const tail = 'y'.repeat(100);
+  assert.equal(diag.redactText(`https://u:p@h/x?q=1 token=abc ${tail}`), `https://h/x token=<redacted> ${tail}`);
+  assert.equal(diag.redactErrorText(`https://u:p@h/x?q=1 token=abc ${tail}`), diag.truncateValue(`https://h/x token=<redacted> ${tail}`));
+  assert.equal(diag.redactText('z'.repeat(5000)).length, 4096, 'scans and keeps the first 4096 characters');
+});
+
+test('redactText: util.inspect, JSON, escaped-JSON forms and more credential names (B14 re-probe M1, 2026-11-04)', () => {
+  const util = require('node:util');
+  const r = diag.redactText;
+  const noSecret = (text) => assert.ok(!/SECRET/.test(r(text)), `${text} -> ${r(text)}`);
+  // util.inspect: single-quoted keys and values.
+  assert.equal(r(util.format('h', { 'x-api-key': 'SECRET1', password: 'SECRET2', other: 'keep' })), "h { 'x-api-key': <redacted>, password: <redacted>, other: 'keep' }");
+  // JSON inside JSON: `\"api-key\":\"…\"`, and one level deeper.
+  assert.equal(r(JSON.stringify({ data: JSON.stringify({ 'api-key': 'SECRETH1', 'x-tenant-token': 'SECRETH2', ok: 'keep' }) })), '{"data":"{\\"api-key\\":<redacted>,\\"x-tenant-token\\":<redacted>,\\"ok\\":\\"keep\\"}"}');
+  noSecret(JSON.stringify(JSON.stringify({ data: JSON.stringify({ 'api-key': 'SECRETH1' }) })));
+  // credential / session / signature names; `&`-joined query pairs.
+  assert.equal(r('credential=SECRETC sessionid=SECRETS'), 'credential=<redacted> sessionid=<redacted>');
+  assert.equal(r('Signature=SECRETSIG&X-Amz-Credential=SECRETCRED&X-Amz-Date=20260101'), 'Signature=<redacted>&X-Amz-Credential=<redacted>&X-Amz-Date=20260101');
+  // Cookie headers lose every pair, whatever the names.
+  assert.equal(r('Cookie: a=SECRETA; other=SECRETB'), 'Cookie: <redacted>');
+  assert.equal(r('{"cookie":"a=SECRETA; b=SECRETB","x":"keep"}'), '{"cookie":<redacted>,"x":"keep"}');
+  assert.equal(r('set-cookie: sid=SECRETSID; Path=/'), 'set-cookie: <redacted>');
+  assert.equal(r('session-cookie=c'), 'session-cookie=<redacted>');
+  // Digest parameters.
+  assert.equal(r('Proxy-Authorization: Digest username="u", response="SECRETD"'), 'Proxy-Authorization: <redacted> <redacted>');
+  noSecret('WWW: Digest username="u", realm="r", response="SECRETD", nonce=SECRETN');
+  // Prose stays.
+  assert.equal(r('basic auth failed'), 'basic auth failed');
+  assert.equal(r('the session ended; the key was rotated'), 'the session ended; the key was rotated');
+  // Bounded on hostile inputs (escaped quotes, backslash runs).
+  for (const big of [`key="${'\\'.repeat(5000)}`, `${'k="\\'.repeat(2000)}`, `cookie=\\${'"'.repeat(5000)}`, '\\'.repeat(5000), `Digest ${'a=b,'.repeat(2000)}`]) {
+    const started = Date.now();
+    r(big);
+    assert.ok(Date.now() - started < 1000, `slow on ${big.slice(0, 8)}…`);
+  }
+});
+
+test('maskLiterals replaces each secret (and its JSON-escaped forms), skipping values shorter than 4 characters', () => {
+  assert.equal(diag.MIN_MASKED_SECRET, 4);
+  assert.equal(diag.maskLiterals('a SECRETV b "SECRETV"', ['SECRETV']), 'a <redacted> b "<redacted>"');
+  assert.equal(diag.maskLiterals(JSON.stringify(JSON.stringify({ v: 'q"uo\\te' })), ['q"uo\\te']), JSON.stringify(JSON.stringify({ v: '<redacted>' })));
+  assert.equal(diag.maskLiterals('on 1 abc', ['on', '1', 'abc', '']), 'on 1 abc');
+  assert.equal(diag.maskLiterals('x', []), 'x');
+});
+
+test('redactText third round: Cookie with quoted pairs, status words, pwd/jwt, bounded backslash runs (B14 round 3)', () => {
+  const r = diag.redactText;
+  assert.equal(r('Cookie: a="b"; sid=abc123'), 'Cookie: <redacted>');
+  assert.equal(r('16 UNAUTHENTICATED: denied'), '16 UNAUTHENTICATED: denied');
+  assert.equal(r('7 PERMISSION_DENIED: unauthorized: no'), '7 PERMISSION_DENIED: unauthorized: no');
+  assert.equal(r('authentication failed: bad'), 'authentication failed: bad');
+  assert.equal(r('Authorization: Bearer x'), 'Authorization: <redacted> <redacted>');
+  assert.equal(r('authorization=secret'), 'authorization=<redacted>');
+  assert.equal(r('x-authentication: t1'), 'x-authentication: <redacted>');
+  assert.equal(r('pwd=p1 jwt: j1 db_pwd="p 2"'), 'pwd=<redacted> jwt: <redacted> db_pwd=<redacted>');
+  assert.equal(r('the jwt was invalid; check pwd and retry'), 'the jwt was invalid; check pwd and retry');
+  const bs = '\\'.repeat(4096);
+  const b2000 = '\\'.repeat(2000);
+  for (const big of [`${b2000}"key${b2000}"`, `${b2000}"cookie${b2000}"`, `key:"${bs}`, `cookie:"${bs}`, `${bs}"key`, `key:${bs}`, `${'key=\\"\\\\\\\\\\\\\\'.repeat(400)}`, 'unauthorized:'.repeat(400)]) {
+    const text = big.slice(0, 4096);
+    const started = process.hrtime.bigint();
+    r(text);
+    const ms = Number(process.hrtime.bigint() - started) / 1e6;
+    assert.ok(ms < 25, `${ms} ms on ${JSON.stringify(text.slice(0, 8))}…`);
+  }
+});
+
+test('maskLiterals: the util.inspect-escaped form too', () => {
+  const util = require('node:util');
+  // inspect single-quotes (escaping ' as \') only when the string holds ', " and ` together.
+  const secret = 'q\'u"o`te\\x';
+  assert.match(util.inspect(secret), /^'.*\\'/);
+  assert.equal(diag.maskLiterals(util.inspect({ h: secret }), [secret]), "{ h: '<redacted>' }");
+  const plain = "it's\\pw";
+  assert.equal(diag.maskLiterals(util.inspect({ h: plain }), [plain]), '{ h: "<redacted>" }');
+});
+
+test('redactText fourth round: status words keep only their own text, unbounded escapes (B14 round 4)', () => {
+  const r = diag.redactText;
+  // A status word before `:` keeps its value, redacted pair by pair.
+  assert.equal(r('unauthorized: token=abc'), 'unauthorized: token=<redacted>');
+  assert.equal(r('16 UNAUTHENTICATED:api_key=SECRET'), '16 UNAUTHENTICATED:api_key=<redacted>');
+  assert.equal(r('unauthenticated: "token: SECRET z"'), 'unauthenticated: "token: <redacted> z"');
+  // `=`, a quoted name or a bare `authentication…` name is a credential pair.
+  for (const leak of ['unauthorized="password=hunter2 x"', 'Authentication: SECRET3', 'authentication=SECRET4', '"authenticated":"SECRET2"', 'unauthorized=SECRET1', 'authentication_failed: SECRET5']) {
+    const out = r(leak);
+    assert.ok(!/SECRET|hunter2/.test(out) && out.includes('<redacted>'), `${leak} -> ${out}`);
+  }
+  for (const readable of ['16 UNAUTHENTICATED: denied', 'unauthorized: no', 'authentication failed: bad', '7 PERMISSION_DENIED: unauthorized: no']) assert.equal(r(readable), readable);
+  // JSON escaped 4 and 5 times, values with spaces.
+  for (const times of [4, 5]) {
+    let text = JSON.stringify({ password: 'a b SECRETX c', ok: 'keep' });
+    for (let i = 1; i < times; i++) text = JSON.stringify(text);
+    const out = r(text);
+    assert.ok(!out.includes('SECRETX') && out.includes('keep'), `${times}x: ${out}`);
+  }
+  // Backslash runs of 8 and 9 inside a quoted value; an escaped newline before a name.
+  for (const n of [8, 9]) assert.equal(r(`key:"a${'\\'.repeat(n)}b SECRET9"`), 'key:<redacted>');
+  assert.equal(r('"a\\napi_key=SECRETN"'), '"a\\napi_key=<redacted>');
+  // A quoted value cut open by the end of the text is redacted to the end.
+  assert.equal(r('x token="a b SECRETU c'), 'x token=<redacted>');
+  // Round 5: a name after a status word or a credential name is a name, not their value.
+  assert.equal(r('401 Unauthorized: x-api-key: SECRET'), '401 Unauthorized: x-api-key: <redacted>');
+  assert.equal(r('Unauthorized: authorization: SECRET'), 'Unauthorized: authorization: <redacted>');
+  assert.equal(r('UNAUTHENTICATED: session: SECRET'), 'UNAUTHENTICATED: session: <redacted>');
+  assert.equal(r('unauthorized: secret: SECRET'), 'unauthorized: secret: <redacted>');
+  assert.equal(r('Authorization: x-api-key: SECRET'), 'Authorization: x-api-key: <redacted>');
+  assert.equal(r('16 UNAUTHENTICATED:api_key=x'), '16 UNAUTHENTICATED:api_key=<redacted>');
+  assert.equal(r('unauthorized: token=x'), 'unauthorized: token=<redacted>');
+  assert.equal(r('password=key=SECRETv'), 'password=<redacted>');
+  // A value that is a plain word followed by `: ` is still a value.
+  assert.equal(r('token: abc: def'), 'token: <redacted> def');
+  assert.equal(r('Cookie: x-api-key: SECRET'), 'Cookie: <redacted>');
+});

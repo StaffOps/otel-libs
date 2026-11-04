@@ -1,6 +1,6 @@
 /**
  * `@staffops/otel-helper-sql` — SQL instrumentation for `@staffops/otel-helper`
- * (opt-in; task B10a, spec JS8, design D-JS9). Go `ext/otelsql`, Python
+ * (opt-in, spec JS8, design D-JS9). Go `ext/otelsql`, Python
  * `staffops_otel_helper.ext.sql`.
  *
  * ```js
@@ -16,7 +16,7 @@
  * `db.system` key (see `OTEL_SEMCONV_STABILITY_OPT_IN`, design D-JS9). Never
  * recorded: bound values (pg `enhancedDatabaseReporting` off; mysql2 records
  * the statement as written, never formatted with its values), the database's
- * error text in the span status (contract D1 row "DB error status", A25), and
+ * error text in the span status (contract D1 row "DB error status"), and
  * connection strings or credentials (only host, port and database name).
  *
  * One per process: every result shares the same contrib instrumentations,
@@ -77,7 +77,7 @@ function checkOptions(options: unknown): SqlInstrumentationOptions {
  * Call it — and `setup()` — before the app loads `pg` or `mysql2` (a library
  * loaded earlier is still patched on the first enable). The first call of
  * this or `redisInstrumentation()` reads `OTEL_SEMCONV_STABILITY_OPT_IN` for
- * the whole process (core `internal/db`, since B10b).
+ * the whole process (core `internal/db`).
  *
  * @throws TypeError on invalid options; Error (D14 wording) when the contrib
  *   instrumentation of a library named `true` does not load, or when none of

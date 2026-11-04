@@ -19,7 +19,7 @@ export type Library = (typeof LIBRARIES)[number];
 /**
  * Directories the app resolves packages from: its entry script's, the
  * working directory, then the main module's `node_modules` lookup paths
- * (core `internal/contrib` since B10c).
+ * (core `internal/contrib`).
  */
 export const appDirectories: typeof coreAppDirectories = coreAppDirectories;
 

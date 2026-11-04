@@ -50,7 +50,7 @@ npm run lint            # eslint
 npm run build           # tsc → dist/ (CommonJS) + the esm/ wrappers
 npm run typecheck       # including the type tests in packages/otel-helper/test/types
 npm run check           # publint --strict + attw per package
-node ci/check-pack.mjs  # every exports target, LICENSE, README.md and package.json in each tarball; no src/ or test/
+node ci/check-pack.mjs  # every exports target, LICENSE, README.md and package.json in each tarball; no src/, test/ or *.map
 npm test                # every package, with its coverage gate
 sh ci/api-range-install.sh
 ```
@@ -136,7 +136,7 @@ The example apps run against the same Collector: see
 | Module | Covers |
 |---|---|
 | `resolve.test.cjs` | resolver building blocks: trim set, booleans, `OTEL_RESOURCE_ATTRIBUTES`, log levels, code-option validation |
-| `setup.test.cjs` | identity resolution, deprecations, diagnostics and the DiagLogger; the lifecycle — rollback at every install step, foreign globals, `replaceGlobals`, re-setup, the shutdown deadline |
+| `setup.test.cjs` | identity resolution, deprecations, diagnostics and the DiagLogger (forwarded SDK text: response bodies dropped, OTLP header values masked, end to end against a server echoing the headers in a 400/500 body); the lifecycle — rollback at every install step, foreign globals, `replaceGlobals`, re-setup, the shutdown deadline |
 | `otlp.test.cjs` | endpoints, protocol, TLS settings, IPv6, host rules |
 | `exporters.test.cjs` | exporter construction: env masking, headers, timeout and export deadline, compression, BSP/BLRP and limits, gRPC credentials, TLS files |
 | `signals.test.cjs` | `OTEL_{TRACES,METRICS,LOGS}_EXPORTER`, console exporters, `OTEL_SDK_DISABLED`, `OTEL_CONFIG_FILE`, the metric interval |
@@ -159,10 +159,10 @@ The example apps run against the same Collector: see
 | Package | Modules |
 |---|---|
 | `-sql` | `sql.test.cjs` (no database: options, detection, statements, errors), `db.test.cjs` (real PostgreSQL and MySQL), `package.test.cjs`, `esm.test.mjs` |
-| `-redis` | `redis.test.cjs` (RESP fake), `server.test.cjs` (real Redis), `package.test.cjs`, `esm.test.mjs` |
+| `-redis` | `redis.test.cjs` (RESP fake), `server.test.cjs` (real Redis; also one span per command issued before ioredis is `ready`), `package.test.cjs`, `esm.test.mjs` |
 | `-aws` | `aws.test.cjs` (no SDK), `sdk.test.cjs` (real `@aws-sdk/client-*` against the fake endpoint, the secrets sweep), `package.test.cjs`, `esm.test.mjs` |
-| `-pino` | `pino.test.cjs` (real pino; OTLP records decoded from a local receiver), `placeholder.test.cjs` (package contract), `esm.test.mjs` |
-| `-winston` | `winston.test.cjs` (real winston; the same receiver), `placeholder.test.cjs`, `esm.test.mjs` |
+| `-pino` | `pino.test.cjs` (real pino; OTLP records decoded from a local receiver), `package.test.cjs` (package contract), `esm.test.mjs` |
+| `-winston` | `winston.test.cjs` (real winston; the same receiver), `package.test.cjs`, `esm.test.mjs` |
 
 ## Writing tests
 

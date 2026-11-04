@@ -48,7 +48,7 @@ export interface Logger {
 /**
  * Level of a record written through the helper: the logger's four levels plus
  * `trace` (below `debug`) and `fatal` (above `error`), which the pino and
- * winston packages receive (B10d). `trace` is below every minimum level, so it
+ * winston packages receive. `trace` is below every minimum level, so it
  * is always dropped (Go `NewSlogHandler` drops levels below Debug; Python
  * drops levels below DEBUG by default); `fatal` always passes.
  */
@@ -115,14 +115,14 @@ function enabled(min: LogLevel, level: RecordLevel): boolean {
  * level, `undefined` = the installed one (read per call, as the record is).
  * Lets a bridge skip building a record that would be dropped.
  *
- * @internal For `@staffops/otel-helper-pino` / `-winston` only (B10d).
+ * @internal For `@staffops/otel-helper-pino` / `-winston` only.
  */
 export function recordEnabled(minimum: LogLevel | undefined, level: RecordLevel): boolean {
   return enabled(minimum ?? logDestination().level, level);
 }
 
 /**
- * One record handed to {@link emitBridgeRecord} by the pino and winston packages (B10d).
+ * One record handed to {@link emitBridgeRecord} by the pino and winston packages.
  *
  * @internal Not public API: may change in any release.
  */
@@ -137,8 +137,7 @@ export interface BridgeRecord {
   /**
    * The body. A string as it is; `undefined`: no OTel body and `msg` `""` on
    * stdout; anything else through the attribute converter — an OTel AnyValue
-   * (a map for an object) and its JSON text as the stdout `msg` (fix round
-   * 2026-11-03).
+   * (a map for an object) and its JSON text as the stdout `msg`.
    */
   readonly message: unknown;
   readonly attributes?: LogAttributes | null | undefined;
@@ -164,7 +163,7 @@ export interface BridgeRecord {
  * (D6): the active setup's Logs API while it has a logs exporter, else one
  * stdout JSON line of the core shape. Never throws.
  *
- * @internal For `@staffops/otel-helper-pino` / `-winston` only (B10d).
+ * @internal For `@staffops/otel-helper-pino` / `-winston` only.
  */
 export function emitBridgeRecord(record: BridgeRecord): void {
   try {
@@ -516,7 +515,7 @@ function otelValue(value: unknown): AnyValue {
  * The record attributes for the Logs API: the first `Error`-valued attribute
  * becomes the record's `exception` (the SDK writes `exception.type`,
  * `exception.message`, `exception.stacktrace`); `null`/`undefined` are left out.
- * With a `leading` error (a bridged record's own, B10d) that one is the
+ * With a `leading` error (a bridged record's own) that one is the
  * exception and `Error` attributes are written as their stack text.
  */
 export function otelAttributes(attributes: LogAttributes | null | undefined, leading?: Error): { attrs: Attributes; exception: Error | undefined } {

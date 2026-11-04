@@ -1,5 +1,5 @@
 /**
- * Signal selection (task B4c; spec JS2; design D-JS3 rows
+ * Signal selection (spec JS2; design D-JS3 rows
  * `OTEL_{TRACES,METRICS,LOGS}_EXPORTER`, `OTEL_SDK_DISABLED`,
  * `OTEL_METRIC_EXPORT_INTERVAL`; contract design D1 rows "Signal on/off" and
  * "Metrics exporters / interval / exemplars"): which exporters each signal
@@ -26,7 +26,7 @@ export const ENV_DISABLED_SIGNALS = 'OTEL_HELPER_DISABLED_SIGNALS';
 export const DEFAULT_EXPORT_INTERVAL_MS = 30_000;
 /**
  * Largest metric export interval (contract design D1 row "Metric export
- * interval", A19): 2^31-1 ms, the largest delay `setInterval` honors (a
+ * interval"): 2^31-1 ms, the largest delay `setInterval` honors (a
  * larger one fires after 1 ms). Env values above it are clamped, code values
  * outside [1, it] throw, in every language.
  */
@@ -34,7 +34,7 @@ export const MAX_EXPORT_INTERVAL_MS = 2 ** 31 - 1;
 
 /** Exporters of traces and logs. */
 export type SpanLogExporterName = 'otlp' | 'console';
-/** Exporters of metrics (`prometheus`: the `/metrics` endpoint, task B7). */
+/** Exporters of metrics (`prometheus`: the `/metrics` endpoint). */
 export type MetricExporterName = 'otlp' | 'prometheus' | 'console';
 
 const SIGNALS: readonly Signal[] = ['traces', 'metrics', 'logs'];

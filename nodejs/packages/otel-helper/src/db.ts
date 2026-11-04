@@ -1,21 +1,20 @@
 /**
- * `@staffops/otel-helper/internal/db` — NOT public API (Node design D-JS9,
- * tasks B10a/B10b). The database-span rules the opt-in instrumentation
+ * `@staffops/otel-helper/internal/db` — NOT public API (Node design D-JS9).
+ * The database-span rules the opt-in instrumentation
  * packages `@staffops/otel-helper-sql` and `@staffops/otel-helper-redis`
- * share — and `@staffops/otel-helper-aws` (B10c, 2026-11-03), whose DynamoDB
+ * share — and `@staffops/otel-helper-aws`, whose DynamoDB
  * spans are database spans and whose ERROR status follows the same rule — so
- * the rules have one implementation and not a copy per package (moved here
- * from `-sql` in B10b, 2026-11-03). Those packages peer-depend on
+ * the rules have one implementation and not a copy per package. Those packages peer-depend on
  * the core at the same version; this entry may change in any release, so
  * applications must not import it.
  *
  * - {@link dbTracerProvider}: the TracerProvider each contrib DB
  *   instrumentation is bound to. An ERROR status keeps its code and drops the
- *   description (contract D1 row "DB error status", A25: the description is
+ *   description (contract D1 row "DB error status": the description is
  *   the server's error text, which can quote a value), with `error.type`
  *   `_OTHER` when the span has none; the legacy `db.system` on the span-start
  *   attributes; an optional span-name rule; an optional attribute sanitizer
- *   (`-aws`, B10c).
+ *   (`-aws`).
  * - {@link dbMeterProvider}: the legacy key on synchronous measurements, and a
  *   generation guard (an instrument created before the latest bind records
  *   nothing; instrumentation-pg moves its pool max between instrument
@@ -63,8 +62,7 @@ function token(raw: string): string {
 
 /**
  * Whether the legacy `db.system` key is emitted: yes unless the value holds
- * `database` without `database/dup` (Go `legacyKeysEnabled`, Python since
- * A25). Unset, empty or without database tokens: yes (the helper default is
+ * `database` without `database/dup` (Go `legacyKeysEnabled`, Python). Unset, empty or without database tokens: yes (the helper default is
  * `http,database/dup`).
  *
  * @internal
@@ -127,12 +125,12 @@ export interface DbTracerOptions {
   /**
    * The response status code in a dropped ERROR description (`-redis`: the
    * reply's leading code, `WRONGTYPE`): set as `db.response.status_code` and
-   * `error.type` (A26, 2026-11-03). Unset (`-sql`) or none found: `error.type`
+   * `error.type`. Unset (`-sql`) or none found: `error.type`
    * `_OTHER`.
    */
   readonly responseStatusCode?: ((description: string) => string | undefined) | undefined;
   /**
-   * The attributes actually recorded (`-aws`, B10c, 2026-11-03): applied to
+   * The attributes actually recorded (`-aws`): applied to
    * the span-start attributes (after the legacy key) and to every
    * `setAttribute`/`setAttributes`, so a value it removes never reaches the
    * span, its processors or its exporter. Must be idempotent (the SDK's

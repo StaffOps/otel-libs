@@ -7,7 +7,7 @@
  * and use the default; they are never secrets, so the value is echoed
  * (truncated).
  *
- * Contract rulings (design D1 rows dated 2026-10-29, task A18):
+ * Contract rulings (design D1 rows dated 2026-10-29):
  * `OTEL_BSP_EXPORT_TIMEOUT`, `OTEL_BLRP_EXPORT_TIMEOUT` and
  * `OTEL_METRIC_EXPORT_TIMEOUT` are not honored (the resolved OTLP timeout is
  * the single export deadline) and warn when set; a value-length limit of 0 is
@@ -48,7 +48,7 @@ export interface SdkSettings {
   readonly logRecordLimits: LogRecordLimitSettings;
 }
 
-/** Export-timeout variables of the SDK processors and reader that the helper does not honor (A18). */
+/** Export-timeout variables of the SDK processors and reader that the helper does not honor. */
 export const IGNORED_TIMEOUT_VARIABLES: readonly string[] = ['OTEL_BSP_EXPORT_TIMEOUT', 'OTEL_BLRP_EXPORT_TIMEOUT', 'OTEL_METRIC_EXPORT_TIMEOUT'];
 
 const INTEGER = /^[0-9]+$/;

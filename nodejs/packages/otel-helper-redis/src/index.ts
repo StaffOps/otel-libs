@@ -1,6 +1,6 @@
 /**
  * `@staffops/otel-helper-redis` — Redis instrumentation for
- * `@staffops/otel-helper` (opt-in; task B10b, spec JS8, design D-JS9). Go
+ * `@staffops/otel-helper` (opt-in, spec JS8, design D-JS9). Go
  * `ext/otelredis`, Python `staffops_otel_helper.ext.redis`.
  *
  * ```js
@@ -20,7 +20,7 @@
  * `server.address`/`server.port`, and `db.query.text` as the command name and
  * one `?` per argument (`SET ? ?`, as Python). Never recorded: command
  * arguments (keys, values, `AUTH` passwords), the server's error text in the
- * span status (contract D1 row "DB error status", A25), and connection
+ * span status (contract D1 row "DB error status"), and connection
  * strings or credentials (only host and port).
  *
  * One per process: every result shares the same contrib instrumentations,

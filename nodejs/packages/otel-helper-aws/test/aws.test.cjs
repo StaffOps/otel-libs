@@ -300,13 +300,13 @@ test('R3: an SDK that does not resolve from the app is still instrumented; diag 
       const inst = require(${JSON.stringify(ENTRY)}).awsInstrumentation();
       helper.setup({ instrumentations: [inst] });
       console.log(JSON.stringify({ libraries: inst.libraries }));`;
-    const lines = (out) => out.stderr.split('\n').filter((l) => l.includes("'aws-sdk' could not be resolved from"));
+    const lines = (out) => out.stderr.split('\n').filter((l) => l.includes('a library could not be resolved') && l.includes(' library=aws-sdk '));
     const quiet = await runIn(dir, src);
     assert.deepEqual(quiet.libraries, ['aws-sdk']);
     assert.deepEqual(lines(quiet), [], 'default mode: no WARN for an absent SDK');
     const debug = await runIn(dir, src, { OTEL_LOG_LEVEL: 'DEBUG' });
     assert.equal(lines(debug).length, 1, debug.stderr);
-    assert.match(lines(debug)[0], /@staffops\/otel-helper-aws: 'aws-sdk' could not be resolved from .*; instrumented if it loads/);
+    assert.match(lines(debug)[0], /@staffops\/otel-helper-aws: a library could not be resolved from the app directories; instrumented if it loads library=aws-sdk dirs=/);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }

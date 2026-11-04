@@ -166,6 +166,10 @@ are listed in the root README "Known emitted-telemetry gaps".
   app is not an error — a nested, non-hoisted copy is invisible to resolution —
   but is reported once: `diag` debug in default mode, WARN when named `true`
   (contract design D14, "Node `@staffops/otel-helper-sql`" paragraph).
+  *Amended 2026-11-04 (B14, code-review M1):* the reports are helper records on
+  the diagnostics sink (`origin: 'helper'`, so the parity `helper_log` sees
+  them), not `diag` messages; the debug one is written only when
+  `OTEL_LOG_LEVEL` asks for debug (DEBUG, VERBOSE, ALL).
 - Tests run against real protocol endpoints in Docker (postgres, mysql, a RESP
   fake, a local HTTP endpoint for the AWS SDK).
 

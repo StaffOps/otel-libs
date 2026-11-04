@@ -1,7 +1,7 @@
 /**
  * Which instrumented libraries the app has, and the load errors (contract
  * design D14, "Python ext import failures" and the Node `-sql` paragraph: a
- * cause is named only when it is certain). As `-sql` (B10a fix round R3):
+ * cause is named only when it is certain). As `-sql`:
  * resolution never decides alone — an app can load a library from a
  * directory the helper cannot see (a nested, non-hoisted `node_modules`) — so
  * an unresolved library is reported, not an error; only a contrib
@@ -26,7 +26,7 @@ export const PACKAGES: Readonly<Record<Library, readonly string[]>> = Object.fre
 /**
  * Directories the app resolves packages from: its entry script's, the
  * working directory, then the main module's `node_modules` lookup paths
- * (core `internal/contrib` since B10c).
+ * (core `internal/contrib`).
  */
 export const appDirectories: typeof coreAppDirectories = coreAppDirectories;
 

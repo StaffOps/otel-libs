@@ -1,10 +1,10 @@
 /**
- * Per-signal OTLP export settings the helper owns (task B4b; design D-JS3
+ * Per-signal OTLP export settings the helper owns (design D-JS3
  * ownership table; contract design D1 rows "Header parsing details",
  * "Timeout range / syntax", "Env compression", "Fallback order for every
  * per-signal value"): headers, timeout and compression. Same rules as the Go
  * helper (`go/endpoint.go` resolveHeaders / resolveTimeout /
- * resolveCompression) and the A18 rulings (contract design D1 rows dated
+ * resolveCompression) and the contract rulings (design D1 rows dated
  * 2026-10-29: export deadline, code timeout bound, header bytes). Header
  * values are secrets: diagnostics name the variable and the item position
  * only (R8).
@@ -65,7 +65,7 @@ function decodeValue(value: string): string | undefined {
  * percent-decoded; values are, as a whole (an invalid escape or a non-UTF-8
  * decode keeps the whole value literal); values are trimmed after decoding; a
  * decoded value that is not printable ASCII (0x20–0x7E: a control character or
- * a non-ASCII character such as a decoded `%C3%A9`) is skipped (A18).
+ * a non-ASCII character such as a decoded `%C3%A9`) is skipped.
  */
 export function parseHeaders(raw: string): ParsedHeaders {
   const headers = Object.create(null) as Record<string, string>;
@@ -137,7 +137,7 @@ export interface ResolvedTimeout {
 
 /**
  * Export timeout of one signal in milliseconds — its single export deadline
- * (D1 ruling "Export deadline", A18): code > `_<SIGNAL>_TIMEOUT` >
+ * (D1 ruling "Export deadline"): code > `_<SIGNAL>_TIMEOUT` >
  * `OTEL_EXPORTER_OTLP_TIMEOUT` > 10 000. Env values are plain decimal
  * milliseconds; anything else (or `0`) warns and falls back to the next level;
  * values outside [1 ms, 24 h] are clamped with a warning.
@@ -200,7 +200,7 @@ export interface SettingsCodeOptions {
 /**
  * Fails fast on code export settings (R8): `exportTimeoutMs` must be a
  * finite number of milliseconds in [1, 86 400 000] (D1 ruling "Code export
- * timeout bound", A18 — the env clamp range; decimals allowed, as in the env
+ * timeout bound" — the env clamp range; decimals allowed, as in the env
  * grammar), `compression` `gzip` or `none` (case-insensitive; an empty string
  * is not set).
  */

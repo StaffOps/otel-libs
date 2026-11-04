@@ -101,6 +101,18 @@ construction. **Reversal**: pass explicit values for that var and drop its
 masking; B13 checklist re-checks every exporter release. **Alternatives**:
 document the env fallbacks (rejected: R8 leak, rejected headers on the wire).
 
+> **Corrected 2026-11-04 (B14, obs M2).** The Choice sentence above is
+> wrong on two points: the table does not list every D1 row (the rows added
+> by contract tasks A21–A28, the resource-detector variables and
+> `telemetry.sdk.*` are missing) and it names no parity cases —
+> `tools/trace_matrix.py` reads requirement ids (`JS<n>`, `R<n>`) from the
+> tests and `parity/cases.json`, not case ids from this table. The
+> maintained record is: contract design D1 and its edge-case rulings, whose
+> rows carry their Node behaviour in dated notes (each later row names its
+> Node task, e.g. "Node B10c ruling Q1"), plus the requirement → test matrix
+> of `python3 tools/trace_matrix.py`. This table stays as the B2-era
+> reference of the original rows and is not extended row by row.
+
 **Ownership table (reference)** — owner H = helper, S = SDK/exporter:
 
 | Row / ruling | Owner | Notes |
@@ -207,6 +219,114 @@ registry); a re-setup with `installDiagLogger: false` removes the logger an
 earlier setup installed. Foreign globals are detected in that registry before
 any `set*Global*` call, so the API's duplicate-registration error (with a stack
 trace) never reaches `diag`.*
+*Amended 2026-11-04 (B14, code-review M1 and the observability defence-in-depth
+item): helper-authored records never go through `diag`. The opt-in packages'
+reports (`internal/contrib`: `setConfig()` ignored, a library not loaded or not
+resolved) and the `/metrics` collection errors (one ERROR record per scrape:
+`count` and the first error, redacted) are `report()` records with `origin:
+'helper'` (`report`/`reportOnce` are exported from `internal/contrib` for the
+packages); a helper debug record is written only when `OTEL_LOG_LEVEL` is
+DEBUG, VERBOSE or ALL (`debugEnabled()`), as a `diag.debug` call was before. The
+forwarded SDK text (`msg`) is redacted by `redactText` (the rules of
+`redactErrorText`, without its 64-character cut). Tests: core
+`test/contrib.test.cjs`, `test/metrics.test.cjs`.*
+*Corrected 2026-11-04 (B14 re-probe M1): the record above claimed the
+forwarded text was free of credentials; it was not. With
+`OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf`, `OTEL_LOG_LEVEL=all` and an endpoint
+answering 400/500 with the request headers echoed in its body, the SDK's global
+error handler (`@opentelemetry/core` `loggingErrorHandler`: `diag.error(JSON.stringify(flattened error))`)
+forwarded the `OTLPExporterError` `data` (the response body, escaped JSON
+`\"api-key\":\"…\"`) unredacted: `SECRET_PAIR` missed escaped quotes and
+util.inspect single-quoted keys, `credential`/`session`/`signature` names,
+`&`-joined pairs and multi-pair `Cookie` values, and an echoed header can have
+any name. Now three layers, in order: (1) `withoutResponseBodies` drops a
+response body before rendering — an Error with a `data` field becomes
+`<name>: <message> (code N) <response body omitted: N characters>`, a
+`Uint8Array` its size, the same one level deep in a plain object or array, and a
+message string that is the JSON of an error (`stack` or `name`, plus `data`)
+gets its `data` replaced; (2) `maskLiterals` replaces the values of
+`OTEL_EXPORTER_OTLP_HEADERS` / `OTEL_EXPORTER_OTLP_<SIGNAL>_HEADERS` (read at
+each record, raw and decoded, plain and JSON-escaped once and twice; values
+under 4 characters skipped) before the 2048-character cut; (3) `redactText`
+with `SECRET_PAIR` widened (optional `\"`, `"` or `'` around the name, quoted or
+escaped-quoted values, unquoted values ending at whitespace, `,`, `;` or `&`;
+names containing `credential`, `session`, `signature` added), a
+`COOKIE_HEADER` rule (the whole `Cookie`/`Set-Cookie` value) and a `DIGEST`
+rule. Layer 3 stays pattern-based; HOW-TO §14 says so. Tests: core
+`test/diagnostics.test.cjs` (inspect, escaped JSON, names, cookie, digest,
+bounded on hostile inputs, `maskLiterals`), `test/setup.test.cjs` (each layer
+through `diag`; end to end against a local server echoing the headers in a
+400 and a 500 body). Go has the same exposure through the SDK default error
+handler (backlog row in `specs/config-contract-v0.3/tasks.md` Deferred);
+Python logs only the status code and reason phrase.*
+*Corrected 2026-11-04 (B14 third round, code-review M2/H1/L2/L3/L4/L5, dev
+re-probe L-a/L-b): the correction above names `OTEL_LOG_LEVEL=all` as a
+condition; it is not one. `loggingErrorHandler` calls `diag.error`, so the
+leak reproduced at the default WARN too; HOW-TO §14 no longer implies that
+WARN/ERROR alone prevented it (layer 1 drops the body at every level).
+Further changes: `forward()` never throws into the SDK — the whole rendering
+is in a try/catch, and an unrenderable message (a throwing getter or
+`inspect.custom`, a Symbol `name`, a revoked Proxy) is one record with
+`msg="<diag message could not be rendered>"`; the text is redacted before the
+2048-character cut; `configuredHeaderValues()` is memoized on the raw
+variables, and `maskLiterals` also masks the util.inspect-escaped form;
+`SECRET_PAIR` names gain `pwd` and `jwt`, and status words
+(`(UN)AUTHENTICATED`, `(un)authori[sz]ed`, `authentication[-_]failed|error|required`)
+are kept, so `16 UNAUTHENTICATED: denied` stays readable while
+`authorization=…` is still redacted [both rules corrected below, round 4];
+backslash runs are bounded (`\\{0,7}`, whole runs only in a quoted value), so
+a 4096-backslash line takes well under a millisecond instead of ~50 ms
+[corrected below, round 4]; the unquoted `Cookie` value runs to a line
+end or a comma (`Cookie: a="b"; sid=…` leaked `sid`). `/metrics` `errorText`
+never throws (`<unprintable error>`). The opt-in packages' library reports
+have constant messages — `<package>: a library is not instrumented` and
+`<package>: a library could not be resolved from the app directories;
+instrumented if it loads` — with `library`, `dirs` and the redacted load
+`error` (which keeps the "Reinstall …" hint) as attributes.*
+*Corrected 2026-11-04 (B14 fourth round, re-review HIGH/MEDIUM/LOW): two of
+the third-round rules leaked. (1) The status-word exemption returned the whole
+match, so the pairs inside its value leaked (`unauthorized: token=abc`), and
+it exempted bare names (`Authentication: x`, `authentication=x`,
+`"authenticated":"x"`, `unauthorized=x`, `authentication_failed: x`). Now
+`STATUS_NAME` is `^(?:un)?(?:authenticated|authori[sz]ed)$` only (the bare and
+suffixed `authentication…` names are dropped), it applies only to an unquoted
+name before a `:` separator (never `=`, never quoted), and the value is
+redacted again pair by pair (`Cookie` and credential rules; it is shorter
+than the match, so the recursion ends): `16 UNAUTHENTICATED: denied` stays
+readable, `16 UNAUTHENTICATED:api_key=x` keeps the word and redacts the key.
+(2) The `\\{0,7}` bound made a value escaped 4 or more times, or holding a run
+of 8+ backslashes, fall through to the unquoted alternative and leak after its
+first space. Quotes are `\\*["']` again, the value body
+`(?:[^"\\]|\\+(?![\\"]))*` (whole runs: one parse), and a match never starts
+inside a backslash run or on a quote right after a backslash
+(`(?!(?<=\\)[\\"'])`), which removes the quadratic rescans: 2000 backslashes +
+`"key` + 2000 backslashes + `"` takes about 0.1 ms on Node 24 (the bound in
+the test is 25 ms); an escaped newline before a name (`\\napi_key=…`) still
+matches. A quoted value not closed before the end of the scanned text is
+redacted to the end. Forwarded text: twice the 2048-character record is
+redacted and the record keeps the first 2048 characters of that, so only
+scanned text is written. Library reports: the `error` attribute is the load
+error's first line, redacted, cut at 512 code points.
+Tests: core `test/diagnostics.test.cjs` "fourth round", `test/contrib.test.cjs`
+first-line test.*
+*Corrected 2026-11-04 (B14 fifth round, re-review HIGH): the fourth-round
+status-word rule kept the name and re-redacted the value, but an unquoted
+value is one token, so the next `name: secret` was swallowed as the value of
+the word and kept (`401 Unauthorized: x-api-key: v`, `Unauthorized:
+authorization: v`, `UNAUTHENTICATED: session: v`, `unauthorized: secret: v`;
+and for any credential name, `Authorization: x-api-key: v`). Now status words
+never match as a name — `SECRET_PAIR` has
+`(?!(?:un)?(?:authenticated|authori[sz]ed)\s*:)` after the start guard, and
+`STATUS_NAME` and the recursive `pair` are removed — and the unquoted value is
+`(?!<credential name>:\s)[^\s,;&]+`: a credential name followed by `: ` is never
+taken as a value, so the scan resumes at it and redacts its own value.
+Deviation from the reviewer's suggested `(?![\w-]{1,64}:\s)`: only
+credential names are excluded, so `token: abc: def` still redacts `abc`. The
+`Cookie` value runs to a line end or comma, so a nested name inside it is
+redacted with it. Known pattern limits (HOW-TO §14): a name right after a
+letter and an escaped quote, a `"` inside a secret value, escaped separators,
+and the unterminated-quote alternative's over-redaction. Tests: core
+`test/diagnostics.test.cjs` "fourth round" block, round-5 lines.*
 
 ### D-JS6 — Logging
 **Choice**: core helper logger (JS6); `-pino` exports `createPinoDestination()`
@@ -632,7 +752,7 @@ core parses only the HTTP side: a value without the `http` token, or with
 only) and changes nothing. Tests: `-sql` `test/sql.test.cjs` (grammar table,
 wrappers), `test/db.test.cjs` (spans and the duration metric against real
 PostgreSQL/MySQL, `database` mode in a child); core `test/opt-in.test.cjs`
-(HTTP warning).* *Amended 2026-11-03 (B10a fix round):* the tracer wrapper is `dbTracerProvider` (it also drops ERROR descriptions, A25, and names mysql2 spans), the meter wrapper `dbMeterProvider` (legacy key plus a per-bind generation), both forwarding members they do not change; the database mode is read **once per process** by the first `sqlInstrumentation()`; Python and Go follow the same opt-in rule since A25. *Amended 2026-11-03 (B10b):* `dbTracerProvider`, `dbMeterProvider`, `legacyKeysEnabled`/`withLegacyKey` and the once-per-process mode moved from `-sql` to the core's internal entry `@staffops/otel-helper/internal/db` (not public API, like `internal/bridge`; tests `packages/otel-helper/test/db.test.cjs`), shared by `-sql` and `-redis`; the tracer takes a generic `spanName` rule (`-sql` passes the mysql2 one); the mode is read once per process by the first `sqlInstrumentation()` **or** `redisInstrumentation()`; `redis`→`redis` joins the value table. *Amended 2026-11-03 (B10c):* `@staffops/otel-helper-aws` binds its contrib to the same `dbTracerProvider` (`legacyKeys` from the shared once-per-process mode, so the first `awsInstrumentation()` can read it too): DynamoDB spans carry `db.system.name=dynamodb` and the legacy `db.system=dynamodb` (an unknown value is copied as is; Python botocore writes `db.system=dynamodb`), only `db.system.name` in `database` mode (test `packages/otel-helper-aws/test/sdk.test.cjs`). `dbTracerProvider` gained an optional `sanitizeAttributes` rule (applied to the span-start attributes after the legacy key, and to every `setAttribute`/`setAttributes`; core test `test/db.test.cjs`), which `-aws` uses for the attribute rules of D-JS14 (rows of 2026-11-03, AWS). The contrib-instance machinery moved to the core entry `internal/contrib` (D-JS11 amendment of 2026-11-03).
+(HTTP warning).* *Amended 2026-11-03 (B10a fix round):* the tracer wrapper is `dbTracerProvider` (it also drops ERROR descriptions, A25, and names mysql2 spans), the meter wrapper `dbMeterProvider` (legacy key plus a per-bind generation), both forwarding members they do not change; the database mode is read **once per process** by the first `sqlInstrumentation()`; Python and Go follow the same opt-in rule since A25. *Amended 2026-11-03 (B10b):* `dbTracerProvider`, `dbMeterProvider`, `legacyKeysEnabled`/`withLegacyKey` and the once-per-process mode moved from `-sql` to the core's internal entry `@staffops/otel-helper/internal/db` (not public API, like `internal/bridge`; tests `packages/otel-helper/test/db.test.cjs`), shared by `-sql` and `-redis`; the tracer takes a generic `spanName` rule (`-sql` passes the mysql2 one); the mode is read once per process by the first `sqlInstrumentation()` **or** `redisInstrumentation()`; `redis`→`redis` joins the value table. *Amended 2026-11-03 (B10c):* `@staffops/otel-helper-aws` binds its contrib to the same `dbTracerProvider` (`legacyKeys` from the shared once-per-process mode, so the first `awsInstrumentation()` can read it too): DynamoDB spans carry `db.system.name=dynamodb` and the legacy `db.system=dynamodb` (an unknown value is copied as is; Python botocore writes `db.system=dynamodb`), only `db.system.name` in `database` mode (test `packages/otel-helper-aws/test/sdk.test.cjs`). `dbTracerProvider` gained an optional `sanitizeAttributes` rule (applied to the span-start attributes after the legacy key, and to every `setAttribute`/`setAttributes`; core test `test/db.test.cjs`), which `-aws` uses for the attribute rules of D-JS14 (rows of 2026-11-03, AWS). The contrib-instance machinery moved to the core entry `internal/contrib` (D-JS11 amendment of 2026-11-03). *Amended 2026-11-04 (B14, code-review L2):* the `-sql` test-only re-export `src/internal/semconv.ts` was deleted; `-sql`'s `test/sql.test.cjs` imports the rule from `@staffops/otel-helper/internal/db` directly.
 
 ### D-JS10 — Lifecycle and single instance
 **Choice**: implementation compiled once to CJS by `tsc`; ESM entry is a thin
@@ -861,6 +981,17 @@ token, then trusted. **Alternatives**: pnpm (extra tool), tsup (extra tool).
 > `setup()`, outside the main thread); a custom preload must guard
 > `setup()` with `isMainThread` (HOW-TO §1, §13).
 
+*Amended 2026-11-04 (B14 re-probe L1): no source maps are built or published
+(`tsconfig.base.json` `sourceMap: false`): the published maps pointed at
+`../src`, which is not in the tarball. The dist JavaScript keeps its comments
+and stays close to the TypeScript (target ES2023), and c8 measures it
+directly — tsc's `__importStar` helpers (emitted for `import * as`) now count,
+so `-aws` and `-redis` import `join` from `node:path` by name (no helper) to
+keep their gates. `ci/check-pack.mjs` fails on any `*.map` in a tarball. The opt-in
+packages' root exports are listed in each package README and in README "API
+stability (0.x)"; `-pino` and `-winston` export `VERSION` too, kept by
+`ci/version.mjs` with the other four constants.*
+
 ### D-JS12 — Parity runner
 **Choice**: `node:test` parent (`runner.test.cjs`) ports the Python runner:
 env reset (`OTEL_*`, `SERVICE_NAME`, `ENVIRONMENT` removed;
@@ -949,7 +1080,7 @@ worker that exits before reporting fails it too (B9b fix round, 2026-11-02).*
 | HTTP metrics: Node emits only `http.server.request.duration` and `http.client.request.duration`. Go also emits request/response body sizes; Python emits body sizes and `http.server.active_requests` (B6 fix round, 2026-11-02) | recorded; README gap; contract A22 follow-ups (b), (c) |
 | `error.type` on transport errors: instrumentation-http and -undici write the JS error name (`Error`, `TypeError`), Go the Go error type, Python the exception class name (B6 fix round, 2026-11-02) | recorded; no case |
 | `http.route` only with express (an instrumented router); a plain `node:http` server has none, so span names and the server metric have no route (Go: only with a `ServeMux` pattern; Python: FastAPI routes) (B6 fix round, 2026-11-02) | recorded; README gap |
-| URL redaction: Node `node:http` and `fetch` clients write userinfo as `REDACTED:REDACTED` and redact the values of the signature parameters (`sig`, `Signature`, `AWSAccessKeyId`, `X-Goog-Signature`, `X-Amz-*`) in `url.full`; Node servers redact the same list in `url.query` (other values, e.g. `token`, are kept). Go `otelhttp` v0.72 drops userinfo from `url.full` (`internal/semconv/client.go:113-121`), redacts no query value and writes no server `url.query`. Python: not verified in the fix round (B6 fix round, 2026-11-02). *Resolved 2026-11-03 (contract task A28):* Go and Python now redact the same parameter list in client `url.full` and (Python) server `url.query`; Node unchanged (contract D1 "URL query redaction"). *Amended 2026-11-02 (B6 dev re-probe L3–L5):* no client span carries `url.query` (undici's is dropped, as `node:http` and Go); in `url.full`, `node:http` re-serializes the query through `URLSearchParams` (upstream) while undici keeps it as written unless a name is redacted (`flag` stays `flag`, `%20` stays `%20`) — intentional, the helper rewrites no more than it must; parameter names are matched **case-sensitively** (`SIG` is not redacted), as upstream does | recorded; README gap; Python comparison open |
+| URL redaction: Node `node:http` and `fetch` clients write userinfo as `REDACTED:REDACTED` and redact the values of the signature parameters (`sig`, `Signature`, `AWSAccessKeyId`, `X-Goog-Signature`, `X-Amz-*`) in `url.full`; Node servers redact the same list in `url.query` (other values, e.g. `token`, are kept). Go `otelhttp` v0.72 drops userinfo from `url.full` (`internal/semconv/client.go:113-121`), redacts no query value and writes no server `url.query`. Python: not verified in the fix round (B6 fix round, 2026-11-02). *Resolved 2026-11-03 (contract task A28):* Go and Python now redact the same parameter list in client `url.full` and (Python) server `url.query`; Node unchanged (contract D1 "URL query redaction"). *Amended 2026-11-02 (B6 dev re-probe L3–L5):* no client span carries `url.query` (undici's is dropped, as `node:http` and Go); in `url.full`, `node:http` re-serializes the query through `URLSearchParams` (upstream) while undici keeps it as written unless a name is redacted (`flag` stays `flag`, `%20` stays `%20`) — intentional, the helper rewrites no more than it must; parameter names are matched **case-sensitively** (`SIG` is not redacted), as upstream does  *Status amended 2026-11-04 (B14, obs L2):* the Python comparison is closed by the A28 resolution above. | recorded; README gap |
 | A foreign global TracerProvider: the instrumentations bind to it, so the helper's health sampler and gRPC status rule do not apply to their spans (they keep upstream's ERROR) (B6 fix round, 2026-11-02). *Extended 2026-11-02 (B9):* a later setup with `replaceGlobals: true` binds them to the helper's forwarding providers | recorded; README gap |
 | Routers or apps created before `setup()`: express wires its route layers when the router is built, so a router or app built before the instrumentation is enabled gives a truncated `http.route` (`GET /api` for `/api/orders/:id`) or none, and may miss request-handler spans; the preload report names this. Routes modules must be required after `setup()` (B6 dev re-probe L1, 2026-11-02) | recorded; the report text (D-JS1); B12 HOW-TO item |
 | A gRPC handler that **throws synchronously** leaves its SERVER span unended (never exported): upstream instrumentation-grpc, reproduced without the helper; Go and Python record the call as UNKNOWN (B6 dev re-probe L2, 2026-11-02) | recorded; README gap; no case (the drivers' "throw" is not equivalent across languages: a Go handler would panic) |
@@ -998,7 +1129,7 @@ worker that exits before reporting fails it too (B9b fix round, 2026-11-02).*
 | instrumentation-pg 0.77 has `@types/pg` and `@types/pg-pool` as **runtime** dependencies, so installing `-sql` adds them to the app's tree (code-review L10, 2026-11-03) | recorded; B12 CONSUMING item |
 | Opt-in instrumentations are matched **by name** (M2, 2026-11-03): two for one library (`instrumentationName`, plus a composite's `coveredInstrumentations`) or one the core installs itself (`@opentelemetry/instrumentation-{http,undici,express,grpc}`) make `setup()` throw a TypeError — a raw `MySQL2Instrumentation` next to `sqlInstrumentation()` would patch twice and drop the statement mask. The same object twice is still enabled once. Every opt-in object of a call that does not enable it is turned off: a rollback at any step, an inactive copy, another API version's registry, `OTEL_SDK_DISABLED=true`, and a `setup()` while one is active (those not used by the active setup; named in its report) (M3) | recorded; core `test/opt-in.test.cjs` |
 | Log bridges, stdout `level` of a level outside DEBUG/INFO/WARN/ERROR (pino `trace`/`fatal`, winston `emerg`, `silly`…): Node writes `DEBUG` below info and `ERROR` above error, as Python `_slog_level` (`CRITICAL` → `ERROR`); Go `NewSlogHandler` writes slog's offset text (`DEBUG-4`, `ERROR+4`) (B10d, 2026-11-02) | recorded; Python behavior. Unit-tested in `otel-helper-pino/test/pino.test.cjs` and `otel-helper-winston/test/winston.test.cjs` |
-| Log bridges, OTel `severityText`: the source level name upper-cased (`INFO`, `HTTP`, `NOTICE`, `EMERG`, a pino custom label); Python writes the stdlib `levelname` (`WARNING`, `CRITICAL`), Go otelslog slog's text. All three carry the source's own text; the texts differ because the sources do. `severityNumber` is the bucket (TRACE 1, DEBUG 5, INFO 9, WARN 13, ERROR 17, FATAL 21) (B10d, 2026-11-02). *Added 2026-11-03 (fix round 2): every level of a range gets the range's lowest number (winston `http` and `verbose` are both DEBUG 5, syslog `emerg`/`alert`/`crit` all FATAL 21, a pino custom 35 is INFO 9), so the ordering within a range is not kept in `severityNumber`; `severityText` keeps the name. Go otelslog maps slog's offsets inside a range (`DEBUG+1` → DEBUG2); the Python mapping inside a range not checked* | recorded; asserted on decoded OTLP records in both suites |
+| Log bridges, OTel `severityText`: the source level name upper-cased (`INFO`, `HTTP`, `NOTICE`, `EMERG`, a pino custom label); Python writes the stdlib `levelname` (`WARNING`, `CRITICAL`), Go otelslog slog's text. All three carry the source's own text; the texts differ because the sources do. `severityNumber` is the bucket (TRACE 1, DEBUG 5, INFO 9, WARN 13, ERROR 17, FATAL 21) (B10d, 2026-11-02). *Added 2026-11-03 (fix round 2): every level of a range gets the range's lowest number (winston `http` and `verbose` are both DEBUG 5, syslog `emerg`/`alert`/`crit` all FATAL 21, a pino custom 35 is INFO 9), so the ordering within a range is not kept in `severityNumber`; `severityText` keeps the name. Go otelslog maps slog's offsets inside a range (`DEBUG+1` → DEBUG2); the Python mapping inside a range not checked*  *Corrected 2026-11-04 (B14, obs L1):* the Python statement above was wrong. Python writes `levelname` except `WARNING` → `WARN` and `CRITICAL` → `FATAL` (`opentelemetry-instrumentation-logging` 0.66b2 `handler.py:184-188`, `_python_to_otel_severity_text`, read in `python:3.13-slim` on 2026-11-04), as contract D1 row "OTel log scope name" says; `DEBUG`, `INFO`, `ERROR` and custom level names pass through. | recorded; asserted on decoded OTLP records in both suites |
 | pino destination: `level`, `time`, `pid`, `hostname` of pino's line are not record fields, and the record time is the write time, not pino's `time` (B10d, 2026-11-02). *Corrected 2026-11-03 (fix round): `pid`/`hostname` are left out only when they equal this process's pid and `os.hostname()` (pino's default `base`); other values stay fields* | recorded; Node-only (Go and Python have no pino). Unit-tested |
 | winston transport, trace correlation: from the active context when winston calls the transport — inside the logging call, except when a slower transport of the same logger applies backpressure (winston buffers the record and delivers it later, uncorrelated). Go correlates only through the context-taking slog calls; Python always at handler time (B10d, 2026-11-02). *Corrected 2026-11-03 (fix round, HIGH-1): "uncorrelated" was wrong — a buffered record took the context active at delivery, i.e. another span's. Now the transport stamps each record with its call's context and time (wrapped `logger.write`, D-JS6 fix-round note); a record without a stamp (the transport used outside a logger, winston's exception handlers) is written with `ROOT_CONTEXT`, uncorrelated. Buffered records keep their call's trace and call time*. *Corrected 2026-11-03 (fix round 2): winston's exception handlers log through `logger.log`, so their records are stamped too; the stamp now lives in a process-wide `WeakMap` (nothing added to the info, D-JS6 "Fix round 2")* | recorded; regression test "HIGH-1" in `otel-helper-winston/test/winston.test.cjs` (two concurrent spans, slow transport, zero misattribution) |
 | Log bridges, non-string message: the body is the converted value — an OTLP map (or array, number…) on the OTel path, its JSON text as the stdout `msg` (winston `logger.info({a: 1})` makes the object the message; pino `{msg: {…}}`). No message: no OTel body, stdout `msg` `""`. Python's stdlib `logging` renders a non-string message with `str()` (`{'a': 1}`); Go slog messages are always strings, no equivalent; `createLogger` keeps its string message (B10d fix round, 2026-11-03) | recorded; unit-tested in both suites and `test/logging.test.cjs` |
@@ -1013,8 +1144,8 @@ worker that exits before reporting fails it too (B9b fix round, 2026-11-02).*
 | pino destination: a chunk with inner newlines is one record per line, so a **direct** write of non-JSON text containing newlines (not pino's own output) becomes several records, each with the text of its line as the body (B10d fix round 2, 2026-11-03) | recorded; unit-tested |
 | Redis span names (B10b, 2026-11-03; **ruled 2026-11-03, Q3**): the contribs name spans node-redis `redis-<COMMAND>` (`redis-SET`, `redis-connect`) and ioredis the lower-case command (`set`, `connect`). `-redis` renames them (`commandSpanName`, the `internal/db` tracer `spanName` rule) to the command uppercased (`SET`, as Python and semconv `{db.operation.name}`) and connection spans to `connect`. MULTI/pipeline: one span per command (both contribs), each named by its command; Python names its one pipeline span `SET GET`. Go keeps `set`, `redis.pipeline set get`, `redis.dial` (contract D1 row "Redis span names": parity gap, Go rename on the backlog) *Reworded 2026-11-03 (A26 fix round, obs M2/dev L2):* uppercasing is a parity choice with Python, **not semconv** (semconv: `{db.operation.name} {target}`, `db.operation.name` as provided); the helper keeps `db.operation.name` as provided and omits `{target}` (contract D1 "Redis span names") | tested (`test/redis.test.cjs`, `test/fixtures/scenario.cjs`); no case (no redis parity case exists) |
 | Redis `db.query.text` (B10b, 2026-11-03): Node and Python `SET ? ?` (the command and one `?` per argument; Node uppercases the ioredis command, cut at 1000 characters as Python); Go records no statement (`WithDBStatement(false)`), both allowed by contract D14. Node replaces upstream's `defaultDbStatementSerializer`, which keeps keys and, for `GET`/`DEL`/`EVAL`/`SISMEMBER`/`LREM`/`ZSCORE`/..., every argument. In dup mode Python also writes the legacy `db.statement`; Node copies only `db.system`, as `-sql` (**ruled 2026-11-03, Q4: kept**; Python's extra legacy keys are the recorded difference) | recorded; tested (`test/fixtures/scenario.cjs`) |
-| Redis span attributes (B10b, 2026-11-03): Node emits `db.operation.name` (node-redis `SET`, `MULTI`, `PIPELINE`; ioredis `set`, `MULTI set`, `PIPELINE set`); Go and Python emit none. Python adds `db.redis.database_index`, `db.redis.args_length`, `network.transport`; Go `db.redis.num_cmd` on pipelines and `code.*`. `server.address`/`server.port` everywhere *Amended 2026-11-03 (A26 fix round):* Go now adds `db.operation.name` as provided (`set`; contract D1 row "Redis `db.operation.name`"), Python still none (backlog). `db.namespace` (the database index) is **absent in all three** (Python has `db.redis.database_index` instead). On a failed span all three set `error.type` and `db.response.status_code` from the reply code (D1 "DB error status") | recorded |
-| Redis spans per call (B10b, 2026-11-03): node-redis and ioredis contribs make **one span per command** in MULTI and pipelines (Go and Python one span per pipeline); a failed node-redis pipeline marks every command span ERROR (upstream fills the error for all when the reply is not a `MultiErrorReply`). node-redis connection setup is one `connect` span (contrib `redis-connect`; its HELLO/AUTH/CLIENT handshake is not traced; nor are SUBSCRIBE/UNSUBSCRIBE/QUIT, which bypass `sendCommand`); ioredis traces `connect` and every handshake command (`HELLO`, `CLIENT`, `INFO` after the Q3 rename) and SUBSCRIBE. ioredis `connect` ends at once (OK even when the connection is then refused) | recorded; tested |
+| Redis span attributes (B10b, 2026-11-03): Node emits `db.operation.name` (node-redis `SET`, `MULTI`, `PIPELINE`; ioredis `set`, `MULTI set`, `PIPELINE set`); Go and Python emit none. Python adds `db.redis.database_index`, `db.redis.args_length`, `network.transport`; Go `db.redis.num_cmd` on pipelines and `code.*`. `server.address`/`server.port` everywhere *Amended 2026-11-03 (A26 fix round):* Go now adds `db.operation.name` as provided (`set`; contract D1 row "Redis `db.operation.name`"), Python still none (backlog). `db.namespace` (the database index) is **absent in all three** (Python has `db.redis.database_index` instead). On a failed span all three set `error.type` and `db.response.status_code` from the reply code (D1 "DB error status") *Decided 2026-11-04 (B14 re-probe L3): `db.operation.name` stays as the client provides it — node-redis `SET`, ioredis `set` — with no case normalization: semconv `docs/db/redis.md` (Development) footnote [1] "It is RECOMMENDED to capture the value as provided by the application without attempting to do any case normalization", and contract D1 row "Redis `db.operation.name`" already says "as provided" (Go `set` follows go-redis). The span name is the normalized field (uppercased, Q3). Documented in HOW-TO §9 and the `-redis` README; no test change (`test/fixtures/scenario.cjs` pins both casings).* | recorded |
+| Redis spans per call (B10b, 2026-11-03): node-redis and ioredis contribs make **one span per command** in MULTI and pipelines (Go and Python one span per pipeline); a failed node-redis pipeline marks every command span ERROR (upstream fills the error for all when the reply is not a `MultiErrorReply`). node-redis connection setup is one `connect` span (contrib `redis-connect`; its HELLO/AUTH/CLIENT handshake is not traced; nor are SUBSCRIBE/UNSUBSCRIBE/QUIT, which bypass `sendCommand`); ioredis traces `connect` and every handshake command (`HELLO`, `CLIENT`, `INFO` after the Q3 rename) and SUBSCRIBE. ioredis `connect` ends at once (OK even when the connection is then refused) *Amended 2026-11-04 (B14 re-probe M2): ioredis sends a queued command a second time through `Redis.prototype.sendCommand` when it replays its offline queue (a command issued before `ready`, a resend after a reconnect or `reconnectOnError` = 2; ioredis 6 `built/Redis.js:625`, `:766-768`), and instrumentation-ioredis 0.72 started a second span for the same command object (two spans, both ended by the reply). `-redis` wraps the contrib's `_traceSendCommand` patch factory (`oneSpanPerCommand`, `src/internal/redis-instrumentation.ts`): a command object already seen goes straight to ioredis's `sendCommand`, so the first span — which covers the queueing — is the only one. Relies on a private contrib method: when it is renamed the instance is returned unchanged and `test/server.test.cjs` "one span per command issued before ready" fails (real Redis). Tests: that case (ioredis before/after `ready`, node-redis before `connect()` resolves).* | recorded; tested |
 | Redis metrics (B10b, 2026-11-03): instrumentation-redis/-ioredis 0.72 record **no metrics**; Go `ext/otelredis` emits the redisotel pool metrics (`db.client.connections.*`, D14); Python none. `-redis` binds the meter wrapper anyway (legacy key, generation guard) for a contrib release that adds them | recorded; README gap (B12) |
 | Redis ERROR description (B10b, 2026-11-03): Node drops it with `error.type=_OTHER` (A25 rule applied to Redis, parity with `-sql`). Go and Python kept it before A26 — reproduced 2026-11-03 against `redis:7.4.12-alpine`: Go `nosuchcmd` status `ERR unknown command 'NOSUCHCMD', with args beginning with: 'secret-arg'`, Python `ResponseError: unknown command 'NOSUCHCMD', with args beginning with: 'secret-arg'`. **Ruled 2026-11-03 (Q1, contract task A26): A25 covers every DB client**; Go `ext/otelredis` and Python `ext.redis` now drop it too (Node alone sets `error.type=_OTHER`). The exception event keeps the server text in all three (**Q2: the accepted A25 residual**, contract D1 row "DB error text in exception events") *Amended 2026-11-03 (A26 fix round, obs M4):* `-redis` passes `internal/db` `responseStatusCode` (`redisResponseCode`): `error.type` and `db.response.status_code` are the reply's leading code (`WRONGTYPE`, `ERR`, `NOAUTH`, `WRONGPASS`; a Lua custom code too), `_OTHER` without one (`connect ECONNREFUSED`, `Connection is closed.`); `-sql` keeps `_OTHER` | ruled; tested in all three languages (A26) |
 | ES module apps without the loader hooks (B10b, 2026-11-03): node-redis is instrumented (its patched file, `@redis/client` `dist/lib/client/index.js`, is loaded by `require()` inside the package), **ioredis is not** (its patched file is the package entry, which an ES module `import` loads without `require()`; the JS5 warning). So "CommonJS libraries work without the hooks" (B10a) holds only when the patched file is not the entry | recorded; tested; B12 HOW-TO item |

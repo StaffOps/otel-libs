@@ -1,6 +1,6 @@
 /**
- * OTLP exporter construction (task B4b; spec JS2; design D-JS1, D-JS3;
- * contract design D1 rows dated 2026-10-29, task A18). The exporters get every
+ * OTLP exporter construction (spec JS2; design D-JS1, D-JS3;
+ * contract design D1 rows dated 2026-10-29). The exporters get every
  * value explicitly — URL or gRPC target, headers, timeout, compression and the
  * TLS material (gRPC channel credentials, or HTTPS agent options) — and are
  * built while every `OTEL_EXPORTER_OTLP[_<SIGNAL>]_*` variable the helper owns
@@ -12,7 +12,7 @@
  * The gRPC exporter packages are loaded only when a gRPC signal is
  * configured: they load `@grpc/grpc-js`, which `require('@staffops/otel-helper')`
  * must not do (an app's grpc-js is still patched by the instrumentation's
- * require hooks when it is loaded later, spike B1c F6).
+ * require hooks when it is loaded later).
  */
 import { X509Certificate } from 'node:crypto';
 import * as fs from 'node:fs';
@@ -39,7 +39,7 @@ const SIGNALS: readonly Signal[] = ['traces', 'metrics', 'logs'];
 type ChannelCredentials = ReturnType<typeof GrpcBase.createInsecureCredentials>;
 type Metadata = ReturnType<typeof GrpcBase.createEmptyMetadata>;
 
-/** The suffixes of the helper-owned OTLP variables (JS2, A18): hidden during construction. */
+/** The suffixes of the helper-owned OTLP variables (JS2): hidden during construction. */
 export const MASKED_SUFFIXES: readonly string[] = [
   'ENDPOINT',
   'HEADERS',
@@ -125,7 +125,7 @@ function tlsCandidates(signal: Signal, suffix: string): string[] {
 
 /**
  * The first readable (and, for the CA, parseable) file among `candidates`
- * (per-signal, then generic: D1 ruling "TLS files", A18). Each file skipped
+ * (per-signal, then generic: D1 ruling "TLS files"). Each file skipped
  * warns naming the variable — never the path or the content (R8).
  */
 function firstFile(candidates: readonly string[], cache: FileCache, warn: Warn, isCA: boolean): { variable: string; content: Buffer } | undefined {
@@ -158,7 +158,7 @@ export interface TlsMaterial {
 
 /**
  * Resolves the CA and the client key/certificate pair of a TLS endpoint (D1
- * ruling "TLS files", A18): each file per-signal then generic; an unreadable
+ * ruling "TLS files"): each file per-signal then generic; an unreadable
  * or unparseable file warns and falls back. The key and the certificate are
  * one pair: when only one resolves, or the TLS layer rejects them (bad PEM,
  * mismatch, encrypted key), the signal uses server authentication with the
@@ -232,7 +232,7 @@ export function grpcCredentials(ep: OtlpEndpoint, tls: TlsMaterial, warn: Warn):
 }
 
 /**
- * gRPC metadata from the parsed headers (printable ASCII only, A18). `-bin`
+ * gRPC metadata from the parsed headers (printable ASCII only). `-bin`
  * keys get the value's bytes (grpc-js requires a Buffer there; Go and Python
  * send the same bytes). A value grpc-js still rejects is skipped with a
  * warning naming the variable and the item position only: grpc-js puts the

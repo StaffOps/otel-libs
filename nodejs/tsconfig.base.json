@@ -18,8 +18,11 @@
     "skipLibCheck": true,
     "declaration": true,
     "declarationMap": false,
-    "sourceMap": true,
-    "inlineSources": true,
+    // No source maps (2026-11-04, B14 re-probe L1): the maps pointed at
+    // ../src, which is not published, and the dist JavaScript keeps the
+    // comments and stays close to the source (target ES2023), so stack traces
+    // are readable without them. c8 measures the dist files directly.
+    "sourceMap": false,
     "removeComments": false,
     "newLine": "lf"
   }

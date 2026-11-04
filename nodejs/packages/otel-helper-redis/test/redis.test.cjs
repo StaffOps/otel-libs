@@ -214,7 +214,7 @@ test('R3: unresolved libraries are still instrumented; WARN only when named true
       const inst = require(${JSON.stringify(ENTRY)}).redisInstrumentation(${opts});
       helper.setup({ instrumentations: [inst] });
       console.log(JSON.stringify({ libraries: inst.libraries }));`;
-    const lines = (out, lib) => out.stderr.split('\n').filter((l) => l.includes(`'${lib}' could not be resolved from`));
+    const lines = (out, lib) => out.stderr.split('\n').filter((l) => l.includes('a library could not be resolved') && l.includes(` library=${lib} `));
     const quiet = await runIn(dir, src(''));
     assert.deepEqual(quiet.libraries, ['redis', 'ioredis']);
     assert.deepEqual([...lines(quiet, 'redis'), ...lines(quiet, 'ioredis')], [], 'default mode: no WARN for an absent library');
@@ -225,7 +225,7 @@ test('R3: unresolved libraries are still instrumented; WARN only when named true
     for (const lib of ['redis', 'ioredis']) {
       const got = lines(named, lib);
       assert.equal(got.length, 1, named.stderr);
-      assert.ok(got[0].includes(dir) && got[0].includes('; instrumented if it loads'), got[0]);
+      assert.ok(got[0].includes(dir) && got[0].includes('; instrumented if it loads library='), got[0]);
       assert.ok(!got[0].includes('node_modules'), `the WARN names the entry directory and cwd only: ${got[0]}`);
     }
   } finally {
@@ -260,7 +260,7 @@ test('D14: no contrib instrumentation loads -> the first load error is thrown; n
       helper.setup({ instrumentations: [inst] });
       console.log(JSON.stringify({ libraries: inst.libraries }));`);
     assert.deepEqual(one.libraries, ['ioredis']);
-    assert.match(one.stderr, /'redis' is not instrumented: failed to import the Redis instrumentation: contrib boom/);
+    assert.match(one.stderr, /a library is not instrumented library=redis error="failed to import the Redis instrumentation: contrib boom"/);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
@@ -458,4 +458,23 @@ test('D-JS11: an ESM app with a custom preload (hooks + setup({ instrumentations
   } finally {
     await fake.close();
   }
+});
+
+test('oneSpanPerCommand: the contrib still has _traceSendCommand; a command object seen once goes straight to ioredis (B14 re-probe M2)', () => {
+  const { IORedisInstrumentation } = require('@opentelemetry/instrumentation-ioredis');
+  // The private patch factory the wrapper relies on (instrumentation-ioredis 0.72).
+  assert.equal(typeof new IORedisInstrumentation({ enabled: false })._traceSendCommand, 'function');
+  const { oneSpanPerCommand } = require('../dist/internal/redis-instrumentation.js');
+  const calls = [];
+  const fake = { _traceSendCommand: (original) => function traced(...args) { calls.push('traced'); return original.apply(this, args); } };
+  assert.equal(oneSpanPerCommand(fake), fake);
+  const send = fake._traceSendCommand(function original() { calls.push('original'); return 'r'; }, '6.0.0');
+  const command = { name: 'set', args: ['k', 'v'] };
+  assert.equal(send.call({}, command), 'r');
+  assert.equal(send.call({}, command), 'r', 'the offline-queue replay of the same object');
+  assert.equal(send.call({}, 'not-a-command'), 'r');
+  assert.deepEqual(calls, ['traced', 'original', 'original', 'traced', 'original']);
+  const without = {};
+  assert.equal(oneSpanPerCommand(without), without, 'no patch factory: returned unchanged');
+  assert.equal(without._traceSendCommand, undefined);
 });

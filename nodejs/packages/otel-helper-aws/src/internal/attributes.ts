@@ -1,7 +1,7 @@
 /**
  * What `@staffops/otel-helper-aws` records on top of, or instead of, what
- * `@opentelemetry/instrumentation-aws-sdk` records (task B10c, 2026-11-03;
- * design D-JS14 rows of 2026-11-03).
+ * `@opentelemetry/instrumentation-aws-sdk` records (design D-JS14 rows of
+ * 2026-11-03).
  */
 import type { Attributes } from '@opentelemetry/api';
 
@@ -73,7 +73,7 @@ export const AWS_ERROR_CODE = /^[A-Z][A-Za-z0-9]{1,63}$/;
 /**
  * Body-less errors (S3 `HeadObject`): status code → the modeled name, Go's
  * `http.StatusText` with the spaces removed (Go 1.26) — the same fixed table
- * in Python (A27 fix round, 2026-11-03).
+ * in Python.
  */
 export const STATUS_CODES: Readonly<Record<string, string>> = Object.freeze({
    400: 'BadRequest', 401: 'Unauthorized', 402: 'PaymentRequired', 403: 'Forbidden', 404: 'NotFound', 405: 'MethodNotAllowed', 406: 'NotAcceptable',

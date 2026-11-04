@@ -9,9 +9,8 @@ import { setupFromRegister } from './setup';
  * threads, where `--require` preloads also run (spike-B1c.md F2). In a worker
  * thread (where Node runs `--require` preloads again) only the hooks are
  * installed, silently: the main thread's setup covers the process, and a
- * worker that wants its own telemetry calls `setup()` itself (B9 fix round M2,
- * final round). A failed setup is
- * reported, never thrown: a preload must not crash the app. Returns whether
+ * worker that wants its own telemetry calls `setup()` itself. A failed setup
+ * is reported, never thrown: a preload must not crash the app. Returns whether
  * it ran.
  */
 export function runRegister(internalThread: boolean = isInternalThread, mainThread: boolean = isMainThread): boolean {

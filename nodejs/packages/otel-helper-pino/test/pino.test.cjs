@@ -566,3 +566,14 @@ test('fix round 2: a dropped record is not parsed; short integers skip the big-i
   assert.equal(lines[0].n, 123456789012345);
   assert.equal(lines[1].n, '1234567890123456789');
 });
+
+test('flush(cb): the callback runs on its own tick, so a throwing callback is an uncaught exception, not an unhandled rejection (child process)', () => {
+  const { spawnSync } = require('node:child_process');
+  const res = spawnSync(process.execPath, ['-e', `
+    process.on('uncaughtException', (e) => { console.log(JSON.stringify({ uncaught: e.message })); });
+    process.on('unhandledRejection', (e) => { console.log(JSON.stringify({ rejection: String(e) })); });
+    require('@staffops/otel-helper-pino').createPinoDestination().flush(() => { throw new Error('cb boom'); });
+  `], { cwd: require('node:path').join(__dirname, '..'), encoding: 'utf8' });
+  assert.equal(res.status, 0, res.stderr);
+  assert.deepEqual(res.stdout.trim().split('\n').map((l) => JSON.parse(l)), [{ uncaught: 'cb boom' }]);
+});

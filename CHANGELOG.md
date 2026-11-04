@@ -2917,6 +2917,113 @@ Unsupported instrumentation versions, task A10 (P18):
   `node-packages` artifact is kept 30 days on a `nodejs/v*` tag run, and
   Dependabot waits 7 days (`cooldown`) before proposing an action release.
   No library behavior changed.
+- **Node.js whole-package review fixes (Phase B, task B14; not released,
+  2026-11-04).** `@staffops/otel-helper`: the warnings of the opt-in
+  instrumentation packages (`setConfig()` ignored, a library that does not
+  load or resolve) and the `/metrics` collection errors are now helper
+  records on the diagnostics sink (`origin: 'helper'`), no longer SDK `diag`
+  messages: the debug-level ones appear only with `OTEL_LOG_LEVEL=debug`, a
+  collection error is one ERROR record per scrape with the count and the
+  first error redacted, and a custom sink or the parity `helper_log` now
+  sees them. The SDK `diag` messages the helper forwards are redacted
+  (URL userinfo/query, tokens, credential-like `key=value` pairs) as its own
+  error attributes are, and the text of a `/metrics` 500 response is
+  redacted too. `@staffops/otel-helper-pino`: `flush(cb)` calls `cb` on its
+  own tick, so a throwing callback is an uncaught exception, not an
+  unhandled rejection. `@staffops/otel-helper-winston`: a foreign or
+  unreadable value at its shared-registry key is left alone (the copy keeps
+  a registry of its own) instead of being used as the registry. The source
+  maps no longer embed the TypeScript sources (`inlineSources` dropped);
+  the `.d.ts` module docs are user-facing (the root entry links to the
+  README and HOW-TO). `nodejs/README.md` gains "API stability (0.x)": the
+  root exports, `/register`, `/hooks` and the `SetupOptions`/`Resolved`
+  fields are the contract; `/testing` and `internal/*` are not
+  (`getState()`, `STATE_KEY` and `HelperState` are marked `@internal`,
+  test-only); `spanProcessors` and `instrumentations` take SDK types and the
+  `@opentelemetry/api` peer stays `<1.11`. CI sets `PARITY_RELEASE=1` on
+  release tags (`go-test` and `python-test` on `v*`, `node-test` on
+  `nodejs/v*`), so a parity case still skipped pending a task fails the
+  release run; `testing/verify.sh --release` does the same locally.
+  `tools/trace_matrix.py` no longer reads test files under `.claude/` (agent
+  worktrees) and counts `nodejs/**/*.test.*` files such as
+  `nodejs/ci/version.test.mjs`. Tests: the metrics listener tests wait for
+  `listening`/`error` instead of a fixed delay and retry once on
+  `EADDRINUSE`; every package's c8 gate states its thresholds.
+- **Node.js B14 re-probe fixes (Phase B, task B14; not released,
+  2026-11-04).** Correction to the entry above: the forwarded SDK `diag`
+  text was not free of header values. With `http/protobuf`,
+  `OTEL_LOG_LEVEL=all` and an endpoint answering 400/500 with the request
+  headers echoed in its body, the `OTLPExporterError` response body reached
+  stderr. `@staffops/otel-helper` now (1) drops the response body of an
+  exporter error before forwarding (`<response body omitted: N
+  characters>`; also a raw response buffer, and the JSON string the SDK's
+  global error handler logs), (2) masks the values of
+  `OTEL_EXPORTER_OTLP_HEADERS` and `OTEL_EXPORTER_OTLP_<SIGNAL>_HEADERS`
+  (4 characters or more) wherever they appear, and (3) redacts more
+  credential forms: escaped JSON (`\"api-key\":\"…\"`), util.inspect
+  (`{ 'x-api-key': '…' }`), `credential`/`session`/`signature` names,
+  `&`-joined query pairs, whole `Cookie`/`Set-Cookie` values and `Digest`
+  parameters ("basic auth failed" stays). Layer 3 is pattern-based (HOW-TO
+  §14). `@staffops/otel-helper-redis`: an ioredis command issued before the
+  connection is `ready` (offline queue) or resent after a reconnect is one
+  span, not two; the span starts when the command is issued, so it includes
+  the wait. `db.operation.name` keeps the client's casing (node-redis
+  `SET`, ioredis `set`), as semconv recommends; now documented. Packages:
+  no source maps are built or published (they pointed at the unpublished
+  `src/`; `ci/check-pack.mjs` rejects `*.map`); `@staffops/otel-helper-pino`
+  and `-winston` export `VERSION` (kept by `ci/version.mjs`); each opt-in
+  README and "API stability (0.x)" list the root exports (the `-pino`
+  default export, the `pino.transport` target that only throws, is not
+  contract). `testing/verify.sh --release` sets `PARITY_RELEASE=1` for
+  every step it runs — scope it with `--only` (release skill); the skill's
+  bootstrap clones the branch or commit that will be tagged. Go has the
+  same response-body exposure through the SDK default error handler
+  (backlog, `specs/config-contract-v0.3/tasks.md` Deferred); Python logs
+  the status code and reason phrase only.
+- **Node.js B14 third-round fixes (Phase B, task B14; not released,
+  2026-11-04).** Correction to the entry above: the exporter-body leak did
+  not need `OTEL_LOG_LEVEL=all` — the SDK logs exporter errors at ERROR, so it
+  also happened at the default WARN. `@staffops/otel-helper`: the forwarding
+  `DiagLogger` never throws into the SDK (a message it cannot render — a
+  throwing getter or `inspect.custom`, a revoked Proxy — is one record with
+  `msg="<diag message could not be rendered>"`); forwarded text is redacted
+  before the 2048-character cut; the configured header values are also
+  masked in their util.inspect-escaped form; `pwd` and `jwt` count as
+  credential names, while status words (`16 UNAUTHENTICATED: denied`,
+  `unauthorized: …`) are no longer redacted; a `Cookie` value with a quoted
+  pair (`a="b"; sid=…`) is redacted whole; redaction stays linear on long
+  backslash runs; a `/metrics` collection error whose text cannot be read is
+  reported as `<unprintable error>` instead of failing the scrape's error
+  path. The opt-in packages' library reports have a constant message with
+  the details as attributes: `<package>: a library is not instrumented
+  library=<name> error="…"` and `<package>: a library could not be resolved
+  from the app directories; instrumented if it loads library=<name>
+  dirs="…"` (match on the attributes, not the old wording). CI and the
+  release skill: the Go gate comment names the joint `v*` tag (a `go/v*`
+  module tag runs no CI); the Node bootstrap clones `$BRANCH`, the branch to
+  be tagged.
+- **Node.js B14 fourth-round fixes (Phase B, task B14; not released,
+  2026-11-04).** Correction to the third-round entry above: its status-word
+  rule and its backslash bound let some credentials through. Now a status
+  word (`(un)authenticated`, `(un)authorized`) is exempt only unquoted and
+  before `:`, and the pairs inside its value are still redacted
+  (`unauthorized: token=<redacted>`); `Authentication: …`,
+  `authentication=…`, `"authenticated":"…"`, `unauthorized=…` and
+  `authentication_failed: …` are redacted. JSON escaped any number of times
+  and long backslash runs inside quoted values are redacted again, in linear
+  time; a quoted value cut open by the end of the scanned text is redacted to
+  the end, and forwarded diag records are cut only from redacted text. The
+  opt-in packages' `error` attribute is the load error's first line,
+  redacted, at most 512 characters. Release skill: the bootstrap check stops
+  (`false`) when the clone has no `nodejs/`.
+- **Node.js B14 fifth-round fix (Phase B, task B14; not released,
+  2026-11-04).** Correction to the fourth-round entry above: a status word
+  followed by a space swallowed the next `name: secret` (`401 Unauthorized:
+  x-api-key: …` kept the key), and so did any credential name
+  (`Authorization: x-api-key: …`). Status words are no longer pair names at
+  all, and a credential name followed by `: ` is never read as a value, so
+  each such name now has its own value redacted. HOW-TO §14 lists the known
+  pattern limits.
 - **Python example: python-process no longer injects `traceparent` by hand.**
   The injection was a no-op (the httpx instrumentation replaces the header);
   `_propagation_headers()` is removed from

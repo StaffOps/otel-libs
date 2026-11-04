@@ -46,6 +46,7 @@ Opt-in packages: `@staffops/otel-helper-sql`, `-redis`, `-aws`
 (instrumentation) and `-pino`, `-winston` (log destinations).
 
 - [Overview and environment variables](https://github.com/StaffOps/otel-libs/blob/main/nodejs/README.md)
+- [API stability (0.x)](https://github.com/StaffOps/otel-libs/blob/main/nodejs/README.md#api-stability-0x): what a patch release keeps, and the SDK/API version coupling
 - [HOW-TO](https://github.com/StaffOps/otel-libs/blob/main/nodejs/HOW-TO.md)
 - [Examples](https://github.com/StaffOps/otel-libs/blob/main/nodejs/example/README.md)
 

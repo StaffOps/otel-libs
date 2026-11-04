@@ -1,13 +1,13 @@
 /**
  * The `Instrumentation` returned by `awsInstrumentation()` and the
- * per-process state it shares (task B10c, 2026-11-03), on the core
+ * per-process state it shares, on the core
  * `internal/contrib` registry as `-sql` and `-redis`.
  *
  * One per process: the contrib instrumentation is built once and shared by
  * every result, and so are its enable state and bindings. Pass one
  * `awsInstrumentation()` to each `setup()`.
  */
-import * as path from 'node:path';
+import { join } from 'node:path';
 import type { Span } from '@opentelemetry/api';
 import type { Instrumentation } from '@opentelemetry/instrumentation';
 import type * as AwsSdk from '@opentelemetry/instrumentation-aws-sdk';
@@ -44,7 +44,7 @@ export const PACKAGES: Readonly<Record<Library, readonly string[]>> = Object.fre
  */
 const PATCHED_FILES: Readonly<Record<Library, readonly (readonly [string, string])[]>> = {
   'aws-sdk': [
-    ['@smithy/core', path.join('dist-cjs', 'submodules', 'client', 'index.js')],
+    ['@smithy/core', join('dist-cjs', 'submodules', 'client', 'index.js')],
     ['@smithy/smithy-client', ''],
     ['@aws-sdk/smithy-client', ''],
   ],

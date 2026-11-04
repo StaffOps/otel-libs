@@ -1,14 +1,14 @@
 /**
  * The `Instrumentation` returned by `redisInstrumentation()` and the
- * per-process state it shares (task B10b; the `-sql` model of B10a; on the
- * core `internal/contrib` registry since B10c, 2026-11-03).
+ * per-process state it shares (the `-sql` model, on the core
+ * `internal/contrib` registry).
  *
  * One per process: the contrib instrumentations are built once and shared by
  * every result, and so are their enable state and bindings. Several results
  * enable a contrib instrumentation once (a count per child); the last one
  * disabled turns it off. Pass one `redisInstrumentation()` to each `setup()`.
  */
-import * as path from 'node:path';
+import { join } from 'node:path';
 import type { Instrumentation } from '@opentelemetry/instrumentation';
 import type * as IORedis from '@opentelemetry/instrumentation-ioredis';
 import type * as Redis from '@opentelemetry/instrumentation-redis';
@@ -34,7 +34,7 @@ const LOADERS: Readonly<Record<Library, () => unknown>> = {
 };
 /* eslint-enable @typescript-eslint/no-require-imports */
 
-const NODE_REDIS_FILES = ['commander.js', 'client/index.js', 'client/multi-command.js', 'cluster/index.js', 'cluster/multi-command.js'].map((f) => path.join('dist', 'lib', ...f.split('/')));
+const NODE_REDIS_FILES = ['commander.js', 'client/index.js', 'client/multi-command.js', 'cluster/index.js', 'cluster/multi-command.js'].map((f) => join('dist', 'lib', ...f.split('/')));
 
 /**
  * Files each library's instrumentation patches, required again on the first
@@ -66,13 +66,47 @@ function build(library: Library): Instrumentation {
     return new RedisInstrumentation({ requireParentSpan: false, dbStatementSerializer: sanitizedStatement });
   }
   const { IORedisInstrumentation } = loaded as typeof IORedis;
-  return new IORedisInstrumentation({ requireParentSpan: false, dbStatementSerializer: sanitizedStatement });
+  return oneSpanPerCommand(new IORedisInstrumentation({ requireParentSpan: false, dbStatementSerializer: sanitizedStatement }));
+}
+
+type SendCommand = (this: unknown, ...args: unknown[]) => unknown;
+interface TraceSendCommand {
+  _traceSendCommand?: (original: SendCommand, moduleVersion: string | undefined) => SendCommand;
+}
+
+/**
+ * ioredis sends a command a second time through `Redis.prototype.sendCommand`
+ * when it replays its offline queue (a command issued before `ready`, or
+ * resent after a reconnect): the contrib would start a second span for the
+ * same command, both ended by the reply. The first call's span is kept — it
+ * covers the whole latency, queueing included — and a command object already
+ * seen goes straight to ioredis's own `sendCommand`. Wraps the contrib's
+ * `_traceSendCommand` (its patch factory, called each time ioredis is
+ * patched); when a contrib release renames it, the instance is returned as is
+ * and the redis tests (`one span per command issued before ready`) fail.
+ */
+export function oneSpanPerCommand<I extends Instrumentation>(instrumentation: I): I {
+  const target = instrumentation as I & TraceSendCommand;
+  const traceSendCommand = target._traceSendCommand;
+  if (typeof traceSendCommand !== 'function') return instrumentation;
+  const sent = new WeakSet<object>();
+  target._traceSendCommand = function patchFactory(this: unknown, original, moduleVersion) {
+    const traced = traceSendCommand.call(target, original, moduleVersion);
+    return function sendCommand(this: unknown, ...args: unknown[]): unknown {
+      const command = args[0];
+      if (command === null || typeof command !== 'object') return traced.apply(this, args);
+      if (sent.has(command)) return original.apply(this, args);
+      sent.add(command);
+      return traced.apply(this, args);
+    };
+  };
+  return instrumentation;
 }
 
 /**
  * The per-process state: shared contrib instances, counted enables, bindings,
  * the re-require of preloaded files and the one-time reports (core
- * `internal/contrib`, extracted from this file in B10c, 2026-11-03).
+ * `internal/contrib`).
  */
 export const registry = contribRegistry<Library>({
   name: NAME,

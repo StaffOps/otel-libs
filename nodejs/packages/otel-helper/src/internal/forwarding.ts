@@ -1,6 +1,6 @@
 /**
  * Stable, helper-owned forwarding providers and propagator (design D-JS10,
- * decided 2026-10-29, implemented in task B9). The helper registers one of
+ * decided 2026-10-29). The helper registers one of
  * each as the API global once per process and swaps its delegate on every
  * `setup()` / `shutdown()`: tracers, meters, instruments and loggers obtained
  * before a re-setup keep working, bound to the new SDK providers. With the

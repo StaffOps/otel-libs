@@ -83,10 +83,14 @@ describe('parseVersion / distTag / tarballName', () => {
 describe('check', () => {
   it('the workspace is consistent at its own version', () => assert.deepEqual(check(ws, current), []));
 
+  it('every package carries a VERSION constant (B14 re-probe L2: -pino and -winston too)', () => {
+    assert.deepEqual(Object.keys(VERSION_CONSTANTS).sort(), [...PACKAGES].sort());
+  });
+
   it('a mismatching tag reports every location, exactly', () => {
     const problems = check(ws, '9.9.9');
-    // 6 versions + 6 lock versions + 5 peers + 5 lock peers + 4 constants + one per Dockerfile.demo.
-    assert.equal(problems.length, 26 + wsDockerfiles, problems.join('\n'));
+    // 6 versions + 6 lock versions + 5 peers + 5 lock peers + 6 constants + one per Dockerfile.demo.
+    assert.equal(problems.length, 28 + wsDockerfiles, problems.join('\n'));
     assert.ok(problems.every((p) => p.endsWith('want "9.9.9"')));
   });
 
@@ -197,7 +201,7 @@ describe('check --tarballs', () => {
   });
 });
 
-describe('verifySums (M2: the publish job checks the tarballs build-lib-node recorded)', () => {
+describe('verifySums (JS10 publication; M2: the publish job checks the tarballs build-lib-node recorded)', () => {
   const sums = (dir, version) => {
     const file = path.join(tmp('sums-'), 'SHA256SUMS');
     writeFileSync(file, execFileSync('sha256sum', PACKAGES.map((d) => tarballName(d, version)), { cwd: dir, encoding: 'utf8' }));
@@ -232,7 +236,7 @@ describe('verifySums (M2: the publish job checks the tarballs build-lib-node rec
   });
 });
 
-describe('registryState (M1: never skip a version published with other bytes)', () => {
+describe('registryState (JS10 publication; M1: never skip a version published with other bytes)', () => {
   const npm = fakeNpm();
   const tarball = path.join(tarballs('1.0.0'), tarballName('otel-helper', '1.0.0'));
   const state = (stdout, status = 0, extra = {}) => {

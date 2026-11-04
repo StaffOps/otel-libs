@@ -1,14 +1,14 @@
 /**
- * OTLP endpoint, protocol and TLS-setting resolution (task B4a; design D-JS3
+ * OTLP endpoint, protocol and TLS-setting resolution (design D-JS3
  * ownership table; contract R1, R2, R8, design D1, D1.a–D1.c and the D1
  * edge-case rulings). Pure resolution: exporters are built from the result by
- * `exporters.ts` (task B4b); headers, timeout and compression come from
+ * `exporters.ts`; headers, timeout and compression come from
  * `otlp-settings.ts`. Endpoints are split by RFC 3986 and the host is checked by the
  * contract's one host rule (D1 rulings, 2026-10-29), the same rule as Go and
  * Python. WHATWG is only used for IDNA (`domainToASCII`, non-ASCII hosts),
  * behind a guard label so its IPv4 parsing never runs. The rows follow the contract D1
  * table; the Go helper (`go/endpoint.go`) is the closest reference, with the
- * differences the D1 rows dated 2026-10-29 record (task A17).
+ * differences the D1 rows dated 2026-10-29 record.
  */
 import { isIPv6 } from 'node:net';
 import { domainToASCII } from 'node:url';
@@ -87,7 +87,7 @@ export interface OtlpEndpoint {
   readonly ignoredTlsVariables: readonly string[];
   /**
    * Export deadline in milliseconds: code > `_<SIGNAL>_TIMEOUT` >
-   * `OTEL_EXPORTER_OTLP_TIMEOUT` > 10 000 (D1, A18). Passed to the exporter and
+   * `OTEL_EXPORTER_OTLP_TIMEOUT` > 10 000 (D1). Passed to the exporter and
    * to its batch processor or metric reader.
    */
   readonly timeoutMs: number;
@@ -216,7 +216,7 @@ function endsInNumber(host: string): boolean {
 /**
  * UTS #46 ToASCII of a non-ASCII host via WHATWG `domainToASCII`, which also
  * runs WHATWG IPv4 parsing on its result: a guard label (`.x`) keeps that from
- * turning fullwidth `１２７.１` into `127.0.0.1` (A17 final round), so the one
+ * turning fullwidth `１２７.１` into `127.0.0.1`, so the one
  * host rule sees `127.1` as Go and Python do. `undefined` on an IDNA failure,
  * an empty label or more than 253 characters (what Python's idna enforces).
  */
@@ -271,7 +271,7 @@ function pathHasAt(sp: RfcEndpoint): boolean {
 // An invalid escape in an http/protobuf path (D1 ruling, A17: invalid in every language).
 const BAD_PATH_ESCAPE = /%(?![0-9A-Fa-f]{2})/;
 
-/** Shown for a schemeless endpoint whose path or query holds an '@' (D1 ruling, A17 final round), in every language. */
+/** Shown for a schemeless endpoint whose path or query holds an '@' (D1 ruling), in every language. */
 export const SCHEMELESS_AT_RENDERING = '<schemeless endpoint>';
 
 /**

@@ -1,11 +1,10 @@
 /**
  * `@staffops/otel-helper/internal/contrib` — NOT public API (Node design
- * D-JS9, D-JS11; task B10c, 2026-11-03). The contrib-instance machinery the
- * opt-in instrumentation packages (`-sql`, `-redis`, `-aws`) share, so it has
- * one implementation and not a copy per package (extracted from `-sql` and
- * `-redis`, code-review M4 of the B10b fix round). Those packages peer-depend
- * on the core at the same version; this entry may change in any release, so
- * applications must not import it.
+ * D-JS9, D-JS11). The contrib-instance machinery the opt-in instrumentation
+ * packages (`-sql`, `-redis`, `-aws`) share, so it has one implementation and
+ * not a copy per package. Those packages peer-depend on the core at the same
+ * version; this entry may change in any release, so applications must not
+ * import it.
  *
  * - {@link contribRegistry}: one registry per opt-in package, holding its
  *   per-process state — the contrib instrumentations built once and shared by
@@ -20,6 +19,9 @@
  *   the library detection and the load errors in the contract D14 words (a
  *   cause is named only when it is certain; an unresolved library is reported,
  *   never an error — a nested, non-hoisted copy is invisible to resolution).
+ * - {@link report}, {@link reportOnce}: the helper's diagnostics sink, so the
+ *   packages' warnings reach the same sink (and the parity `helper_log`) as
+ *   the core's, with `origin: 'helper'`.
  *
  * The span and metric rules stay with each package (and `internal/db` for the
  * database ones): a registry only calls the package's `tracerProvider` and
@@ -30,11 +32,18 @@
  */
 import { createRequire } from 'node:module';
 import * as path from 'node:path';
-import { diag, type LoggerProvider, type MeterProvider, type TracerProvider } from '@opentelemetry/api';
+import type { LoggerProvider, MeterProvider, TracerProvider } from '@opentelemetry/api';
 import type { Instrumentation, InstrumentationConfig } from '@opentelemetry/instrumentation';
+import { redactText, report, type DiagnosticValue } from './internal/diagnostics';
+import { debugEnabled } from './internal/diag-logger';
+
+export { report, reportOnce } from './internal/diagnostics';
+export type { DiagnosticValue } from './internal/diagnostics';
 
 /**
- * How a library report is emitted on the first enable (through the helper's DiagLogger).
+ * How a library report is emitted on the first enable, on the helper's
+ * diagnostics sink: `warn` always, `debug` only when `OTEL_LOG_LEVEL` asks
+ * for debug records.
  *
  * @internal
  */
@@ -148,11 +157,22 @@ export function resolvesFromApp(names: readonly string[], dirs: readonly string[
 
 /**
  * The report for a library the app dirs do not resolve; it is still
- * instrumented. WARN when the library was named `true`, `diag` debug in
- * default mode (an absent library is the common case).
+ * instrumented. WARN when the library was named `true`, debug in default mode
+ * (an absent library is the common case).
  */
-function unresolvedMessage(pkg: string, library: string, dirs: readonly string[]): string {
-  return `${pkg}: '${library}' could not be resolved from ${dirs.join(', ')}; instrumented if it loads`;
+function unresolvedReport(pkg: string, library: string, dirs: readonly string[], level: ReportLevel): LibraryReport {
+  return { message: `${pkg}: a library could not be resolved from the app directories; instrumented if it loads`, attrs: { library, dirs: oneLine(dirs.join(', ')) }, level };
+}
+
+/**
+ * One library report: a constant message (per package), the variable parts
+ * (library, directories, the load error) in attributes, quoted by the sink so
+ * they can never forge a record.
+ */
+interface LibraryReport {
+  readonly message: string;
+  readonly attrs: Readonly<Record<string, DiagnosticValue>>;
+  readonly level: ReportLevel;
 }
 
 /**
@@ -174,6 +194,32 @@ export function contribLoadError(label: string, pkg: string, module: string, err
     return new Error(`${label} instrumentation not installed: ${module} is missing. Reinstall ${pkg} (it depends on ${module}).`, { cause: err });
   }
   return new Error(`failed to import the ${label} instrumentation: ${first}`, { cause: err });
+}
+
+/** Longest `error` attribute of a library report, in code points (then `…`). */
+const MAX_ERROR_ATTRIBUTE = 512;
+
+/** The first line of `text`, redacted, cut to {@link MAX_ERROR_ATTRIBUTE} code points. */
+function errorAttribute(text: string): string {
+  const newline = text.search(/[\r\n\u2028\u2029]/);
+  const redacted = redactText(oneLine(newline < 0 ? text : text.slice(0, newline)));
+  const points = Array.from(redacted);
+  return points.length > MAX_ERROR_ATTRIBUTE ? `${points.slice(0, MAX_ERROR_ATTRIBUTE).join('')}…` : redacted;
+}
+
+/** The message of a load error (anything thrown); never throws. */
+function loadErrorText(err: unknown): string {
+  try {
+    return err instanceof Error && typeof err.message === 'string' ? err.message : String(err);
+  } catch {
+    return '<unprintable error>';
+  }
+}
+
+/** `text` on one line: a control character in a load error would split the diagnostic record. */
+function oneLine(text: string): string {
+  // eslint-disable-next-line no-control-regex -- matching control characters is the point
+  return text.replace(/[\x00-\x1f\x7f-\x9f\u2028\u2029]+/g, ' ');
 }
 
 /** Cached files of `pkg` (every copy in `require.cache`): `file` inside it, or its main entry when that is cached. */
@@ -223,7 +269,7 @@ export function contribRegistry<L extends string>(spec: ContribSpec<L>): Contrib
   const preloadChecked = new Set<L>();
   const reportedUnresolved = new Set<string>();
   const childrenOf = new WeakMap<object, readonly Instrumentation[]>();
-  /** A `setConfig()` call is warned on the next enable, once the helper's DiagLogger is installed. */
+  /** A `setConfig()` call is warned on the next enable (when `setup()` uses the result). */
   let setConfigCalled = false;
   let warnedSetConfig = false;
 
@@ -263,7 +309,7 @@ export function contribRegistry<L extends string>(spec: ContribSpec<L>): Contrib
   function warnSetConfig(): void {
     if (warnedSetConfig) return;
     warnedSetConfig = true;
-    diag.warn(`${spec.name}: setConfig() is ignored; the configuration is fixed and enabled follows setup()/shutdown()`);
+    report(`${spec.name}: setConfig() is ignored; the configuration is fixed and enabled follows setup()/shutdown()`);
   }
 
   class Result implements ContribInstrumentation<L> {
@@ -272,10 +318,10 @@ export function contribRegistry<L extends string>(spec: ContribSpec<L>): Contrib
     readonly libraries: readonly L[];
     readonly coveredInstrumentations: readonly string[];
     readonly #children: readonly Child[];
-    readonly #unresolved: readonly (readonly [string, ReportLevel])[];
+    readonly #unresolved: readonly LibraryReport[];
     #enabled = false;
 
-    constructor(children: readonly Child[], unresolved: readonly (readonly [string, ReportLevel])[]) {
+    constructor(children: readonly Child[], unresolved: readonly LibraryReport[]) {
       this.#children = children;
       this.#unresolved = unresolved;
       this.libraries = Object.freeze(children.map((c) => c.library));
@@ -290,14 +336,14 @@ export function contribRegistry<L extends string>(spec: ContribSpec<L>): Contrib
         c.enables += 1;
         if (c.enables === 1) c.instrumentation.enable();
       }
-      // Reported once the helper's DiagLogger is installed (setup() enables after it).
+      // Reported when setup() enables the result, not when the factory runs.
       if (setConfigCalled) warnSetConfig();
-      for (const [message, level] of this.#unresolved) {
-        const key = `${level}:${message}`;
+      for (const { message, attrs, level } of this.#unresolved) {
+        const key = `${level}:${message}:${JSON.stringify(attrs)}`;
         if (reportedUnresolved.has(key)) continue;
+        if (level === 'debug' && !debugEnabled()) continue;
         reportedUnresolved.add(key);
-        if (level === 'warn') diag.warn(message);
-        else diag.debug(message);
+        report(message, attrs, { origin: 'helper', level });
       }
       patchPreloaded(this.libraries);
     }
@@ -355,7 +401,7 @@ export function contribRegistry<L extends string>(spec: ContribSpec<L>): Contrib
   function instrument(selection: ContribSelection<L>): ContribInstrumentation<L> {
     const dirs = appDirectories();
     const children: Child[] = [];
-    const unresolved: [string, ReportLevel][] = [];
+    const unresolved: LibraryReport[] = [];
     let firstError: unknown;
     for (const library of spec.libraries.filter((l) => selection[l] !== false)) {
       let entry: Child;
@@ -366,7 +412,9 @@ export function contribRegistry<L extends string>(spec: ContribSpec<L>): Contrib
         if (selection[library] === true) throw err;
         firstError ??= err;
         // Reported on the first enable when another library is instrumented.
-        unresolved.push([`${spec.name}: '${library}' is not instrumented: ${err instanceof Error ? err.message : String(err)}`, 'warn']);
+        // The load error's first line (it carries the "Reinstall …" hint; the
+        // rest is a require stack of local paths), redacted, capped.
+        unresolved.push({ message: `${spec.name}: a library is not instrumented`, attrs: { library, error: errorAttribute(loadErrorText(err)) }, level: 'warn' });
         continue;
       }
       children.push(entry);
@@ -374,8 +422,8 @@ export function contribRegistry<L extends string>(spec: ContribSpec<L>): Contrib
       // entry directory and cwd; the full lookup chain goes on a debug line.
       // Default mode: usually just absent (a pg-only app has no mysql2), so debug only.
       if (!resolvesFromApp(spec.packages[library], dirs)) {
-        if (selection[library] === true) unresolved.push([unresolvedMessage(spec.name, library, appDirectories(undefined, undefined, [])), 'warn']);
-        unresolved.push([unresolvedMessage(spec.name, library, dirs), 'debug']);
+        if (selection[library] === true) unresolved.push(unresolvedReport(spec.name, library, appDirectories(undefined, undefined, []), 'warn'));
+        unresolved.push(unresolvedReport(spec.name, library, dirs, 'debug'));
       }
     }
     if (children.length === 0) throw firstError;

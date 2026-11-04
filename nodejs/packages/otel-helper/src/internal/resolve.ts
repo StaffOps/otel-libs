@@ -3,15 +3,14 @@
  * frozen {@link Resolved} plus the resource attributes. Explicit code > standard
  * `OTEL_*` env > legacy / `OTEL_HELPER_*` env > default (contract D1). Invalid
  * code values throw before anything is built; environment problems only warn
- * (R8). This module covers the identity rows (task B3), the OTLP endpoint,
- * protocol and TLS-setting rows (task B4a, `otlp.ts`), the OTLP headers,
- * timeout and compression rows and the batch/limit settings (task B4b,
- * `otlp-settings.ts`, `sdk-settings.ts`), the exporter lists,
- * `OTEL_SDK_DISABLED` and the metric export interval (task B4c,
- * `signals.ts`), the sampler, propagators and health paths (task B5,
- * `tracing.ts`), the `/metrics` port (task B7, `metrics-endpoint.ts`), the
- * opt-in `instrumentations` option and the `OTEL_SEMCONV_STABILITY_OPT_IN` HTTP
- * warning (task B10a, design D-JS9); later tasks add theirs.
+ * (R8). This module covers the identity rows, the OTLP endpoint,
+ * protocol and TLS-setting rows (`otlp.ts`), the OTLP headers,
+ * timeout and compression rows and the batch/limit settings
+ * (`otlp-settings.ts`, `sdk-settings.ts`), the exporter lists,
+ * `OTEL_SDK_DISABLED` and the metric export interval (`signals.ts`), the
+ * sampler, propagators and health paths (`tracing.ts`), the `/metrics` port
+ * (`metrics-endpoint.ts`), the opt-in `instrumentations` option and the
+ * `OTEL_SEMCONV_STABILITY_OPT_IN` HTTP warning (design D-JS9).
  */
 import cluster from 'node:cluster';
 import { randomUUID } from 'node:crypto';
@@ -54,13 +53,8 @@ const BUILTIN_DETECTORS: ReadonlySet<string> = new Set(['env', 'serviceinstance'
 
 /**
  * `setup()` options set in code (design API table). A key left `undefined` is
- * not set and reads the environment. Task B3 implements the identity,
- * log-level and diagnostics options, task B4a the OTLP endpoint, protocol and
- * `insecure` options, task B4b `exportTimeoutMs` and `compression`, task B4c
- * `metricExporters`, `exportIntervalMs` and `disabledSignals`, task B5
- * `sampleRatio` and `healthPaths`, task B7 `prometheusMetricsPort`, A21
- * `disabledMetrics`, task B10a `instrumentations`; the other documented options land with their tasks and
- * are rejected as unknown until then. Pass a plain object (or
+ * not set and reads the environment. An option this version does not know
+ * is rejected. Pass a plain object (or
  * a null-prototype one); class instances are rejected. `setup()` reads each
  * property once.
  */

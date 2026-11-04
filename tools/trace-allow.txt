@@ -31,4 +31,3 @@ SR14 not implemented yet (spec draft); owner task: S6
 # nodejs-otel-helper (Phase B): "JS<n> pending B<x>" = not cited yet; owner task B<x>
 # from specs/nodejs-otel-helper/tasks.md. The owner task deletes its line when its
 # tests cite the id (added by B2, 2026-10-29).
-JS10 pending B13 (npmjs + GitHub Packages publication)

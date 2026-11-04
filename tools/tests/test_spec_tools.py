@@ -341,6 +341,22 @@ class TraceTest(Tree):
         write(self.root, "python/tests/test_y.py", "it('JS94 is not a Python test start')\n")
         self.assertEqual(self.reqs()["JS94"].citations, [])
 
+    def test_ci_test_files_count_and_claude_worktrees_are_skipped(self) -> None:
+        write(self.root, "specs/gamma/requirements.md", """\
+            ### JS95 — Cited by a *.test.mjs outside a test directory
+            The helper SHALL e.
+            ### R95 — Only in an agent worktree
+            The helper SHALL f.
+            """)
+        write(self.root, "nodejs/ci/version.test.mjs", "describe('JS95 publication', () => {});\n")
+        write(self.root, "nodejs/ci/version.mjs", "test('JS95 not a test file', () => {});\n")
+        write(self.root, ".claude/worktrees/w/go/z_test.go", "func TestZ(t *testing.T) {\n// R95\n}\n")
+        write(self.root, ".claude/worktrees/w/nodejs/test/z.test.cjs", "test('R95', () => {});\n")
+        write(self.root, "nodejs/.claude/x/test/y.test.cjs", "test('R95', () => {});\n")
+        reqs = self.reqs()
+        self.assertEqual(reqs["JS95"].citations, ["nodejs/ci/version.test.mjs:1"])
+        self.assertEqual(reqs["R95"].citations, [])
+
     def test_many_citations_are_truncated(self) -> None:
         write(self.root, "go/y_test.go", "func TestY(t *testing.T) {\n// R91\n// R91\n// R91\n}\n")
         code, out = run_main(trace_tool.main, ["--root", str(self.root)])

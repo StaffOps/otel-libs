@@ -18,7 +18,7 @@ const { MeterProvider, MetricReader } = require('@opentelemetry/sdk-metrics');
 const helper = require('@staffops/otel-helper');
 const testing = require('@staffops/otel-helper/testing');
 const { sqlInstrumentation } = require('@staffops/otel-helper-sql');
-const semconv = require('../dist/internal/semconv.js');
+const semconv = require('@staffops/otel-helper/internal/db');
 const providers = require('../dist/internal/providers.js');
 const libraries = require('../dist/internal/libraries.js');
 const { childrenForTests } = require('../dist/internal/sql-instrumentation.js');
@@ -137,7 +137,7 @@ test('R3: unresolved libraries are still instrumented; WARN only when named true
       const inst = require(${JSON.stringify(ENTRY)}).sqlInstrumentation(${opts});
       helper.setup({ instrumentations: [inst] });
       console.log(JSON.stringify({ libraries: inst.libraries }));`;
-    const lines = (out, lib) => out.stderr.split('\n').filter((l) => l.includes(`'${lib}' could not be resolved from`));
+    const lines = (out, lib) => out.stderr.split('\n').filter((l) => l.includes('a library could not be resolved') && l.includes(` library=${lib} `));
     const quiet = runIn(dir, src(''));
     assert.deepEqual(quiet.libraries, ['pg', 'mysql2']);
     assert.deepEqual([...lines(quiet, 'pg'), ...lines(quiet, 'mysql2')], [], 'default mode: no WARN for an absent library');
@@ -148,7 +148,7 @@ test('R3: unresolved libraries are still instrumented; WARN only when named true
     for (const lib of ['pg', 'mysql2']) {
       const got = lines(named, lib);
       assert.equal(got.length, 1, named.stderr);
-      assert.ok(got[0].includes(dir) && got[0].includes('; instrumented if it loads'), got[0]);
+      assert.ok(got[0].includes(dir) && got[0].includes('; instrumented if it loads library='), got[0]);
       assert.ok(!got[0].includes('node_modules'), `the WARN names the entry directory and cwd only (L-d): ${got[0]}`);
     }
   } finally {
@@ -183,7 +183,7 @@ test('D14: no contrib instrumentation loads -> the first load error is thrown; n
       helper.setup({ instrumentations: [inst] });
       console.log(JSON.stringify({ libraries: inst.libraries }));`);
     assert.deepEqual(one.libraries, ['mysql2']);
-    assert.match(one.stderr, /'pg' is not instrumented: failed to import the SQL instrumentation: contrib boom/);
+    assert.match(one.stderr, /a library is not instrumented library=pg error="failed to import the SQL instrumentation: contrib boom"/);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
@@ -259,7 +259,7 @@ test('R3: a nested, non-hoisted pg named true that the app dirs do not resolve i
       console.log(JSON.stringify({ libraries: inst.libraries, wrapped: pg.Client.prototype.query.__wrapped === true }));`);
     assert.deepEqual(out.libraries, ['pg']);
     assert.equal(out.wrapped, true);
-    assert.match(out.stderr, /'pg' could not be resolved from .*; instrumented if it loads/);
+    assert.match(out.stderr, /a library could not be resolved from the app directories; instrumented if it loads library=pg dirs=/);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }

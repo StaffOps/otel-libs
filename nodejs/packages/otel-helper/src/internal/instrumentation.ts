@@ -1,5 +1,5 @@
 /**
- * The core instrumentations (task B6; contract R7, R10, D5; Node design
+ * The core instrumentations (contract R7, R10, D5; Node design
  * D-JS1, D-JS7): `@opentelemetry/instrumentation-http` (node:http/https
  * servers and clients), `-undici` (global `fetch` and undici), `-express`
  * (route and request-handler spans, middleware layers ignored) and `-grpc`
@@ -209,8 +209,8 @@ function redactQuery(search: string): string {
  * with its leading `?`), rewritten as instrumentation-http writes them for
  * `node:http` clients — userinfo `REDACTED:REDACTED`, the values of
  * {@link REDACTED_QUERY_PARAMS} `REDACTED` (names matched case-sensitively,
- * as upstream), and no `url.query` (A22, 2026-11-02; dropped in the B6
- * re-probe: instrumentation-http writes it on server spans only). The query
+ * as upstream), and no `url.query` (instrumentation-http writes it on server
+ * spans only). The query
  * in `url.full` is kept as written unless a name is redacted (`node:http`
  * re-serializes it): intentional, nothing is rewritten that need not be.
  * The hook's attributes override the instrumentation's. Never throws (an
@@ -356,8 +356,7 @@ function cachedEntries(name: string): string[] {
 /**
  * Whether a cached entry was loaded by the ESM loader (an `import` of a CJS
  * package): Node creates that `Module` without a parent, while a CJS
- * `require()` records the requiring module (checked on Node 24, B6 re-probe
- * 2026-11-02).
+ * `require()` records the requiring module (checked on Node 24, 2026-11-02).
  */
 function loadedThroughEsm(entry: string): boolean {
   const cached = require.cache[entry] as { readonly parent?: unknown } | undefined;
@@ -419,7 +418,7 @@ export function enableInstrumentations(holder: HelperInstrumentations, exclusion
 /**
  * Binds every instrumentation to these providers (after they are built and
  * registered): the helper's forwarding providers, whose delegates every
- * setup swaps (task B9), or a foreign global provider. Explicit providers,
+ * setup swaps, or a foreign global provider. Explicit providers,
  * not the API proxies: the API has no proxy meter, and a proxy tracer keeps
  * the first delegate it resolved.
  */
@@ -454,8 +453,8 @@ export interface OptInProviders {
 }
 
 /**
- * Binds and enables the opt-in instrumentations of `setup({ instrumentations })`
- * (task B10a): the same providers as the core ones, then `enable()`. One that
+ * Binds and enables the opt-in instrumentations of `setup({ instrumentations })`:
+ * the same providers as the core ones, then `enable()`. One that
  * throws is reported, disabled again and left out (R8: telemetry failures
  * never fail `setup()`); the others carry on. Returns the enabled ones.
  */

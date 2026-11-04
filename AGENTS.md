@@ -21,7 +21,7 @@ equivalent**: `go/` (module `github.com/staffops/otel-libs/go` +
 [ADR-011](specs/decisions/ADR-011-owner-prefixed-package-names.md)),
 `dotnet/` (`OtelHelper` + `.AWS`/`.Redis`/`.Sql`/`.Profiling`), `nodejs/`
 (npm workspaces: `@staffops/otel-helper` + `-sql`/`-redis`/`-aws`/`-pino`/`-winston`;
-not published yet, task B13). Shared Grafana dashboards in `dashboards/`, MkDocs site in
+not published yet: the release pipeline exists, the first release is pending). Shared Grafana dashboards in `dashboards/`, MkDocs site in
 `docs/site/`, specs in [`specs/`](specs/README.md).
 
 ## Core principles
@@ -41,12 +41,12 @@ not published yet, task B13). Shared Grafana dashboards in `dashboards/`, MkDocs
 4. **Resource attributes at the Collector** — SDK sets only `service.name`
    and `deployment.environment.name` (semconv ≥ v1.27 key, never the legacy
    `deployment.environment`). `k8sattributes` enriches the rest. From 0.3
-   (Go/Python) a per-process `service.instance.id` is added when the env does
+   (Go/Python/Node.js) a per-process `service.instance.id` is added when the env does
    not provide one (`specs/config-contract-v0.3/design.md` D4).
 5. **TLS by default** — `https://` or schemeless endpoints use TLS (system CA).
    The scheme decides; `OTEL_EXPORTER_OTLP_INSECURE=true` only makes a
    schemeless endpoint plaintext, and a contradiction with an explicit scheme
-   is warned and the scheme wins (Go/Python, design D1.c). .NET 0.2.x also
+   is warned and the scheme wins (Go/Python/Node.js, design D1.c). .NET 0.2.x also
    applies `_INSECURE` to schemeless endpoints only.
 6. **Standard OTel env vars win over `OTEL_HELPER_*` vars.** Order: explicit
    code > standard OTel env var > `OTEL_HELPER_*`/legacy env > library
@@ -54,7 +54,7 @@ not published yet, task B13). Shared Grafana dashboards in `dashboards/`, MkDocs
 7. **Don't re-implement what the SDK already does.** If an OTel SDK honors an
    env var per spec (endpoints, TLS, headers, timeout, compression), the
    helper must not override it ([ADR-001](specs/decisions/ADR-001-defer-otlp-env-to-sdk.md)).
-8. **Failures must be loud** — never silently drop telemetry. Go/Python:
+8. **Failures must be loud** — never silently drop telemetry. Go/Python/Node.js:
    env-var parse errors warn and fall back; invalid values passed in code fail
    fast (R8). .NET 0.2.x still fails startup on some env values (Phase C).
 

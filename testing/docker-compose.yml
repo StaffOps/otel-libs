@@ -35,6 +35,9 @@ x-fakeotlp-env: &fakeotlp-env
   FAKEOTLP_ADMIN: http://127.0.0.2:8888
   FAKEOTLP_CA: /fakeotlp/ca.pem
   PARITY_REQUIRE_FAKEOTLP: "1"
+  # Parity release gate (parity/README.md): `testing/verify.sh --release` sets 1;
+  # empty (the default) skips the gate tests in go-tests, python-tests and node-tests.
+  PARITY_RELEASE: ${PARITY_RELEASE:-}
 
 services:
   fakeotlp-go:

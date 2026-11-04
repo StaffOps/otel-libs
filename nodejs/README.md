@@ -45,7 +45,7 @@ dependencies.
 
 ## Installation
 
-Until the release (B13), install the packages from `npm pack` tarballs built
+Until the first release, install the packages from `npm pack` tarballs built
 from this repository, as the example images do:
 
 ```bash
@@ -132,8 +132,10 @@ Precedence everywhere: **code (`setup()` options) > standard `OTEL_*`
 variable > deprecated / `OTEL_HELPER_*` variable > helper default**. An
 invalid environment value warns on stderr (`otelhelper: …`) and falls back to
 the next level; an invalid value passed in code throws a `TypeError` naming
-the option. Warnings never print header values, client keys or URL
-credentials. The OpenTelemetry JS SDK 3.0 reads no environment variable
+the option. The helper's warnings never print header values, client keys or URL
+credentials; forwarded SDK messages have exporter response bodies dropped,
+the configured OTLP header values masked and credential-like text redacted
+(pattern-based, [HOW-TO §14](HOW-TO.md#14-validation-and-diagnostics)). The OpenTelemetry JS SDK 3.0 reads no environment variable
 itself: the helper resolves every row below and passes the result to the SDK.
 
 ### Service identity
@@ -254,10 +256,30 @@ with `setup({ healthPaths: [...] })` (`[]` traces every path).
 | `VERSION` | The helper version |
 | `@staffops/otel-helper/register` | Preload entry: the module hooks, then `setup()` from the environment |
 | `@staffops/otel-helper/hooks` | Preload entry: the module hooks only (then call `setup({...})` yourself) |
-| `@staffops/otel-helper/testing` | Tests only: `reset()`, `setDiagnosticSink()`, `getResource()`, `getProviders()`, `getState()` |
+| `@staffops/otel-helper/testing` | Tests only: `reset()`, `setDiagnosticSink()`, `getResource()`, `getProviders()` (and `getState()`, `STATE_KEY`, for the helper's own suites) |
 
 The `@staffops/otel-helper/internal/*` entries are for the opt-in packages
 only: not a public API, no compatibility promise.
+
+## API stability (0.x)
+
+Before 1.0 a minor release (`0.3` → `0.4`) may break the API; a patch
+release does not. What a patch keeps, and what may change in any release:
+
+| Contract (kept within a minor release) | Not contract (may change in any release) |
+|---|---|
+| The root exports of `@staffops/otel-helper` (the [Public API](#public-api) table) and of each opt-in package: `-sql` `sqlInstrumentation`, `VERSION` (types `SqlInstrumentationOptions`, `SqlInstrumentation`); `-redis` `redisInstrumentation`, `VERSION` (types `RedisInstrumentationOptions`, `RedisInstrumentation`); `-aws` `awsInstrumentation`, `VERSION` (types `AwsInstrumentationOptions`, `AwsInstrumentation`); `-pino` `createPinoDestination`, `VERSION` (types `PinoDestinationOptions`, `PinoDestination`); `-winston` `OtelHelperTransport`, `VERSION` (type `OtelHelperTransportOptions`) | `@staffops/otel-helper/testing`: `reset()`, `setDiagnosticSink()`, `getResource()` and `getProviders()` are kept as far as possible; `getState()`, `STATE_KEY` and `HelperState` are for the helper's own test suites only (marked `@internal`), their shape changes without notice |
+| `@staffops/otel-helper/register` and `@staffops/otel-helper/hooks` (entry names and behavior) | `@staffops/otel-helper/internal/*` (`bridge`, `contrib`, `db`): used by the opt-in packages, which peer-depend on the core at the same version |
+| The fields of `SetupOptions` and `Resolved` (names, types, meaning), and the environment-variable contract | Diagnostic message wording (match on the variable name, not the text); the `-pino` default export (the `pino.transport({ target })` entry point, which only throws) |
+
+**OpenTelemetry version coupling.** Two `SetupOptions` fields take SDK
+types: `spanProcessors` (`SpanProcessor` from `@opentelemetry/sdk-trace`
+`~3.0.0`) and `instrumentations` (`Instrumentation` from
+`@opentelemetry/instrumentation` `~0.300.0`). Pass objects built against
+the same SDK generation the helper depends on; a helper release that moves
+to a new SDK generation changes these types and is a minor release. The
+`@opentelemetry/api` peer range `>=1.10.0 <1.11.0` follows the SDK packages
+the helper pulls; widening or moving it is also a minor release.
 
 ## Known differences from Go and Python
 
