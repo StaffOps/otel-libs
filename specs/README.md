@@ -14,6 +14,8 @@ Planning artefacts for `otel-libs`. Conventions and principles live in
    of the rc (Docker Compose; Kubernetes deferred as Phase K).
 3. [`nodejs-otel-helper/`](nodejs-otel-helper/) — **active**. Phase B: Node.js
    helper at parity on the 0.3 contract.
+   [`dotnet-otel-helper/`](dotnet-otel-helper/) — **active** (reviewed r3, 2026-11-04). Phase C:
+   .NET helper at parity on the 0.3 contract; C0 (`net10.0` only) last.
 4. [`repo-tooling/`](repo-tooling/) — **active**. Hooks, spec lint,
    traceability, local verify, skills.
 5. [`decisions/`](decisions/) — decision records (index below).
@@ -34,10 +36,11 @@ Planning artefacts for `otel-libs`. Conventions and principles live in
 | [006](decisions/ADR-006-debug-span-attribute.md) | Debug marker is the existing span attribute `debug=true`, not tracestate | Accepted |
 | [007](decisions/ADR-007-keep-prometheus-in-core.md) | Keep Prometheus `/metrics` in core | Accepted |
 | [008](decisions/ADR-008-shared-parity-fixture.md) | Enforce parity with a shared JSON fixture | Accepted |
-| [009](decisions/ADR-009-dotnet-retarget-net10-only.md) | Retarget .NET to `net10.0` only before .NET 8 EOL | Accepted |
+| [009](decisions/ADR-009-dotnet-retarget-net10-only.md) | Retarget .NET to `net10.0` only, last step of Phase C; the 0.2.x line dual-targets (amended 2026-10-28 and 2026-11-04) | Accepted |
 | [010](decisions/ADR-010-go-module-path-matches-repo.md) | Go module path matches the repository name | Accepted |
 | [011](decisions/ADR-011-owner-prefixed-package-names.md) | Owner-prefixed package names in every language | Accepted |
 | [012](decisions/ADR-012-node-helper-owns-env-resolution.md) | Node.js helper composes the SDK and owns env resolution (amends ADR-001) | Accepted |
+| [013](decisions/ADR-013-dotnet-helper-owns-env-resolution.md) | .NET helper owns env resolution and builds its exporters with explicit values (amends ADR-001) | Accepted |
 
 ## Format
 

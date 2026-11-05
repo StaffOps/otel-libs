@@ -6,6 +6,22 @@
 > then the rest of Phase C (.NET), and C0 last — no longer "before
 > 2026-11-10". Consequence: the published .NET package keeps targeting
 > `net8.0` past its end of support until Phase C finishes.
+>
+> **Amended 2026-11-04 by the owner (Phase C decision O1):** the `0.2.x` line
+> gets a `.NET`-only `0.2.1` that targets `net8.0;net10.0` with no behavior
+> change on the same runtime (OpenTelemetry stays on 1.15.x), cut on a
+> maintenance branch `release/dotnet-0.2` from tag `v0.2.0` and released
+> before the 2026-11-10 end of support — dual targeting for the `0.2.x` line
+> **only**, which reverses the "Alternatives considered" rejection of
+> `net8.0;net10.0` for that line. The 0.3 line is unchanged: C0 still
+> retargets to `net10.0` only, last. Evidence: the 180/180 prototype of
+> 2026-10-27 used OpenTelemetry 1.20.1; the `0.2.1` shape (1.15.3,
+> `Microsoft.Extensions.*` 10.0.0 on the test project's `net10.0` leg) was
+> measured 2026-11-04: built with SDK 10.0.403 (both TFMs, 0 errors, the 52
+> warnings are 26 pre-existing CS1591 × 2), tests 179/179 on runtime 10.0.14
+> and 179/179 on runtime 8.0.33, coverage 95.96% on the `net10.0` leg; SDK
+> 8 cannot build the dual target (NETSDK1045), so every CI leg installs the
+> 10.0 SDK (`specs/dotnet-otel-helper/tasks.md`, C-patch).
 
 ## Context
 

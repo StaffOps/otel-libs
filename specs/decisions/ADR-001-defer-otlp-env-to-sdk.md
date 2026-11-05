@@ -3,6 +3,13 @@
 > **Amended 2026-10-29 for Node.js** by [ADR-012](ADR-012-node-helper-owns-env-resolution.md):
 > the JS SDK 3.0 no longer reads env in its stable packages, so the Node helper
 > owns every D1 row except certificate/mTLS variables.
+>
+> **Amended 2026-11-04 for .NET** by [ADR-013](ADR-013-dotnet-helper-owns-env-resolution.md)
+> (accepted 2026-11-04, Phase C task C1): the .NET helper owns every D1 row the Go
+> helper owns except `OTEL_SDK_DISABLED` and attribute value-length limits
+> (left to the SDK), plus the exemplar filter default (.NET-only, covered by a
+> unit test instead of a fixture case), and constructs its exporters with
+> explicit values.
 
 **Status**: Accepted | **Date**: 2026-10-27 | **Deciders**: repo owner, validated by `observability` + `dev` agents
 
