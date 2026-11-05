@@ -303,6 +303,21 @@ The lib is compiled for `net8.0` and runs on .NET 10 via roll-forward. Requireme
   ENV DOTNET_ROLL_FORWARD=Major
   ```
 
+Moving an app to the .NET 9+/10 **runtime** changes three things in the
+emitted telemetry; they come from the runtime and the upstream
+instrumentation, not from the helper (same as the `0.2.1` release notes):
+
+- **Runtime metrics** come from the built-in `System.Runtime` meter and are
+  named `dotnet.*` (for example `dotnet.gc.collections`) instead of
+  `process.runtime.dotnet.*`. Update dashboards and alerts that query the old
+  names.
+- **HttpClient `url.full`**: query redaction changes from per-value
+  `?key=Redacted` to `?*` (the runtime's own redaction); userinfo was already
+  removed on .NET 8.
+- **ASP.NET Core 10** adds meters that the ASP.NET Core instrumentation
+  subscribes to: `Microsoft.AspNetCore.Authorization`, `.Authentication`,
+  `.Identity` and `.MemoryPool`, and the Blazor Components meters.
+
 ---
 
 ## Project Structure

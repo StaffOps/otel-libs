@@ -323,6 +323,17 @@ cut from `main` (equivalent code, but `main`'s CHANGELOG `[Unreleased]` holds a
 Go entry; rejected only for clarity); bump OTel in the patch (rejected:
 behavior changes).
 
+> **Corrected 2026-11-04 (C-patch code-review, PR #12).** (1) URL userinfo is
+> not a .NET 9+ change: `OpenTelemetry.Instrumentation.Http` 1.15.1 already
+> builds `url.full` from `uri.Authority`, which excludes userinfo, on .NET 8;
+> the only HttpClient change on the .NET 9+ runtime is query redaction
+> `?key=Redacted` → `?*`. (2) The runtime-metric names alone cannot detect a
+> leg that rolled forward (upstream picks the names by the same
+> `Environment.Version.Major` check); the test detects it by asserting the
+> runtime major equals the test assembly's TFM major, and keeps the name
+> assertions to pin upstream behaviour.
+
+
 ### D-NET1 — Version set: OTel 1.20.x on net8.0 first (owner decision O6, 2026-11-04), net10.0 last
 **Choice**: C3 moves every `OpenTelemetry*` reference to the 1.20.x
 generation (contrib to the matching 1.20.x / 1.20.x-beta) **while still
