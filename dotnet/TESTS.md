@@ -1,9 +1,11 @@
 # Tests — OtelHelper (.NET)
 
-179 unit tests (xUnit), 0 failed, 0 warnings.
+180 unit tests (xUnit) per target framework (`net8.0`, `net10.0`), 0 failed.
 
 ```bash
-docker run --rm -v "$(pwd):/src" -w /src mcr.microsoft.com/dotnet/sdk:8.0 dotnet test OtelHelper.Tests
+# SDK 10 builds both TFMs (SDK 8 cannot, NETSDK1045). This runs the net10.0 leg;
+# the net8.0 leg needs the .NET 8 runtime installed next to SDK 10 (as CI does).
+docker run --rm -v "$(pwd):/src" -w /src mcr.microsoft.com/dotnet/sdk:10.0 dotnet test OtelHelper.Tests -f net10.0
 ```
 
 ---
@@ -379,3 +381,12 @@ OTLP wire protocol selection (grpc vs http/protobuf) — tracing and metrics. Cr
 |-------|-----------|
 | `Tracing_Http_DeliversToV1Traces` | `ConfigureTracing` with http/protobuf sends the request to `/v1/traces` on a real `HttpListener` |
 | `Metrics_Http_DeliversToV1Metrics` | `ConfigureMetrics` with http/protobuf sends the request to `/v1/metrics` on a real `HttpListener` |
+
+## RuntimeMetricNamesTests
+
+Runtime metric names follow the runtime, not the target framework, so a test
+leg that silently ran on another runtime fails.
+
+| Test | Description |
+|-------|-----------|
+| `RuntimeMetricNames_FollowTheRuntimeVersion` | `Environment.Version.Major < 9` → `process.runtime.dotnet.*` names and no `dotnet.*`; otherwise → `dotnet.*` (built-in `System.Runtime` meter) and no `process.runtime.dotnet.*` |

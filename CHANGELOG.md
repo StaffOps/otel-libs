@@ -9,6 +9,50 @@ currently aligned at the same version.
 
 ## [Unreleased]
 
+## [.NET 0.2.1] - Unreleased
+
+.NET-only patch (tag `dotnet/v0.2.1`, branch `release/dotnet-0.2` cut from
+`v0.2.0`) for the .NET 8 end of support on 2026-11-10. Go and Python are not
+part of this release.
+
+### Changed
+
+- **.NET: every package targets `net8.0` and `net10.0`.** `OtelHelper`,
+  `OtelHelper.AWS`, `OtelHelper.Redis`, `OtelHelper.Sql` and
+  `OtelHelper.Profiling` ship `lib/net8.0` and `lib/net10.0`; `net10.0` apps
+  no longer need `DOTNET_ROLL_FORWARD`. Same OpenTelemetry versions (1.15.x),
+  same code, same defaults: on a given runtime both assets emit the same
+  telemetry. Building from source now needs the .NET 10 SDK.
+- **.NET: package metadata.** `PackageLicenseExpression` `Apache-2.0` (with
+  `LICENSE` at the repository root) and `RepositoryUrl`
+  `https://github.com/StaffOps/otel-libs` on all five packages.
+
+### Notes — moving an app to the .NET 9+/10 runtime
+
+These follow the runtime and the upstream instrumentation, not the helper or
+the target framework, so they were already true for `0.2.0` running on .NET 10
+under roll-forward:
+
+- Runtime metrics come from the built-in `System.Runtime` meter: `dotnet.*`
+  instead of `process.runtime.dotnet.*`. Update dashboards and alerts.
+- HttpClient spans: the `url.full` query is redacted to `?*` and URL userinfo
+  is removed.
+- ASP.NET Core 10 adds the `Microsoft.AspNetCore.Authorization`,
+  `.Authentication`, `.Identity` and `.MemoryPool` meters, which the ASP.NET
+  Core instrumentation subscribes to.
+
+### Known issues
+
+- `OtelHelper.Profiling` is not validated on .NET 10: it loads the native
+  Pyroscope profiler, which the test suite does not exercise.
+- `AddOtelHelperRedis()` without arguments (the overload that resolves
+  `IConnectionMultiplexer` from DI) throws `NotSupportedException` when the
+  tracer provider is built. Workaround: pass the multiplexer explicitly,
+  `services.AddOtelHelperRedis(multiplexer)`. Unchanged from `0.2.0`; the fix
+  is planned for the next .NET minor.
+
+No other behavior change.
+
 ## [0.2.0] - 2026-07-15
 
 ### Added
