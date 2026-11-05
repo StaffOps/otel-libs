@@ -10,7 +10,7 @@ Practical guide for developers. One line configures everything — traces, metri
 dotnet add package OtelHelper
 ```
 
-> **Note .NET 10**: the lib is compiled for net8.0 and works on .NET 10 via roll-forward. Use the `aspnet` image (not `runtime`) and ensure `DOTNET_ROLL_FORWARD=Major` is set.
+> **Note .NET 10**: since `0.2.1` the packages ship `net8.0` and `net10.0` assets, so .NET 10 apps need no roll-forward. Use the `aspnet` image (not `runtime`). See the ".NET 10 Note" in [README.md](README.md#net-10-note) for what changes on the .NET 9+/10 runtime.
 
 ---
 

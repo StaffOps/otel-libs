@@ -207,7 +207,7 @@ AWS, Redis, SQL, and Profiling instrumentations are **no longer bundled in core*
 | Package | Registration | What it instruments |
 |---------|--------------|---------------------|
 | `OtelHelper.AWS` | `services.AddOtelHelperAws()` | AWS SDK calls (S3, SQS, DynamoDB, etc.) |
-| `OtelHelper.Redis` | `services.AddOtelHelperRedis()` | StackExchange.Redis commands |
+| `OtelHelper.Redis` | `services.AddOtelHelperRedis(multiplexer)` | StackExchange.Redis commands |
 | `OtelHelper.Sql` | `services.AddOtelHelperSql()` | SqlClient queries |
 | `OtelHelper.Profiling` | `services.AddOtelHelperProfiling()` | Pyroscope continuous profiling |
 
@@ -218,15 +218,14 @@ services.AddOtelHelper();
 
 // Add only the instrumentations you need:
 services.AddOtelHelperAws();
-services.AddOtelHelperRedis();
+services.AddOtelHelperRedis(connectionMultiplexer); // pass the IConnectionMultiplexer
 services.AddOtelHelperSql();
 ```
 
-Redis with explicit connection:
-
-```csharp
-services.AddOtelHelperRedis(connectionMultiplexer);
-```
+> **Known issue in 0.2.x — see [CHANGELOG](../CHANGELOG.md):** the
+> no-argument overload `services.AddOtelHelperRedis()` (resolves
+> `IConnectionMultiplexer` from DI) throws `NotSupportedException` when the
+> tracer provider is built. Pass the multiplexer explicitly as above.
 
 ### Profiling (Pyroscope)
 
@@ -267,7 +266,9 @@ All telemetry goes through the Collector. The SDK does NOT export directly to ba
 ### Run unit tests
 
 ```bash
-docker run --rm -v "$(pwd):/src" -w /src mcr.microsoft.com/dotnet/sdk:8.0 dotnet test OtelHelper.Tests
+# SDK 10 builds both TFMs (SDK 8 cannot, NETSDK1045). This runs the net10.0 leg;
+# the net8.0 leg needs the .NET 8 runtime installed next to SDK 10 (as CI does).
+docker run --rm -v "$(pwd):/src" -w /src mcr.microsoft.com/dotnet/sdk:10.0 dotnet test OtelHelper.Tests -f net10.0
 ```
 
 Coverage: see [TESTS.md](TESTS.md) for the full list.
@@ -280,18 +281,39 @@ See [example/README.md](example/README.md) for sample apps with distributed trac
 
 ## Supported Targets
 
-- .NET 8 (LTS)
-- .NET 10 (LTS) — via roll-forward
+Since `0.2.1` every package ships two assets: `lib/net8.0` and `lib/net10.0`.
+
+- .NET 8 (LTS) — `net8.0` asset
+- .NET 10 (LTS) — `net10.0` asset (no roll-forward needed)
+
+Building the libraries from source needs the .NET 10 SDK (SDK 8 cannot build
+the `net10.0` target, `NETSDK1045`).
 
 ### .NET 10 Note
 
-The lib is compiled for `net8.0` and runs on .NET 10 via roll-forward. Requirements:
+`net10.0` apps get the `net10.0` asset directly; `DOTNET_ROLL_FORWARD` is no
+longer needed. On a given runtime both assets behave the same (the helper has
+no target-framework branches). Moving an app to the .NET 9+/10 **runtime**
+changes three things in the emitted telemetry; they come from the runtime and
+the upstream instrumentation, not from the helper, and were already true for
+`0.2.0` running under roll-forward:
 
-- **Runtime image**: use `aspnet` (not `runtime`) — the lib depends on `Microsoft.AspNetCore.App` for ASP.NET Core instrumentation
-- **Roll-forward**: add `DOTNET_ROLL_FORWARD=Major` env var if using a custom image:
-  ```dockerfile
-  ENV DOTNET_ROLL_FORWARD=Major
-  ```
+- **Runtime metrics** come from the built-in `System.Runtime` meter and are
+  named `dotnet.*` (for example `dotnet.gc.collections`) instead of
+  `process.runtime.dotnet.*`. Update dashboards and alerts that query the old
+  names.
+- **HttpClient `url.full`**: query redaction changes from per-value
+  `?key=Redacted` to `?*` (the runtime's own redaction); userinfo was already
+  removed on .NET 8.
+- **ASP.NET Core 10** adds meters that the ASP.NET Core instrumentation
+  subscribes to: `Microsoft.AspNetCore.Authorization`, `.Authentication`,
+  `.Identity` and `.MemoryPool`, and the Blazor Components meters.
+
+Runtime image: use `aspnet` (not `runtime`) — the lib depends on
+`Microsoft.AspNetCore.App` for ASP.NET Core instrumentation.
+
+The Profiling package (`OtelHelper.Profiling`) is not validated on .NET 10:
+it loads the native Pyroscope profiler, which the test suite does not exercise.
 
 ---
 

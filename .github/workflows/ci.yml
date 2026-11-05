@@ -1,239 +1,149 @@
 name: CI
 
+# .NET-only workflow of the 0.2.x maintenance branch (release/dotnet-0.2,
+# cut from v0.2.0). Go, Python, example images and dev publishing live on
+# main and the 0.3 branch. Never trigger on `v*` tags: only `dotnet/v*`
+# publishes from this branch.
 on:
   push:
-    branches: [main]
-    tags: ['v*']
+    branches: [release/dotnet-0.2]
+    tags: ['dotnet/v*']
   pull_request:
-    branches: [main]
+    branches: [release/dotnet-0.2]
 
 permissions:
-  contents: write
-  packages: write
+  contents: read
+
+# One run per PR/branch; a new push to a PR cancels the older run. Tag runs
+# (publishing) are never cancelled.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  # ─── Test Jobs ───────────────────────────────────────────────────────
-
-  go-test:
-    name: Go (test + coverage)
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: go
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version: '1.22'
-      - run: go test ./... -coverprofile=coverage.out -covermode=atomic
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: go-coverage
-          path: go/coverage.out
-
   dotnet-test:
-    name: .NET ${{ matrix.dotnet }} (test + coverage)
+    name: .NET ${{ matrix.tfm }} (test + coverage)
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
-        dotnet: ['8.0.x', '10.0.x']
+        # Each leg runs its own target framework on its own runtime. The SDK
+        # 10 builds both TFMs (SDK 8 cannot, NETSDK1045); the net8.0 leg also
+        # installs the 8.0 runtime. No DOTNET_ROLL_FORWARD: RuntimeMetricNamesTests
+        # asserts the runtime major equals the test assembly's TFM major, so a
+        # leg that ran on another runtime fails.
+        include:
+          - tfm: net8.0
+            dotnet: |
+              8.0.x
+              10.0.x
+          - tfm: net10.0
+            dotnet: '10.0.x'
     defaults:
       run:
         working-directory: dotnet
-    env:
-      DOTNET_ROLL_FORWARD: Major
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4.3.1
         with:
           dotnet-version: ${{ matrix.dotnet }}
+      - run: dotnet --info
+      - run: dotnet --list-runtimes
       - run: dotnet restore OtelHelper.Tests/OtelHelper.Tests.csproj
       - run: >
           dotnet test OtelHelper.Tests
+          -f ${{ matrix.tfm }}
           --configuration Release
           --no-restore
           /p:CollectCoverage=true
           /p:CoverletOutputFormat=cobertura
-          /p:CoverletOutput=./coverage/
+          /p:CoverletOutput=./coverage/${{ matrix.tfm }}/
           /p:Threshold=90
           /p:ThresholdType=line
           /p:ThresholdStat=total
           /p:Exclude="[xunit*]*"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: always()
         with:
-          name: dotnet-coverage-${{ matrix.dotnet }}
-          path: dotnet/OtelHelper.Tests/coverage/
-
-  python-test:
-    name: Python (test + coverage)
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: python
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-      - run: pip install -e ".[dev]" grpcio -q
-      - run: >
-          pytest tests/ --ignore=tests/test_propagation.py -v
-          --cov=otel_helper
-          --cov-report=term-missing
-          --cov-report=xml:coverage.xml
-          --cov-fail-under=90
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: python-coverage
-          path: python/coverage.xml
-
-  # ─── Build Jobs ──────────────────────────────────────────────────────
-
-  build-lib:
-    name: Build packages (once)
-    runs-on: ubuntu-latest
-    needs: [go-test, dotnet-test, python-test]
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: '8.0.x'
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-      - name: Pack all .NET packages (core + subpackages)
-        run: |
-          for proj in OtelHelper OtelHelper.AWS OtelHelper.Redis OtelHelper.Sql OtelHelper.Profiling; do
-            dotnet pack "dotnet/$proj/$proj.csproj" -c Release -o packages
-          done
-      - run: pip install build -q && python -m build --outdir packages python
-      - uses: actions/upload-artifact@v4
-        with:
-          name: packages
-          path: packages/
-          retention-days: 1
-
-  example-images:
-    name: Build example images (consume prebuilt package)
-    runs-on: ubuntu-latest
-    needs: [build-lib]
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - context: dotnet
-            dockerfile: dotnet/example/dotnet-api/Dockerfile.demo
-          - context: dotnet
-            dockerfile: dotnet/example/dotnet-backend/Dockerfile.demo
-          - context: dotnet
-            dockerfile: dotnet/example/dotnet-process/Dockerfile.demo
-          - context: python
-            dockerfile: python/example/python-api/Dockerfile.demo
-          - context: python
-            dockerfile: python/example/python-backend/Dockerfile.demo
-          - context: python
-            dockerfile: python/example/python-process/Dockerfile.demo
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
-        with:
-          name: packages
-          path: ${{ matrix.context }}/packages
-      - uses: docker/setup-buildx-action@v3
-      - uses: docker/build-push-action@v6
-        with:
-          context: ${{ matrix.context }}
-          file: ${{ matrix.dockerfile }}
-          push: false
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-  # ─── Publish Jobs ───────────────────────────────────────────────────
-
-  publish-dotnet:
-    name: Publish .NET to GitHub NuGet
-    runs-on: ubuntu-latest
-    needs: [dotnet-test]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    defaults:
-      run:
-        working-directory: dotnet
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: '8.0.x'
-      - name: Pack with dev version
-        run: |
-          SHORT_SHA=${GITHUB_SHA::7}
-          for proj in OtelHelper OtelHelper.AWS OtelHelper.Redis OtelHelper.Sql OtelHelper.Profiling; do
-            dotnet pack "$proj/$proj.csproj" \
-              -c Release \
-              -o nupkgs \
-              /p:Version="0.1.0-dev-${SHORT_SHA}" \
-              /p:RepositoryUrl="https://github.com/StaffOps/staffops-otel-libs"
-          done
-      - name: Push to GitHub Packages
-        run: |
-          dotnet nuget push nupkgs/*.nupkg \
-            --source "https://nuget.pkg.github.com/StaffOps/index.json" \
-            --api-key ${{ secrets.GITHUB_TOKEN }} \
-            --skip-duplicate
+          name: dotnet-coverage-${{ matrix.tfm }}
+          path: dotnet/OtelHelper.Tests/coverage/${{ matrix.tfm }}/
 
   publish-dotnet-release:
     name: Publish .NET release to GitHub NuGet
+    permissions:
+      contents: read
+      packages: write
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     needs: [dotnet-test]
-    if: startsWith(github.ref, 'refs/tags/v')
+    # .NET versions diverge from Go/Python (ADR-004): only dotnet/vX.Y.Z publishes NuGet.
+    if: startsWith(github.ref, 'refs/tags/dotnet/v')
     defaults:
       run:
         working-directory: dotnet
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
-          dotnet-version: '8.0.x'
+          persist-credentials: false
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4.3.1
+        with:
+          dotnet-version: '10.0.x'
       - name: Extract version from tag
         id: version
-        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+        env:
+          REF_NAME: ${{ github.ref_name }}
+        run: echo "VERSION=${REF_NAME#dotnet/v}" >> "$GITHUB_OUTPUT"
+      # The tag must match the <Version> of every project, so the published
+      # version is the one the source declares.
+      - name: Tag matches every project <Version>
+        env:
+          VERSION: ${{ steps.version.outputs.VERSION }}
+        run: |
+          status=0
+          for proj in OtelHelper OtelHelper.AWS OtelHelper.Redis OtelHelper.Sql OtelHelper.Profiling; do
+            declared=$(sed -n 's:.*<Version>\(.*\)</Version>.*:\1:p' "$proj/$proj.csproj" | head -n 1)
+            if [ "$declared" != "$VERSION" ]; then
+              echo "::error::$proj/$proj.csproj <Version> is '$declared', the tag says '$VERSION'"; status=1
+            fi
+          done
+          exit $status
+      # The release must have a dated CHANGELOG entry.
+      - name: CHANGELOG has a dated entry for this version
+        env:
+          VERSION: ${{ steps.version.outputs.VERSION }}
+        run: |
+          grep -Eq "^## \[\.NET ${VERSION//./\\.}\] - [0-9]{4}-[0-9]{2}-[0-9]{2}$" ../CHANGELOG.md \
+            || { echo "::error::CHANGELOG has no dated .NET $VERSION entry"; exit 1; }
       - name: Pack release version
+        env:
+          VERSION: ${{ steps.version.outputs.VERSION }}
         run: |
           for proj in OtelHelper OtelHelper.AWS OtelHelper.Redis OtelHelper.Sql OtelHelper.Profiling; do
             dotnet pack "$proj/$proj.csproj" \
               -c Release \
               -o nupkgs \
-              /p:Version="${{ steps.version.outputs.VERSION }}" \
-              /p:RepositoryUrl="https://github.com/StaffOps/staffops-otel-libs"
+              /p:Version="$VERSION" \
+              /p:RepositoryUrl="https://github.com/StaffOps/otel-libs"
           done
+      - name: Every package has lib/net8.0 and lib/net10.0
+        run: |
+          status=0
+          for pkg in nupkgs/*.nupkg; do
+            for tfm in net8.0 net10.0; do
+              if ! unzip -Z1 "$pkg" | grep -q "^lib/$tfm/"; then
+                echo "::error::$pkg has no lib/$tfm/"; status=1
+              fi
+            done
+          done
+          exit $status
       - name: Push to GitHub Packages
+        env:
+          NUGET_API_KEY: ${{ secrets.GITHUB_TOKEN }}
         run: |
           dotnet nuget push nupkgs/*.nupkg \
             --source "https://nuget.pkg.github.com/StaffOps/index.json" \
-            --api-key ${{ secrets.GITHUB_TOKEN }} \
+            --api-key "$NUGET_API_KEY" \
             --skip-duplicate
-
-  publish-python-release:
-    name: Publish Python to GitHub Release
-    runs-on: ubuntu-latest
-    needs: [python-test]
-    if: startsWith(github.ref, 'refs/tags/v')
-    defaults:
-      run:
-        working-directory: python
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-      - name: Build wheel and sdist
-        run: pip install build -q && python -m build
-      - name: Upload to GitHub Release
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh release upload "${{ github.ref_name }}" dist/* --clobber \
-            || gh release create "${{ github.ref_name }}" dist/* --generate-notes

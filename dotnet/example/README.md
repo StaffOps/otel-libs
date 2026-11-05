@@ -224,7 +224,7 @@ example/
 │   ├── Services/
 │   │   └── OrderGrpcService.cs             # 5 RPCs, manual spans, metrics
 │   ├── appsettings.json                    # Kestrel HTTP/2 on port 5100
-│   ├── Dockerfile                          # SDK 8.0, aspnet 8.0, port 5100
+│   ├── Dockerfile                          # SDK 10.0 (build), aspnet 8.0, port 5100
 │   └── Dockerfile.demo                     # CI
 └── dotnet-process/
     ├── dotnet-process.csproj               # net8.0, Worker SDK
