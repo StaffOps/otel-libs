@@ -10,6 +10,18 @@
 // grpc-timeout, x-parity-* headers). ADMIN serves GET /requests (JSON) and
 // DELETE /requests (reset). Payloads are drained, never decoded.
 //
+// A request carrying the header x-parity-echo-error is answered with an error
+// that echoes its x-parity-* headers, as a collector or proxy echoing the
+// request would (contract task A29: SDK error text must not carry a response
+// body or a configured header value):
+//   - any value but "token": OTLP/HTTP 400 with the headers and the body-only
+//     marker "parity-body-marker" in a JSON body; OTLP/gRPC INVALID_ARGUMENT
+//     with the headers in the status message;
+//   - "token": only the last whitespace-separated part of each other x-parity-*
+//     value (the credential of "Bearer <token>") — in the HTTP reason phrase
+//     (status line "400 Rejected invalid token <t>", body = the marker only) and
+//     in the gRPC status message.
+//
 // Test-only: no auth. Never run it outside a test network.
 package main
 
@@ -22,17 +34,22 @@ import (
 	"crypto/x509/pkix"
 	"encoding/json"
 	"encoding/pem"
+	"fmt"
 	"io"
 	"log"
 	"math/big"
 	"net"
 	"net/http"
 	"os"
+	"sort"
 	"strings"
 	"sync"
 	"time"
 
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/status"
 	// Registers the gzip decompressor: the helpers export gzip by default and
 	// an unregistered codec fails the call (logged as an upload error).
 	_ "google.golang.org/grpc/encoding/gzip"
@@ -71,6 +88,39 @@ func parityHeaders(h http.Header) map[string]string {
 	}
 	return out
 }
+
+// echoErrorHeader asks the receiver to answer with an error echoing the
+// request's x-parity-* headers.
+const echoErrorHeader = "x-parity-echo-error"
+
+// echoText renders the x-parity-* headers as JSON (sorted keys).
+func echoText(h map[string]string) string {
+	b, _ := json.Marshal(h)
+	return string(b)
+}
+
+// echoTokens is the last whitespace-separated part of every x-parity-* value
+// except the trigger, space-separated (sorted by header name).
+func echoTokens(h map[string]string) string {
+	keys := make([]string, 0, len(h))
+	for k := range h {
+		if k != echoErrorHeader {
+			keys = append(keys, k)
+		}
+	}
+	sort.Strings(keys)
+	var out []string
+	for _, k := range keys {
+		if f := strings.Fields(h[k]); len(f) > 0 {
+			out = append(out, f[len(f)-1])
+		}
+	}
+	return strings.Join(out, " ")
+}
+
+// bodyMarker is written only in the HTTP error body: a case asserts it never
+// reaches the logs (the body is dropped, not only masked).
+const bodyMarker = "parity-body-marker"
 
 var (
 	mu   sync.Mutex
@@ -144,6 +194,27 @@ func handler(g *grpc.Server, isTLS bool) http.Handler {
 		b, _ := io.ReadAll(http.MaxBytesReader(w, r.Body, maxBody))
 		add(rec{Addr: addr, Proto: "http", TLS: isTLS, Host: r.Host, Port: port, Path: r.URL.Path, RawPath: r.URL.EscapedPath(), Bytes: len(b),
 			Encoding: r.Header.Get("Content-Encoding"), Headers: parityHeaders(r.Header)})
+		if mode := r.Header.Get(echoErrorHeader); mode != "" {
+			ph := parityHeaders(r.Header)
+			if mode == "token" {
+				// A custom reason phrase needs the raw connection (HTTP/1.1 only).
+				if hj, ok := w.(http.Hijacker); ok && r.ProtoMajor == 1 {
+					if conn, bw, err := hj.Hijack(); err == nil {
+						body := `{"note":"` + bodyMarker + `"}`
+						reason := strings.NewReplacer("\r", " ", "\n", " ").Replace("Rejected invalid token " + echoTokens(ph))
+						_, _ = fmt.Fprintf(bw, "HTTP/1.1 400 %s\r\nContent-Type: application/json\r\nContent-Length: %d\r\nConnection: close\r\n\r\n%s",
+							reason, len(body), body)
+						_ = bw.Flush()
+						_ = conn.Close()
+						return
+					}
+				}
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"error":"echo","note":"` + bodyMarker + `","request_headers":` + echoText(ph) + "}"))
+			return
+		}
 		w.Header().Set("Content-Type", "application/x-protobuf")
 		w.WriteHeader(http.StatusOK) // empty body == empty Export*ServiceResponse
 	})
@@ -158,6 +229,18 @@ func main() {
 		var m emptypb.Empty // unknown fields retained; we only need to drain the request
 		if err := s.RecvMsg(&m); err != nil {
 			return err
+		}
+		if md, ok := metadata.FromIncomingContext(s.Context()); ok && len(md.Get(echoErrorHeader)) > 0 {
+			echoed := map[string]string{}
+			for k, v := range md {
+				if strings.HasPrefix(k, "x-parity") {
+					echoed[k] = strings.Join(v, ",")
+				}
+			}
+			if md.Get(echoErrorHeader)[0] == "token" {
+				return status.Error(codes.InvalidArgument, "invalid token "+echoTokens(echoed))
+			}
+			return status.Error(codes.InvalidArgument, "echo: request headers "+echoText(echoed))
 		}
 		return s.SendMsg(&emptypb.Empty{}) // zero bytes == valid Export*ServiceResponse
 	}))

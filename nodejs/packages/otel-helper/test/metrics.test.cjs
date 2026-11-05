@@ -707,3 +707,119 @@ test('errorText never throws: a throwing toString or message getter, a revoked P
   assert.equal(errorText(Object.assign(new Error('x'), { message: { a: 1 } })), UNPRINTABLE_ERROR);
   assert.equal(errorText(Symbol('s')), 'Symbol(s)');
 });
+
+// Contract task A29 (design D1 row "Prometheus exporter variables").
+test('A29 OTEL_EXPORTER_PROMETHEUS_PORT: code > it > OTEL_HELPER_METRICS_PORT > 9464; invalid falls to the next level', () => {
+  const warned = [];
+  const warn = (message, attrs) => warned.push(`${message} ${attrs.variable} ${attrs.value} ${attrs.using}`);
+  const port = (prom, helperPort, code) => {
+    if (prom === undefined) delete process.env.OTEL_EXPORTER_PROMETHEUS_PORT;
+    else process.env.OTEL_EXPORTER_PROMETHEUS_PORT = prom;
+    if (helperPort === undefined) delete process.env.OTEL_HELPER_METRICS_PORT;
+    else process.env.OTEL_HELPER_METRICS_PORT = helperPort;
+    return resolveMetricsPort(code, warn);
+  };
+  assert.equal(port(undefined, undefined), 9464);
+  assert.equal(port('9300', '9100'), 9300);
+  assert.equal(port('0', '9100'), 0);
+  assert.equal(port('+0009300', undefined), 9300);
+  assert.equal(port('  ', '9100'), 9100);
+  assert.deepEqual(warned, []);
+  assert.equal(port('93_00', '9100'), 9100);
+  assert.equal(port('70000', undefined), 9464);
+  assert.deepEqual(warned, [
+    'invalid port OTEL_EXPORTER_PROMETHEUS_PORT 93_00 OTEL_HELPER_METRICS_PORT, else 9464',
+    'invalid port OTEL_EXPORTER_PROMETHEUS_PORT 70000 OTEL_HELPER_METRICS_PORT, else 9464',
+  ]);
+  assert.equal(port('x', 'y'), 9464);
+  assert.equal(warned.at(-1), 'invalid port OTEL_HELPER_METRICS_PORT y 9464');
+  assert.equal(port('9300', '9100', 9200), 9200);
+  assert.equal(port('9300', undefined, 0), 0);
+});
+
+test('A29 OTEL_EXPORTER_PROMETHEUS_HOST: IP literals and localhost, else every interface with a warning', () => {
+  const { parsePrometheusHost, resolveMetricsHost } = endpoint;
+  for (const [raw, want] of [
+    ['127.0.0.1', '127.0.0.1'], ['0.0.0.0', '0.0.0.0'], ['::1', '::1'], ['[::1]', '::1'], ['FE80::AB', 'fe80::ab'],
+    ['::', ''], ['[::]', ''], ['0:0:0:0:0:0:0:0', ''], ['localhost', '127.0.0.1'], ['LocalHost', '127.0.0.1'],
+    ['::ffff:10.0.0.1', '10.0.0.1'], ['::ffff:0.0.0.0', '0.0.0.0'], ['[::ffff:7f00:1]', '127.0.0.1'],
+    ['*', undefined], ['collector.example.com', undefined], ['127.0.0.1:9464', undefined], ['http://127.0.0.1', undefined],
+    ['[127.0.0.1]', undefined], ['fe80::1%eth0', undefined], ['010.0.0.1', undefined], ['1.2.3', undefined], ['١٢٧.0.0.1', undefined],
+  ]) {
+    assert.equal(parsePrometheusHost(raw), want, raw);
+  }
+  const warned = [];
+  const warn = (message, attrs) => warned.push(`${message} ${attrs.variable} ${attrs.value} ${attrs.using}`);
+  assert.equal(resolveMetricsHost(warn), '');
+  process.env.OTEL_EXPORTER_PROMETHEUS_HOST = ' [::1] ';
+  assert.equal(resolveMetricsHost(warn), '::1');
+  process.env.OTEL_EXPORTER_PROMETHEUS_HOST = '*';
+  assert.equal(resolveMetricsHost(warn), '');
+  assert.deepEqual(warned, [`${endpoint.MSG_INVALID_PROMETHEUS_HOST} OTEL_EXPORTER_PROMETHEUS_HOST * every interface`]);
+  process.env.OTEL_EXPORTER_PROMETHEUS_HOST = 'https://user:tok-s3cr3t@metrics.example.com?k=q-s3cr3t';
+  assert.equal(resolveMetricsHost(warn), '');
+  assert.equal(warned.at(-1), `${endpoint.MSG_INVALID_PROMETHEUS_HOST} OTEL_EXPORTER_PROMETHEUS_HOST https://metrics.example.com every interface`);
+  process.env.OTEL_EXPORTER_PROMETHEUS_HOST = '0.0.0.0';
+  assert.equal(helper.setup({ metricExporters: ['none'] }).prometheusMetricsHost, '0.0.0.0');
+});
+
+test('A29 listener: OTEL_EXPORTER_PROMETHEUS_HOST is the bind address, OTEL_EXPORTER_PROMETHEUS_PORT the port', async () => {
+  process.env.OTEL_HELPER_METRICS_PORT = '1'; // the standard variable wins
+  process.env.OTEL_EXPORTER_PROMETHEUS_HOST = '127.0.0.1';
+  const port = await setupOnFreePort((p) => {
+    process.env.OTEL_EXPORTER_PROMETHEUS_PORT = String(p);
+    helper.setup();
+  });
+  assert.equal(testing.getState().runtime.active.listener.address().address, '127.0.0.1');
+  assert.equal((await get(port, '/metrics')).status, 200);
+  // Negative control (obs L8): another address of this host is refused.
+  const other = Object.values(os.networkInterfaces()).flat().find((a) => a && a.family === 'IPv4' && !a.internal);
+  if (other) await assert.rejects(get(port, '/metrics', other.address), { code: 'ECONNREFUSED' });
+  await helper.shutdown();
+  // An address the host does not own is a bind error, reported like a busy port.
+  resetAndCapture();
+  process.env.OTEL_EXPORTER_PROMETHEUS_HOST = '192.0.2.1';
+  process.env.OTEL_EXPORTER_PROMETHEUS_PORT = String(await freePort());
+  helper.setup();
+  const err = await listenerSettled();
+  assert.ok(err !== undefined && err.code === 'EADDRNOTAVAIL', String(err?.code));
+  assert.ok(records.some((r) => r.level === 'error' && r.line.includes('could not bind port') && r.line.includes('on 192.0.2.1')), JSON.stringify(records));
+  // The hint names what applied (A29 fix round, M1): the host variable, and the port's source.
+  const line = records.find((r) => r.line.includes('could not bind port')).line;
+  assert.match(line, /OTEL_EXPORTER_PROMETHEUS_HOST sets the address/);
+  assert.match(line, /set OTEL_EXPORTER_PROMETHEUS_PORT=0\)/);
+  assert.match(line, /variable=OTEL_EXPORTER_PROMETHEUS_HOST/);
+});
+
+test('A29 metricsPortVariable and redactEchoedValue', () => {
+  const { metricsPortVariable, redactEchoedValue } = endpoint;
+  delete process.env.OTEL_HELPER_METRICS_PORT;
+  assert.equal(metricsPortVariable(9200), 'prometheusMetricsPort');
+  assert.equal(metricsPortVariable(undefined), 'OTEL_EXPORTER_PROMETHEUS_PORT'); // the default
+  process.env.OTEL_HELPER_METRICS_PORT = '9100';
+  assert.equal(metricsPortVariable(undefined), 'OTEL_HELPER_METRICS_PORT');
+  process.env.OTEL_EXPORTER_PROMETHEUS_PORT = 'x';
+  assert.equal(metricsPortVariable(undefined), 'OTEL_HELPER_METRICS_PORT', 'an invalid value is not the source');
+  process.env.OTEL_EXPORTER_PROMETHEUS_PORT = '9300';
+  assert.equal(metricsPortVariable(undefined), 'OTEL_EXPORTER_PROMETHEUS_PORT');
+  for (const [raw, want] of [['plain', 'plain'], ['https://u:p@h:1/x?q#f', 'https://h:1/x'], ['u:p@h', 'h'], ['h#frag', 'h'], ['a@b@c', 'c'], ['http://h/p@x', 'http://x']]) {
+    assert.equal(redactEchoedValue(raw), want, raw);
+  }
+});
+
+test('A29 busy port: the hint names OTEL_HELPER_METRICS_PORT when that variable set the port', async () => {
+  const blocker = net.createServer();
+  await new Promise((resolve) => blocker.listen(0, resolve));
+  try {
+    process.env.OTEL_HELPER_METRICS_PORT = String(blocker.address().port);
+    helper.setup();
+    const err = await listenerSettled();
+    assert.equal(err?.code, 'EADDRINUSE');
+    const line = records.find((r) => r.line.includes('could not bind port')).line;
+    assert.match(line, /set OTEL_HELPER_METRICS_PORT=0\)/);
+    assert.match(line, /variable=OTEL_HELPER_METRICS_PORT/);
+    assert.doesNotMatch(line, /OTEL_EXPORTER_PROMETHEUS_HOST/);
+  } finally {
+    await new Promise((resolve) => blocker.close(resolve));
+  }
+});

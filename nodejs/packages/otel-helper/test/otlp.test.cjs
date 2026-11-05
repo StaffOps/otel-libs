@@ -541,11 +541,11 @@ test('R8 code: only the endpoint each signal uses is checked; a schemeless code 
   assert.equal(fresh({}, { otelEndpoint: 'collector:4317', insecure: false }).traces.url, 'https://collector:4317');
 });
 
-test('Resolved keeps its B3 fields and adds otlp (B4a), the signal selection (B4c), the sampler/propagators/health paths (B5) and the metrics port (B7)', () => {
+test('Resolved keeps its B3 fields and adds otlp (B4a), the signal selection (B4c), the sampler/propagators/health paths (B5), the metrics port (B7) and the metrics host (A29)', () => {
   const resolved = helper.setup({ otelEndpoint: 'http://c:4317' });
   assert.deepEqual(Object.keys(resolved).sort(), [
     'debug', 'disabledMetrics', 'environment', 'healthPaths', 'inactiveSignals', 'logLevel', 'logsExporters', 'metricExportIntervalMs', 'metricExporters', 'otlp',
-    'prometheusMetricsPort', 'propagators', 'sampler', 'sdkDisabled', 'serviceInstanceId', 'serviceName', 'tracesExporters',
+    'prometheusMetricsHost', 'prometheusMetricsPort', 'propagators', 'sampler', 'sdkDisabled', 'serviceInstanceId', 'serviceName', 'tracesExporters',
   ]);
   assert.ok(Object.isFrozen(resolved));
 });
@@ -668,3 +668,31 @@ test('D1 ruling (IDN): hosts are punycoded; a host that fails IDNA processing is
   assert.throws(() => fresh({}, { otelEndpoint: 'https://h:4318/x\\y' }), /otelEndpoint endpoint contains a backslash/);
 });
 
+
+// Contract task A29 (design D1 row "Path on a gRPC endpoint"): a path on a gRPC
+// endpoint is dropped and warned once per variable, naming the variable only.
+test('A29 gRPC endpoint path: dropped, one warning per variable, the path never printed', () => {
+  const MSG = 'endpoint path is ignored by the gRPC exporter';
+  let otlp = fresh({ OTEL_EXPORTER_OTLP_ENDPOINT: 'http://collector:4317/secret-path' });
+  assert.equal(otlp.traces.grpcTarget, 'collector:4317');
+  assert.deepEqual(warnings(), [`otelhelper: ${MSG} variable=OTEL_EXPORTER_OTLP_ENDPOINT`]);
+  otlp = fresh({ OTEL_EXPORTER_OTLP_ENDPOINT: 'http://collector:4317', OTEL_EXPORTER_OTLP_LOGS_ENDPOINT: 'http://collector:4317/v1/logs' });
+  assert.equal(otlp.logs.grpcTarget, 'collector:4317');
+  assert.deepEqual(warnings(), [`otelhelper: ${MSG} variable=OTEL_EXPORTER_OTLP_LOGS_ENDPOINT`]);
+  fresh({ OTEL_EXPORTER_OTLP_ENDPOINT: 'collector:4317/secret-path', OTEL_EXPORTER_OTLP_INSECURE: 'true' });
+  assert.deepEqual(warnings(), [`otelhelper: ${MSG} variable=OTEL_EXPORTER_OTLP_ENDPOINT`]);
+  otlp = fresh({}, { otelEndpoint: 'http://collector:4317/code-path' });
+  assert.equal(otlp.traces.grpcTarget, 'collector:4317');
+  assert.deepEqual(warnings(), [`otelhelper: ${MSG} variable=otelEndpoint`]);
+  for (const env of [{ OTEL_EXPORTER_OTLP_ENDPOINT: 'http://collector:4317/' }, { OTEL_EXPORTER_OTLP_ENDPOINT: 'http://collector:4318/prefix' }]) {
+    fresh(env);
+    assert.ok(!warnings().some((w) => w.includes(MSG)), JSON.stringify(env));
+  }
+  assert.ok(!records.some((r) => r.line.includes('secret-path') || r.line.includes('code-path')));
+});
+
+test('A29 a skipped (invalid) per-signal endpoint with a path never warns about the path', () => {
+  const otlp = fresh({ OTEL_EXPORTER_OTLP_ENDPOINT: 'http://collector:4317', OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: 'http://coll\tector:4317/skipped-path' });
+  assert.equal(otlp.traces.grpcTarget, 'collector:4317');
+  assert.ok(!records.some((r) => r.line.includes('endpoint path is ignored') || r.line.includes('skipped-path')), JSON.stringify(records));
+});

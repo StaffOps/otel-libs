@@ -26,7 +26,7 @@ suite runs every case. **`cases.json` is hand-maintained**: edit it directly
 | Field | Meaning |
 |---|---|
 | `env` | Environment for the case. The runner first removes every `OTEL_*`, `SERVICE_NAME` and `ENVIRONMENT` variable and sets `OTEL_HELPER_METRICS_PORT=0` (cases may override it). |
-| `code` | Options set in code, snake_case: `service_name`, `environment`, `otel_endpoint`, `otlp_protocol`, `metric_exporters`, `sample_ratio`, `debug`, `export_interval_ms`, `resource_attributes` (also `traces_endpoint`, `metrics_endpoint`, `logs_endpoint`, `insecure`, `compression`, `export_timeout_ms`, `health_paths`, and `disabled_signals` since A19). A key an adapter can't map is an adapter error (hard failure), so a case for an API that doesn't exist yet is `skip:<task>-…` until that task adds the API and the mapping. |
+| `code` | Options set in code, snake_case: `service_name`, `environment`, `otel_endpoint`, `otlp_protocol`, `metric_exporters`, `sample_ratio`, `debug`, `export_interval_ms`, `resource_attributes` (also `traces_endpoint`, `metrics_endpoint`, `logs_endpoint`, `insecure`, `compression`, `export_timeout_ms`, `health_paths`, and `disabled_signals` since A19; `prometheus_metrics_port` since A29). A key an adapter can't map is an adapter error (hard failure), so a case for an API that doesn't exist yet is `skip:<task>-…` until that task adds the API and the mapping. |
 | `input` | Kind-specific parameters (schema below). |
 | Placeholders | `{receiver}` (plain + TLS ports), `{receiver_tls}` (TLS on the standard port 4317), `{receiver_ipv6}`, `{receiver_ca}`. |
 
@@ -34,7 +34,7 @@ suite runs every case. **`cases.json` is hand-maintained**: edit it directly
 
 | Kind | `input` | Does | Snapshot fields (`expect` keys) |
 |---|---|---|---|
-| `resolve` | — | Setup, read what it installed | `resource` (all attributes of the installed resource), `metric_exporters` (the **effective** list: `[]` when metrics are disabled — `OTEL_HELPER_DISABLED_SIGNALS`, code disabled signals — or the SDK is, `OTEL_SDK_DISABLED=true`; defined 2026-10-29, A19 fix round), `metric_export_interval_ms`, `log_level`, `prometheus_metrics_port` (the resolved `/metrics` listener port; added 2026-11-02, A21) |
+| `resolve` | — | Setup, read what it installed | `resource` (all attributes of the installed resource), `metric_exporters` (the **effective** list: `[]` when metrics are disabled — `OTEL_HELPER_DISABLED_SIGNALS`, code disabled signals — or the SDK is, `OTEL_SDK_DISABLED=true`; defined 2026-10-29, A19 fix round), `metric_export_interval_ms`, `log_level`, `prometheus_metrics_port` (the resolved `/metrics` listener port; added 2026-11-02, A21), `prometheus_metrics_host` (the resolved bind address from `OTEL_EXPORTER_PROMETHEUS_HOST`: `""` = every interface, else the IP literal without brackets, `localhost` → `127.0.0.1`, an IPv4-mapped address (`::ffff:a.b.c.d`, any spelling) → its IPv4 literal; added 2026-11-05, A29) |
 | `export` | — | Setup, emit one span + counter + log, shut down, read the receiver | `received{traces,metrics,logs}` → records `{proto, tls, port, path, raw_path, encoding, headers, timeout_ms}` (`path` decoded, `raw_path` as sent with escapes kept; `timeout_ms` from the gRPC `grpc-timeout` header) |
 | `sampler` | `scenario`: `root`, `remote_sampled`, `remote_unsampled`, `remote_sampled_debug_tracestate`, `remote_sampled_debug_baggage`, `local_child_of_root`, `local_child_of_remote_unsampled` | Start one span | `sampled`, `attributes` |
 | `propagation` | — | Inject inside a span with baggage `parity=1` | `headers` (sorted names) |
@@ -66,6 +66,19 @@ invalid status or `python@sdk>=X.Y` override.
 The fake receiver records only request headers whose name starts with
 `x-parity` (plus `grpc-encoding` / `content-encoding` and `grpc-timeout`):
 cases and probes that assert `headers` must use that prefix.
+
+A request carrying `x-parity-echo-error` (any value) is answered with an error
+that echoes its `x-parity-*` headers, as a collector or proxy echoing the
+request would: OTLP/HTTP `400` with a JSON body, OTLP/gRPC `INVALID_ARGUMENT`
+with them in the status message (added 2026-11-05, A29; cases
+`export.http_error_body_header_values_not_logged`,
+`export.grpc_error_details_header_values_masked`). The request is still
+recorded. *A29 fix round (2026-11-05):* the 400 body also carries the
+body-only marker `parity-body-marker` (a case asserts it is never logged), and
+`x-parity-echo-error: token` echoes only the last space-separated part of each
+other `x-parity-*` value (the credential of `Bearer <token>`): in the HTTP
+reason phrase (`400 Rejected invalid token <t>`, HTTP/1.1) and in the gRPC
+status message.
 
 Protocol, URL and TLS are asserted only by `export` cases (per signal, from
 what reached the wire), never from resolved options.

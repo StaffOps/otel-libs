@@ -75,6 +75,9 @@ type Options struct {
 	disabledSignalsSet bool
 	disabledMetricsSet bool
 	metricsPortSet     bool
+	// prometheusHost: the standalone listener's bind address from
+	// OTEL_EXPORTER_PROMETHEUS_HOST ("" = every interface; A29).
+	prometheusHost string
 
 	// Resolution results (filled by resolveFromEnv / lazily).
 	identityResolved    bool
@@ -199,8 +202,8 @@ func WithDisabledMetrics(patterns []string) Option {
 }
 
 // WithPrometheusMetricsPort sets the standalone /metrics listener port in
-// [0, 65535] (0 = no listener), overriding OTEL_HELPER_METRICS_PORT whatever
-// the value (9464 included).
+// [0, 65535] (0 = no listener), overriding OTEL_EXPORTER_PROMETHEUS_PORT and
+// OTEL_HELPER_METRICS_PORT whatever the value (9464 included).
 func WithPrometheusMetricsPort(port int) Option {
 	return func(o *Options) { o.PrometheusMetricsPort = port; o.metricsPortSet = true }
 }

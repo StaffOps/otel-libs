@@ -40,7 +40,8 @@ _CASE_KEYS = {"id", "kind", "requirement", "note", "env", "code", "input", "expe
 _REQUIRED_KEYS = {"id", "kind", "env", "code", "expect", "status"}  # same set as go/parity_match_test.go
 _OVERRIDE_RE = re.compile(r"^python@sdk>=[\d.]+$")
 _SCHEMA = {
-    "resolve": {"resource", "metric_exporters", "metric_export_interval_ms", "log_level", "prometheus_metrics_port"},
+    "resolve": {"resource", "metric_exporters", "metric_export_interval_ms", "log_level", "prometheus_metrics_port",
+                "prometheus_metrics_host"},
     "export": {"received"},
     "sampler": {"sampled", "attributes"},
     "propagation": {"headers"},

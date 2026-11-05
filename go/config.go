@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"net/netip"
 	"os"
 	"strconv"
 	"strings"
@@ -51,6 +52,14 @@ const (
 	// EnvExperimentalConfigFile is the deprecated name of OTEL_CONFIG_FILE.
 	EnvExperimentalConfigFile = "OTEL_EXPERIMENTAL_CONFIG_FILE"
 	EnvPropagators            = "OTEL_PROPAGATORS"
+)
+
+// EnvPrometheusPort and EnvPrometheusHost are the OTel spec's Prometheus
+// exporter variables, honored for the standalone /metrics listener (design D1
+// row "Prometheus exporter variables", A29).
+const (
+	EnvPrometheusPort = "OTEL_EXPORTER_PROMETHEUS_PORT"
+	EnvPrometheusHost = "OTEL_EXPORTER_PROMETHEUS_HOST"
 )
 
 const (
@@ -258,16 +267,7 @@ func (o *Options) resolveFromEnv() {
 		o.DisabledMetrics = splitList(os.Getenv(EnvDisabledMetrics), false)
 	}
 
-	if !o.metricsPortSet {
-		if v := trimWS(os.Getenv(EnvMetricsPort)); v != "" {
-			// 0 is valid: disables the standalone listener (mounted-handler mode).
-			if p, ok := parseMetricsPort(v); ok {
-				o.PrometheusMetricsPort = p
-			} else {
-				warnEnv("invalid port", EnvMetricsPort, v, "9464")
-			}
-		}
-	}
+	o.resolveMetricsListener()
 
 	o.propagator = parsePropagators(os.Getenv(EnvPropagators))
 	o.warnIgnoredTimeouts()
@@ -324,7 +324,93 @@ func dedupe(list []string) []string {
 	return out
 }
 
-// parseMetricsPort parses OTEL_HELPER_METRICS_PORT (already trimmed; design D1
+// resolveMetricsListener resolves the standalone /metrics listener (design
+// D1 rows "Metrics port grammar" and "Prometheus exporter variables", A29).
+// Port: code > OTEL_EXPORTER_PROMETHEUS_PORT > OTEL_HELPER_METRICS_PORT >
+// 9464, the same grammar for both variables, 0 = no listener; an invalid
+// value warns and falls to the next level. Host: OTEL_EXPORTER_PROMETHEUS_HOST
+// (no code option); unset = every interface.
+func (o *Options) resolveMetricsListener() {
+	if !o.metricsPortSet {
+		for _, src := range []struct{ variable, next string }{
+			{EnvPrometheusPort, EnvMetricsPort + ", else 9464"},
+			{EnvMetricsPort, "9464"},
+		} {
+			v := trimWS(os.Getenv(src.variable))
+			if v == "" {
+				continue
+			}
+			// 0 is valid: disables the standalone listener (mounted-handler mode).
+			if p, ok := parseMetricsPort(v); ok {
+				o.PrometheusMetricsPort = p
+				break
+			}
+			warnEnv("invalid port", src.variable, redactEchoedValue(v), src.next)
+		}
+	}
+	o.prometheusHost = ""
+	if v := trimWS(os.Getenv(EnvPrometheusHost)); v != "" {
+		if h, ok := parsePrometheusHost(v); ok {
+			o.prometheusHost = h
+		} else {
+			// Fails open by owner decision (D1 row): the warning says so.
+			warnEnv(msgInvalidPrometheusHost, EnvPrometheusHost, redactEchoedValue(v), "every interface")
+		}
+	}
+}
+
+// parsePrometheusHost parses OTEL_EXPORTER_PROMETHEUS_HOST (already trimmed):
+// an IPv4 literal, an IPv6 literal with or without brackets and without a
+// zone, or localhost (ASCII case-insensitive, bound as 127.0.0.1). It returns
+// the bind address ("" = every interface, for "::") and whether v is valid.
+// Host names other than localhost are not resolved (D1 row).
+func parsePrometheusHost(v string) (string, bool) {
+	if asciiLower(v) == "localhost" {
+		return "127.0.0.1", true
+	}
+	s, bracketed := v, false
+	if strings.HasPrefix(s, "[") && strings.HasSuffix(s, "]") {
+		s, bracketed = s[1:len(s)-1], true
+	}
+	if strings.Contains(s, "%") {
+		return "", false // a zone id
+	}
+	addr, err := netip.ParseAddr(s)
+	if err != nil || (bracketed && !addr.Is6()) {
+		return "", false
+	}
+	if addr.Is4In6() {
+		// ::ffff:a.b.c.d binds as the IPv4 address in every language (A29 fix round).
+		return addr.Unmap().String(), true
+	}
+	if addr.Is6() && addr.IsUnspecified() {
+		return "", true
+	}
+	return asciiLower(s), true
+}
+
+// msgInvalidPrometheusHost is the same text in every language (design D1 row
+// "Prometheus exporter variables": an invalid restriction widens exposure).
+const msgInvalidPrometheusHost = "invalid host, not applied: the listener binds every interface, wider than a restriction (use an IP address or localhost)"
+
+// redactEchoedValue strips URL userinfo, query and fragment from a value a
+// warning echoes (A29 fix round, obs L2): "https://user:tok@h?q" → "https://h".
+func redactEchoedValue(v string) string {
+	if i := strings.IndexAny(v, "?#"); i >= 0 {
+		v = v[:i]
+	}
+	if at := strings.LastIndex(v, "@"); at >= 0 {
+		start := 0
+		if i := strings.Index(v, "://"); i >= 0 && i < at {
+			start = i + 3
+		}
+		v = v[:start] + v[at+1:]
+	}
+	return v
+}
+
+// parseMetricsPort parses OTEL_HELPER_METRICS_PORT and
+// OTEL_EXPORTER_PROMETHEUS_PORT (already trimmed; design D1
 // row "Metrics port grammar", A21): ASCII decimal digits with an optional "+"
 // ("-0" and "9_464" are invalid), in [0, 65535]; a long digit string is never
 // converted.

@@ -747,6 +747,15 @@ Without a metrics endpoint the helper serves `GET`/`HEAD /metrics` on port
 9464 (dual-stack `::`; `OTEL_HELPER_METRICS_PORT`). The listener does not
 keep the process alive.
 
+The standard `OTEL_EXPORTER_PROMETHEUS_PORT` beats `OTEL_HELPER_METRICS_PORT`
+(`prometheusMetricsPort` still wins; `0` = no listener), and
+`OTEL_EXPORTER_PROMETHEUS_HOST` sets the bind address — an IP literal or
+`localhost` (`127.0.0.1`), reported as `Resolved.prometheusMetricsHost` (`''`
+= every interface). Unset binds every interface, not the spec default
+`localhost`, so a scraper in another pod reaches it; an invalid value is
+warned and every interface is used. Neither variable turns the listener on,
+and an address the host does not own is reported like a busy port (A29).
+
 ### Choosing exporters
 
 | `OTEL_METRICS_EXPORTER` (or `metricExporters`) | Result |
@@ -802,8 +811,10 @@ setup({
 - `http/protobuf`: `/v1/<signal>` is appended to the generic endpoint (a path
   prefix is kept, as written); per-signal endpoints are used as-is, path
   included.
-- `grpc`: only `scheme://host:port` of any endpoint is used; a path is
-  ignored without a warning (as the Go exporters do).
+- `grpc`: only `scheme://host:port` of any endpoint is used; a path (other
+  than `/`) is ignored and warned once per variable, naming the variable only
+  (`OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://c:4317/v1/traces` exports to
+  `c:4317`; contract task A29, the same warning in Go and Python).
 - Headers come from `OTEL_EXPORTER_OTLP[_<SIGNAL>]_HEADERS` only (no code
   option); put credentials there, never in the URL.
 - gRPC over TLS needs a DNS name on Node.js 26 (an IP literal fails the
@@ -1068,9 +1079,19 @@ written (a message that cannot be rendered — a throwing getter or
 (1) the response body of an exporter error (`OTLPExporterError` `data`, a raw
 response buffer) is replaced by its size — a collector or proxy that echoes
 the request would otherwise print every header; (2) the values of
-`OTEL_EXPORTER_OTLP_HEADERS` and `OTEL_EXPORTER_OTLP_<SIGNAL>_HEADERS` (4
-characters or more, raw and percent-decoded, plain, JSON- and
-`util.inspect`-escaped) are replaced by `<redacted>` wherever they appear;
+`OTEL_EXPORTER_OTLP_HEADERS` and `OTEL_EXPORTER_OTLP_<SIGNAL>_HEADERS`, and
+each space-separated part of them (the token of `Bearer <token>`), 4
+characters or more, raw and percent-decoded — plain, JSON-escaped once and
+twice, HTML-escaped JSON (and that JSON-escaped again), form-encoded and
+`util.inspect`-escaped — are replaced by `<redacted>` wherever they appear, in
+one pass over marked spans (a value contained in, or overlapping, another
+never leaves a part of it; a value `prod` also masks `prod` in a host name; a
+leading `Bearer`/`Basic`/`Digest`/`Negotiate` is not masked on its own). The
+values are those `setup()` built the exporters with plus the variables'
+current values: deleting them after `setup()` does not unmask what is sent;
+(layers (1) and (2) are the contract rule every language applies, design D1
+row "SDK error text: response bodies and header values", A29; Go in its OTel
+error handler, Python in a filter on the exporter loggers)
 (3) URL userinfo, query and fragment, `Bearer`/`Basic`/`Digest` credentials,
 whole `Cookie`/`Set-Cookie` values (up to a line end or a comma) and the
 values of `name: value` / `name=value` pairs whose name contains `key`,

@@ -206,6 +206,29 @@ test('redactText third round: Cookie with quoted pairs, status words, pwd/jwt, b
   }
 });
 
+test('A29 maskLiterals: longest first in one pass, token parts, form and HTML-escaped forms', () => {
+  const values = ['Bearer tok-s3cr3t-1234', 'team', 'team-secret-token', 'a&b<c>-amp-value'];
+  assert.equal(diag.maskLiterals('tenant team-secret-token', values), 'tenant <redacted>', 'code-review H1: no partial mask');
+  assert.equal(diag.maskLiterals('tenant team-secret-token', ['team', 'team-secret-token']), 'tenant <redacted>');
+  assert.equal(diag.maskLiterals('tenant team-secret-token', ['team-secret-token', 'team']), 'tenant <redacted>');
+  for (const text of ['invalid token tok-s3cr3t-1234', 'form Bearer+tok-s3cr3t-1234', 'html "a\\u0026b\\u003cc\\u003e-amp-value"', 'raw a&b<c>-amp-value']) {
+    const out = diag.maskLiterals(text, values);
+    for (const secret of ['s3cr3t', 'secret-token', 'amp-value']) assert.ok(!out.includes(secret), `${text} -> ${out}`);
+  }
+  assert.equal(diag.maskLiterals('x dact y', ['dact']), 'x <redacted> y', 'one pass: <redacted> is not scanned again');
+  assert.equal(diag.maskLiterals('abc', ['abc def1']), 'abc', 'a part under 4 characters is not masked');
+  assert.equal(diag.formEncode('Bearer a/b~c*é'), 'Bearer+a%2Fb~c%2A%C3%A9');
+  const forms = diag.maskForms(['Bearer tok-s3cr3t-1234']);
+  assert.ok(forms.includes('tok-s3cr3t-1234') && forms.includes('Bearer+tok-s3cr3t-1234') && !forms.includes('Bearer'), 'an auth-scheme name is not a part');
+  assert.equal(diag.maskLiterals('scheme Bearer, token tok-s3cr3t-1234', values), 'scheme Bearer, token <redacted>');
+  // Overlapping values never leave a tail (A29 final round, dev R2-L1).
+  assert.equal(diag.maskLiterals('x OVERLAP-AAAA-BBBB-CCCC-PLACEHOLDER2 y', ['OVERLAP-AAAA-BBBB', 'BBBB-CCCC-PLACEHOLDER2']), 'x <redacted> y');
+  // The forms are cached on the secrets object: the same Set reuses them.
+  const set = new Set(['cached-v4lue']);
+  assert.equal(diag.maskLiterals('a cached-v4lue', set), 'a <redacted>');
+  assert.equal(diag.maskLiterals('b cached-v4lue', set), 'b <redacted>');
+});
+
 test('maskLiterals: the util.inspect-escaped form too', () => {
   const util = require('node:util');
   // inspect single-quotes (escaping ' as \') only when the string holds ', " and ` together.

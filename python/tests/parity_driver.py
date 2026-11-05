@@ -86,7 +86,7 @@ def _options(code: dict):
               "sample_ratio", "export_interval_ms", "resource_attributes",
               "traces_endpoint", "metrics_endpoint", "logs_endpoint",
               "insecure", "compression", "export_timeout_ms", "health_paths",
-              "disabled_signals"}
+              "disabled_signals", "prometheus_metrics_port"}
     kwargs = {}
     unsupported = []
     for key, value in sorted(code.items()):
@@ -165,6 +165,7 @@ def kind_resolve(case: dict) -> dict:
         level = logging.getLevelName(get_default_log_level(opts.environment, opts.resolved.debug_level))
         snap["log_level"] = "WARN" if level == "WARNING" else level
         snap["prometheus_metrics_port"] = opts.resolved.prometheus_metrics_port
+        snap["prometheus_metrics_host"] = opts.resolved.prometheus_metrics_host  # "" = every interface (A29)
     _flush_and_shutdown()
     return snap
 

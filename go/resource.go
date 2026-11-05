@@ -2,7 +2,6 @@ package otelhelper
 
 import (
 	"errors"
-	"log"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -189,8 +188,10 @@ func (f *resourceEnvEchoFilter) Handle(err error) {
 	}
 	if forwardsBackToFilter(target) {
 		// The SDK default: the first SetErrorHandler made the default
-		// delegator forward to this filter, so calling it would loop.
-		log.Print(err)
+		// delegator forward to this filter, so calling it would loop. Written
+		// like the helper's own SDK error handler, never with log.Print
+		// (design D1 row "SDK error text", A29).
+		reportSDKError(sanitizeSDKError(err))
 		return
 	}
 	target.Handle(err)

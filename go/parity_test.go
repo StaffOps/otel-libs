@@ -478,6 +478,8 @@ func codeOptions(code map[string]any, recv *fakeReceiver) ([]Option, []string) {
 		intOpt := map[string]func(int) Option{
 			"export_timeout_ms":  WithExportTimeout,
 			"export_interval_ms": WithExportInterval,
+			// A29 fix round (obs L7): code beats OTEL_EXPORTER_PROMETHEUS_PORT.
+			"prometheus_metrics_port": WithPrometheusMetricsPort,
 		}
 		if f, ok := strOpt[k]; ok {
 			if s, ok := str(); ok {
@@ -633,6 +635,7 @@ func runResolve(opts []Option) map[string]any {
 	snap["metric_export_interval_ms"] = float64(o.metricIntervalMs)
 	snap["log_level"] = DefaultLogLevel(o.Environment, o.DebugLevel).String()
 	snap["prometheus_metrics_port"] = float64(o.PrometheusMetricsPort)
+	snap["prometheus_metrics_host"] = o.prometheusHost // "" = every interface (A29)
 	return snap
 }
 

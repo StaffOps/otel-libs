@@ -717,6 +717,18 @@ script returns while a client holds half a request: it exits in under 2 s);
 `mergedLabels` (contract D1 row "Colliding label names") and the scope labels
 are written by the helper; names follow the contract D1 row "Suffix
 semantics".*
+*Amended 2026-11-05 (contract task A29, design D1 rows "Prometheus exporter
+variables" and "Path on a gRPC endpoint"):* the port is `prometheusMetricsPort`
+> `OTEL_EXPORTER_PROMETHEUS_PORT` > `OTEL_HELPER_METRICS_PORT` > 9464
+(`resolveMetricsPort`), and `OTEL_EXPORTER_PROMETHEUS_HOST` sets the listen
+host (`resolveMetricsHost`, `Resolved.prometheusMetricsHost`; `''` keeps the
+host omitted, as above). `@opentelemetry/exporter-prometheus` 0.300.0 reads
+neither variable (`dist/PrometheusExporter.cjs:44-45` takes `config.host` /
+`config.port` only) and its server is never started (`preventServerStart`),
+so only the helper's resolution applies. A path on a gRPC endpoint warns once per
+variable in `otlp.ts` (`endpoint path is ignored by the gRPC exporter`). The
+SDK error text rule of the same task is the B14 DiagLogger behavior above,
+unchanged.*
 
 ### D-JS9 — Semconv opt-in
 **Choice**: helper parses `OTEL_SEMCONV_STABILITY_OPT_IN` (default

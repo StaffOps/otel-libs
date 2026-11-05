@@ -454,6 +454,7 @@ return an error naming the option.
 | Generic endpoint | `/v1/traces`, `/v1/metrics`, `/v1/logs` appended for http/protobuf, keeping any path prefix (`http://c:4318/otlp` → `/otlp/v1/traces`) |
 | Per-signal endpoint | Used verbatim (no path appended) |
 | Schemeless `host:port` | Becomes `https://` (`http://` only with `INSECURE=true`), default port 4317 (gRPC) / 4318 (HTTP). For http/protobuf it is deprecated (warned once) |
+| gRPC endpoint with a path | The path is ignored (gRPC dials `host:port`) and warned once per variable, naming the variable only — `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://c:4317/v1/traces` exports to `c:4317`. A bare `/` is not a path; a code endpoint warns too and does not fail `Setup` (A29) |
 | URL without port | http/protobuf: scheme default 443 / 80. gRPC: `:4317` + warning "set an explicit port" ([D1.b](https://github.com/StaffOps/otel-libs/blob/main/specs/config-contract-v0.3/design.md#decision-d1b-portless-grpc-urls-keep-4317-reversed)) |
 | Unsupported scheme (`unix://`, `ftp://`, `unix:/path`) | Warned; the signal is **not exported** (also when a valid generic endpoint exists) |
 | Unparseable / empty-host per-signal endpoint | Warned as `<unparseable URL>` (never a partial rendering); falls back to the generic endpoint. Code values fail `Setup` |
@@ -586,6 +587,21 @@ rdb := redis.NewClient(&redis.Options{
 With no metrics endpoint, metrics are served on `:9464/metrics`
 (`OTEL_HELPER_METRICS_PORT`) for Prometheus/VictoriaMetrics to scrape.
 
+The standard `OTEL_EXPORTER_PROMETHEUS_PORT` beats `OTEL_HELPER_METRICS_PORT`
+(`WithPrometheusMetricsPort` / `WithoutMetricsListener` still win; `0` = no
+listener), and `OTEL_EXPORTER_PROMETHEUS_HOST` sets the bind address — an IP
+literal or `localhost` (`127.0.0.1`). Unset binds every interface, not the
+spec default `localhost`, so a scraper in another pod reaches it. Neither
+variable turns the listener on: that still takes the `prometheus` exporter
+(A29):
+
+```bash
+OTEL_EXPORTER_PROMETHEUS_HOST=127.0.0.1   # a sidecar scraper on loopback only
+OTEL_EXPORTER_PROMETHEUS_PORT=9100
+```
+
+An address the host does not own fails `Setup` like a busy port.
+
 ### Selecting exporters
 
 | `OTEL_METRICS_EXPORTER` | Behavior |
@@ -663,10 +679,15 @@ OTEL_EXPORTER_OTLP_CERTIFICATE=/etc/ssl/collector-ca.pem
 The helper's own warnings never print header values, TLS file paths or URL
 userinfo/query. The OTel Go SDK, however, still parses some `OTEL_EXPORTER_OTLP_*`
 values itself and reports problems through its global logger
-(`otel.SetLogger` / `otel.Handle`), which can echo the raw value — for example a
-malformed `OTEL_EXPORTER_OTLP_HEADERS` item. The helper does not rewrite
-environment variables, so keep header values well-formed and route the SDK
-logger accordingly if your logs leave the pod.
+(`otel.SetLogger`, stderr by default), which can echo the raw value: a
+malformed `OTEL_EXPORTER_OTLP_HEADERS` item or a value with a bad `%` escape is
+printed whole when the exporter is built (`envconfig.go:166,181`, all four
+exporters), and so is an endpoint value the SDK cannot parse (a schemeless
+value with a path). Errors the SDK hands to `otel.Handle` are sanitized since
+A29 ([SDK errors](#sdk-errors-response-bodies-and-header-values)); this logger
+is not. The helper does not rewrite environment variables, so keep header
+values well-formed and route the SDK logger accordingly if your logs leave the
+pod ([README known gaps](https://github.com/StaffOps/otel-libs/blob/main/README.md#known-emitted-telemetry-gaps)).
 
 ---
 
@@ -713,6 +734,44 @@ For a local plaintext Collector use `OTEL_EXPORTER_OTLP_ENDPOINT=http://localhos
 
 Inspecting what is sent: `OTEL_TRACES_EXPORTER=otlp,console` (and the same for
 logs/metrics) prints every item on stdout as well.
+
+### SDK errors: response bodies and header values
+
+A failed OTLP/HTTP export puts the Collector's (or a proxy's) whole response
+body in the SDK error, and some proxies echo the request — headers included —
+or only the credential ("invalid token <token>"). `Setup` installs an OTel
+error handler that drops the body (`body: <response body omitted: N bytes>`)
+and masks, as `<redacted>`, the values of `OTEL_EXPORTER_OTLP_HEADERS` and the
+per-signal `_HEADERS` variables **and each space-separated part of them** (the
+token of `Bearer <token>`) of 4 characters or more — as written, JSON-escaped,
+HTML-escaped by Go's `encoding/json`, form-encoded and `strconv.Quote`d — in
+every SDK error, gRPC status text included (A29). Any configured value of 4+
+characters is masked wherever it appears: a value `prod` also masks `prod` in a
+host name.
+
+The error a handler receives is a **sanitized chain**: every level of
+`errors.Unwrap` has its own sanitized text, so walking the causes never reaches
+the body or a header value. `errors.Is` keeps working (it checks the original
+chain); `status.FromError` returns the original code with the sanitized text
+and no details; `errors.As` fails for **every** typed error of the original
+chain — the SDK's and standard-library ones such as `*url.Error` — because they
+hold the raw text: only `errors.Is` and the gRPC status are preserved. An
+error carrying gRPC status details is always rewrapped, so the details never
+reach your handler. The values masked are those `Setup` built the exporters
+with plus the variables' current values: deleting `OTEL_EXPORTER_OTLP_HEADERS`
+after `Setup` does not unmask what is still sent.
+
+| Your handler | What happens |
+|---|---|
+| None | The helper writes `otelhelper: OpenTelemetry SDK error` (ERROR) on its stderr logger, never `log.Print` |
+| `otel.SetErrorHandler(h)` **before** `Setup` | The helper wraps `h`: it receives the sanitized chain |
+| `otel.SetErrorHandler(h)` **after** `Setup` | `h` replaces the helper's handler (last writer wins) and receives the **raw** errors, body included — set it before `Setup`. No sanitizer is exported |
+| `Shutdown` | Puts back the handler `Setup` found, unless another one was set meanwhile. The error `Shutdown` returns is sanitized the same way. When the helper's was the first handler of the process, the SDK's default delegator keeps forwarding to it after `Shutdown` (still sanitized) |
+
+Install and restore are not atomic: an `otel.SetErrorHandler` call racing
+`Setup` or `Shutdown` can be overwritten — set your handler before `Setup`.
+The SDK's internal logger (`otel.SetLogger`) is not filtered: see
+[SDK log output of raw env values](#sdk-log-output-of-raw-env-values).
 
 ---
 

@@ -90,13 +90,13 @@ back to the generic one, then to the default.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | _(unset)_ | Generic Collector endpoint, `http(s)://host:port[/prefix]` (or deprecated-for-HTTP schemeless `host:port`). `/v1/<signal>` is appended for http/protobuf. **Unset = that signal is not exported** (see [No OTLP endpoint](#when-no-otlp-endpoint-is-configured)) |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | _(unset)_ | Generic Collector endpoint, `http(s)://host:port[/prefix]` (or deprecated-for-HTTP schemeless `host:port`). `/v1/<signal>` is appended for http/protobuf. **Unset = that signal is not exported** (see [No OTLP endpoint](#when-no-otlp-endpoint-is-configured)). gRPC: a path (other than `/`) is ignored and warned once, naming the variable only — `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://c:4317/v1/traces` sends to `c:4317` (A29). |
 | `OTEL_EXPORTER_OTLP_<SIGNAL>_ENDPOINT` | _(unset)_ | Per-signal endpoint, used verbatim; configures OTLP for that signal alone |
 | `OTEL_EXPORTER_OTLP[_<SIGNAL>]_PROTOCOL` | `grpc` | `grpc` or `http/protobuf`. Unset: port `4318` on that signal's endpoint infers `http/protobuf`. `http/json` is warned and ignored |
 | `OTEL_EXPORTER_OTLP[_<SIGNAL>]_INSECURE` | _(unset)_ | `true` = plaintext for **schemeless** endpoints only; with `http://`/`https://` the scheme decides and a contradicting value is warned and ignored |
 | `OTEL_EXPORTER_OTLP[_<SIGNAL>]_CERTIFICATE` | _(unset)_ | CA bundle for TLS (read by the SDK) |
 | `OTEL_EXPORTER_OTLP[_<SIGNAL>]_CLIENT_CERTIFICATE` / `_CLIENT_KEY` | _(unset)_ | mTLS client certificate and key (read by the SDK); ignored with a warning on a plaintext endpoint |
-| `OTEL_EXPORTER_OTLP[_<SIGNAL>]_HEADERS` | _(unset)_ | `key=value,key2=value2`; values percent-decoded. Use it for auth (`Authorization=Basic%20<base64>`) |
+| `OTEL_EXPORTER_OTLP[_<SIGNAL>]_HEADERS` | _(unset)_ | `key=value,key2=value2`; values percent-decoded. Use it for auth (`Authorization=Basic%20<base64>`). Values of 4 characters or more, and each space-separated part of 4 or more (the token of `Bearer <token>`), are masked as `<redacted>` in SDK error text; the helper's OTel error handler also drops OTLP/HTTP response bodies (A29, [HOW-TO](HOW-TO.md#sdk-errors-response-bodies-and-header-values)). The Go SDK's own internal logger can still print a malformed item when the exporter is built (README [known gaps](https://github.com/StaffOps/otel-libs/blob/main/README.md#known-emitted-telemetry-gaps)). |
 | `OTEL_EXPORTER_OTLP[_<SIGNAL>]_TIMEOUT` | SDK `10000` | Export timeout in **milliseconds**, clamped to [1 ms, 24 h] |
 | `OTEL_EXPORTER_OTLP[_<SIGNAL>]_COMPRESSION` | `gzip` | `gzip` or `none` (case-insensitive) |
 
@@ -119,7 +119,9 @@ back to the generic one, then to the default.
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `OTEL_HELPER_DEBUG_LEVEL` | `false` | `true`: DEBUG log level **and** `debug=true` on entry spans ([Debug mode](HOW-TO.md#6-debug-mode)) |
-| `OTEL_HELPER_METRICS_PORT` | `9464` | Port of the standalone Prometheus `/metrics` listener (dual-stack, `GET`/`HEAD /metrics` only: other paths 404, other methods 405); ASCII digits with an optional `+`, in [0, 65535], anything else warns and uses 9464; `0` = no listener (mount `MetricsHandler()` yourself) |
+| `OTEL_EXPORTER_PROMETHEUS_PORT` | _(unset)_ | Standalone `/metrics` listener port; beats `OTEL_HELPER_METRICS_PORT`, code (Go: `WithPrometheusMetricsPort` / `WithoutMetricsListener`) still wins. Same grammar; `0` = no listener; invalid → warned, next level (A29) |
+| `OTEL_EXPORTER_PROMETHEUS_HOST` | every interface | Listener bind address: an IPv4/IPv6 literal (brackets allowed, no zone id) or `localhost` (= `127.0.0.1`); `::` = every interface. Unset binds every interface — **not** the spec default `localhost`, so other pods can scrape. Other values (host names, `*`) are warned and every interface is used; no code option (A29) |
+| `OTEL_HELPER_METRICS_PORT` | `9464` | Port of the standalone Prometheus `/metrics` listener (dual-stack, `GET`/`HEAD /metrics` only: other paths 404, other methods 405); ASCII digits with an optional `+`, in [0, 65535], anything else warns and uses 9464; `0` = no listener (mount `MetricsHandler()` yourself). Used when `OTEL_EXPORTER_PROMETHEUS_PORT` is unset or invalid. |
 | `OTEL_HELPER_DISABLED_METRICS` | _(unset)_ | Comma list of patterns (`http.server.*`), each a case-sensitive glob on the instrument name (`*` any run of characters, `.` and `/` included; `?` one character; everything else literal, no `[...]` classes); items trimmed, blank items ignored; matching instruments are dropped from every exporter |
 | `OTEL_HELPER_SAMPLE_RATIO` | _(unset)_ | **Deprecated** (warns once): ratio in [0, 1] → `ParentBased(TraceIDRatioBased(x))`, only while `OTEL_TRACES_SAMPLER` is unset. Use `OTEL_TRACES_SAMPLER=parentbased_traceidratio` + `_ARG` |
 | `OTEL_HELPER_DISABLED_SIGNALS` | _(unset)_ | **Deprecated** (warns once): `traces`, `metrics`, `logs`. Use `OTEL_<SIGNAL>_EXPORTER=none`. Ignored for a signal whose `OTEL_<SIGNAL>_EXPORTER` holds a valid entry, and for metrics when `WithMetricExporters` is used; unknown entries warn once |

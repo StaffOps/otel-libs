@@ -50,7 +50,8 @@ logs as JSON on stdout, traces not exported.
 2. **Everything via the Collector** — the SDK exports OTLP to the Collector,
    never directly to backends. One exception: with no OTLP endpoint, or when
    `OTEL_METRICS_EXPORTER` includes `prometheus`, metrics are served on
-   `/metrics` (port 9464, `OTEL_HELPER_METRICS_PORT`)
+   `/metrics` (port 9464, `OTEL_EXPORTER_PROMETHEUS_PORT` or
+   `OTEL_HELPER_METRICS_PORT`)
    ([ADR-007](https://github.com/StaffOps/otel-libs/blob/main/specs/decisions/ADR-007-keep-prometheus-in-core.md)).
 3. **Sampling at the Collector** — tail sampling at the gateway. The SDK
    default is `parentbased_always_on`
@@ -168,11 +169,11 @@ rulings are in [design D1](https://github.com/StaffOps/otel-libs/blob/main/specs
 
 | Variable | Default | Behavior |
 |----------|---------|----------|
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | _(unset)_ | Collector endpoint. Unset (and no per-signal endpoint) → that signal is not exported over OTLP: metrics fall back to Prometheus `/metrics`, logs to stdout JSON. HTTP: `/v1/<signal>` appended, path prefix kept, no port → 443/80. gRPC URL without a port → `:4317` + warning. Schemeless `host:port` → `https://` (deprecated for `http/protobuf`) |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | _(unset)_ | Collector endpoint. Unset (and no per-signal endpoint) → that signal is not exported over OTLP: metrics fall back to Prometheus `/metrics`, logs to stdout JSON. HTTP: `/v1/<signal>` appended, path prefix kept, no port → 443/80. gRPC URL without a port → `:4317` + warning. gRPC: a path (other than `/`) is ignored, warned once naming the variable, never the path; per-signal and code endpoints too (A29). Schemeless `host:port` → `https://` (deprecated for `http/protobuf`) |
 | `OTEL_EXPORTER_OTLP_<SIGNAL>_ENDPOINT` | _(unset)_ | Used verbatim for `TRACES`, `METRICS`, `LOGS`; alone, it configures that signal |
 | `OTEL_EXPORTER_OTLP[_<SIGNAL>]_PROTOCOL` | port inference | `grpc` or `http/protobuf`. Unset → `http/protobuf` when the resolved endpoint's port is `4318`, else `grpc`. `http/json` from env warns and is ignored |
 | `OTEL_EXPORTER_OTLP[_<SIGNAL>]_INSECURE` | _(unset)_ | Only for schemeless endpoints: `true` → plaintext. Contradicting an explicit scheme → the scheme wins, warned. Values other than `true` are false (warned if not `false`) |
-| `OTEL_EXPORTER_OTLP[_<SIGNAL>]_HEADERS` | _(unset)_ | `key=value,…`; keys `[A-Za-z0-9._-]+` (lowercased, last wins), values percent-decoded; malformed items skipped and warned by position. Put credentials here, not in the URL (userinfo/query are stripped) |
+| `OTEL_EXPORTER_OTLP[_<SIGNAL>]_HEADERS` | _(unset)_ | `key=value,…`; keys `[A-Za-z0-9._-]+` (lowercased, last wins), values percent-decoded; malformed items skipped and warned by position. Put credentials here, not in the URL (userinfo/query are stripped). Their values, and each space-separated part of them (the token of `Bearer <token>`), of 4 characters or more are masked as `<redacted>` in SDK error text, and Go drops OTLP/HTTP response bodies from it (A29: a collector or proxy echoing the request no longer puts them in the log). Exception: the Go SDK's own internal logger can print a malformed item at startup ([known gaps](#known-emitted-telemetry-gaps)) |
 | `OTEL_EXPORTER_OTLP[_<SIGNAL>]_TIMEOUT` | `10000` | Milliseconds, plain decimal, clamped to [1 ms, 24 h] |
 | `OTEL_EXPORTER_OTLP[_<SIGNAL>]_COMPRESSION` | `gzip` | `gzip` or `none` (case-insensitive) |
 | `OTEL_EXPORTER_OTLP[_<SIGNAL>]_CERTIFICATE`, `_CLIENT_CERTIFICATE`, `_CLIENT_KEY` | _(unset)_ | Custom CA / mTLS (SDK). Ignored with a warning on a plaintext endpoint |
@@ -184,6 +185,8 @@ rulings are in [design D1](https://github.com/StaffOps/otel-libs/blob/main/specs
 | `OTEL_SDK_DISABLED` | `false` | `true` → no providers, exporters, `/metrics` listener or log handlers; propagators still installed |
 | `OTEL_TRACES_EXPORTER`, `OTEL_LOGS_EXPORTER` | `otlp` when configured | `otlp`, `console`, `none` (or a list); `logging` = deprecated `console` (env only: in code `logging` is an unknown exporter and fails). Wins over `OTEL_HELPER_DISABLED_SIGNALS` for its signal |
 | `OTEL_METRICS_EXPORTER` | OTLP if an endpoint is configured, else `prometheus` | `otlp`, `prometheus`, `otlp,prometheus`, `console`, `none`. Env `otlp` without an endpoint warns and falls back |
+| `OTEL_EXPORTER_PROMETHEUS_PORT` | _(unset)_ | Port of the standalone `/metrics` listener, beats `OTEL_HELPER_METRICS_PORT` (code still wins). Same grammar; `0` = no listener (not an ephemeral port); invalid → warned, next level (A29) |
+| `OTEL_EXPORTER_PROMETHEUS_HOST` | every interface | Bind address of the listener: an IPv4 or IPv6 literal (brackets allowed, no zone id) or `localhost` (= `127.0.0.1`); `::` = every interface. **Unset binds every interface, not the spec default `localhost`**, so other pods can scrape it. Another value (a host name, `*`) is warned and **every interface** is used — wider than the restriction it was meant to set (owner decision). Never turns the listener on by itself (A29) |
 | `OTEL_METRIC_EXPORT_INTERVAL` | `30000` | Milliseconds (helper default 30 s; SDK default 60 s): ASCII digits with an optional `+` (any length), > 0, else warned and the default; above 2 147 483 647 clamped with a warning. A code interval outside [1, 2 147 483 647] fails |
 | `OTEL_CONFIG_FILE`, `OTEL_EXPERIMENTAL_CONFIG_FILE` | _(unset)_ | Declarative configuration is **not supported**: set, it is ignored with one warning per process naming the variable (never the path); `OTEL_EXPERIMENTAL_CONFIG_FILE` is the deprecated name |
 | `OTEL_TRACES_SAMPLER` / `OTEL_TRACES_SAMPLER_ARG` | `parentbased_always_on` | The six spec samplers (ASCII case-insensitive). Unknown names warn and use the default. With services in several languages use `parentbased_traceidratio`, not bare `traceidratio`: the SDKs (Node.js and .NET in particular) derive the ratio decision from the trace id differently, so bare ratio decisions are not consistent across a trace |
@@ -195,7 +198,7 @@ rulings are in [design D1](https://github.com/StaffOps/otel-libs/blob/main/specs
 | Variable | Default | Behavior |
 |----------|---------|----------|
 | `OTEL_HELPER_DEBUG_LEVEL` | `false` | Debug log level and `debug=true` on entry spans (no parent or a remote parent) for Collector tail-sampling policies ([ADR-006](https://github.com/StaffOps/otel-libs/blob/main/specs/decisions/ADR-006-debug-span-attribute.md)); the Collector policy needs an environment allow-list and a rate limit ([prerequisites](#collector-and-platform-prerequisites)). Python debug mode also turns on every installed `ext` instrumentor (SQL, Redis, AWS). Do not leave on in production |
-| `OTEL_HELPER_METRICS_PORT` | `9464` | Standalone Prometheus `/metrics` listener port: ASCII digits with an optional `+`, in [0, 65535] (else warned, 9464); dual-stack, `GET`/`HEAD /metrics` only. `0` disables the listener (the mountable handler keeps working) |
+| `OTEL_HELPER_METRICS_PORT` | `9464` | Standalone Prometheus `/metrics` listener port when `OTEL_EXPORTER_PROMETHEUS_PORT` is unset or invalid: ASCII digits with an optional `+`, in [0, 65535] (else warned, 9464); dual-stack, `GET`/`HEAD /metrics` only. `0` disables the listener (the mountable handler keeps working) |
 | `OTEL_HELPER_DISABLED_METRICS` | _(unset)_ | Comma list of case-sensitive instrument-name globs to drop from every exporter: `*` any run of characters, `?` one character, everything else literal |
 | `OTEL_HELPER_SAMPLE_RATIO` | `1.0` | **Deprecated** → `OTEL_TRACES_SAMPLER=parentbased_traceidratio` + `OTEL_TRACES_SAMPLER_ARG`. Used only while `OTEL_TRACES_SAMPLER` is unset; builds `ParentBased(TraceIdRatioBased(x))`; a value that is not a plain decimal in [0, 1] warns and is ignored |
 | `OTEL_HELPER_DISABLED_SIGNALS` | _(unset)_ | **Deprecated** → `OTEL_{TRACES,METRICS,LOGS}_EXPORTER=none`. A signal whose `OTEL_<SIGNAL>_EXPORTER` holds a valid entry (`none` included; only unknown entries count as unset) is not disabled by it, nor are metrics when code sets the metric exporters; unknown entries warn once |
@@ -251,7 +254,7 @@ lightweight. Node.js also ships its pino and winston log destinations as
 ## Cross-language parity
 
 Parity is enforced, not promised. [`parity/cases.json`](https://github.com/StaffOps/otel-libs/blob/main/parity/cases.json) is a
-hand-maintained, language-neutral fixture (324 cases: 187 after A13, 17 added by the Node B3 review, 6 by A16, 40 by Node B4a and its rulings, 16 by A17, 2 by Node B4b, 13 by A18, 14 by A19 and its fix round, 1 by Node B5, 5 by A20, 3 by Node B7, 11 by A21, 6 by the B7/A21 fix rounds, 2 by A22 from the Node B6 fix round, 1 by A23 from Node B8)
+hand-maintained, language-neutral fixture (342 cases: 187 after A13, 17 added by the Node B3 review, 6 by A16, 40 by Node B4a and its rulings, 16 by A17, 2 by Node B4b, 13 by A18, 14 by A19 and its fix round, 1 by Node B5, 5 by A20, 3 by Node B7, 11 by A21, 6 by the B7/A21 fix rounds, 2 by A22 from the Node B6 fix round, 1 by A23 from Node B8, 18 by A29)
 that every language's test suite runs — config resolution, wire-level export
 against a fake OTLP receiver, sampling, propagation, health exclusion, logging
 and `/metrics` status
@@ -293,7 +296,10 @@ always identical:
 | Node.js AWS spans | No `server.address` / `server.port` (the contrib does not see the endpoint; Python writes them). The legacy `rpc.*` keys as Python (row above) |
 | Node.js runtime metrics and exemplars | Node.js emits no runtime metrics (Go `go.*`, Python `system.*` / `process.*`) and its metric points carry no exemplars (`@opentelemetry/sdk-metrics` 3.0 exports no exemplar filter) |
 | Go Redis pool metrics keep `db_system` | With `OTEL_SEMCONV_STABILITY_OPT_IN=database` (without `/dup`) Go `ext/otelredis` drops the legacy `db.system` from spans, but its pool metrics (`db_client_connections_*`) keep `db_system="redis"`: redisotel adds it to the metric attributes and Go has no meter wrapper ([design D1](https://github.com/StaffOps/otel-libs/blob/main/specs/config-contract-v0.3/design.md), "Database semconv opt-in") |
-| .NET | Still on the 0.2.x contract and instrumentation set until Phase C ([differences](#net-02x-differences)) |
+| Go application error handler set after `Setup` | The helper's OTel error handler (drops OTLP/HTTP response bodies, masks the configured header values) wraps a handler installed **before** `Setup`; it receives a sanitized chain (`errors.Is` and `status.FromError` work; `errors.As` fails for every typed error of the chain, `*url.Error` included). `otel.SetErrorHandler` called **after** `Setup` replaces it (last writer wins), and that handler receives the raw SDK errors, body included. No sanitizer is exported (owner decision) ([Go HOW-TO](go/HOW-TO.md#sdk-errors-response-bodies-and-header-values), design D1 "SDK error text", A29) |
+| Go SDK internal logger | The Go OTLP exporters parse `OTEL_EXPORTER_OTLP_*` again when they are built and report problems through the SDK's own logger (`otel.SetLogger`, stderr by default), outside the helper's masking: a malformed `OTEL_EXPORTER_OTLP_HEADERS` item or a value with a bad `%` escape is printed whole (`envconfig.go:166,181`), and so is an endpoint value it cannot parse (a schemeless value with a path). Keep header values well formed ([design D1](https://github.com/StaffOps/otel-libs/blob/main/specs/config-contract-v0.3/design.md), "SDK's own log output of env values") |
+| SDK error text redaction depth | Every language drops response bodies (Go by its handler; Python's exporters never log one; Node.js by `withoutResponseBodies`) and masks the configured OTLP header values. Node.js also applies pattern-based redaction (credential-named `key=value` pairs, `Cookie`, URL userinfo) to forwarded SDK text; Go and Python mask only the configured values, so a credential the helper was not given is printed as the SDK wrote it |
+| .NET | Still on the 0.2.x contract and instrumentation set until Phase C ([differences](#net-02x-differences)); the Prometheus variables, the gRPC path warning and the SDK error text rule (A29) land in Phase C (C12, C7b, C8) |
 
 ## Collector and platform prerequisites
 

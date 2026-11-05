@@ -19,7 +19,7 @@ from staffops_otel_helper._diag import warn_once_per_process
 from staffops_otel_helper._exporters import build_otlp_exporter
 from prometheus_client import CollectorRegistry
 
-from staffops_otel_helper.config import TelemetryOptions, _truncate
+from staffops_otel_helper.config import ENV_PROMETHEUS_HOST, ENV_PROMETHEUS_PORT, TelemetryOptions, _truncate
 
 _logger = logging.getLogger(__name__)
 
@@ -252,7 +252,18 @@ class _ListenerHandler(BaseHTTPRequestHandler):
 
 
 class _QuietErrors:
-    """Logs a request that failed in the server machinery on the helper logger, not as a stderr traceback."""
+    """Logs a request that failed in the server machinery on the helper logger, not as a stderr traceback.
+
+    Also binds without ``HTTPServer.server_bind``'s ``socket.getfqdn(host)``: a reverse DNS
+    lookup at setup for an ``OTEL_EXPORTER_PROMETHEUS_HOST`` address (A29 fix round, obs L4).
+    """
+
+    def server_bind(self) -> None:
+        import socketserver
+
+        socketserver.TCPServer.server_bind(self)  # type: ignore[arg-type]
+        host, port = self.server_address[:2]  # type: ignore[attr-defined]
+        self.server_name, self.server_port = str(host), port
 
     def handle_error(self, request, client_address) -> None:
         import sys
@@ -275,8 +286,16 @@ class _IPv4Server(_QuietErrors, ThreadingHTTPServer):
     daemon_threads = True
 
 
-def _start_listener(port: int):
-    """Binds the listener: dual-stack, else IPv4 when the platform has no IPv6.
+class _IPv6Server(_QuietErrors, ThreadingHTTPServer):
+    """One IPv6 address (``OTEL_EXPORTER_PROMETHEUS_HOST``)."""
+
+    address_family = socket.AF_INET6
+    daemon_threads = True
+
+
+def _start_listener(port: int, host: str = ""):
+    """Binds the listener: on ``host`` when set (OTEL_EXPORTER_PROMETHEUS_HOST, A29), else
+    dual-stack, else IPv4 when the platform has no IPv6.
 
     A port in use is never retried on IPv4 (it would bind only half the address space).
     Returns ``(server, thread)`` (the shape :func:`stop_listener` takes).
@@ -284,7 +303,9 @@ def _start_listener(port: int):
     import errno
 
     server = None
-    if socket.has_ipv6:
+    if host:
+        server = (_IPv6Server if ":" in host else _IPv4Server)((host, port), _ListenerHandler)
+    elif socket.has_ipv6:
         try:
             server = _DualStackServer(("::", port), _ListenerHandler)
         except OSError as e:
@@ -349,12 +370,26 @@ def metrics_app() -> _MetricsASGIApp:
     ``app.mount("/metrics", metrics_app())`` also works, but Starlette then
     answers ``GET /metrics`` with a 307 redirect to ``/metrics/``.
 
-    Combine with OTEL_HELPER_METRICS_PORT=0 to suppress the standalone listener.
+    Combine with OTEL_EXPORTER_PROMETHEUS_PORT=0 (or OTEL_HELPER_METRICS_PORT=0, or
+    ``prometheus_metrics_port=0``) to suppress the standalone listener.
     Without an active Prometheus reader it answers 503 (before setup, after a
     failed setup, after shutdown_telemetry()) or, when setup deliberately left
     Prometheus off, 200 with an empty body.
     """
     return _MetricsASGIApp()
+
+
+def _bind_hint(options) -> str:
+    """Names what set the port and host (A29 fix round, M1): the standard variable now
+    outranks OTEL_HELPER_METRICS_PORT, so the cure must name the one that applied."""
+    source = options._effective.get("prometheus_metrics_port_source", "")
+    off = ("prometheus_metrics_port=0" if source == "prometheus_metrics_port"
+           else f"{source or ENV_PROMETHEUS_PORT}=0")
+    hint = ""
+    if options.resolved.prometheus_metrics_host:
+        hint = f"{ENV_PROMETHEUS_HOST} sets the address: is it an address of this host? "
+    return (f"{hint}If another process (or worker) owns the port, mount staffops_otel_helper.metrics_app() "
+            f"on your app and set {off} to disable the standalone listener.")
 
 
 def stop_listener(listener) -> None:
@@ -409,18 +444,16 @@ def build_metrics(resource: Resource, options: TelemetryOptions):
             # A foreign global MeterProvider will keep the helper's provider off (setup warns at install):
             # bind nothing, so a busy port cannot fail setup for a listener that would be stopped anyway.
             if options.resolved.prometheus_metrics_port > 0 and not foreign_meter_provider():
+                host = options.resolved.prometheus_metrics_host
+                where = f"{host or 'every interface'}, port {options.resolved.prometheus_metrics_port}"
                 try:
-                    listener = _start_listener(options.resolved.prometheus_metrics_port)
+                    listener = _start_listener(options.resolved.prometheus_metrics_port, host)
                 except OSError as e:
-                    raise RuntimeError(
-                        f"[OtelHelper] Could not bind the /metrics listener on port "
-                        f"{options.resolved.prometheus_metrics_port}: {e}. If another process (or worker) owns "
-                        "the port, mount staffops_otel_helper.metrics_app() on your app and set "
-                        "OTEL_HELPER_METRICS_PORT=0 to disable the standalone listener."
-                    ) from e
+                    raise RuntimeError(f"[OtelHelper] Could not bind the /metrics listener on {where}: {e}. "
+                                       f"{_bind_hint(options)}") from e
                 _logger.info(
-                    "OTel Prometheus exporter: metrics available on port %d at /metrics",
-                    options.resolved.prometheus_metrics_port,
+                    "OTel Prometheus exporter: metrics available on %s, port %d at /metrics",
+                    host or "every interface", options.resolved.prometheus_metrics_port,
                 )
             else:
                 _logger.info(

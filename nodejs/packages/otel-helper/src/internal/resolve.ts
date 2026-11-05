@@ -20,7 +20,7 @@ import { checkCodeOtlp, resolveOtlp, type OtlpHeaders, type OtlpPlan, type Repor
 import type { Signal } from './otlp-settings';
 import { resolveSdkSettings, type SdkSettings } from './sdk-settings';
 import { checkCodeSignals, resolveSignals, type MetricExporterName, type SpanLogExporterName } from './signals';
-import { checkCodeDisabledMetrics, checkCodeMetricsPort, resolveDisabledMetrics, resolveMetricsPort } from './metrics-endpoint';
+import { checkCodeDisabledMetrics, checkCodeMetricsPort, resolveDisabledMetrics, resolveMetricsHost, resolveMetricsPort } from './metrics-endpoint';
 import { defaultLogLevel, knownEnvironment, LOG_LEVELS, type LogLevel } from './log-level';
 import { parseResourceAttributes } from './resource-attributes';
 import { checkCodeTracing, DEFAULT_HEALTH_PATHS, DEFAULT_SAMPLER, ENV_SAMPLE_RATIO, resolvePropagators, resolveSampler, type PropagatorName, type SamplerConfig } from './tracing';
@@ -203,10 +203,16 @@ export interface Resolved {
   readonly metricExportIntervalMs: number;
   /**
    * Port of the `/metrics` listener (`prometheusMetricsPort` >
-   * `OTEL_HELPER_METRICS_PORT` > 9464; `0` = none). Used only while
-   * `metricExporters` holds `prometheus`.
+   * `OTEL_EXPORTER_PROMETHEUS_PORT` > `OTEL_HELPER_METRICS_PORT` > 9464;
+   * `0` = none). Used only while `metricExporters` holds `prometheus`.
    */
   readonly prometheusMetricsPort: number;
+  /**
+   * Bind address of the `/metrics` listener (`OTEL_EXPORTER_PROMETHEUS_HOST`;
+   * `''` = every interface; contract design D1 row "Prometheus exporter
+   * variables", A29).
+   */
+  readonly prometheusMetricsHost: string;
   /** Disabled-metric globs (`disabledMetrics` > `OTEL_HELPER_DISABLED_METRICS`), trimmed, blanks dropped. */
   readonly disabledMetrics: readonly string[];
   /**
@@ -602,6 +608,7 @@ export function resolvePlan(options: SetupOptions, defaultServiceName: string, q
   const sampler = signals.sdkDisabled ? DEFAULT_SAMPLER : resolveSampler(options, reporter.warn);
   const propagators = resolvePropagators(reporter.warn);
   const prometheusMetricsPort = resolveMetricsPort(options.prometheusMetricsPort, reporter.warn);
+  const prometheusMetricsHost = resolveMetricsHost(reporter.warn);
 
   const resolved: Resolved = Object.freeze({
     serviceName,
@@ -616,6 +623,7 @@ export function resolvePlan(options: SetupOptions, defaultServiceName: string, q
     logsExporters: signals.logsExporters,
     metricExportIntervalMs: signals.metricExportIntervalMs,
     prometheusMetricsPort,
+    prometheusMetricsHost,
     disabledMetrics: resolveDisabledMetrics(options.disabledMetrics),
     sampler,
     propagators,

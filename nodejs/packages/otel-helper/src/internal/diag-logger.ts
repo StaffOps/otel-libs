@@ -8,7 +8,7 @@
 import { formatWithOptions } from 'node:util';
 import { diag, DiagLogLevel, type DiagLogger } from '@opentelemetry/api';
 import { maskLiterals, REDACT_SCAN_LIMIT, redactText, report, truncateValue } from './diagnostics';
-import { asciiUpper, envValue } from './env';
+import { asciiUpper, envValue, trimWS } from './env';
 import type { DiagnosticLevel } from './key';
 import { otlpEnv, parseHeaders, type Signal } from './otlp-settings';
 
@@ -133,27 +133,51 @@ export function messageWithoutResponseBody(message: string): string {
 }
 
 const HEADER_VARIABLES: readonly string[] = [undefined, ...SIGNALS].map((signal) => otlpEnv(signal, 'HEADERS'));
-let headerCache: { readonly raws: readonly (string | undefined)[]; readonly values: ReadonlySet<string> } | undefined;
+let headerCache:
+  | { readonly raws: readonly (string | undefined)[]; readonly captured: ReadonlySet<string>; readonly values: ReadonlySet<string> }
+  | undefined;
+// The values the exporters were built with (captureHeaderValues, at setup).
+let captured: ReadonlySet<string> = new Set();
 
-/**
- * The configured OTLP header values (`OTEL_EXPORTER_OTLP_HEADERS` and the
- * per-signal variables), raw and decoded: they are masked literally in
- * forwarded text. Never logged. Re-parsed only when one of the raw variables
- * changed (memoized on their values).
- */
-export function configuredHeaderValues(): ReadonlySet<string> {
-  const raws = HEADER_VARIABLES.map((variable) => process.env[variable]);
-  if (headerCache !== undefined && raws.every((raw, i) => raw === headerCache?.raws[i])) return headerCache.values;
+function valuesOf(raws: readonly (string | undefined)[]): Set<string> {
   const values = new Set<string>();
   for (const raw of raws) {
     if (raw === undefined) continue;
     for (const value of Object.values(parseHeaders(raw).headers)) values.add(value);
     for (const item of raw.split(',')) {
       const eq = item.indexOf('=');
-      if (eq >= 0) values.add(item.slice(eq + 1).trim());
+      if (eq >= 0) values.add(trimWS(item.slice(eq + 1))); // the contract trim set (code-review L12)
     }
   }
-  headerCache = { raws, values };
+  return values;
+}
+
+/**
+ * Records the header values setup builds the exporters with: they stay
+ * masked after the application changes or deletes the variables, because
+ * the exporters keep sending them (A29 final round, dev R2-M1).
+ */
+export function captureHeaderValues(): void {
+  captured = valuesOf(HEADER_VARIABLES.map((variable) => process.env[variable]));
+}
+
+/** Forgets the captured values (`testing.reset()`). */
+export function resetCapturedHeaderValues(): void {
+  captured = new Set();
+}
+
+/**
+ * The union of the values captured at setup and the configured OTLP header
+ * values now (`OTEL_EXPORTER_OTLP_HEADERS` and the per-signal variables), raw
+ * and decoded: they are masked literally in forwarded text. Never logged.
+ * Rebuilt only when the raw variables or the captured set changed.
+ */
+export function configuredHeaderValues(): ReadonlySet<string> {
+  const raws = HEADER_VARIABLES.map((variable) => process.env[variable]);
+  if (headerCache?.captured === captured && raws.every((raw, i) => raw === headerCache?.raws[i])) return headerCache.values;
+  const values = new Set<string>([...captured, ...valuesOf(raws)]);
+  values.delete('');
+  headerCache = { raws, captured, values };
   return values;
 }
 

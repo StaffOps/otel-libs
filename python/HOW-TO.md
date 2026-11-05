@@ -530,6 +530,17 @@ one label (`a.b`/`a_b` → `a_b="x;y"`, as Go). An idle connection is closed aft
 dedicated: only OTel-produced series, no `process_*` / `python_*` and nothing
 your code registers on `prometheus_client.REGISTRY`.
 
+The standard `OTEL_EXPORTER_PROMETHEUS_PORT` beats `OTEL_HELPER_METRICS_PORT`
+(code `prometheus_metrics_port` still wins; `0` = no listener), and
+`OTEL_EXPORTER_PROMETHEUS_HOST` sets the bind address — an IP literal or
+`localhost` (`127.0.0.1`); read it back as
+`options.resolved.prometheus_metrics_host` (`""` = every interface). Unset binds
+every interface, not the spec default `localhost`, so a scraper in another pod
+reaches it; an invalid value is warned and every interface is used. Neither
+variable turns the listener on (that still takes the `prometheus` exporter),
+and an address the host does not own makes `setup_telemetry()` raise like a
+busy port (A29).
+
 ### Choosing exporters
 
 | `OTEL_METRICS_EXPORTER` | Behavior |
@@ -615,6 +626,10 @@ and passes them to the exporters explicitly. Certificates
 
 - gRPC URL without a port → `:4317` + "set an explicit port" warning.
   `http/protobuf` URL without a port → 443 / 80.
+- gRPC endpoint with a path (other than `/`): the path is ignored (gRPC dials
+  `host:port`) and warned once per variable, naming the variable only —
+  `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://c:4317/v1/traces` exports to
+  `c:4317`. A code endpoint warns too and does not raise (A29).
 - User info, query and fragment are stripped and warned (redacted); put
   credentials in `OTEL_EXPORTER_OTLP_HEADERS`, e.g.
   `Authorization=Basic%20<base64>`.
@@ -678,7 +693,7 @@ sets the CA; with a plaintext endpoint it is warned and ignored.
 |---|---|
 | `*_TIMEOUT` | Milliseconds, plain decimal (`500`, `2500.5`; not `1e3`, `.5`, `+5`), clamped to [1 ms, 24 h] with a warning. Below 100 warns "looks like seconds". Code: `export_timeout_ms` (default `None` = env, else SDK 10 s) |
 | `*_COMPRESSION` | `gzip` or `none`, case-insensitive; anything else (`deflate`) warns and uses `gzip`. Default `gzip`. Code: `compression` |
-| `*_HEADERS` | `k1=v1,k2=v2`; keys `[A-Za-z0-9._-]+`, lowercased, last wins; values percent-decoded and trimmed. A malformed item or invalid key is skipped; an invalid `%` escape keeps the whole value literal; a decoded control character skips the item. Warnings name the position only |
+| `*_HEADERS` | `k1=v1,k2=v2`; keys `[A-Za-z0-9._-]+`, lowercased, last wins; values percent-decoded and trimmed. A malformed item or invalid key is skipped; an invalid `%` escape keeps the whole value literal; a decoded control character skips the item. Warnings name the position only. The values and each space-separated part of them (the token of `Bearer <token>`), 4 characters or more — raw, decoded, JSON-escaped once and twice, HTML-escaped JSON, form-encoded, `repr` — are masked as `<redacted>` in the SDK OTLP exporters' log records: the HTTP reason phrase and, from exporter 1.45, the gRPC status details are server text a proxy may fill with the request; the exporters never log a response body (A29). A filter on the `opentelemetry.exporter.otlp.*` exporter loggers does it, added by the first `setup_telemetry()` and kept for the process. Limits: only records logged on those loggers (not their child loggers or other SDK loggers); a traceback that needed masking is folded into the message and `exc_info` cleared, so handlers that read `exc_info` (OTel `LoggingHandler`, error trackers) get no exception for that record; any configured value of 4+ characters is masked wherever it appears (`prod` also in a host name). The values masked are those `setup_telemetry()` built the exporters with plus the variables' current values, so deleting `OTEL_EXPORTER_OTLP_HEADERS` after setup does not unmask what is still sent; overlapping values are masked as one span; a leading `Bearer`/`Basic`/`Digest`/`Negotiate` is not masked on its own |
 | Fallback order | invalid per-signal value → warning → generic value → default |
 
 ---

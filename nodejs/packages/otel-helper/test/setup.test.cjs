@@ -1166,7 +1166,8 @@ test('M2 in a worker thread setup() starts no /metrics listener and says so once
   `);
   const out = lastJson(res);
   assert.equal(out.listener, false);
-  assert.deepEqual(out.lines, ["otelhelper: worker thread: the helper's /metrics listener (OTEL_HELPER_METRICS_PORT=9) is not started outside the main thread; mount metricsHandler() on a server of this thread, or export metrics over OTLP variable=OTEL_HELPER_METRICS_PORT"]);
+  // A29 fix round (M1): the notice names what set the port — here the code option.
+  assert.deepEqual(out.lines, ["otelhelper: worker thread: the helper's /metrics listener (prometheusMetricsPort=9) is not started outside the main thread; mount metricsHandler() on a server of this thread, or export metrics over OTLP variable=prometheusMetricsPort"]);
 });
 
 test('L getProviders() is undefined after shutdown and under OTEL_SDK_DISABLED', async () => {
@@ -1191,4 +1192,19 @@ test('final round: on the shutdown deadline a hung provider stops being the dele
   await assert.rejects(helper.shutdown(30), /did not finish within 30 ms/);
   assert.equal(forwarder.getDelegate(), undefined);
   assert.equal(testing.getResource(), undefined);
+});
+
+test('A29 the header values captured at setup stay masked after the env is cleared', () => {
+  const { configuredHeaderValues, renderDiagMessage } = require('../dist/internal/diag-logger.js');
+  process.env.OTEL_EXPORTER_OTLP_HEADERS = 'authorization=Bearer%20tok-captured-s3cr3t';
+  helper.setup({ serviceName: 's', environment: 'DEV', metricExporters: ['none'] });
+  delete process.env.OTEL_EXPORTER_OTLP_HEADERS;
+  process.env.OTEL_EXPORTER_OTLP_LOGS_HEADERS = 'x-new=new-v4lue';
+  try {
+    const values = configuredHeaderValues();
+    assert.ok(values.has('tok-captured-s3cr3t') || values.has('Bearer tok-captured-s3cr3t'));
+    assert.equal(renderDiagMessage('invalid token tok-captured-s3cr3t new-v4lue', []), 'invalid token <redacted> <redacted>');
+  } finally {
+    delete process.env.OTEL_EXPORTER_OTLP_LOGS_HEADERS;
+  }
 });

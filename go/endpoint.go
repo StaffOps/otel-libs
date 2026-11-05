@@ -203,6 +203,12 @@ func resolveEndpoint(in endpointInput) (endpointResult, error) {
 			path = strings.TrimRight(sp.path, "/") + "/v1/" + in.signal
 		}
 	}
+	if in.protocol == ProtocolGRPC && sp.path != "" && sp.path != "/" {
+		// gRPC has no URL path: it is dropped (as the SDK does, otlpconfig
+		// "URLPath is ignored by gRPC exporters"). The variable only, never
+		// the path (design D1 row "Path on a gRPC endpoint", A29; R8).
+		res.warnings = append(res.warnings, endpointWarning{msg: msgGRPCPathIgnored, variable: in.variable})
+	}
 	res.scheme = sp.scheme
 	res.explicitURL = sp.scheme + "://" + hostWith(port) + path
 	if sp.userinfo || sp.hasQuery || sp.hasFragment {
@@ -231,6 +237,10 @@ func (o *Options) codeSignalEndpoint(signal string) (value, option string) {
 		return o.LogsEndpoint, "WithLogsEndpoint"
 	}
 }
+
+// msgGRPCPathIgnored is the warning for a path on a gRPC endpoint; the same
+// text in every language (design D1 row "Path on a gRPC endpoint", A29).
+const msgGRPCPathIgnored = "endpoint path is ignored by the gRPC exporter"
 
 // msgSchemelessHTTPDeprecated is the deprecation warning for a schemeless
 // http/protobuf endpoint (design D8); unlike other endpoint warnings it is

@@ -14,13 +14,20 @@
  * `0.0.0.0`), serving only `/metrics`, `unref()`'d.
  */
 import * as http from 'node:http';
+import { isIP } from 'node:net';
 import { PrometheusExporter, PrometheusSerializer } from '@opentelemetry/exporter-prometheus';
 import type { ExportResult } from '@opentelemetry/core';
 import { DataPointType, type MetricData, type PushMetricExporter, type ResourceMetrics } from '@opentelemetry/sdk-metrics';
 import { redactErrorText, report, truncateValue } from './diagnostics';
-import { envValue, trimWS, typeName, type Warn } from './env';
+import { asciiLower, envValue, trimWS, typeName, type Warn } from './env';
 
 export const ENV_METRICS_PORT = 'OTEL_HELPER_METRICS_PORT';
+/**
+ * The OTel spec's Prometheus exporter variables, honored for the standalone
+ * listener (contract design D1 row "Prometheus exporter variables", A29).
+ */
+export const ENV_PROMETHEUS_PORT = 'OTEL_EXPORTER_PROMETHEUS_PORT';
+export const ENV_PROMETHEUS_HOST = 'OTEL_EXPORTER_PROMETHEUS_HOST';
 export const ENV_DISABLED_METRICS = 'OTEL_HELPER_DISABLED_METRICS';
 export const DEFAULT_METRICS_PORT = 9464;
 const MAX_PORT = 65_535;
@@ -48,20 +55,115 @@ export function checkCodeMetricsPort(value: unknown): number | undefined {
 const PORT = /^\+?[0-9]+$/;
 
 /**
- * `prometheusMetricsPort` > `OTEL_HELPER_METRICS_PORT` > 9464. An env value
- * that is not an integer in [0, 65535] warns and the default applies (Go
- * `config.go`, Python `config.py`: "invalid port", using 9464).
+ * `prometheusMetricsPort` > `OTEL_EXPORTER_PROMETHEUS_PORT` >
+ * `OTEL_HELPER_METRICS_PORT` > 9464 (contract design D1 rows "Metrics port
+ * grammar", A21, and "Prometheus exporter variables", A29). An env value
+ * that is not an integer in [0, 65535] warns and the next level applies (Go
+ * `config.go`, Python `config.py`: "invalid port").
  */
 export function resolveMetricsPort(code: number | undefined, warn: Warn): number {
   if (code !== undefined) return code;
-  const raw = envValue(ENV_METRICS_PORT);
-  if (raw === undefined) return DEFAULT_METRICS_PORT;
-  const port = Number(raw);
-  if (!PORT.test(raw) || port < 0 || port > MAX_PORT) {
-    warn('invalid port', { variable: ENV_METRICS_PORT, value: truncateValue(raw), using: String(DEFAULT_METRICS_PORT) });
-    return DEFAULT_METRICS_PORT;
+  for (const [variable, next] of [
+    [ENV_PROMETHEUS_PORT, `${ENV_METRICS_PORT}, else ${String(DEFAULT_METRICS_PORT)}`],
+    [ENV_METRICS_PORT, String(DEFAULT_METRICS_PORT)],
+  ] as const) {
+    const raw = envValue(variable);
+    if (raw === undefined) continue;
+    const port = Number(raw);
+    if (PORT.test(raw) && port >= 0 && port <= MAX_PORT) return port;
+    warn('invalid port', { variable, value: truncateValue(redactEchoedValue(raw)), using: next });
   }
-  return port;
+  return DEFAULT_METRICS_PORT;
+}
+
+/**
+ * The option or variable the listener port came from, for the bind-failure
+ * hint and the worker/cluster notices (A29 fix round, M1: the standard
+ * variable outranks `OTEL_HELPER_METRICS_PORT`, so the cure must name the one
+ * that applied): `prometheusMetricsPort`, the first valid of
+ * `OTEL_EXPORTER_PROMETHEUS_PORT` / `OTEL_HELPER_METRICS_PORT`, else (the
+ * default) `OTEL_EXPORTER_PROMETHEUS_PORT`.
+ */
+export function metricsPortVariable(code: number | undefined): string {
+  if (code !== undefined) return 'prometheusMetricsPort';
+  for (const variable of [ENV_PROMETHEUS_PORT, ENV_METRICS_PORT]) {
+    const raw = envValue(variable);
+    if (raw !== undefined && PORT.test(raw) && Number(raw) <= MAX_PORT) return variable;
+  }
+  return ENV_PROMETHEUS_PORT;
+}
+
+/**
+ * URL userinfo, query and fragment stripped from a value a warning echoes
+ * (A29 fix round, obs L2): `https://user:tok@h?q` → `https://h`.
+ */
+export function redactEchoedValue(value: string): string {
+  let v = value;
+  const cut = v.search(/[?#]/);
+  if (cut >= 0) v = v.slice(0, cut);
+  const at = v.lastIndexOf('@');
+  if (at >= 0) {
+    const scheme = v.indexOf('://');
+    const start = scheme >= 0 && scheme < at ? scheme + 3 : 0;
+    v = v.slice(0, start) + v.slice(at + 1);
+  }
+  return v;
+}
+
+/** Same text in every language (contract design D1 row "Prometheus exporter variables"). */
+export const MSG_INVALID_PROMETHEUS_HOST =
+  'invalid host, not applied: the listener binds every interface, wider than a restriction (use an IP address or localhost)';
+
+/**
+ * `OTEL_EXPORTER_PROMETHEUS_HOST` (already trimmed): the listener's bind
+ * address, `''` = every interface (for `::`); `undefined` when invalid. An
+ * IPv4 literal, an IPv6 literal with or without brackets and without a zone
+ * id, or `localhost` (ASCII case-insensitive, bound as 127.0.0.1). Other host
+ * names are not resolved (contract design D1 row "Prometheus exporter
+ * variables", A29).
+ */
+export function parsePrometheusHost(value: string): string | undefined {
+  if (asciiLower(value) === 'localhost') return '127.0.0.1';
+  let text = value;
+  let bracketed = false;
+  if (text.startsWith('[') && text.endsWith(']')) {
+    text = text.slice(1, -1);
+    bracketed = true;
+  }
+  // A zone id, or a non-ASCII character (no other digit scripts).
+  if (text.includes('%')) return undefined;
+  for (let i = 0; i < text.length; i += 1) if (text.charCodeAt(i) > 0x7f) return undefined;
+  const family = isIP(text);
+  if (family === 0 || (bracketed && family !== 6)) return undefined;
+  if (family === 6) {
+    // WHATWG canonical form: the unspecified address and IPv4-mapped addresses
+    // read the same in every spelling (A29 fix round: ::ffff:a.b.c.d binds as IPv4).
+    const canonical = new URL(`http://[${text}]`).hostname;
+    if (canonical === '[::]') return ''; // every interface
+    const mapped = /^\[::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})\]$/.exec(canonical);
+    if (mapped) {
+      const hi = parseInt(mapped[1] ?? '0', 16);
+      const lo = parseInt(mapped[2] ?? '0', 16);
+      return `${String(hi >> 8)}.${String(hi & 0xff)}.${String(lo >> 8)}.${String(lo & 0xff)}`;
+    }
+  }
+  return asciiLower(text);
+}
+
+/**
+ * The listener's bind address from `OTEL_EXPORTER_PROMETHEUS_HOST`; unset or
+ * invalid (warned) = every interface (`''`). No code option.
+ */
+export function resolveMetricsHost(warn: Warn): string {
+  const raw = envValue(ENV_PROMETHEUS_HOST);
+  if (raw === undefined) return '';
+  const host = parsePrometheusHost(raw);
+  if (host === undefined) {
+    // Fails open by owner decision (D1 row): the warning says so.
+    warn(MSG_INVALID_PROMETHEUS_HOST, { variable: ENV_PROMETHEUS_HOST, value: truncateValue(redactEchoedValue(raw)), using: 'every interface' });
+    return '';
+  }
+  return host;
 }
 
 /**
@@ -447,13 +549,14 @@ function plain(req: http.IncomingMessage, res: http.ServerResponse, status: numb
 }
 
 /**
- * Starts the helper's listener on `port` (> 0), host omitted. `setup()` is
+ * Starts the helper's listener on `port` (> 0), on `host` (`''` = omitted:
+ * every interface; `OTEL_EXPORTER_PROMETHEUS_HOST`, A29). `setup()` is
  * synchronous, so a bind failure (port in use, no permission) arrives later:
  * it is reported as an error on the diagnostics sink and the mounted handler
  * keeps working (a recorded Node difference: Go fails Setup). The server is
  * `unref()`'d: it never keeps the process alive.
  */
-export function startListener(port: number, handler: http.RequestListener): http.Server {
+export function startListener(port: number, handler: http.RequestListener, host = '', portVariable: string = ENV_PROMETHEUS_PORT): http.Server {
   // GET and HEAD /metrics only: other paths 404, other methods 405, with Go's
   // text bodies (contract design D1 row "Metrics listener", A21).
   // connectionsCheckingInterval: headersTimeout/requestTimeout are enforced
@@ -472,13 +575,16 @@ export function startListener(port: number, handler: http.RequestListener): http
   helperServers.add(server);
   // Attached before listen: a bind error must never be an unhandled 'error' event.
   server.on('error', (err: NodeJS.ErrnoException) => {
+    // The variable that applied (A29 fix round, M1): the host when one was set, else the port's source.
+    const hostHint = host === '' ? '' : ` on ${host} (${ENV_PROMETHEUS_HOST} sets the address: is it an address of this host?)`;
     report(
-      `the /metrics listener could not bind port ${String(port)}; metrics are served only by a mounted metricsHandler() (if another process owns the port, mount metricsHandler() and set ${ENV_METRICS_PORT}=0)`,
-      { variable: ENV_METRICS_PORT, port, error: truncateValue(err.code ?? err.message) },
+      `the /metrics listener could not bind port ${String(port)}${hostHint}; metrics are served only by a mounted metricsHandler() (if another process owns the port, mount metricsHandler() and set ${portVariable}=0)`,
+      { variable: host === '' ? portVariable : ENV_PROMETHEUS_HOST, port, error: truncateValue(err.code ?? err.message) },
       { origin: 'helper', level: 'error' },
     );
   });
-  server.listen(port);
+  if (host === '') server.listen(port);
+  else server.listen(port, host);
   server.unref();
   return server;
 }

@@ -25,7 +25,7 @@ const CASE_KEYS = new Set(['id', 'kind', 'requirement', 'note', 'env', 'code', '
 const REQUIRED_KEYS = ['id', 'kind', 'env', 'code', 'expect', 'status'];
 const OVERRIDE_RE = /^python@sdk>=[\d.]+$/;
 const SCHEMA = {
-  resolve: ['resource', 'metric_exporters', 'metric_export_interval_ms', 'log_level', 'prometheus_metrics_port'],
+  resolve: ['resource', 'metric_exporters', 'metric_export_interval_ms', 'log_level', 'prometheus_metrics_port', 'prometheus_metrics_host'],
   export: ['received'],
   sampler: ['sampled', 'attributes'],
   propagation: ['headers'],

@@ -74,6 +74,10 @@ ENV_SAMPLE_RATIO = "OTEL_HELPER_SAMPLE_RATIO"
 ENV_DISABLED_SIGNALS = "OTEL_HELPER_DISABLED_SIGNALS"
 ENV_DISABLED_METRICS = "OTEL_HELPER_DISABLED_METRICS"
 ENV_METRICS_PORT = "OTEL_HELPER_METRICS_PORT"
+# The OTel spec's Prometheus exporter variables, honored for the standalone /metrics
+# listener (design D1 row "Prometheus exporter variables", A29).
+ENV_PROMETHEUS_PORT = "OTEL_EXPORTER_PROMETHEUS_PORT"
+ENV_PROMETHEUS_HOST = "OTEL_EXPORTER_PROMETHEUS_HOST"
 ENV_INSECURE = "OTEL_EXPORTER_OTLP_INSECURE"
 ENV_METRICS_EXPORTER = "OTEL_METRICS_EXPORTER"
 ENV_METRIC_EXPORT_INTERVAL = "OTEL_METRIC_EXPORT_INTERVAL"
@@ -151,6 +155,67 @@ def _env(name: str) -> str | None:
         return None
     return value.strip(TRIM_CHARS)
 
+
+
+def _parse_port(value: str) -> int | None:
+    """Design D1 row "Metrics port grammar" (A21): ASCII digits with an optional "+" in [0, 65535].
+
+    ``int()`` would accept "9_464" and non-ASCII digits; at most 5 significant digits are
+    converted, so a long digit string is never parsed.
+    """
+    if not _PORT_RE.fullmatch(value):
+        return None
+    digits = value.lstrip("+").lstrip("0")
+    if len(digits) > 5:
+        return None
+    port = int(digits or "0")
+    return port if port <= 65535 else None
+
+
+def _parse_prometheus_host(value: str) -> str | None:
+    """``OTEL_EXPORTER_PROMETHEUS_HOST`` (already trimmed): the bind address, ``""`` = every interface.
+
+    An IPv4 literal, an IPv6 literal with or without brackets and without a zone id, or
+    ``localhost`` (ASCII case-insensitive, bound as 127.0.0.1). Other host names are not
+    resolved: None (design D1 row "Prometheus exporter variables", A29).
+    """
+    if ascii_lower(value) == "localhost":
+        return "127.0.0.1"
+    text, bracketed = value, False
+    if text.startswith("[") and text.endswith("]"):
+        text, bracketed = text[1:-1], True
+    if "%" in text or not text.isascii():
+        return None
+    try:
+        addr = ipaddress.ip_address(text)
+    except ValueError:
+        return None
+    if bracketed and addr.version != 6:
+        return None
+    if addr.version == 6:
+        if addr.ipv4_mapped is not None:
+            # ::ffff:a.b.c.d binds as the IPv4 address in every language (A29 fix round).
+            return str(addr.ipv4_mapped)
+        if int(addr) == 0:  # "::" only (is_unspecified is also true for ::ffff:0.0.0.0)
+            return ""
+    return ascii_lower(text)
+
+
+#: Same text in every language (design D1 row "Prometheus exporter variables").
+MSG_INVALID_PROMETHEUS_HOST = ("invalid host, not applied: the listener binds every interface, wider than a "
+                               "restriction (use an IP address or localhost)")
+
+
+def redact_echoed_value(value: str) -> str:
+    """URL userinfo, query and fragment stripped from a value a warning echoes (A29 fix round, obs L2)."""
+    for sep in "?#":
+        value = value.split(sep, 1)[0]
+    at = value.rfind("@")
+    if at >= 0:
+        scheme = value.find("://")
+        start = scheme + 3 if 0 <= scheme < at else 0
+        value = value[:start] + value[at + 1:]
+    return value
 
 
 def _non_blank(value: object) -> str | None:
@@ -559,6 +624,9 @@ class ResolvedOptions:
     export_interval_ms: int
     # None = not set anywhere: inferred (otlp with a metrics endpoint, else prometheus).
     metric_exporters: list[str] | None
+    # Bind address of the standalone /metrics listener from OTEL_EXPORTER_PROMETHEUS_HOST
+    # ("" = every interface; no code option — design D1 row "Prometheus exporter variables", A29).
+    prometheus_metrics_host: str = ""
 
 
 # Fields whose public value is only ever the code value; resolution stores the
@@ -669,7 +737,8 @@ class TelemetryOptions:
             if values[name] is not None:
                 values[name] = list(values[name])
         sample_set = self._effective.get("sample_ratio_set", self.sample_ratio is not None)
-        return ResolvedOptions(sample_ratio_set=bool(sample_set), **values)
+        host = str(self._effective.get("prometheus_metrics_host", ""))
+        return ResolvedOptions(sample_ratio_set=bool(sample_set), prometheus_metrics_host=host, **values)
 
     def has_instrumentation(self, name: str) -> bool:
         if self._value("debug_level"):
@@ -912,22 +981,38 @@ class TelemetryOptions:
         # Design D1 row "Disabled-metric patterns" (A21): code items too are trimmed, blanks ignored.
         eff["disabled_metrics"] = [s.strip(TRIM_CHARS) for s in eff["disabled_metrics"] if s.strip(TRIM_CHARS)]
 
+        # Code > OTEL_EXPORTER_PROMETHEUS_PORT > OTEL_HELPER_METRICS_PORT > 9464, one grammar,
+        # 0 = no listener; an invalid value warns and falls to the next level (design D1 rows
+        # "Metrics port grammar" (A21) and "Prometheus exporter variables" (A29)).
+        # Where the port came from, for the bind-failure hint (A29 fix round, M1): the code
+        # option, the variable that set it, or "" for the default.
+        eff["prometheus_metrics_port_source"] = ""
         if self.prometheus_metrics_port is not None:
             eff["prometheus_metrics_port"] = self.prometheus_metrics_port
+            eff["prometheus_metrics_port_source"] = "prometheus_metrics_port"
         else:
             eff["prometheus_metrics_port"] = _DEFAULT_METRICS_PORT
-            env_port = _env(ENV_METRICS_PORT)
-            if env_port is not None:
-                # Design D1 row "Metrics port grammar" (A21): ASCII digits with an optional "+"
-                # (int() would accept "9_464" and non-ASCII digits); at most 5 significant digits
-                # are converted, so a long digit string is never parsed.
-                digits = env_port.lstrip("+").lstrip("0") if _PORT_RE.fullmatch(env_port) else None
-                port = int(digits or "0") if digits is not None and len(digits) <= 5 else None
-                if port is not None and port <= 65535:
+            for var, fallback in ((ENV_PROMETHEUS_PORT, f"{ENV_METRICS_PORT}, else 9464"), (ENV_METRICS_PORT, "9464")):
+                env_port = _env(var)
+                if env_port is None:
+                    continue
+                port = _parse_port(env_port)
+                if port is not None:
                     eff["prometheus_metrics_port"] = port
-                else:
-                    self._warn_once(ENV_METRICS_PORT, "[OtelHelper] %s=%r is not a port (0-65535); using 9464.",
-                                    ENV_METRICS_PORT, env_port)
+                    eff["prometheus_metrics_port_source"] = var
+                    break
+                self._warn_once(var, "[OtelHelper] %s=%r is not a port (0-65535); using %s.",
+                                var, redact_echoed_value(env_port), fallback)
+        eff["prometheus_metrics_host"] = ""
+        env_host = _env(ENV_PROMETHEUS_HOST)
+        if env_host is not None:
+            host = _parse_prometheus_host(env_host)
+            if host is None:
+                # Fails open by owner decision (D1 row); the text is the same in every language.
+                self._warn_once(ENV_PROMETHEUS_HOST, "[OtelHelper] %s=%r: %s.", ENV_PROMETHEUS_HOST,
+                                redact_echoed_value(env_host), MSG_INVALID_PROMETHEUS_HOST)
+            else:
+                eff["prometheus_metrics_host"] = host
         self._resolved = True
 
     def _resolve_sample_ratio(self) -> None:
@@ -1266,6 +1351,13 @@ class TelemetryOptions:
             # Used as parsed; the name only, the value may hold the credentials (D1 ruling).
             self._warn_once(f"at:{name}", "[OtelHelper] %s: endpoint path contains '@' — misplaced "
                             "credentials?", name)
+
+        if protocol == PROTOCOL_GRPC and ep.path not in ("", "/"):
+            # gRPC has no URL path: the target is host:port (the SDK keeps only the netloc,
+            # exporter.py:315-327). The name only, never the path (design D1 row "Path on a
+            # gRPC endpoint", A29; R8).
+            self._warn_once(f"grpcpath:{name}", "[OtelHelper] %s: endpoint path is ignored by the gRPC exporter.",
+                            name)
 
         if scheme == "http":
             tls_vars = [v for suffix in ("CERTIFICATE", "CLIENT_CERTIFICATE", "CLIENT_KEY")

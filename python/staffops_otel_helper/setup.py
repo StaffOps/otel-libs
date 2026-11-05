@@ -26,6 +26,7 @@ from staffops_otel_helper._propagators import build_propagator
 from staffops_otel_helper._resource_echo import suppress_sdk_resource_echo
 from staffops_otel_helper._semconv import ensure_semconv_default
 from staffops_otel_helper._diag import warn_once_per_process
+from staffops_otel_helper._sdk_log_mask import capture_header_values, install_sdk_log_mask
 from staffops_otel_helper.config import (
     ATTR_ENVIRONMENT,
     ATTR_INSTANCE_ID,
@@ -379,6 +380,10 @@ def _setup_locked(options: TelemetryOptions, prep) -> None:
     global _initialized, _options, _pipeline, _shutdown_error
     options.resolve_from_env()
     options.validate()
+    # SDK exporter log records lose the configured OTLP header values (design D1 row
+    # "SDK error text: response bodies and header values", A29); once per process.
+    install_sdk_log_mask()
+    capture_header_values()  # what the exporters will send stays masked (A29 final round)
     if not options.sdk_disabled:
         # Before any provider is installed: a foreign OTel handler would export the
         # SDK's install-time records ("Overriding of current TracerProvider ...").

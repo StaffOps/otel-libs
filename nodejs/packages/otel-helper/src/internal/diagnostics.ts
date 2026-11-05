@@ -120,22 +120,105 @@ function redactPairs(text: string): string {
   return text.replace(COOKIE_HEADER, pair).replace(SECRET_PAIR, pair);
 }
 
+/** Characters Go's `url.QueryEscape` (and Python's `quote_plus`) keep as they are. */
+const FORM_UNRESERVED = /^[A-Za-z0-9_.~-]$/;
+
+/** `value` form-encoded as Go `url.QueryEscape` writes it: space as `+`, UTF-8 bytes as `%XX`. */
+export function formEncode(value: string): string {
+  let out = '';
+  for (const ch of value) {
+    if (ch === ' ') {
+      out += '+';
+    } else if (FORM_UNRESERVED.test(ch)) {
+      out += ch;
+    } else {
+      for (const byte of Buffer.from(ch, 'utf8')) out += `%${byte.toString(16).toUpperCase().padStart(2, '0')}`;
+    }
+  }
+  return out;
+}
+
 /**
- * `text` with every occurrence of each of `secrets` (and its JSON- and
- * util.inspect-escaped forms)
- * replaced by `<redacted>`. Values shorter than {@link MIN_MASKED_SECRET}
- * characters are skipped (masking `1` or `on` everywhere would wreck the text
- * and protect nothing). Linear: split/join per value.
+ * Every masked form of `secrets` (contract design D1 row "SDK error text",
+ * A29 fix round): for each value and each of its whitespace-separated parts
+ * (the credential of `Bearer <token>`) of at least {@link MIN_MASKED_SECRET}
+ * characters — the text, JSON-escaped once and twice, JSON with Go's HTML
+ * escaping (`\u0026`, `\u003c`, `\u003e`), form-encoded and, Node's own
+ * quote form, `util.inspect`-escaped. Deduplicated, longest first.
+ */
+export function maskForms(secrets: Iterable<string>): string[] {
+  const forms = new Set<string>();
+  for (const secret of secrets) {
+    let parts = secret.split(/\s+/).filter((p) => p !== '');
+    // "Bearer" alone is not a secret (A29 final round).
+    if (parts.length > 1 && AUTH_SCHEMES.has((parts[0] ?? '').toLowerCase())) parts = parts.slice(1);
+    for (const base of [secret, ...parts]) {
+      if (base.length < MIN_MASKED_SECRET) continue;
+      const once = JSON.stringify(base).slice(1, -1);
+      const html = once.replace(/&/g, '\\u0026').replace(/</g, '\\u003c').replace(/>/g, '\\u003e');
+      for (const form of [
+        base,
+        once,
+        JSON.stringify(once).slice(1, -1),
+        html,
+        JSON.stringify(html).slice(1, -1), // and JSON-escaped again (the SDK's JSON-rendered error)
+        formEncode(base),
+        // util.inspect single-quotes strings: `\` → `\\`, `'` → `\'`.
+        base.replace(/\\/g, '\\\\').replace(/'/g, "\\'"),
+      ]) {
+        if (form !== '') forms.add(form);
+      }
+    }
+  }
+  return [...forms].sort((a, b) => b.length - a.length || (a < b ? -1 : a > b ? 1 : 0));
+}
+
+const AUTH_SCHEMES = new Set(['bearer', 'basic', 'digest', 'negotiate']);
+
+// The forms of the last secrets object (the cached Set configuredHeaderValues()
+// returns): computed once per header change, not per record (A29 final round).
+let formsCache: { readonly secrets: Iterable<string>; readonly forms: readonly string[] } | undefined;
+
+function formsOf(secrets: Iterable<string>): readonly string[] {
+  if (formsCache?.secrets === secrets) return formsCache.forms;
+  const forms = maskForms(secrets);
+  formsCache = { secrets, forms };
+  return forms;
+}
+
+/**
+ * `text` with every masked form of each of `secrets` ({@link maskForms})
+ * replaced by `<redacted>`, marked spans merged: a value that contains
+ * another is masked whole (A29 fix round, code-review H1: insertion order let
+ * `team` cut `team-secret-token` open), and `<redacted>` is never scanned
+ * again. Values shorter than {@link MIN_MASKED_SECRET} characters are skipped
+ * (masking `1` or `on` everywhere would wreck the text and protect nothing).
  */
 export function maskLiterals(text: string, secrets: Iterable<string>): string {
-  let out = text;
-  for (const secret of secrets) {
-    if (secret.length < MIN_MASKED_SECRET) continue;
-    const once = JSON.stringify(secret).slice(1, -1);
-    const twice = JSON.stringify(once).slice(1, -1);
-    // util.inspect single-quotes strings: `\` → `\\`, `'` → `\'`.
-    const inspected = secret.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
-    for (const form of new Set([secret, once, twice, inspected])) out = out.split(form).join('<redacted>');
+  const forms = formsOf(secrets);
+  if (forms.length === 0 || text === '') return text;
+  // Every occurrence of every form is marked (overlapping ones included), then
+  // each marked run becomes one `<redacted>` (A29 final round, dev R2-L1: two
+  // overlapping values never leave a tail).
+  let marked: Uint8Array | undefined;
+  for (const form of forms) {
+    for (let at = text.indexOf(form); at >= 0; at = text.indexOf(form, at + 1)) {
+      marked ??= new Uint8Array(text.length);
+      marked.fill(1, at, at + form.length);
+    }
+  }
+  if (marked === undefined) return text;
+  let out = '';
+  for (let i = 0; i < text.length; ) {
+    if (marked[i] === 1) {
+      out += '<redacted>';
+      while (i < text.length && marked[i] === 1) i += 1;
+    } else {
+      let j = marked.indexOf(1, i);
+      if (j < 0) j = text.length;
+      out += text.slice(i, j);
+      i = j;
+    }
   }
   return out;
 }

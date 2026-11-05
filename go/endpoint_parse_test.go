@@ -186,7 +186,7 @@ func TestResolveEndpointA17Rulings(t *testing.T) {
 	ok := []struct{ name, raw, protocol, wantURL, wantWarn string }{
 		{"leading-zero port numeric", "http://h:04318", ProtocolHTTP, "http://h:4318/v1/traces", ""},
 		{"IDN punycoded", "http://bücher.de", ProtocolGRPC, "http://xn--bcher-kva.de:4317", "explicit port"},
-		{"invalid path escape irrelevant for gRPC", "http://h:4317/%zz", ProtocolGRPC, "http://h:4317", ""},
+		{"invalid path escape irrelevant for gRPC (A29: the path is warned, name only)", "http://h:4317/%zz", ProtocolGRPC, "http://h:4317", "endpoint path is ignored by the gRPC exporter"},
 		{"empty fragment removed", "http://h:4317#", ProtocolGRPC, "http://h:4317", "userinfo/query"},
 		{"empty query removed", "http://h:4317/?", ProtocolGRPC, "http://h:4317", "userinfo/query"},
 		{"@ in path warned", "http://user:4318/secret@collector", ProtocolHTTP, "http://user:4318/secret@collector/v1/traces", "misplaced credentials"},

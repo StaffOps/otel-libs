@@ -110,13 +110,13 @@ rewritten (see HOW-TO, pre-fork servers).
 
 | Variable | Default | Notes |
 |---|---|---|
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | _(unset)_ | Generic endpoint. For `http/protobuf`, `/v1/<signal>` is appended (a path prefix such as `/otlp` is kept) |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | _(unset)_ | Generic endpoint. For `http/protobuf`, `/v1/<signal>` is appended (a path prefix such as `/otlp` is kept). gRPC: a path (other than `/`) is ignored and warned once, naming the variable only — `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://c:4317/v1/traces` sends to `c:4317` (A29). |
 | `OTEL_EXPORTER_OTLP_<SIGNAL>_ENDPOINT` | _(unset)_ | `TRACES`, `METRICS`, `LOGS`. Used as-is (no path appended). Configures that signal only |
 | `OTEL_EXPORTER_OTLP[_<SIGNAL>]_PROTOCOL` | `grpc` | `grpc` or `http/protobuf`. Unset and endpoint port `4318` → `http/protobuf`. `http/json` is warned and ignored |
 | `OTEL_EXPORTER_OTLP[_<SIGNAL>]_INSECURE` | `false` | Only for schemeless endpoints. `true` (any case) = plaintext; any other value = false, warned unless it is `false` |
 | `OTEL_EXPORTER_OTLP[_<SIGNAL>]_TIMEOUT` | `10000` | **Milliseconds** (OTel spec; the Python SDK alone would read seconds). Plain decimals only, clamped to [1 ms, 24 h]; values below 100 warn "looks like seconds" |
 | `OTEL_EXPORTER_OTLP[_<SIGNAL>]_COMPRESSION` | `gzip` | `gzip` or `none` (any case); anything else warns and uses `gzip` |
-| `OTEL_EXPORTER_OTLP[_<SIGNAL>]_HEADERS` | _(unset)_ | `key=value,...`, values percent-decoded. Keys must match `[A-Za-z0-9._-]+`, are lowercased, last one wins; malformed items are skipped with a warning naming only their position |
+| `OTEL_EXPORTER_OTLP[_<SIGNAL>]_HEADERS` | _(unset)_ | `key=value,...`, values percent-decoded. Keys must match `[A-Za-z0-9._-]+`, are lowercased, last one wins; malformed items are skipped with a warning naming only their position. Values of 4 characters or more, and each space-separated part of 4 or more (the token of `Bearer <token>`), are masked as `<redacted>` in the SDK exporters' log records (HTTP reason phrase, gRPC status details; A29). The exporters never log a response body. |
 | `OTEL_EXPORTER_OTLP[_<SIGNAL>]_CERTIFICATE`, `_CLIENT_CERTIFICATE`, `_CLIENT_KEY` | _(unset)_ | Read by the SDK. A certificate with a plaintext endpoint is warned |
 
 Each per-signal variable falls back to the generic one, then to the default; an
@@ -144,7 +144,9 @@ metrics use the Prometheus fallback and logs stay local.
 | Variable | Default | Notes |
 |---|---|---|
 | `OTEL_HELPER_DEBUG_LEVEL` | `false` | DEBUG logs, every extension instrumentor, and `debug=true` on entry spans |
-| `OTEL_HELPER_METRICS_PORT` | `9464` | Standalone Prometheus `/metrics` listener (dual-stack, `GET`/`HEAD /metrics` only: other paths 404, other methods 405); ASCII digits with an optional `+`, in [0, 65535] (`9_464` and non-ASCII digits warn and use 9464); `0` disables it (serve `metrics_app()` from the app instead: `app.add_route("/metrics", metrics_app())`) |
+| `OTEL_EXPORTER_PROMETHEUS_PORT` | _(unset)_ | Standalone `/metrics` listener port; beats `OTEL_HELPER_METRICS_PORT`, code (Python: `prometheus_metrics_port`) still wins. Same grammar; `0` = no listener; invalid → warned, next level (A29) |
+| `OTEL_EXPORTER_PROMETHEUS_HOST` | every interface | Listener bind address: an IPv4/IPv6 literal (brackets allowed, no zone id) or `localhost` (= `127.0.0.1`); `::` = every interface. Unset binds every interface — **not** the spec default `localhost`, so other pods can scrape. Other values (host names, `*`) are warned and every interface is used; no code option (A29) |
+| `OTEL_HELPER_METRICS_PORT` | `9464` | Standalone Prometheus `/metrics` listener (dual-stack, `GET`/`HEAD /metrics` only: other paths 404, other methods 405); ASCII digits with an optional `+`, in [0, 65535] (`9_464` and non-ASCII digits warn and use 9464); `0` disables it (serve `metrics_app()` from the app instead: `app.add_route("/metrics", metrics_app())`). Used when `OTEL_EXPORTER_PROMETHEUS_PORT` is unset or invalid. |
 | `OTEL_HELPER_DISABLED_METRICS` | _(unset)_ | Comma list of patterns, each a case-sensitive glob on the instrument name (`*` any run of characters, `.` and `/` included; `?` one character; everything else literal, no `[...]` classes); items trimmed, blank items ignored; matching instruments are dropped from every exporter. The SDK lower-cases instrument names, so use lower-case patterns |
 | `OTEL_HELPER_SAMPLE_RATIO` | `1.0` | **Deprecated** → `OTEL_TRACES_SAMPLER=parentbased_traceidratio` + `OTEL_TRACES_SAMPLER_ARG`. Used only while `OTEL_TRACES_SAMPLER` is unset |
 | `OTEL_HELPER_DISABLED_SIGNALS` | _(unset)_ | **Deprecated** → `OTEL_{TRACES,METRICS,LOGS}_EXPORTER=none`. A standard variable with a valid entry wins for its signal, and `metric_exporters` wins for metrics; unknown entries warn once |

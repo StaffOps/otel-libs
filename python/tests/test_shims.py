@@ -878,8 +878,9 @@ class TestDiagnosticsChannel:
             # back to restore it on shutdown), only in logging_setup.py.
             tuning = (str(rel) in ("logging_setup.py", "_console.py") and isinstance(parent, ast.Attribute)
                       and parent.attr in ("setLevel", "level", "addHandler", "removeHandler", "handlers"))
-            # The SDK resources logger: only the A16 echo filter, only in _resource_echo.py.
-            tuning = tuning or (str(rel) == "_resource_echo.py" and isinstance(parent, ast.Attribute)
+            # SDK loggers: only filters — the A16 echo filter (_resource_echo.py, resources logger)
+            # and the A29 header-value mask (_sdk_log_mask.py, OTLP exporter loggers).
+            tuning = tuning or (str(rel) in ("_resource_echo.py", "_sdk_log_mask.py") and isinstance(parent, ast.Attribute)
                                 and parent.attr in ("filters", "addFilter", "removeFilter"))
             if not tuning:
                 bad.append(f"{rel}:{node.lineno} getLogger({ast.unparse(arg) if arg else ''})")

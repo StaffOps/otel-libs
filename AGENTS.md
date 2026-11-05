@@ -33,7 +33,8 @@ release candidate `0.3.0-rc.1`, tag `nodejs/v0.3.0-rc.1`, on npmjs with dist-tag
    directly to backends (Tempo, Loki, VictoriaMetrics). **One exception:** with
    no OTLP endpoint — or when `OTEL_METRICS_EXPORTER` includes `prometheus` —
    metrics are served on a Prometheus `/metrics` endpoint on port 9464
-   (`OTEL_HELPER_METRICS_PORT`). This fallback stays in core
+   (`OTEL_EXPORTER_PROMETHEUS_PORT` > `OTEL_HELPER_METRICS_PORT`; bind address
+   `OTEL_EXPORTER_PROMETHEUS_HOST`, unset = every interface, A29). This fallback stays in core
    (decided 2026-10-27, see [ADR-007](specs/decisions/ADR-007-keep-prometheus-in-core.md)).
 3. **Sampling at the Collector** — tail sampling at the gateway, not in app
    code. Target default sampler: `parentbased_always_on`
@@ -86,6 +87,8 @@ without effect; the code option `replaceGlobals`, not an env var) are in [`nodej
 | `OTEL_HELPER_SAMPLE_RATIO`, `OTEL_HELPER_DISABLED_SIGNALS` | Deprecated, warned once → standard vars. A set `OTEL_<SIGNAL>_EXPORTER` (a valid entry, `none` included) — and code metric exporters, for metrics — wins over `OTEL_HELPER_DISABLED_SIGNALS`; its unknown entries warn once (A19) | Supported |
 | `OTEL_HELPER_EXTRA_INSTRUMENTATION` | Go: removed (warns). Python: deprecated, default `SQL` | Read but no effect |
 | `OTEL_HELPER_DISABLED_METRICS`, `OTEL_HELPER_METRICS_PORT` | Supported (`9464`, `0` = no listener) | Supported |
+| `OTEL_EXPORTER_PROMETHEUS_PORT` / `_HOST` | Honored (A29): port beats `OTEL_HELPER_METRICS_PORT` (code wins, `0` = no listener); host = bind address, unset = every interface (not the spec's `localhost`) | Ignored; honored from Phase C C12 |
+| gRPC endpoint with a path | Path ignored, warned once per variable, name only (A29) | Path ignored, no warning (C7b) |
 
 ## Cross-language parity
 
@@ -159,5 +162,9 @@ without effect; the code option `replaceGlobals`, not an env var) are in [`nodej
   Node.js → the diagnostics sink (`report()`, one `otelhelper:` line on
   `process.stderr`; never `console.*` or `process.emitWarning`).
   Never print secrets (`*_HEADERS`, `*_CLIENT_KEY`, URL userinfo/query).
+  SDK error text is cleaned too (A29): response bodies dropped, configured
+  OTLP header values masked — Go's OTel error handler (wraps an app handler
+  set before `Setup`), Python's filter on the exporter loggers, Node.js's
+  DiagLogger.
 - Commit messages: Conventional Commits with a language scope, e.g.
   `fix(go): ...`, `feat(all): ...`.

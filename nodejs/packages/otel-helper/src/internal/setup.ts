@@ -23,7 +23,7 @@ import { BatchLogRecordProcessor, ConsoleLogRecordExporter, LoggerProvider, type
 import { ConsoleMetricExporter, MeterProvider, PeriodicExportingMetricReader, type IMetricReader } from '@opentelemetry/sdk-metrics';
 import { BatchSpanProcessor, ConsoleSpanExporter, TracerProvider, type SpanProcessor } from '@opentelemetry/sdk-trace';
 import { clearReportedOnce, redactErrorText, report, reportOnce, truncateValue } from './diagnostics';
-import { installDiagLogger } from './diag-logger';
+import { captureHeaderValues, installDiagLogger, resetCapturedHeaderValues } from './diag-logger';
 import { logExporter, metricExporter, spanExporter, tlsMaterial, withMaskedEnv, type ExporterInput, type FileCache } from './exporters';
 import { createForwarders, type Forwarders } from './forwarding';
 import { foreignRegistry, registeredGlobal, removeGlobal, type ApiGlobal } from './globals';
@@ -31,7 +31,7 @@ import { entryIsEsm, hooksMode } from './hooks';
 import type { LogLevel } from './log-level';
 import type { Instrumentation } from '@opentelemetry/instrumentation';
 import { bindProviders, clientExclusions, createInstrumentations, disableInstrumentations, disableOptIn, enableInstrumentations, enableOptIn, loadedPackages, otlpTargets, type HelperInstrumentations } from './instrumentation';
-import { closeListener, createPrometheusReader, dropPredicate, droppingExporter, ENV_METRICS_PORT, serveMetrics, startListener, type DropPredicate, type ScrapeRequest, type ScrapeResponse, type ScrapeTarget } from './metrics-endpoint';
+import { closeListener, createPrometheusReader, dropPredicate, droppingExporter, metricsPortVariable, serveMetrics, startListener, type DropPredicate, type ScrapeRequest, type ScrapeResponse, type ScrapeTarget } from './metrics-endpoint';
 import type { OtlpEndpoint } from './otlp';
 import type { Signal } from './otlp-settings';
 import { ATTR_SERVICE_NAME, TELEMETRY_SDK_KEYS, resolvePlan, validateOptions, type Plan, type Resolved, type SetupOptions } from './resolve';
@@ -859,6 +859,9 @@ function install(rt: Runtime, plan: Plan, options: SetupOptions, base: Resource,
     installDiagLogger(ownsDiag);
     rt.diagLogger = registeredGlobal('diag');
   }
+  // The header values the exporters are built with stay masked even if the app
+  // changes the variables later (A29 final round, dev R2-M1).
+  captureHeaderValues();
   step('diag');
   const { sdkDisabled } = plan.resolved;
   // Before the exporters load grpc-js: what the app had loaded itself.
@@ -949,22 +952,24 @@ function install(rt: Runtime, plan: Plan, options: SetupOptions, base: Resource,
   // (a foreign provider's instruments would never reach it: 503 instead).
   const prometheus = built?.prometheus;
   const port = plan.resolved.prometheusMetricsPort;
+  // The option or variable that set the port (A29 fix round, M1).
+  const portVariable = metricsPortVariable(options.prometheusMetricsPort);
   if (prometheus !== undefined && ownsMeterProvider && port > 0 && !isMainThread) {
     // A worker thread shares the process (and the port) with the main thread: no listener (B9 fix round M2).
     reportOnce(
       'worker:metrics-port',
-      `worker thread: the helper's /metrics listener (${ENV_METRICS_PORT}=${String(port)}) is not started outside the main thread; mount metricsHandler() on a server of this thread, or export metrics over OTLP`,
-      { variable: ENV_METRICS_PORT },
+      `worker thread: the helper's /metrics listener (${portVariable}=${String(port)}) is not started outside the main thread; mount metricsHandler() on a server of this thread, or export metrics over OTLP`,
+      { variable: portVariable },
     );
   } else if (prometheus !== undefined && ownsMeterProvider && port > 0) {
     if (cluster.isWorker) {
       reportOnce(
         'cluster:metrics-port',
         `cluster worker serving /metrics on port ${String(port)}: if several workers use this port, each scrape reaches one of them at random; give each worker its own port (e.g. base + a per-worker slot) or use OTLP only`,
-        { variable: ENV_METRICS_PORT },
+        { variable: portVariable },
       );
     }
-    attempt.listener = startListener(port, metricsHandler());
+    attempt.listener = startListener(port, metricsHandler(), plan.resolved.prometheusMetricsHost, portVariable);
   }
   step('listener');
   const inactiveSignals: Signal[] = [];
@@ -1113,8 +1118,8 @@ function scrapeTarget(): ScrapeTarget {
  * A request handler serving the Prometheus scrape of the active setup, for
  * the app's own server (`node:http`, express):
  * `app.get('/metrics', metricsHandler())`. Pair it with
- * `OTEL_HELPER_METRICS_PORT=0` (or `prometheusMetricsPort: 0`) to skip the
- * helper's listener. It can be created before `setup()`; every request reads
+ * `OTEL_EXPORTER_PROMETHEUS_PORT=0` (or `OTEL_HELPER_METRICS_PORT=0`, or
+ * `prometheusMetricsPort: 0`) to skip the helper's listener. It can be created before `setup()`; every request reads
  * the current state. Status (design "Mounted /metrics handler status"): 503
  * before setup, after a failed one, after `shutdown()` and when the global
  * MeterProvider is not the helper's; 200 with an empty body when Prometheus
@@ -1274,6 +1279,7 @@ export function getProviders(): { readonly tracerProvider: TracerProvider; reado
  * registered.
  */
 export function resetForTests(): void {
+  resetCapturedHeaderValues();
   const state = getState();
   if (state !== null) {
     const rt = runtimeOf(state);

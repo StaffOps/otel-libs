@@ -341,6 +341,8 @@ export interface Reporter {
 }
 
 const MSG_UNSUPPORTED = 'unsupported endpoint scheme (use http:// or https://)';
+/** Same text in every language (contract design D1 row "Path on a gRPC endpoint", A29). */
+const MSG_GRPC_PATH_IGNORED = 'endpoint path is ignored by the gRPC exporter';
 const MSG_SCHEMELESS_HTTP =
   'schemeless endpoint is deprecated for http/protobuf and will be removed in 1.0; use a URL (http:// or https://)';
 
@@ -430,6 +432,11 @@ function resolveEndpoint(
   if (protocol === PROTOCOL_HTTP) {
     // Escapes kept verbatim, never decoded (D1 ruling "Percent-encoding in the endpoint path").
     path = src.perSignal ? sp.path : `${sp.path.replace(/\/+$/, '')}/v1/${signal}`;
+  }
+  if (protocol === PROTOCOL_GRPC && sp.path !== '' && sp.path !== '/') {
+    // gRPC has no URL path: the target is host:port. The variable only, never
+    // the path (contract design D1 row "Path on a gRPC endpoint", A29; R8).
+    rep.warn(MSG_GRPC_PATH_IGNORED, { variable: src.variable });
   }
   const resolvedUrl = `${scheme}://${host}${path}`;
   if (sp.userinfo || sp.query !== undefined || sp.fragment !== undefined) {

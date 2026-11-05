@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/netip"
+	"strconv"
 	"sync"
 	"time"
 
@@ -152,11 +154,12 @@ func configureMetrics(ctx context.Context, res *resource.Resource, opts *Options
 		if opts.PrometheusMetricsPort > 0 {
 			// Synchronous Listen: a busy port fails Setup immediately instead of
 			// dying silently in a goroutine (the P5 "silent telemetry loss" bug).
-			ln, err := net.Listen("tcp", fmt.Sprintf(":%d", opts.PrometheusMetricsPort))
+			network, addr := listenAddress(opts.prometheusHost, opts.PrometheusMetricsPort)
+			ln, err := net.Listen(network, addr)
 			if err != nil {
 				return fail(fmt.Errorf(
-					"prometheus /metrics listener on port %d: %w (if another process owns the port, mount otelhelper.MetricsHandler() and use WithoutMetricsListener())",
-					opts.PrometheusMetricsPort, err))
+					"prometheus /metrics listener on %s: %w (if another process owns the port, mount otelhelper.MetricsHandler() and use WithoutMetricsListener())",
+					addr, err))
 			}
 			// GET (and HEAD) /metrics only: other paths 404, other methods 405
 			// (design D1 row "Metrics listener", A21). The method is checked
@@ -324,4 +327,19 @@ func newOTLPMetricExporter(ctx context.Context, e *signalExport) (sdkmetric.Expo
 		o = append(o, otlpmetricgrpc.WithCompressor(CompressionGzip))
 	}
 	return otlpmetricgrpc.New(ctx, o...)
+}
+
+// listenAddress is the network and address of the standalone listener: every
+// interface (dual-stack) when host is "", else host — an IPv4 literal binds
+// IPv4 only ("tcp4": Go's "tcp" with 0.0.0.0 would also take IPv6; design
+// D1 row "Prometheus exporter variables", A29).
+func listenAddress(host string, port int) (network, addr string) {
+	if host == "" {
+		return "tcp", fmt.Sprintf(":%d", port)
+	}
+	network = "tcp"
+	if ip, err := netip.ParseAddr(host); err == nil && ip.Is4() {
+		network = "tcp4"
+	}
+	return network, net.JoinHostPort(host, strconv.Itoa(port))
 }

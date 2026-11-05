@@ -7,12 +7,10 @@ package otelhelper
 // xfail:A3 (failing) before the fix.
 
 import (
-	"bytes"
 	"context"
 	"encoding/pem"
 	"errors"
 	"fmt"
-	"log"
 	"log/slog"
 	"math"
 	"net"
@@ -100,7 +98,8 @@ func TestResolveEndpoint(t *testing.T) {
 		{"code generic http", endpointInput{raw: "http://c:4318", signal: "traces", protocol: ProtocolHTTP, fromCode: true}, "http://c:4318/v1/traces", "", ""},
 		{"code generic http prefix", endpointInput{raw: "http://c:4318/otlp/", signal: "logs", protocol: ProtocolHTTP, fromCode: true}, "http://c:4318/otlp/v1/logs", "", ""},
 		{"code per-signal verbatim", endpointInput{raw: "http://c:4318/custom/traces", signal: "traces", protocol: ProtocolHTTP, fromCode: true, perSignal: true}, "http://c:4318/custom/traces", "", ""},
-		{"code grpc drops path", endpointInput{raw: "https://c:4317/ignored", signal: "traces", protocol: ProtocolGRPC, fromCode: true}, "https://c:4317", "", ""},
+		// A29: the path is dropped and warned (variable only), never an error.
+		{"code grpc drops path", endpointInput{raw: "https://c:4317/ignored", signal: "traces", protocol: ProtocolGRPC, fromCode: true}, "https://c:4317", "endpoint path is ignored by the gRPC exporter", ""},
 		{"code + WithInsecure conflict", endpointInput{raw: "https://c:4317", variable: "WithEndpoint", signal: "traces", protocol: ProtocolGRPC, fromCode: true, insecure: true, insecureSet: true, insecureFromCode: true}, "", "", "contradicts"},
 		{"code unsupported scheme", endpointInput{raw: "ftp://c:21", variable: "WithEndpoint", signal: "traces", protocol: ProtocolGRPC, fromCode: true}, "", "", "unsupported endpoint scheme"},
 		{"code invalid", endpointInput{raw: "http://[::1", variable: "WithEndpoint", signal: "traces", protocol: ProtocolGRPC, fromCode: true}, "", "", "invalid endpoint"},
@@ -744,10 +743,8 @@ func TestQuietResourceEnvEcho_KeepsAHandlerSetDuringTheWindow(t *testing.T) {
 }
 
 func TestResourceEnvEchoFilter_NeverLoops(t *testing.T) {
-	var buf bytes.Buffer
-	prevOut := log.Writer()
-	log.SetOutput(&buf)
-	t.Cleanup(func() { log.SetOutput(prevOut) })
+	// The fallback writes on the helper's stderr logger (A29), never log.Print.
+	buf := captureDiag(t)
 	f := &resourceEnvEchoFilter{prev: nil}
 	f.active.Store(true)
 	f.Handle(errors.New("to log, not to a nil handler"))
@@ -786,8 +783,11 @@ func TestSetup_SDKDoesNotEchoMalformedResourceItems(t *testing.T) {
 			t.Errorf("SDK echo reached the application's handler: %q", e)
 		}
 	}
-	if otel.GetErrorHandler() != otel.ErrorHandler(user) {
-		t.Error("Setup did not restore the application's error handler")
+	// After the echo filter, the application's handler sits behind the
+	// helper's SDK error handler until Shutdown (design D1 row "SDK error
+	// text", A29).
+	if h, ok := otel.GetErrorHandler().(*sdkErrorHandler); !ok || h.next != otel.ErrorHandler(user) {
+		t.Errorf("Setup did not restore the application's error handler behind the helper's: %T", otel.GetErrorHandler())
 	}
 }
 

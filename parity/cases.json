@@ -9363,6 +9363,982 @@
         "dotnet": "xfail:phase-c",
         "nodejs": "pass"
       }
+    },
+    {
+      "id": "export.http_error_body_header_values_not_logged",
+      "kind": "export",
+      "requirement": "R8/D1 A29",
+      "note": "Design D1 row \"SDK error text: response bodies and header values\" (A29): fakeotlp answers 400 with the x-parity-* headers echoed in a JSON body (x-parity-echo-error). No language prints the body or the configured header value: Go drops 'body: ...' in its OTel error handler and masks the value, Python logs code + reason only, Node drops the body (withoutResponseBodies). The received headers prove the echo path ran. A29 fix round (2026-11-05): the body carries a body-only marker that must never be logged (Go drops the body, not only masks it), and a positive control requires the failure to be logged (400 or Bad Request).",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "http://{receiver}:4318",
+        "OTEL_EXPORTER_OTLP_PROTOCOL": "http/protobuf",
+        "OTEL_EXPORTER_OTLP_HEADERS": "x-parity-echo-error=1,x-parity-secret=parity-echo-s3cr3t"
+      },
+      "code": {},
+      "expect": {
+        "received": {
+          "traces": {
+            "proto": "http",
+            "headers": {
+              "x-parity-echo-error": "1"
+            }
+          }
+        },
+        "log": {
+          "all": [
+            {
+              "not_contains": "parity-echo-s3cr3t"
+            },
+            {
+              "not_contains": "parity-body-marker"
+            },
+            {
+              "regex": "400|Bad Request"
+            }
+          ]
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:C8",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "export.grpc_error_details_header_values_masked",
+      "kind": "export",
+      "requirement": "R8/D1 A29",
+      "note": "Design D1 row \"SDK error text: response bodies and header values\" (A29): fakeotlp answers INVALID_ARGUMENT with the x-parity-* headers echoed in the status message. The configured header value is masked wherever the SDK error text carries it: Go's OTel error handler, Python's filter on the exporter loggers (1.45 logs error.details()), Node's maskLiterals. A29 fix round (2026-11-05): positive control: the failure is logged with its gRPC code.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "http://{receiver}:4317",
+        "OTEL_EXPORTER_OTLP_HEADERS": "x-parity-echo-error=1,x-parity-secret=parity-echo-s3cr3t"
+      },
+      "code": {},
+      "expect": {
+        "received": {
+          "traces": {
+            "proto": "grpc",
+            "headers": {
+              "x-parity-echo-error": "1"
+            }
+          }
+        },
+        "log": {
+          "all": [
+            {
+              "not_contains": "parity-echo-s3cr3t"
+            },
+            {
+              "regex": "InvalidArgument|INVALID_ARGUMENT"
+            }
+          ]
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:C8",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "export.grpc_endpoint_path_ignored_warned",
+      "kind": "export",
+      "requirement": "R8/D1 A29",
+      "note": "Design D1 row \"Path on a gRPC endpoint\" (A29): the path is dropped (the export still reaches host:port) and one warning names the variable, never the path, although the generic variable serves three signals. A29 fix round (2026-11-05): the variable (or option) is matched on the warning line itself.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "http://{receiver}:4317/parity-grpc-path"
+      },
+      "code": {},
+      "expect": {
+        "received": {
+          "traces": {
+            "proto": "grpc",
+            "port": 4317,
+            "tls": false
+          },
+          "metrics": {
+            "proto": "grpc",
+            "port": 4317,
+            "tls": false
+          },
+          "logs": {
+            "proto": "grpc",
+            "port": 4317,
+            "tls": false
+          }
+        },
+        "warning_count": {
+          "endpoint path is ignored by the gRPC exporter": 1
+        },
+        "helper_log": {
+          "not_contains": "parity-grpc-path"
+        },
+        "log": {
+          "regex": "endpoint path is ignored by the gRPC exporter[^\\n]*(OTEL_EXPORTER_OTLP_ENDPOINT)|(OTEL_EXPORTER_OTLP_ENDPOINT)[^\\n]*endpoint path is ignored by the gRPC exporter"
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:C7b",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "export.grpc_per_signal_endpoint_path_ignored_warned",
+      "kind": "export",
+      "requirement": "R8/D1 A29",
+      "note": "Design D1 row \"Path on a gRPC endpoint\" (A29): the common mistake OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://collector:4317/v1/traces with gRPC warns once, naming the per-signal variable; the generic endpoint has no path. A29 fix round (2026-11-05): the variable (or option) is matched on the warning line itself.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "http://{receiver}:4317",
+        "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT": "http://{receiver}:4317/v1/traces"
+      },
+      "code": {},
+      "expect": {
+        "received": {
+          "traces": {
+            "proto": "grpc",
+            "port": 4317,
+            "tls": false
+          },
+          "metrics": {
+            "proto": "grpc",
+            "port": 4317,
+            "tls": false
+          },
+          "logs": {
+            "proto": "grpc",
+            "port": 4317,
+            "tls": false
+          }
+        },
+        "warning_count": {
+          "endpoint path is ignored by the gRPC exporter": 1
+        },
+        "log": {
+          "regex": "endpoint path is ignored by the gRPC exporter[^\\n]*(OTEL_EXPORTER_OTLP_TRACES_ENDPOINT)|(OTEL_EXPORTER_OTLP_TRACES_ENDPOINT)[^\\n]*endpoint path is ignored by the gRPC exporter"
+        },
+        "helper_log": {
+          "not_contains": "/v1/traces"
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:C7b",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "export.grpc_code_endpoint_path_ignored_warned",
+      "kind": "export",
+      "requirement": "R8/D1 A29",
+      "note": "Design D1 row \"Path on a gRPC endpoint\" (A29): a code endpoint with a path warns too and does not fail setup (a path is ignored, not invalid). A29 fix round (2026-11-05): the variable (or option) is matched on the warning line itself.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc"
+      },
+      "code": {
+        "otel_endpoint": "http://{receiver}:4317/parity-code-path"
+      },
+      "expect": {
+        "received": {
+          "traces": {
+            "proto": "grpc",
+            "port": 4317,
+            "tls": false
+          },
+          "metrics": {
+            "proto": "grpc",
+            "port": 4317,
+            "tls": false
+          },
+          "logs": {
+            "proto": "grpc",
+            "port": 4317,
+            "tls": false
+          }
+        },
+        "warning_count": {
+          "endpoint path is ignored by the gRPC exporter": 1
+        },
+        "helper_log": {
+          "not_contains": "parity-code-path"
+        },
+        "log": {
+          "regex": "endpoint path is ignored by the gRPC exporter[^\\n]*(WithEndpoint|otel_endpoint|otelEndpoint)|(WithEndpoint|otel_endpoint|otelEndpoint)[^\\n]*endpoint path is ignored by the gRPC exporter"
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:C7b",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "export.grpc_endpoint_root_path_not_warned",
+      "kind": "export",
+      "requirement": "D1 A29",
+      "note": "Design D1 row \"Path on a gRPC endpoint\" (A29): a bare '/' is not a path.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "http://{receiver}:4317/"
+      },
+      "code": {},
+      "expect": {
+        "received": {
+          "traces": {
+            "proto": "grpc",
+            "port": 4317,
+            "tls": false
+          },
+          "metrics": {
+            "proto": "grpc",
+            "port": 4317,
+            "tls": false
+          },
+          "logs": {
+            "proto": "grpc",
+            "port": 4317,
+            "tls": false
+          }
+        },
+        "warning_count": {
+          "endpoint path is ignored by the gRPC exporter": 0
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:C7b",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "metrics.port_prometheus_port_beats_helper_port",
+      "kind": "resolve",
+      "requirement": "D1/A29",
+      "note": "Design D1 row \"Prometheus exporter variables\" (A29): OTEL_EXPORTER_PROMETHEUS_PORT wins over OTEL_HELPER_METRICS_PORT (principle 6).",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_METRICS_EXPORTER": "none",
+        "OTEL_EXPORTER_PROMETHEUS_PORT": "9300",
+        "OTEL_HELPER_METRICS_PORT": "9100"
+      },
+      "code": {},
+      "expect": {
+        "prometheus_metrics_port": 9300
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:C12",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "metrics.port_prometheus_port_invalid_falls_back",
+      "kind": "resolve",
+      "requirement": "D1/A29",
+      "note": "Design D1 row \"Prometheus exporter variables\" (A29): an invalid OTEL_EXPORTER_PROMETHEUS_PORT (the A21 grammar) warns and falls to OTEL_HELPER_METRICS_PORT.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_METRICS_EXPORTER": "none",
+        "OTEL_EXPORTER_PROMETHEUS_PORT": "93_00",
+        "OTEL_HELPER_METRICS_PORT": "9100"
+      },
+      "code": {},
+      "expect": {
+        "prometheus_metrics_port": 9100,
+        "warning": "OTEL_EXPORTER_PROMETHEUS_PORT"
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:C12",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "metrics.port_prometheus_port_zero_no_listener",
+      "kind": "resolve",
+      "requirement": "D1/A29",
+      "note": "Design D1 row \"Prometheus exporter variables\" (A29): 0 means no standalone listener, as for OTEL_HELPER_METRICS_PORT (not an ephemeral port).",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_METRICS_EXPORTER": "none",
+        "OTEL_EXPORTER_PROMETHEUS_PORT": "0",
+        "OTEL_HELPER_METRICS_PORT": "9100"
+      },
+      "code": {},
+      "expect": {
+        "prometheus_metrics_port": 0
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:C12",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "metrics.port_prometheus_port_empty_is_unset",
+      "kind": "resolve",
+      "requirement": "D1/A29",
+      "note": "Design D1 row \"Prometheus exporter variables\" (A29): an empty value is unset (spec 'Parsing empty value'): no warning, OTEL_HELPER_METRICS_PORT applies.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_METRICS_EXPORTER": "none",
+        "OTEL_EXPORTER_PROMETHEUS_PORT": "",
+        "OTEL_HELPER_METRICS_PORT": "9100"
+      },
+      "code": {},
+      "expect": {
+        "prometheus_metrics_port": 9100,
+        "warning_count": {
+          "OTEL_EXPORTER_PROMETHEUS_PORT": 0
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:C12",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "metrics.port_prometheus_host_unset_every_interface",
+      "kind": "resolve",
+      "requirement": "D1/A29",
+      "note": "Design D1 row \"Prometheus exporter variables\" (A29): unset binds every interface, a recorded deviation from the spec default localhost.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_METRICS_EXPORTER": "none"
+      },
+      "code": {},
+      "expect": {
+        "prometheus_metrics_host": ""
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:C12",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "metrics.port_prometheus_host_ipv4",
+      "kind": "resolve",
+      "requirement": "D1/A29",
+      "note": "Design D1 row \"Prometheus exporter variables\" (A29): an IPv4 literal is the bind address.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_METRICS_EXPORTER": "none",
+        "OTEL_EXPORTER_PROMETHEUS_HOST": "127.0.0.1"
+      },
+      "code": {},
+      "expect": {
+        "prometheus_metrics_host": "127.0.0.1"
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:C12",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "metrics.port_prometheus_host_ipv6_brackets",
+      "kind": "resolve",
+      "requirement": "D1/A29",
+      "note": "Design D1 row \"Prometheus exporter variables\" (A29): an IPv6 literal may be bracketed; the snapshot has no brackets.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_METRICS_EXPORTER": "none",
+        "OTEL_EXPORTER_PROMETHEUS_HOST": "[::1]"
+      },
+      "code": {},
+      "expect": {
+        "prometheus_metrics_host": "::1"
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:C12",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "metrics.port_prometheus_host_localhost",
+      "kind": "resolve",
+      "requirement": "D1/A29",
+      "note": "Design D1 row \"Prometheus exporter variables\" (A29): localhost (ASCII case-insensitive) binds 127.0.0.1; other names are not resolved.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_METRICS_EXPORTER": "none",
+        "OTEL_EXPORTER_PROMETHEUS_HOST": "LocalHost"
+      },
+      "code": {},
+      "expect": {
+        "prometheus_metrics_host": "127.0.0.1"
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:C12",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "metrics.port_prometheus_host_unspecified_ipv6",
+      "kind": "resolve",
+      "requirement": "D1/A29",
+      "note": "Design D1 row \"Prometheus exporter variables\" (A29): :: is the same as unset (every interface, dual-stack).",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_METRICS_EXPORTER": "none",
+        "OTEL_EXPORTER_PROMETHEUS_HOST": "::"
+      },
+      "code": {},
+      "expect": {
+        "prometheus_metrics_host": ""
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:C12",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "metrics.port_prometheus_host_invalid_warned",
+      "kind": "resolve",
+      "requirement": "D1/A29",
+      "note": "Design D1 row \"Prometheus exporter variables\" (A29): a value that is not an IP literal or localhost ('*' here) warns once and binds every interface.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_METRICS_EXPORTER": "none",
+        "OTEL_EXPORTER_PROMETHEUS_HOST": "*"
+      },
+      "code": {},
+      "expect": {
+        "prometheus_metrics_host": "",
+        "warning_count": {
+          "OTEL_EXPORTER_PROMETHEUS_HOST": 1
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:C12",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "metrics.port_prometheus_host_zone_invalid",
+      "kind": "resolve",
+      "requirement": "D1/A29",
+      "note": "Design D1 row \"Prometheus exporter variables\" (A29): an IPv6 zone id is not accepted: warned, every interface.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_METRICS_EXPORTER": "none",
+        "OTEL_EXPORTER_PROMETHEUS_HOST": "fe80::1%eth0"
+      },
+      "code": {},
+      "expect": {
+        "prometheus_metrics_host": "",
+        "warning": "OTEL_EXPORTER_PROMETHEUS_HOST"
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:C12",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "metrics.listener_prometheus_host_loopback",
+      "kind": "metrics_listener",
+      "requirement": "D1/A29",
+      "note": "Design D1 row \"Prometheus exporter variables\" (A29): the standalone listener binds OTEL_EXPORTER_PROMETHEUS_HOST (127.0.0.1, where the runner connects); the runner sets the port.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_PROMETHEUS_HOST": "127.0.0.1"
+      },
+      "code": {},
+      "input": {
+        "requests": [
+          "GET /metrics",
+          "GET /other"
+        ]
+      },
+      "expect": {
+        "listener_statuses": [
+          200,
+          404
+        ]
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:C12",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "export.http_error_reason_token_header_values_masked",
+      "kind": "export",
+      "requirement": "R8/D1 A29",
+      "note": "Design D1 row \"SDK error text\" (A29 fix round (2026-11-05): dev H1): fakeotlp answers 400 with only the credential of 'Bearer <token>' in the HTTP reason phrase (x-parity-echo-error=token). Every language masks each whitespace-separated part (4+ characters) of a configured value; the positive control requires the failure to be logged.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "http://{receiver}:4318",
+        "OTEL_EXPORTER_OTLP_PROTOCOL": "http/protobuf",
+        "OTEL_EXPORTER_OTLP_HEADERS": "x-parity-echo-error=token,x-parity-secret=Bearer%20parity-tok3n-s3cr3t"
+      },
+      "code": {},
+      "expect": {
+        "received": {
+          "traces": {
+            "proto": "http",
+            "headers": {
+              "x-parity-echo-error": "token"
+            }
+          }
+        },
+        "log": {
+          "all": [
+            {
+              "not_contains": "parity-tok3n-s3cr3t"
+            },
+            {
+              "not_contains": "parity-body-marker"
+            },
+            {
+              "regex": "400"
+            }
+          ]
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:C8",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "export.grpc_error_token_header_values_masked",
+      "kind": "export",
+      "requirement": "R8/D1 A29",
+      "note": "Design D1 row \"SDK error text\" (A29 fix round (2026-11-05): dev H1): fakeotlp answers INVALID_ARGUMENT 'invalid token <token>' (only the credential of 'Bearer <token>').",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "http://{receiver}:4317",
+        "OTEL_EXPORTER_OTLP_HEADERS": "x-parity-echo-error=token,x-parity-secret=Bearer%20parity-tok3n-s3cr3t"
+      },
+      "code": {},
+      "expect": {
+        "received": {
+          "traces": {
+            "proto": "grpc",
+            "headers": {
+              "x-parity-echo-error": "token"
+            }
+          }
+        },
+        "log": {
+          "all": [
+            {
+              "not_contains": "parity-tok3n-s3cr3t"
+            },
+            {
+              "regex": "InvalidArgument|INVALID_ARGUMENT"
+            }
+          ]
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:C8",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "export.grpc_error_overlapping_header_values_masked",
+      "kind": "export",
+      "requirement": "R8/D1 A29",
+      "note": "Design D1 row \"SDK error text\" (A29 fix round (2026-11-05): code-review H1, M3): a value contained in another ('abcd' in 'abcd-rest-s3cr3t') never cuts the longer one open (one pass, longest first), and a value with '&' echoed by Go's encoding/json (\\u0026) is masked in its HTML-escaped JSON form.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "http://{receiver}:4317",
+        "OTEL_EXPORTER_OTLP_HEADERS": "x-parity-echo-error=1,x-parity-a=abcd,x-parity-b=abcd-rest-s3cr3t,x-parity-c=a%26b-amp-s3cr3t"
+      },
+      "code": {},
+      "expect": {
+        "received": {
+          "traces": {
+            "proto": "grpc",
+            "headers": {
+              "x-parity-echo-error": "1"
+            }
+          }
+        },
+        "log": {
+          "all": [
+            {
+              "not_contains": "rest-s3cr3t"
+            },
+            {
+              "not_contains": "amp-s3cr3t"
+            },
+            {
+              "regex": "InvalidArgument|INVALID_ARGUMENT"
+            }
+          ]
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:C8",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "export.grpc_schemeless_endpoint_path_ignored_warned",
+      "kind": "export",
+      "requirement": "R8/D1 A29",
+      "note": "Design D1 row \"Path on a gRPC endpoint\" (A29 fix round (2026-11-05): obs L7): a schemeless value with a path warns too. The Go SDK's own internal logger still prints the raw value (a recorded limitation: helper_log only is asserted).",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "{receiver}:4317/parity-schemeless-path",
+        "OTEL_EXPORTER_OTLP_INSECURE": "true"
+      },
+      "code": {},
+      "expect": {
+        "received": {
+          "traces": {
+            "proto": "grpc",
+            "port": 4317,
+            "tls": false
+          },
+          "metrics": {
+            "proto": "grpc",
+            "port": 4317,
+            "tls": false
+          },
+          "logs": {
+            "proto": "grpc",
+            "port": 4317,
+            "tls": false
+          }
+        },
+        "warning_count": {
+          "endpoint path is ignored by the gRPC exporter": 1
+        },
+        "log": {
+          "regex": "endpoint path is ignored by the gRPC exporter[^\\n]*(OTEL_EXPORTER_OTLP_ENDPOINT)|(OTEL_EXPORTER_OTLP_ENDPOINT)[^\\n]*endpoint path is ignored by the gRPC exporter"
+        },
+        "helper_log": {
+          "not_contains": "parity-schemeless-path"
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:C7b",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "export.grpc_skipped_endpoint_path_not_warned",
+      "kind": "export",
+      "requirement": "D1 A29",
+      "note": "Design D1 row \"Path on a gRPC endpoint\" (A29 fix round (2026-11-05): code-review M4b): an invalid per-signal value (a tab in the port) that the resolution skipped never produces the path warning; traces fall back to the generic endpoint.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "http://{receiver}:4317",
+        "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT": "http://{receiver}:43\t17/parity-skip-path"
+      },
+      "code": {},
+      "expect": {
+        "received": {
+          "traces": {
+            "proto": "grpc",
+            "port": 4317,
+            "tls": false
+          }
+        },
+        "warning_count": {
+          "endpoint path is ignored by the gRPC exporter": 0
+        },
+        "helper_log": {
+          "not_contains": "parity-skip-path"
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:C7b",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "export.http_endpoint_path_not_warned",
+      "kind": "export",
+      "requirement": "D1 A29",
+      "note": "Design D1 row \"Path on a gRPC endpoint\" (A29 fix round (2026-11-05): obs L7): an http/protobuf path is the URL prefix, never warned.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "http://{receiver}:4318/parity-http-prefix"
+      },
+      "code": {},
+      "expect": {
+        "received": {
+          "traces": {
+            "proto": "http",
+            "path": "/parity-http-prefix/v1/traces"
+          }
+        },
+        "warning_count": {
+          "endpoint path is ignored by the gRPC exporter": 0
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:C7b",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "metrics.port_prometheus_code_beats_standard",
+      "kind": "resolve",
+      "requirement": "D1/A29",
+      "note": "Design D1 row \"Prometheus exporter variables\" (A29 fix round (2026-11-05): obs L7): the code port beats OTEL_EXPORTER_PROMETHEUS_PORT.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_METRICS_EXPORTER": "none",
+        "OTEL_EXPORTER_PROMETHEUS_PORT": "9300"
+      },
+      "code": {
+        "prometheus_metrics_port": 9200
+      },
+      "expect": {
+        "prometheus_metrics_port": 9200
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:C12",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "metrics.port_prometheus_port_both_invalid",
+      "kind": "resolve",
+      "requirement": "D1/A29",
+      "note": "Design D1 row \"Prometheus exporter variables\" (A29 fix round (2026-11-05): obs L7): both port variables invalid: each warns once (counted on the echoed values, not on the wording of the fallback), 9464.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_METRICS_EXPORTER": "none",
+        "OTEL_EXPORTER_PROMETHEUS_PORT": "x93",
+        "OTEL_HELPER_METRICS_PORT": "y91"
+      },
+      "code": {},
+      "expect": {
+        "prometheus_metrics_port": 9464,
+        "warning_count": {
+          "x93": 1,
+          "y91": 1
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:C12",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "metrics.port_prometheus_host_ipv4_any",
+      "kind": "resolve",
+      "requirement": "D1/A29",
+      "note": "Design D1 row \"Prometheus exporter variables\" (A29 fix round (2026-11-05): obs L7): 0.0.0.0 binds every IPv4 interface (IPv4 only).",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_METRICS_EXPORTER": "none",
+        "OTEL_EXPORTER_PROMETHEUS_HOST": "0.0.0.0"
+      },
+      "code": {},
+      "expect": {
+        "prometheus_metrics_host": "0.0.0.0"
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:C12",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "metrics.port_prometheus_host_ipv4_mapped",
+      "kind": "resolve",
+      "requirement": "D1/A29",
+      "note": "Design D1 row \"Prometheus exporter variables\" (A29 fix round (2026-11-05): obs L7): an IPv4-mapped IPv6 address binds as its IPv4 address.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_METRICS_EXPORTER": "none",
+        "OTEL_EXPORTER_PROMETHEUS_HOST": "::ffff:127.0.0.1"
+      },
+      "code": {},
+      "expect": {
+        "prometheus_metrics_host": "127.0.0.1"
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:C12",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "metrics.port_prometheus_host_leading_zeros_invalid",
+      "kind": "resolve",
+      "requirement": "D1/A29",
+      "note": "Design D1 row \"Prometheus exporter variables\" (A29 fix round (2026-11-05): obs L7): leading zeros in an IPv4 literal are invalid: warned, every interface.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_METRICS_EXPORTER": "none",
+        "OTEL_EXPORTER_PROMETHEUS_HOST": "127.000.0.1"
+      },
+      "code": {},
+      "expect": {
+        "prometheus_metrics_host": "",
+        "warning_count": {
+          "OTEL_EXPORTER_PROMETHEUS_HOST": 1
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:C12",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "metrics.port_prometheus_host_bracketed_ipv4_invalid",
+      "kind": "resolve",
+      "requirement": "D1/A29",
+      "note": "Design D1 row \"Prometheus exporter variables\" (A29 fix round (2026-11-05): obs L7): brackets are for IPv6 only: warned, every interface.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_METRICS_EXPORTER": "none",
+        "OTEL_EXPORTER_PROMETHEUS_HOST": "[127.0.0.1]"
+      },
+      "code": {},
+      "expect": {
+        "prometheus_metrics_host": "",
+        "warning_count": {
+          "OTEL_EXPORTER_PROMETHEUS_HOST": 1
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:C12",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "metrics.port_prometheus_host_with_port_invalid",
+      "kind": "resolve",
+      "requirement": "D1/A29",
+      "note": "Design D1 row \"Prometheus exporter variables\" (A29 fix round (2026-11-05): obs L7): a host with a port is invalid: warned, every interface.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_METRICS_EXPORTER": "none",
+        "OTEL_EXPORTER_PROMETHEUS_HOST": "127.0.0.1:9464"
+      },
+      "code": {},
+      "expect": {
+        "prometheus_metrics_host": "",
+        "warning_count": {
+          "OTEL_EXPORTER_PROMETHEUS_HOST": 1
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:C12",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "metrics.port_prometheus_host_name_invalid",
+      "kind": "resolve",
+      "requirement": "D1/A29",
+      "note": "Design D1 row \"Prometheus exporter variables\" (A29 fix round (2026-11-05): obs L7): a host name other than localhost is not resolved: warned, every interface (fails open by owner decision).",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_METRICS_EXPORTER": "none",
+        "OTEL_EXPORTER_PROMETHEUS_HOST": "metrics.example.com"
+      },
+      "code": {},
+      "expect": {
+        "prometheus_metrics_host": "",
+        "warning_count": {
+          "OTEL_EXPORTER_PROMETHEUS_HOST": 1
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:C12",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "metrics.port_prometheus_host_userinfo_not_echoed",
+      "kind": "resolve",
+      "requirement": "D1/A29",
+      "note": "Design D1 row \"Prometheus exporter variables\" (A29 fix round (2026-11-05): obs L7): the echoed invalid value loses URL userinfo and query (obs L2).",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_METRICS_EXPORTER": "none",
+        "OTEL_EXPORTER_PROMETHEUS_HOST": "https://user:parity-host-s3cr3t@metrics.example.com?k=parity-query-s3cr3t"
+      },
+      "code": {},
+      "expect": {
+        "prometheus_metrics_host": "",
+        "warning_count": {
+          "OTEL_EXPORTER_PROMETHEUS_HOST": 1
+        },
+        "helper_log": {
+          "all": [
+            {
+              "not_contains": "parity-host-s3cr3t"
+            },
+            {
+              "not_contains": "parity-query-s3cr3t"
+            }
+          ]
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:C12",
+        "nodejs": "pass"
+      }
     }
   ]
 }

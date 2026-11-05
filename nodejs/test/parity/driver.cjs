@@ -101,6 +101,7 @@ const CODE_KEYS = {
   resource_attributes: 'resourceAttributes',
   health_paths: 'healthPaths',
   disabled_signals: 'disabledSignals',
+  prometheus_metrics_port: 'prometheusMetricsPort', // A29 fix round (obs L7)
 };
 
 /** Maps a case's `code` object to setup() options; an unmapped key is an adapter error. */
@@ -190,6 +191,7 @@ async function kindResolve(c) {
       snap.log_level = level === 'WARNING' ? 'WARN' : level;
     }
     if ('prometheus_metrics_port' in expect) snap.prometheus_metrics_port = resolvedField(resolved, 'prometheusMetricsPort', 'B7');
+    if ('prometheus_metrics_host' in expect) snap.prometheus_metrics_host = resolvedField(resolved, 'prometheusMetricsHost', 'A29');
   }
   await shutdown();
   return snap;

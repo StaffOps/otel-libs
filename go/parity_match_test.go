@@ -28,7 +28,7 @@ var (
 )
 
 var snapshotSchema = map[string][]string{
-	"resolve":          {"resource", "metric_exporters", "metric_export_interval_ms", "log_level", "prometheus_metrics_port"},
+	"resolve":          {"resource", "metric_exporters", "metric_export_interval_ms", "log_level", "prometheus_metrics_port", "prometheus_metrics_host"},
 	"export":           {"received"},
 	"sampler":          {"sampled", "attributes"},
 	"propagation":      {"headers"},

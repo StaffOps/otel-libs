@@ -67,7 +67,7 @@ func releaseOnFailure(ctx context.Context, what string, shutdown func(context.Co
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), cleanupTimeout)
 	defer cancel()
 	if err := shutdown(ctx); err != nil {
-		diagLogger.Warn("otelhelper: releasing "+what+" after a failed Setup", "error", err)
+		diagLogger.Warn("otelhelper: releasing "+what+" after a failed Setup", "error", sanitizeSDKError(err).Error())
 	}
 }
 
@@ -83,6 +83,9 @@ type pipeline struct {
 	// on done instead of returning a dying pipeline.
 	closing bool
 	done    chan struct{}
+	// restoreHandler puts back the OTel error handler Setup found (design D1
+	// row "SDK error text", A29); set by commit.
+	restoreHandler func()
 }
 
 func newPipeline() *pipeline { return &pipeline{done: make(chan struct{})} }
@@ -115,7 +118,12 @@ func (p *pipeline) shutdown(ctx context.Context) error {
 			}()
 		}
 		wg.Wait()
-		p.err = errors.Join(errs...)
+		// A last flush can fail with an OTLP/HTTP response body: the caller
+		// may log this error (design D1 row "SDK error text", A29).
+		p.err = sanitizeSDKError(errors.Join(errs...))
+		if owner && p.restoreHandler != nil {
+			p.restoreHandler() // after the flushes: their errors are still sanitized
+		}
 
 		mu.Lock()
 		if owner {
@@ -157,6 +165,9 @@ func Setup(ctx context.Context, opts ...Option) (Shutdown, error) {
 		// Validation failure does NOT set setupDone — caller can retry with valid config.
 		return noopShutdown, fmt.Errorf("otelhelper: %w", err)
 	}
+	// The header values the exporters are built with stay masked in SDK errors
+	// even if the application changes the variables later (A29 final round).
+	captureHeaderValues()
 
 	p := newPipeline()
 	if options.sdkDisabled {
@@ -263,6 +274,9 @@ func Setup(ctx context.Context, opts ...Option) (Shutdown, error) {
 // (nil = stdout). Callers hold mu.
 func commit(p *pipeline, options *Options, bridge *logBridge) {
 	options.metricIntervalMs = effectiveIntervalMs(options)
+	// SDK errors lose OTLP/HTTP response bodies and configured header values
+	// (design D1 row "SDK error text: response bodies and header values", A29).
+	p.restoreHandler = installSDKErrorHandler()
 	current = p
 	shutdownFn = p.shutdown
 	// Level first: a record that sees the new bridge must also see its level.

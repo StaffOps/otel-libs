@@ -15,7 +15,7 @@ import opentelemetry._logs._internal as _logs_mod
 from opentelemetry.instrumentation.logging.handler import LoggingHandler as _ContribLoggingHandler
 from opentelemetry.sdk._logs import LoggingHandler
 
-from staffops_otel_helper import _diag
+from staffops_otel_helper import _diag, _sdk_log_mask
 from staffops_otel_helper.setup import reset_telemetry
 
 ALL_ENV_VARS = [
@@ -99,6 +99,7 @@ def isolate_otel_state():
     # --- Setup ---
     _clear_env()
     _diag._reset()
+    _sdk_log_mask._reset_captured()
     reset_telemetry()
     _shutdown_stray_prometheus_readers()
     _reset_otel_globals()
@@ -109,6 +110,7 @@ def isolate_otel_state():
     # --- Teardown ---
     _clear_env()
     _diag._reset()
+    _sdk_log_mask._reset_captured()
     reset_telemetry()
     _shutdown_stray_prometheus_readers()
     _reset_otel_globals()

@@ -154,7 +154,7 @@ the C4 runner records.
 | Listener `GET`/`HEAD /metrics` only, other paths 404, other methods 405 | 1.9.0-beta.2 on `UriPrefixes http://*:<port>/` (`MetricsSetup.cs:53-56`) answers 200 to `POST`/`PUT` (measured); 1.20.1-beta.1 with the `+` prefix answers 200 to `POST`, `PUT`, `DELETE`, `HEAD`, `GET` on `/metrics`, `/metrics/` and `/metrics/foo`, 404 on `/`, `/foo`, `/METRICS` (measured, C1 dev H2); no public collection API exists to serve `/metrics` differently (exported types: options, translation-strategy enum, builder extension) — owner decision O9 (a), 2026-11-04: both cases `skip:no-upstream-dotnet-prom-listener` | `metrics.listener_*` (2) |
 | Port `^\+?[0-9]+$` in [0, 65535], code wins | env port parsed with `int.TryParse` and applied over code (`TelemetryOptionsPostConfigure.cs:47-49`; measured code 1234 + env `" 9999"` → 9999, N8) | `metrics.port_*` (4) |
 | Bind all interfaces | 0.2.x binds `http://*:<port>/`; 1.20.1-beta.1 defaults `Host` to `localhost` (Prometheus README line 61) and **aborts** the MeterProvider build for `Host` `*`, `+` or `0.0.0.0` (`UriFormatException`, measured, C1 dev H1); working pattern: `ConfigureHttpListener` with `Prefixes.Clear()` + `http://+:{port}/metrics/` (README lines 180-213); `UriPrefixes` removed in 1.17.0-beta.1, `Host`/`Port` added in 1.16.0-beta.1 | e2e scrape from another container (C17; landed in C3, see the D-NET11 correction of 2026-11-05) |
-| `OTEL_EXPORTER_PROMETHEUS_HOST` / `_PORT` | read by the 1.20.1-beta.1 listener options from env/`IConfiguration` (README lines 105-106); not ruled by the contract — owner decision O10 (a), 2026-11-04: ignored with one warning each (D-NET11) | no case |
+| `OTEL_EXPORTER_PROMETHEUS_HOST` / `_PORT` | read by the 1.20.1-beta.1 listener options from env/`IConfiguration` (README lines 105-106); not ruled by the contract — owner decision O10 (a), 2026-11-04: ignored with one warning each (D-NET11); *superseded 2026-11-05 (contract A29): honored, C12* | no case |
 | Disabled-metric glob: `*`, `?`, rest literal, **case-sensitive** | `Regex.Escape` + `*` → `.*`, `IgnoreCase` (`MetricsSetup.cs:62-65`); `?` literal | `metrics.disabled_metrics_*` (5) |
 | Suffixes (`_total`, unit, Gauge unit `1` → `_ratio`), `target_info`, `otel_scope_name`, colliding labels | measured diff 1.9.0-beta.2 → 1.20.1-beta.1 (C1 dev M7): `target_info` added; timestamps dropped; `# UNIT` lines and `# EOF` dropped; a Gauge in unit `1` gets **no** `_ratio` suffix in either version. CHANGELOG 1.10.0–1.19.0: meter tags as labels (1.10.0), `otel_scope_*` labels on every series, invalid characters → `_`, `le` canonicalization; scrape responses cached 300 ms by default (`ScrapeResponseCacheDurationMilliseconds`, README line 114) | `metrics.scrape_*` (11) |
 
@@ -665,6 +665,19 @@ services).
 > `publish-dotnet` and `publish-dotnet-release` need; C17 may fold it into the
 > `dotnet-smoke` service.
 
+> **Superseded 2026-11-05 (owner decision, contract task A29).** O10 (a) no
+> longer holds: the contract now honors both variables (config-contract design
+> D1 row "Prometheus exporter variables"): port = code >
+> `OTEL_EXPORTER_PROMETHEUS_PORT` > `OTEL_HELPER_METRICS_PORT` > 9464, the A21
+> grammar, `0` = no listener; `OTEL_EXPORTER_PROMETHEUS_HOST` = the bind address
+> (an IP literal or `localhost` → `127.0.0.1`; unset, `::` or an invalid value =
+> every interface, the `+` prefix; invalid values warn once). **C12 must honor
+> them** instead of warning that they have no effect: the helper keeps owning
+> `Host` (never the exporter's `localhost` default, never `*`) and builds the
+> prefix from the resolved host; `PrometheusEnvVars_HaveNoEffect_HelperPortServed`
+> is rewritten in C12. Cases `metrics.port_prometheus_*` and
+> `metrics.listener_prometheus_host_loopback` are `xfail:C12`.
+
 ### D-NET12 — Parity runner: xUnit theory over the fixture, one process per case
 **Choice**: a test class `ParityTests` in the test project finds
 `parity/cases.json` from a repository-root marker (walking up from the test
@@ -861,7 +874,7 @@ Decided (2026-11-04):
 | O7 | (b): the app sets `OTEL_DOTNET_EXPERIMENTAL_ASPNETCORE_ENABLE_GRPC_INSTRUMENTATION`; the helper detects gRPC endpoints without it and warns once; README and migration item 5 say so; the driver and examples set it | D-NET8, D-NET12 |
 | O8 | (c): documented gap — README gap row and HOW-TO line on `OTEL_SEMCONV_STABILITY_OPT_IN=database/dup`; reviewers split (observability (b), dev (c)); (b) is the reversal | D-NET14, D-NET15 |
 | O9 | (a): `metrics.listener_*` (2 cases) `skip:no-upstream-dotnet-prom-listener` | D-NET11, D-NET15 |
-| O10 | (a): `OTEL_EXPORTER_PROMETHEUS_HOST`/`_PORT` ignored with one warning each; contract question to Go + Python (Deferred row) | ADR-013, D-NET11 |
+| O10 | (a): `OTEL_EXPORTER_PROMETHEUS_HOST`/`_PORT` ignored with one warning each; contract question to Go + Python (Deferred row) *Superseded 2026-11-05 (contract A29): honored per the contract D1 row "Prometheus exporter variables"; C12 implements it (D-NET11 note)* | ADR-013, D-NET11 |
 | O11 | (a): `0.2.1` carries `LICENSE` and `<PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>` (metadata only; the repository is Apache-2.0 since `72d82c6`) | tasks.md C-patch plan item 1 |
 | O4 | Reserve the `StaffOps.` ID prefix on nuget.org; publish on GitHub Packages only. The reservation is an **open owner action** with no deadline that blocks nothing | D-NET13 |
 

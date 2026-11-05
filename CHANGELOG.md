@@ -800,6 +800,54 @@ after the upgrade.
 
 ### Go — detailed changes
 
+- **A29 fix round (2026-11-05; three reviews, no BLOCKING).** The masked
+  forms now include each space-separated part of a configured header value of
+  4+ characters (the token of `Bearer <token>`: an auth proxy echoing only the
+  credential leaked it), the form-encoded form and the HTML-escaped JSON form
+  JSON-escaped again; all forms are replaced in one pass, longest first. The
+  handler receives a sanitized chain: every `errors.Unwrap` level has its own
+  sanitized text, `errors.Is` checks the original, `status.FromError` gives the
+  code and the sanitized text without details, and `errors.As` into the SDK's
+  own error types no longer finds them. An `(empty)` body is 0 bytes; every
+  flattened `body: ` is cut; `releaseOnFailure` logs a sanitized error. An
+  invalid `OTEL_EXPORTER_PROMETHEUS_HOST` now warns `invalid host, not applied:
+  the listener binds every interface, wider than a restriction`, and echoed
+  invalid host/port values lose URL userinfo and query. `::ffff:a.b.c.d` binds
+  as IPv4. Tests: `go/a29_test.go` (`TestA29SanitizedChainHidesBodiesAndValues`,
+  `TestA29MaskFormsAndParts`, `TestA29FailedSetupLeavesTheHandler`,
+  `TestA29SkippedEndpointPathNotWarned`, …). The "SDK errors" section of the Go
+  HOW-TO moved to §17 Troubleshooting.
+- **Upgrade note — A29 Prometheus variables (Go, Python and Node.js).** Grep
+  your manifests for `OTEL_EXPORTER_PROMETHEUS_` before upgrading: these
+  variables were ignored until now and are honored from this release.
+  `OTEL_EXPORTER_PROMETHEUS_HOST=localhost` (a common copy from upstream
+  examples) now binds `127.0.0.1` only and **breaks pod-to-pod scraping**; a
+  stray `OTEL_EXPORTER_PROMETHEUS_PORT` (for example set for a .NET sibling)
+  moves the listener away from the port your scrape config uses; and
+  `OTEL_EXPORTER_PROMETHEUS_PORT=0` now disables the listener even when
+  `OTEL_HELPER_METRICS_PORT` is set.
+- **A29 SDK error text, gRPC endpoint paths, Prometheus variables (design D1
+  rows of 2026-11-05 "SDK error text: response bodies and header values",
+  "Path on a gRPC endpoint", "Prometheus exporter variables"; not yet
+  independently reviewed).** `Setup` installs an OTel error handler
+  (`errorhandler.go`) that replaces an OTLP/HTTP response body in SDK errors
+  by `body: <response body omitted: N bytes>` and masks the values of
+  `OTEL_EXPORTER_OTLP[_<SIGNAL>]_HEADERS` (4 characters or more; raw,
+  decoded, JSON-escaped once and twice, `strconv.Quote` form) as
+  `<redacted>`; the original error stays reachable with `errors.Unwrap`. An
+  application handler set before `Setup` is wrapped and receives the
+  sanitized error; without one the helper writes `otelhelper: OpenTelemetry
+  SDK error` on its stderr logger (the `OTEL_RESOURCE_ATTRIBUTES` echo filter's
+  `log.Print` fallback now writes there too); a handler set after `Setup`
+  replaces it and gets raw errors (HOW-TO §17, "SDK errors"). `Shutdown` restores the
+  handler it found and returns a sanitized error. A path on a gRPC endpoint
+  (env generic, per-signal or code) is ignored with the warning `endpoint
+  path is ignored by the gRPC exporter` (variable only). New
+  `EnvPrometheusPort` / `EnvPrometheusHost`: `OTEL_EXPORTER_PROMETHEUS_PORT`
+  beats `OTEL_HELPER_METRICS_PORT` (code still wins, `0` = no listener,
+  invalid → warned, next level); `OTEL_EXPORTER_PROMETHEUS_HOST` is the
+  listener's bind address (IP literal or `localhost`; an IPv4 literal binds
+  `tcp4`; unset or invalid = every interface). Tests: `go/a29_test.go`.
 - **BREAKING (narrow) — A28 URL query redaction (design D1 row "URL query
   redaction" of 2026-11-03; migration item 28).** `NewHTTPTransport` passes
   otelhttp a tracer provider wrapper (`urlredact.go`, resolving the global
@@ -1303,6 +1351,34 @@ Behavior changes, with migration notes:
 
 ### Python — detailed changes
 
+- **A29 fix round (2026-11-05).** The exporter-log filter masks each
+  space-separated part of 4+ characters of a configured header value (the
+  token of `Bearer <token>`), the HTML-escaped JSON form (and it JSON-escaped
+  again) and the form-encoded form, in one pass, longest first; the
+  `ensure_ascii` form is dropped. The bind-failure hint names what set the port
+  (`prometheus_metrics_port`, `OTEL_EXPORTER_PROMETHEUS_PORT` or
+  `OTEL_HELPER_METRICS_PORT`) and `OTEL_EXPORTER_PROMETHEUS_HOST` when one was
+  set; the startup line names the host; the listener binds without a reverse
+  DNS lookup. `::ffff:a.b.c.d` binds as IPv4 (`::ffff:0.0.0.0` is no longer
+  "every interface"). Invalid host warnings use the shared fail-open text and
+  never echo URL userinfo or query. The upgrade note on the Prometheus
+  variables is in the Go section above and applies here.
+- **A29 SDK error text, gRPC endpoint paths, Prometheus variables (design D1
+  rows of 2026-11-05; not yet independently reviewed).** The OTLP exporters
+  never log a response body, but they log server text: the HTTP reason phrase
+  and, in `opentelemetry-exporter-otlp-proto-grpc` 1.45, the gRPC status
+  details. `setup_telemetry()` adds a filter (`_sdk_log_mask.py`, once per
+  process) to the SDK OTLP exporter loggers that masks the configured
+  `OTEL_EXPORTER_OTLP[_<SIGNAL>]_HEADERS` values (4 characters or more; raw,
+  decoded, JSON-escaped once and twice, `repr` form) in the message and the
+  exception text (a masked traceback is folded into the message, `exc_info`
+  cleared). A path on a gRPC endpoint is ignored with the warning
+  `[OtelHelper] <variable>: endpoint path is ignored by the gRPC exporter.`
+  `OTEL_EXPORTER_PROMETHEUS_PORT` beats `OTEL_HELPER_METRICS_PORT` (code
+  `prometheus_metrics_port` still wins); `OTEL_EXPORTER_PROMETHEUS_HOST` sets
+  the listener's bind address, read back as the new
+  `ResolvedOptions.prometheus_metrics_host` (`""` = every interface). Tests:
+  `tests/test_a29.py`.
 - **BREAKING (narrow) — A28 URL query redaction (design D1 row "URL query
   redaction" of 2026-11-03; migration item 28).** A
   `UrlQueryRedactionProcessor` (`_url_redaction.py`), first on the helper's
@@ -2039,6 +2115,62 @@ Unsupported instrumentation versions, task A10 (P18):
 
 ### Internal
 
+- **A29 final round (2026-11-05, after two confirmation passes).** In Go,
+  Python and Node.js the masked header values are the union of the values
+  captured when setup builds the exporters and the variables' current values
+  (deleting or rotating `*_HEADERS` after setup no longer unmasks what the
+  exporters still send); masking marks every occurrence of every form,
+  overlapping ones included, and replaces each marked run by one `<redacted>`;
+  a leading auth-scheme name (`Bearer`, `Basic`, `Digest`, `Negotiate`) is not
+  masked on its own. Node.js caches the forms per header set. Go: an error
+  whose gRPC status carries details is always rewrapped; the chain walk visits
+  each pointer error once (a self-referencing chain no longer runs forever);
+  `errors.As` fails for every typed error of the sanitized chain, documented.
+  Fixture: `metrics.port_prometheus_port_both_invalid` counts the echoed
+  values, not the fallback wording.
+- **A29 fix round (2026-11-05; observability, code-review and dev reviews,
+  no BLOCKING).** 15 more parity cases (357 in total): the token-only and
+  overlapping-value echo cases (`export.http_error_reason_token_header_values_masked`,
+  `export.grpc_error_token_header_values_masked`,
+  `export.grpc_error_overlapping_header_values_masked`), three gRPC path cases
+  (schemeless, skipped invalid value, http/protobuf not warned) and nine
+  `metrics.port_prometheus_*` cases; the two error-text cases gain a
+  body-only marker and positive controls, the path cases match the variable on
+  the warning line. fakeotlp: `x-parity-echo-error=token` echoes only the
+  credential (HTTP reason phrase, gRPC message), and the 400 body carries
+  `parity-body-marker`. New fixture `code` key `prometheus_metrics_port`.
+  Node.js (unreleased since `0.3.0-rc.1`): `maskLiterals` replaces every form
+  in one pass, longest first (insertion order let `team` leave
+  `<redacted>-secret-token`), adds the token parts, the form-encoded and the
+  HTML-escaped forms, and trims header values with the contract set; the
+  bind-failure record and the worker/cluster notices name the option or
+  variable that set the port (and `OTEL_EXPORTER_PROMETHEUS_HOST`).
+- **A29 parity cases and Node.js alignment (contract task A29, 2026-11-05;
+  not yet independently reviewed).** 18 parity cases (342 in total):
+  `export.http_error_body_header_values_not_logged`,
+  `export.grpc_error_details_header_values_masked`,
+  `export.grpc_endpoint_path_ignored_warned`,
+  `export.grpc_per_signal_endpoint_path_ignored_warned`,
+  `export.grpc_code_endpoint_path_ignored_warned`,
+  `export.grpc_endpoint_root_path_not_warned`, eleven
+  `metrics.port_prometheus_*` and `metrics.listener_prometheus_host_loopback`
+  (.NET `xfail:C8`, `xfail:C7b`, `xfail:C12`). The `resolve` snapshot gains
+  `prometheus_metrics_host` in the three runners. fakeotlp answers a request
+  carrying `x-parity-echo-error` with an error echoing its `x-parity-*`
+  headers (HTTP 400 JSON body, gRPC `INVALID_ARGUMENT` message). Node.js
+  (unreleased since `0.3.0-rc.1`, a behavior change for rc.1 users): the same gRPC path warning (`otlp.ts`), `OTEL_EXPORTER_PROMETHEUS_PORT`
+  / `_HOST` (`metrics-endpoint.ts`, new `Resolved.prometheusMetricsHost`),
+  SDK error text unchanged (B14 already drops bodies and masks the header
+  values). Specs: three Deferred rows of `specs/config-contract-v0.3/tasks.md`
+  promoted to A29; the .NET Phase C decision O10 (a) superseded (C12 honors the
+  Prometheus variables).
+  Measured 2026-11-05: the 18 cases pass in Go, Python (3.13 latest; 3.10 and
+  3.13 lower) and Node.js (24, 22.15.0, 26); with Go's sanitizer disabled, or
+  Python's filter not installed (sdk 1.45), the error-text cases fail. Existing
+  tests updated to the new rule: Go `TestResolveEndpoint`,
+  `TestResolveEndpointA17Rulings` and
+  `TestSetup_SDKDoesNotEchoMalformedResourceItems`, Python `test_shims` logger
+  scan, the Node.js `Resolved` key list.
 - **Node.js workspace scaffolding (Phase B, tasks B1a–B1c; not released).**
   `nodejs/` is an npm workspace (private root, committed `package-lock.json`,
   `npm ci --ignore-scripts`, engines `>=22.15.0`) with placeholder packages
