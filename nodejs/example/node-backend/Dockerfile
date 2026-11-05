@@ -1,9 +1,19 @@
 # Build from the repo root (context nodejs/):
 #   docker build -t node-backend -f nodejs/example/node-backend/Dockerfile nodejs
-# Installs @staffops/otel-helper from the local workspace source: built and
-# packed in the first stage, then installed like a published package.
+# Installs the published @staffops/otel-helper pinned in package.json, with the
+# dependency tree locked in package-lock.json (npm ci). Against the local tree
+# instead (a commit under development):
+#   docker build --build-arg HELPER_SOURCE=workspace -t node-backend -f nodejs/example/node-backend/Dockerfile nodejs
+# builds and packs the helper from the workspace source and installs that
+# tarball over the published one (package.json and the lockfile are not changed).
+ARG HELPER_SOURCE=registry
 
-FROM node:24.22.2-slim AS helper
+# HELPER_SOURCE=registry: nothing to install over the published helper.
+FROM node:24.22.2-slim AS helper-registry
+RUN mkdir /tarballs
+
+# HELPER_SOURCE=workspace: the core built and packed from the workspace source.
+FROM node:24.22.2-slim AS helper-workspace
 WORKDIR /src
 # Manifests first, so the dependency layer is reused until a lockfile changes.
 # The workspace manifests are listed by hand (COPY cannot glob while keeping the
@@ -19,22 +29,29 @@ COPY packages/otel-helper-winston/package.json packages/otel-helper-winston/
 # The whole workspace: the core build needs the root typescript and @types/node.
 RUN npm ci --ignore-scripts --no-audit --no-fund && npm cache clean --force
 COPY packages/ ./packages/
-RUN npm run build --workspace=@staffops/otel-helper \
+# npm pack does not create the destination directory (npm 11).
+RUN mkdir /tarballs && npm run build --workspace=@staffops/otel-helper \
  && npm pack --workspace=@staffops/otel-helper --pack-destination /tarballs
+
+# Only the selected stage is built (BuildKit); another HELPER_SOURCE value fails the
+# build (BuildKit tries to pull an image named helper-<value>).
+FROM helper-${HELPER_SOURCE} AS helper
 
 FROM node:24.22.2-slim
 ENV NODE_ENV=production
 WORKDIR /app
 
-# App dependencies, exact versions from the example's lockfile. The helper is
-# not listed in package.json on purpose (the @staffops scope is not claimed on
-# npmjs yet, so a registry entry could resolve to someone else's package); its
-# own dependencies resolve within its declared ranges, as Python's wheel install.
+# App dependencies and the published @staffops/otel-helper, exact versions and
+# integrity from the example's lockfile (the helper's own dependencies included).
 COPY example/node-backend/package.json example/node-backend/package-lock.json ./
 RUN npm ci --omit=dev --ignore-scripts --no-audit --no-fund && npm cache clean --force
+# HELPER_SOURCE=workspace only: the local core tarball replaces the published
+# helper (--no-save: package.json and the lockfile keep the published pin). Its
+# dependencies are re-resolved within its declared ranges, reusing the locked tree where it fits.
 COPY --from=helper /tarballs/ /tmp/tarballs/
-RUN npm install --no-save --omit=dev --ignore-scripts --no-audit --no-fund /tmp/tarballs/staffops-otel-helper-*.tgz \
- && npm cache clean --force && rm -rf /tmp/tarballs
+RUN set -- /tmp/tarballs/*.tgz; \
+    if [ -e "$1" ]; then npm install --no-save --omit=dev --ignore-scripts --no-audit --no-fund "$@" && npm cache clean --force; fi; \
+    rm -rf /tmp/tarballs
 
 # notification.proto is loaded at runtime by @grpc/proto-loader (no generated stubs).
 COPY example/protos/ /app/protos/

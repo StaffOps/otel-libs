@@ -6,8 +6,8 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { after, describe, it } from 'node:test';
 import {
-  CORE, PACKAGES, VERSION_CONSTANTS, check, distTag, docWarnings, integrity, main, parseVersion,
-  registryState, set, tarballName, verifySums,
+  CORE, PACKAGES, VERSION_CONSTANTS, check, collectExamples, distTag, docWarnings, examplePin, exampleWarnings, integrity, main,
+  npmjsTarball, parseVersion, registryState, set, setExamples, tarballName, verifySums,
 } from './version.mjs';
 
 const ws = path.join(import.meta.dirname, '..');
@@ -34,7 +34,7 @@ function fixture() {
   }
   for (const ex of ['node-api', 'node-backend']) {
     mkdirSync(path.join(root, 'example', ex), { recursive: true });
-    cpSync(path.join(ws, 'example', ex, 'Dockerfile.demo'), path.join(root, 'example', ex, 'Dockerfile.demo'));
+    for (const f of ['Dockerfile.demo', 'package.json', 'package-lock.json']) cpSync(path.join(ws, 'example', ex, f), path.join(root, 'example', ex, f));
   }
   return root;
 }
@@ -362,5 +362,136 @@ describe('CLI', () => {
     const out = [];
     assert.equal(main(['dist-tag', '1.0.0'], (l) => out.push(l)), 0);
     assert.deepEqual(out, ['latest']);
+  });
+});
+
+// B14 carry-over (1): the examples depend on the published helper, locked; `set` leaves that pin alone.
+describe('examples (B14 carry-over 1: the published helper, locked)', () => {
+  const pinned = examplePin(ws);
+  const editJson = (file, edit) => { const v = JSON.parse(readFileSync(file, 'utf8')); edit(v); writeFileSync(file, JSON.stringify(v, null, 2)); };
+  const lockOf = (root, ex = 'node-api') => path.join(root, 'example', ex, 'package-lock.json');
+  const fail = (root) => check(root, current).filter((p) => p.startsWith('example/'));
+
+  it('the workspace examples pin one exact version, locked from npmjs with a sha512 integrity', () => {
+    assert.match(pinned, /^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/);
+    const rows = collectExamples(ws);
+    assert.ok(rows.length >= 4 * 5, rows.length);
+    for (const [label, found, want] of rows) assert.equal(found, want, label);
+    const lock = JSON.parse(readFileSync(lockOf(ws), 'utf8'));
+    assert.equal(lock.packages[`node_modules/${CORE}`].resolved, npmjsTarball(pinned));
+  });
+
+  it('a range, a drifted lockfile, another registry, a missing integrity and a missing lockfile fail check', () => {
+    const range = fixture();
+    editJson(path.join(range, 'example/node-backend/package.json'), (p) => { p.dependencies[CORE] = `^${pinned}`; });
+    assert.deepEqual(fail(range), [`example/node-backend/package.json dependencies["${CORE}"]: "^${pinned}", want "${pinned}"`]);
+    const first = fixture();
+    editJson(path.join(first, 'example/node-api/package.json'), (p) => { p.dependencies[CORE] = `~${pinned}`; });
+    assert.deepEqual(fail(first), [`example/node-api/package.json dependencies["${CORE}"]: "~${pinned}", want "an exact published version X.Y.Z[-pre]"`],
+      'only the example that sets the pin is reported');
+    const lock = fixture();
+    editJson(lockOf(lock), (l) => {
+      l.packages[''].dependencies[CORE] = '0.0.1';
+      l.packages[`node_modules/${CORE}`].version = '0.0.1';
+      l.packages[`node_modules/${CORE}`].resolved = 'https://npm.pkg.github.com/download/x.tgz';
+      delete l.packages[`node_modules/${CORE}`].integrity;
+    });
+    const p = fail(lock);
+    assert.equal(p.length, 5, p.join('\n'));
+    assert.ok(p.some((x) => x.includes('resolved') && x.endsWith(`want "${npmjsTarball(pinned)}"`)));
+    assert.ok(p.some((x) => x.includes('integrity: (not found), want "sha512-…"')));
+    const sha1 = fixture();
+    editJson(lockOf(sha1), (l) => { l.packages[`node_modules/${CORE}`].integrity = 'sha1-AAAA'; });
+    assert.deepEqual(fail(sha1), [`example/node-api/package-lock.json node_modules/${CORE} integrity: "sha1-AAAA", want "sha512-…"`]);
+    const mirror = fixture();
+    editJson(lockOf(mirror, 'node-backend'), (l) => { l.packages['node_modules/x-mirror'] = { version: '1.0.0', resolved: 'https://mirror.example.com/x/-/x-1.0.0.tgz' }; });
+    assert.deepEqual(fail(mirror), ['example/node-backend/package-lock.json entries resolved outside https://registry.npmjs.org/: "node_modules/x-mirror", want "none"']);
+    const nolock = fixture();
+    rmSync(lockOf(nolock, 'node-backend'));
+    assert.deepEqual(fail(nolock), ['example/node-backend/package-lock.json: "absent", want "present"']);
+  });
+
+  it('pinning another version than the release is a warning (by hand), not a failure', () => {
+    const root = fixture();
+    assert.deepEqual(exampleWarnings(root, pinned), []);
+    const w = exampleWarnings(root, '9.9.9');
+    assert.equal(w.length, 1);
+    assert.match(w[0], /once 9\.9\.9 is on npmjs, run `node ci\/version\.mjs examples 9\.9\.9` \(by hand\)$/);
+    const r = run(['check', '9.9.9', '--root', root]);
+    assert.match(r.stderr, /^WARN example\/\*\/package\.json pin /m);
+  });
+
+  it('set leaves the examples alone (an unpublished version cannot be locked) and says so', () => {
+    const root = fixture();
+    const before = ['package.json', 'package-lock.json'].map((f) => readFileSync(path.join(root, 'example/node-api', f), 'utf8'));
+    const r = run(['set', '9.0.0', '--root', root]);
+    assert.equal(r.status, 0, r.stderr);
+    assert.deepEqual(['package.json', 'package-lock.json'].map((f) => readFileSync(path.join(root, 'example/node-api', f), 'utf8')), before);
+    assert.match(r.stdout, new RegExp(`^note example/\\*/package\\.json keep @staffops/otel-helper@${pinned.replace(/\./g, '\\.')} \\(published\\); once 9\\.0\\.0 is on npmjs`, 'm'));
+    assert.deepEqual(check(root, '9.0.0'), []);
+  });
+
+  /** A fake npm that does what `npm install <spec> --save-exact --package-lock-only` does to the two files. */
+  function fakeInstaller({ status = 0, resolvedHost = 'https://registry.npmjs.org/', published = true, noop = false } = {}) {
+    const dir = tmp('fake-npm-install-');
+    const bin = path.join(dir, 'npm');
+    writeFileSync(bin, `#!${process.execPath}
+const fs = require('fs');
+fs.appendFileSync(${JSON.stringify(path.join(dir, 'calls'))}, JSON.stringify({ cwd: process.cwd(), argv: process.argv.slice(2) }) + '\\n');
+if (process.argv[2] === 'view') {
+  if (!${published}) { process.stderr.write('npm error 404\\n'); process.exit(1); }
+  process.stdout.write(process.argv[3].split('@').pop() + '\\n'); process.exit(0);
+}
+if (${status}) { process.stderr.write('npm error 404 Not Found\\n'); process.exit(${status}); }
+if (${noop}) process.exit(0);
+const version = process.argv[3].split('@').pop();
+const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+pkg.dependencies['${CORE}'] = version;
+fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2));
+const lock = JSON.parse(fs.readFileSync('package-lock.json', 'utf8'));
+lock.packages[''].dependencies['${CORE}'] = version;
+lock.packages['node_modules/${CORE}'] = { version, resolved: '${resolvedHost}${CORE}/-/otel-helper-' + version + '.tgz', integrity: 'sha512-AAAA' };
+fs.writeFileSync('package-lock.json', JSON.stringify(lock, null, 2));
+`);
+    chmodSync(bin, 0o755);
+    const calls = () => readFileSync(path.join(dir, 'calls'), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+    return { bin, calls };
+  }
+
+  it('setExamples pins the published version in every example through npm (no scripts, npmjs, lock only), then check passes', () => {
+    const root = fixture();
+    const npm = fakeInstaller();
+    const changed = setExamples(root, '9.9.9', { npmBin: npm.bin });
+    assert.equal(changed.length, 4);
+    const [view, ...calls] = npm.calls();
+    assert.deepEqual(view.argv, ['view', `${CORE}@9.9.9`, 'version', '--registry=https://registry.npmjs.org/', '--@staffops:registry=https://registry.npmjs.org/']);
+    assert.deepEqual(calls.map((c) => path.basename(c.cwd)), ['node-api', 'node-backend']);
+    assert.deepEqual(calls[0].argv, ['install', `${CORE}@9.9.9`, '--save-exact', '--package-lock-only', '--ignore-scripts', '--no-audit', '--no-fund',
+      '--registry=https://registry.npmjs.org/', '--@staffops:registry=https://registry.npmjs.org/']);
+    assert.equal(examplePin(root), '9.9.9');
+    assert.deepEqual(fail(root), []);
+    assert.deepEqual(exampleWarnings(root, '9.9.9'), []);
+  });
+
+  it('setExamples fails loudly on an npm error, an npm that changed nothing, or a lock from another registry', () => {
+    assert.throws(() => setExamples(fixture(), '9.9.9', { npmBin: fakeInstaller({ status: 1 }).bin }), /in example\/node-api: exit 1: npm error 404 Not Found/);
+    assert.throws(() => setExamples(fixture(), '9.9.9', { npmBin: fakeInstaller({ noop: true }).bin }), /examples after npm install: .*want "9\.9\.9"/);
+    const untouched = fixture();
+    const before = readFileSync(path.join(untouched, 'example/node-api/package.json'), 'utf8');
+    assert.throws(() => setExamples(untouched, '9.9.9', { npmBin: fakeInstaller({ published: false }).bin }), /not on https:\/\/registry\.npmjs\.org\/ .*nothing changed/);
+    assert.equal(readFileSync(path.join(untouched, 'example/node-api/package.json'), 'utf8'), before);
+    assert.throws(() => setExamples(fixture(), '9.9.9', { npmBin: fakeNpm().bin }), /is not on/);
+    assert.throws(() => setExamples(fixture(), '9.9.9', { npmBin: fakeInstaller({ resolvedHost: 'https://npm.pkg.github.com/' }).bin }), /resolved: "https:\/\/npm\.pkg\.github\.com\//);
+    assert.throws(() => setExamples(fixture(), '9.9.9', { npmBin: '/nonexistent/npm' }), /ENOENT/);
+  });
+
+  it('CLI: examples needs a version (exit 2) and runs NPM_BIN', () => {
+    const root = fixture();
+    const bad = run(['examples', '--root', root]);
+    assert.equal(bad.status, 2, bad.stderr);
+    const npm = fakeInstaller();
+    const r = run(['examples', 'nodejs/v9.9.9', '--root', root], { NPM_BIN: npm.bin });
+    assert.equal(r.status, 0, r.stderr);
+    assert.match(r.stdout, /^set {2}example\/node-api\/package-lock\.json -> @staffops\/otel-helper@9\.9\.9$/m);
   });
 });

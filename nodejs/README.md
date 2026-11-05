@@ -75,7 +75,9 @@ range, so leaving it unapproved, or `--ignore-scripts`, changes nothing.
 ### From `npm pack` tarballs (an unreleased commit)
 
 To try a commit that is not published, install tarballs built from this
-repository, as the example images do:
+repository, as the examples' `HELPER_SOURCE=workspace` build and their CI
+images (`Dockerfile.demo`) do (the examples' default build installs the
+published version: [example/README.md](example/README.md#build)):
 
 ```bash
 # In a checkout of this repository (Docker; no local Node needed): tarballs in nodejs/tarballs/

@@ -143,19 +143,49 @@ docker build -t node-backend -f nodejs/example/node-backend/Dockerfile nodejs
 docker build -t node-process -f nodejs/example/node-process/Dockerfile nodejs
 ```
 
-`Dockerfile` builds the helper from the workspace source and installs the
-`npm pack` tarball; `Dockerfile.demo` installs a prebuilt tarball from
-`nodejs/tarballs/` instead — what CI builds (`build-lib-node` packs the
-tarballs, `example-images` passes `--build-arg HELPER_VERSION=<core version>`).
-Each example's own dependencies are
-pinned by its `package-lock.json`; the helper's dependencies resolve within the
-helper's declared ranges at install time, as Python's wheel install. The helper is not listed in the examples'
-`package.json` on purpose: the examples run the helper built from this
-workspace (a commit under development has no published version), and a
-`file:` tarball entry would pin one build's bytes in the lockfile (npm records
-the tarball's `integrity`). Depending on the published version
-(from the first release candidate on) instead is an open follow-up, task B14 in
-[`specs/nodejs-otel-helper/tasks.md`](https://github.com/StaffOps/otel-libs/blob/main/specs/nodejs-otel-helper/tasks.md).
+Each example depends on the **published** `@staffops/otel-helper` at an exact
+version from npmjs (the `dependencies` entry of its `package.json`), and its
+`package-lock.json` locks the whole tree — the helper's own dependencies
+included — with the registry's integrity hashes; `npm ci` installs exactly
+that. Exact pins are the rule for example lockfiles only; libraries use ranges.
+
+**Against the local tree** (a commit under development, not published):
+
+```bash
+docker build --build-arg HELPER_SOURCE=workspace -t node-api -f nodejs/example/node-api/Dockerfile nodejs
+```
+
+`HELPER_SOURCE=workspace` builds and packs the core from the workspace source
+in an extra stage and installs that tarball over the published one
+(`npm install --no-save`: `package.json` and the lockfile keep the published
+pin; the helper's dependencies are re-resolved within its declared ranges,
+reusing the locked tree where it fits). The default, `registry`, skips that
+stage. Any other value fails the build.
+
+`Dockerfile.demo` is what CI builds (`example-images`): the same locked
+install, then the core tarball that `build-lib-node` packed from the commit,
+copied from `nodejs/tarballs/` (`--build-arg HELPER_VERSION=<core version>`).
+The e2e smoke (`testing/e2e/run-node.sh`) does not use the examples: it builds
+the helper from the workspace, so it always tests the branch.
+
+**Moving the examples to a new release.** `node ci/version.mjs set <version>`
+moves the version everywhere in the workspace, `Dockerfile.demo`'s
+`ARG HELPER_VERSION` included, but leaves the examples' pin alone: a version
+that is not on npmjs yet cannot be locked. Once it is published, from the
+repository root:
+
+```bash
+docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp -v "$PWD/nodejs:/w" -w /w node:24-slim \
+  node ci/version.mjs examples <version>
+```
+
+which runs `npm install @staffops/otel-helper@<version> --save-exact
+--package-lock-only --ignore-scripts` in each example against npmjs and checks
+the result; it first checks that the version is on npmjs and changes nothing
+otherwise. `ci/version.mjs check` fails when the examples disagree with each
+other or with their lockfiles, pin a range, or lock any package from another
+registry than npmjs, and warns
+when they pin another version than the release.
 
 ### Run
 
@@ -192,7 +222,9 @@ docker stop node-process node-api node-backend
 ### Trace of a worker cycle
 
 Recorded against collector-contrib 0.160.0 on 2026-11-03 (one trace id across
-the three services; the cycle dispatched three notifications, one shown):
+the three services; the cycle dispatched three notifications, one shown).
+The same tree, three notifications in one trace, on 2026-11-05 with the
+default build (the published `0.3.0-rc.1`):
 
 ```text
 process.queue-consume                                    Internal  node-process

@@ -51,6 +51,11 @@ normalization (`v0.3.0-rc.3` = `0.3.0rc3`), .NET with every project
    mentions it cannot rewrite, and about "release candidate" wording left
    on a stable version; CI runs the same check against the tag.
    (`--user` keeps the files owned by you; `HOME=/tmp` gives npm a writable home.)
+   `set` does **not** move the examples' `@staffops/otel-helper` dependency
+   (`example/*/package.json` + lockfile): it pins a version already on npmjs,
+   and an unpublished version cannot be locked. `set` prints a `note` and
+   `check` a `WARN … (by hand)` while the two differ; the examples move after
+   the publish (After tagging).
    `npm pack` must keep each package's `README.md` (`node ci/check-pack.mjs`).
    Before an SDK or API bump, walk the **Node.js SDK-bump checklist** below.
 3. Docs/consumption pages (`CONSUMING.md`, README matrix) name the new tags.
@@ -58,7 +63,9 @@ normalization (`v0.3.0-rc.3` = `0.3.0rc3`), .NET with every project
    `nodejs/HOW-TO.md` and the package READMEs: the repository-root
    `README.md` (matrix row, gaps table, Installing), `CONSUMING.md` (intro,
    Versions row, Node.js section install commands), `AGENTS.md` (Repository)
-   and the `nodejs/example/README.md` wording; on a stable release also every
+   and the `nodejs/example/README.md` wording — except the examples' pinned
+   version, which moves only after the publish (After tagging, `ci/version.mjs
+   examples`); on a stable release also every
    "release candidate" / dist-tag `next` sentence (`check` warns only about
    "release candidate" in the scanned files). Then regenerate the site index from the README:
    `docker run --rm --user "$(id -u):$(id -g)" -v "$PWD:/repo" -w /repo python:3.12-slim python tools/regen_index.py`
@@ -112,11 +119,14 @@ normalization (`v0.3.0-rc.3` = `0.3.0rc3`), .NET with every project
   with other bytes). An unreadable answer fails the job too, never reads as
   "absent". A published npm version can never be replaced (npm unpublish is
   limited and the number stays burned): fix forward with the next rc.
-- GitHub Packages may not return `dist.integrity` for an existing version;
-  `registry-state` then fails ("no dist.integrity"), so a **re-run of
-  `publish-nodejs-ghp` after a partial publish fails closed** instead of
-  skipping. Checked on the first rc (B14); if it happens, fix forward with
-  the next rc.
+- GitHub Packages returns `dist.integrity` for a published version, identical
+  to npmjs (both are the sha512 of the same tarball): **verified 2026-11-05 on
+  `0.3.0-rc.1`** (`@staffops/otel-helper` = `sha512-pEl3FxPn2L8FlnBVOoGDq2D…`
+  on both registries). So a **re-run of `publish-nodejs-ghp` after a partial
+  publish reads `same` for the packages already there and skips them**, like
+  the npmjs job (B14 carry-over 3, closed). Were GitHub Packages ever to stop
+  returning the field, `registry-state` fails ("no dist.integrity") and the
+  re-run fails closed — never a silent skip; fix forward with the next rc.
 - The `node-packages` artifact is kept 30 days on a `nodejs/v*` tag run (1
   day elsewhere). **Approve the `nodejs-release` deployment and finish any
   re-run within that window**; after it the publish jobs cannot download the
@@ -377,6 +387,13 @@ task C3, 1.15.x → 1.20.x):
     @staffops/otel-helper@<v> @staffops/otel-helper-sql@<v>
     @opentelemetry/api@~1.10.0 && node -e "require('@staffops/otel-helper')"
     && npm audit signatures`;
+  - move the examples to the published version (B14, 2026-11-05) — it pins
+    `<v>` in `nodejs/example/*/package.json` and refreshes their lockfiles
+    from npmjs (`npm install --save-exact --package-lock-only
+    --ignore-scripts`), then checks them:
+    `docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp -v "$PWD/nodejs:/w" -w /w node:24-slim node ci/version.mjs examples <v>`;
+    it changes nothing when `<v>` is not on npmjs yet; build the examples
+    (`nodejs/example/README.md` "Build") and commit;
   - anything wrong: fix forward with the next rc (a published version
     cannot be replaced).
 - If the run fails: fix, bump to the next rc (do not move a published tag),

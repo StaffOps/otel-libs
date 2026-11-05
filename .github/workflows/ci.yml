@@ -575,11 +575,13 @@ jobs:
           - context: go
             dockerfile: go/example/go-process/Dockerfile.demo
             source: true
-          # Node examples install the npm pack tarballs of build-lib-node
-          # (downloaded to artifact_path, HELPER_VERSION from the core's
-          # package.json). Their Dockerfile (helper built from the workspace
-          # source) is the local path; node-custom-signals is not built here, as
-          # python-custom-signals is not (task B13, owner 2026-11-04).
+          # Node examples: npm ci of the published helper locked in each
+          # example's package-lock.json, then the npm pack tarball of
+          # build-lib-node installed over it (downloaded to artifact_path,
+          # HELPER_VERSION from the core's package.json), so the image runs this
+          # commit. Their Dockerfile is the local path (published helper by
+          # default, HELPER_SOURCE=workspace for the local tree); node-custom-signals
+          # is not built here, as python-custom-signals is not (task B13, owner 2026-11-04).
           - context: nodejs
             dockerfile: nodejs/example/node-api/Dockerfile.demo
             artifact: node-packages

@@ -3,7 +3,10 @@
 What each example emits, span by span and metric by metric, with ready-to-use
 queries (Tempo TraceQL, PromQL). Audience: developers building dashboards or
 checking that their own instrumentation looks like the examples. How to run
-the examples: [README.md](README.md). Where Node differs from the Python and
+the examples: [README.md](README.md). The default image build runs the
+published helper the examples pin (their `package.json`); a `HELPER_SOURCE=workspace`
+build runs this branch's, whose telemetry may differ where the branch changed
+it (see the CHANGELOG). Where Node differs from the Python and
 Go twins, the last section, [Differences from Python and Go](#differences-from-python-and-go),
 lists it.
 

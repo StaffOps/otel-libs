@@ -2112,6 +2112,24 @@ Unsupported instrumentation versions, task A10 (P18):
   (`*_total`, `*_ms`, no unit, `process.*`) are marked as kept for the shared
   dashboards, not as a model; build/run commands work from the repo root in
   bash and zsh.
+- **Node.js examples run the published helper (task B14, 2026-11-05).**
+  `node-api`, `node-backend`, `node-process` and `node-custom-signals` now
+  depend on `@staffops/otel-helper` `0.3.0-rc.1` (exact, from npmjs), and
+  their lockfiles lock the helper's dependency tree with the registry's
+  integrity hashes, so `npm ci` installs the same bytes every time. The
+  default `Dockerfile` build installs that; `--build-arg
+  HELPER_SOURCE=workspace` builds the core from the local tree and installs
+  it over the published one (a commit under development). The CI images
+  (`Dockerfile.demo`) keep installing the commit's own tarball, now over the
+  locked install. The workspace build creates its `/tarballs` directory
+  first: `npm pack --pack-destination` of npm 11 does not, and that build
+  failed. `ci/version.mjs set` leaves the examples' pin alone (a version that
+  is not published cannot be locked); the new `ci/version.mjs examples
+  <version>` moves it after the publish, and `check` rejects a range, a
+  drifted lockfile, a missing integrity or any package locked from another
+  registry than npmjs. GitHub Packages
+  returns `dist.integrity` for `0.3.0-rc.1`, identical to npmjs, so a re-run
+  of `publish-nodejs-ghp` skips the packages it already published.
 
 ### Internal
 

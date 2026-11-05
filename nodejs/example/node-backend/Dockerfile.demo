@@ -1,18 +1,22 @@
 # Build from the repo root (context nodejs/) after `npm pack` of the helper into nodejs/tarballs/:
 #   docker build -t node-backend -f nodejs/example/node-backend/Dockerfile.demo nodejs
 #   (another helper version: --build-arg HELPER_VERSION=<version>)
+# What CI builds (example-images): the image of this commit. The published
+# helper and its locked dependency tree come from the lockfile (npm ci), then the
+# core tarball that CI packed from this commit (build-lib-node) replaces it.
 FROM node:24.22.2-slim
 ENV NODE_ENV=production
 WORKDIR /app
 
-# App dependencies, exact versions from the example's lockfile (the helper is
-# not listed: it comes from the prebuilt tarball below; its own dependencies
-# resolve within its declared ranges, as Python's wheel install).
+# App dependencies and the published @staffops/otel-helper, exact versions and
+# integrity from the example's lockfile (the helper's own dependencies included).
 COPY example/node-backend/package.json example/node-backend/package-lock.json ./
 RUN npm ci --omit=dev --ignore-scripts --no-audit --no-fund && npm cache clean --force
 
 # The prebuilt @staffops/otel-helper tarball (npm pack, built once in CI, passed
-# via artifact). An exact file name: a stale tarball of another version is never picked.
+# via artifact), installed over the published one (--no-save: package.json and
+# the lockfile keep the published pin). An exact file name: a stale tarball of
+# another version is never picked.
 ARG HELPER_VERSION=0.3.0-rc.1
 COPY tarballs/staffops-otel-helper-${HELPER_VERSION}.tgz /tmp/tarballs/
 RUN npm install --no-save --omit=dev --ignore-scripts --no-audit --no-fund /tmp/tarballs/staffops-otel-helper-${HELPER_VERSION}.tgz \
