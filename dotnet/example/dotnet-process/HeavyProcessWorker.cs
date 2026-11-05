@@ -2,7 +2,7 @@ using System.Diagnostics;
 using System.Diagnostics.Metrics;
 using System.Security.Cryptography;
 using System.Text;
-using OtelHelper;
+using StaffOps.OtelHelper;
 
 /// <summary>
 /// Simulates heavy batch processing — CPU-bound hashing, memory allocation, concurrent work.

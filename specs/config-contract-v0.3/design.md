@@ -1,0 +1,899 @@
+# Design — Config Contract & Parity (`0.3.0`)
+
+> **Corrected 2026-10-27 after adversarial review.** D1.b originally sent
+> portless gRPC URLs to the scheme default "80"; both SDKs actually dial
+> **443** (grpc-go dns resolver `defaultPort = "443"`), so the decision was
+> reversed: the helper keeps 4317 for gRPC. D5's Python mechanism
+> (`excluded_urls`) would have dropped health requests from metrics too; it is
+> replaced by a sampler. D2's snapshot asserted resolved URLs the helper no
+> longer holds (contradicting ADR-008); URLs and TLS are now asserted only on
+> the wire. D4's reliance on the Python SDK fork detector was wrong (it
+> overwrites env-provided ids and doesn't exist at the 1.42 floor).
+>
+> **Second correction, same day — best-practice validation** (observability
+> research against spec/docs/distros + dev prototypes on sdk 1.42/1.45 and
+> otel-go v1.47): schemeless gRPC endpoints are legal per spec and are no
+> longer deprecated; TLS conflicts are now normalized by the helper (scheme
+> wins, per spec) instead of only warned, because both SDKs violate the spec
+> rule; the Python SDK ≥ 1.45 generates `service.instance.id` itself, so the
+> helper only fills the gap on 1.42–1.44; the `-<pid>` suffix was an
+> invention and is dropped.
+
+Guiding rule ([ADR-001](../decisions/ADR-001-defer-otlp-env-to-sdk.md)):
+**if the SDK already implements a spec behavior correctly and identically in
+our languages, the helper must not re-implement or override it.** Where an
+SDK breaks a supported input or the SDKs disagree, the helper owns that case
+through a small, fixture-covered shim.
+
+References: [SDK env vars](https://opentelemetry.io/docs/specs/otel/configuration/sdk-environment-variables/),
+[OTLP exporter](https://opentelemetry.io/docs/specs/otel/protocol/exporter/),
+resource semconv (`service.*`, `deployment.*`, `db.*`), W3C Trace Context.
+
+---
+
+## D1 — Resolution contract (the table every language implements)
+
+Precedence: **explicit code > standard `OTEL_*` env > legacy / `OTEL_HELPER_*` env > helper default**.
+
+| Setting | Precedence (high → low) | Owner |
+|---|---|---|
+| `service.name` | code > `OTEL_SERVICE_NAME` > `OTEL_RESOURCE_ATTRIBUTES` > `SERVICE_NAME` (deprecated) > SDK default `unknown_service:*` + warning | helper sets only what it resolved ([ADR-003](../decisions/ADR-003-environment-unset-not-local.md)) |
+| `deployment.environment.name` | code > `OTEL_RESOURCE_ATTRIBUTES` > `ENVIRONMENT` (deprecated alias) > unset + warning | helper (ADR-003) |
+| Env-driven behavior (log level) | only `LOCAL/DEV/HML/PRD` switch behavior; unset/unknown → INFO; unknown values emitted verbatim | helper |
+| `service.instance.id` | code > `OTEL_RESOURCE_ATTRIBUTES` > SDK detector (Python ≥ 1.45) > helper UUID per process (Go; Python 1.42–1.44) (D4) | SDK / helper |
+| Other resource attrs | code per key > `OTEL_RESOURCE_ATTRIBUTES`; never overwritten by a helper default | SDK + helper merge |
+| "OTLP configured" | **per signal**: code endpoint ∨ generic env ∨ that signal's env endpoint | helper |
+| Endpoint (absolute `http(s)://` URL in env) | `_<SIGNAL>_ENDPOINT` verbatim > generic (`/v1/<signal>` appended for HTTP) | **SDK** — helper passes nothing (except D1.b) |
+| Endpoint in code | generic: helper appends `/v1/<signal>` for HTTP, then passes the URL (Go `WithEndpointURL`); per-signal: verbatim | helper |
+| Schemeless `host:port` (env or code) | rewritten to `https://` (`http://` only if `INSECURE=true`), port defaulted 4317/4318, passed explicitly. gRPC: supported (legal per spec). HTTP: deprecation warning | helper shim |
+| Port, URL with scheme and none | `http/protobuf`: scheme default 443/80 (SDK). `grpc`: **4317** + warning (D1.b) | SDK / helper |
+| Protocol | code > `_<SIGNAL>_PROTOCOL` > `OTEL_EXPORTER_OTLP_PROTOCOL` > port-4318 inference (INFO once; uses the endpoint that signal actually resolves to — per-signal if set, else generic) > `grpc` | helper picks exporter package |
+| TLS | scheme decides; `INSECURE` only for schemeless (spec). On conflict the helper normalizes — scheme wins — and warns (D1.c) | SDK / helper on conflict |
+| Certificates, headers | `OTEL_EXPORTER_OTLP_*` incl. per-signal | **SDK** — passed only when set in code |
+| Timeout | code > `OTEL_EXPORTER_OTLP_<SIGNAL>_TIMEOUT` > `OTEL_EXPORTER_OTLP_TIMEOUT` (**milliseconds**, spec) > SDK default 10 s | Helper-parsed in both (Go passes the resolved value to the exporter and batch processors; Python shim D1.e). *Corrected 2026-10-28 (A13): earlier text said "Go: SDK", superseded by the edge-case rulings below* |
+| Compression | code > env > helper default `gzip` (D1.d) | helper default |
+| Sampler | code > `OTEL_TRACES_SAMPLER`/`_ARG` > `OTEL_HELPER_SAMPLE_RATIO` → `parentbased_traceidratio` (deprecated) > SDK default `parentbased_always_on`; health drop wrapper (D5) on top | SDK + helper ([ADR-002](../decisions/ADR-002-parentbased-sampler.md)) |
+| Signal on/off | `OTEL_SDK_DISABLED`, `OTEL_{TRACES,METRICS,LOGS}_EXPORTER=none` > `OTEL_HELPER_DISABLED_SIGNALS` (deprecated) | helper *Corrected 2026-10-29 (A19): any set `OTEL_<SIGNAL>_EXPORTER` (a valid entry, not only `none`) and, for metrics, the code metric-exporter option win over the deprecated variable — see the row "Deprecated `OTEL_HELPER_DISABLED_SIGNALS`"* |
+| Metrics exporters / interval / exemplars | `OTEL_METRICS_EXPORTER` (existing contract + `console`; env `otlp` without endpoint warns — R2), `OTEL_METRIC_EXPORT_INTERVAL` (default 30000), `OTEL_METRICS_EXEMPLAR_FILTER` (never set in code) | helper / SDK |
+| Propagators | `OTEL_PROPAGATORS` > `tracecontext,baggage`. Supported values in every language: `tracecontext`, `baggage`, `none`; any other value (`b3`, `jaeger`, `xray`, `ottrace`, …) warns and is skipped — no extra propagator dependencies (decided 2026-10-28, A3) | helper |
+
+> **Node.js owners** (note added 2026-11-04, B14 obs L9): the Owner column
+> describes Go and Python. Node.js: helper-owned, see
+> [nodejs design D-JS3](../nodejs-otel-helper/design.md#d-js3--resolution-and-ownership-go-model)
+> — the helper composes the SDK itself and hides the OTLP variables it owns
+> while the exporters are built; where a Node owner differs (an SDK-owned
+> row, a gap), D-JS3 and D-JS14 record it.
+
+**Parsing rule:** unknown/unparseable **env** values warn and fall back to the
+default; invalid **code** values fail fast. Warnings name the variable and
+never print `*_HEADERS`, `*_CLIENT_KEY` or URL userinfo/query values.
+
+**When wrong** (added 2026-10-28, spec lint): an OTel SDK starts honoring a
+row itself (ADR-001's trigger) or a consumer needs env to override code.
+**Reversal action**: move that row's owner to the SDK (ADR-001) and drop the
+helper parsing in Go and Python together, with a parity case flip; for an
+env-over-code need, add an explicit opt-in option rather than inverting the
+order.
+
+### D1 edge-case rulings (A3 validation, 2026-10-28)
+
+The A3 review (observability + dev + two code-reviews) found inputs the table
+didn't pin down, where Go and Python diverged. One rule each, both languages:
+
+| Input | Rule | Why |
+|---|---|---|
+| Boolean env value that isn't `true`/`false` (`INSECURE=yes`, `OTEL_SDK_DISABLED=maybe`) | Case-insensitive `true` → true; **anything else → false**, with a warning. Never "ignored / fall through" | Spec boolean parsing; Python's "ignore" made `http://` + `INSECURE=yes` dial TLS (observability H3) |
+| `OTEL_PROPAGATORS` casing / empty tokens (`TraceContext`, `tracecontext,,baggage`, trailing comma, `""`) | Tokens are trimmed and lowercased; empty tokens dropped; Python hides the raw value from the API whenever it differs from the canonical form (not only when something was skipped) | Spec enum values are case-insensitive; Python crashed at import (observability H1, code-review H2) |
+| gRPC + `http://` + `OTEL_EXPORTER_OTLP[_<SIGNAL>]_CERTIFICATE`/`CLIENT_*` | Plaintext (scheme wins). Go passes `WithTLSCredentials(insecure.NewCredentials())` for that signal; warn | Go SDK prioritizes env credentials over `Insecure` (observability H2, Go code-review H1) |
+| Env compression | Helper resolves it in both languages: case-insensitive `gzip` / `none`; any other value warns and the default (`gzip`) is used. `deflate` is not supported | Spec defines `gzip`/`none`; Go deferred to the SDK (case-sensitive), Python accepted `deflate` (observability M1) |
+| `OTEL_SDK_DISABLED=true` | Short-circuit setup in both: no-op providers, no exporters, no Prometheus listener, no log handlers; propagators still installed | Python kept side effects (observability M2) *Amended 2026-10-29 (A19 fix round): case `propagation.sdk_disabled_propagators_kept` pins the propagators (baggage injected, no `traceparent` from the no-op span); Node passes since B5 (2026-10-30). The INFO line: row "`OTEL_SDK_DISABLED` INFO"* |
+| Invalid per-signal env value (endpoint, timeout) with a valid generic one | Warn and fall back to the **generic** value, then the default | "Warn and fall back" means the next level, as the SDK does for timeouts (observability L4, Go code-review M3) |
+| Env endpoint with an unsupported scheme (`unix://`, `ftp://`) | Warn; the signal is **not configured** (no exporter) — also when it is a per-signal var and a valid generic endpoint exists (an explicit per-signal choice is not overridden; unparseable per-signal URLs, by contrast, fall back) | Python behavior; consistent with code values being rejected (Go code-review M2) |
+| URL userinfo or query in any endpoint (env or code, both protocols) | Not supported: the helper strips them before the SDK sees the URL and warns (redacted). Auth belongs in `OTEL_EXPORTER_OTLP_HEADERS` | Go SDK drops them anyway; same input must not behave differently depending on whether a shim fires (Python code-review M2, observability L1) |
+| Code `insecure` contradicting a code URL's scheme | Fail fast in both languages, error names the option | Parsing rule (code-invalid fails fast); Go already did (Python code-review M1) |
+| Code values out of range (`sample_ratio` ∉ [0,1] or NaN, metrics port ∉ [0,65535], unknown disabled-signal names, wrong types) | Fail fast with an error naming the option | Parsing rule (both code-reviews M3/M4) |
+| Code timeout + garbage per-signal env timeout (Python) | Mask the garbage per-signal var during exporter construction regardless of where the timeout came from | Python SDK `float()`s it unconditionally (Python code-review H1) |
+| Env timeout garbage / `0` / negative (generic or per-signal) | Helper parses it in both languages (milliseconds): warn and fall back (per-signal → generic → 10 000 ms) | Go passed it to the SDK: garbage → only an SDK error; `0`/negative → ~30 s BatchSpanProcessor deadline, no warning (dev M4) |
+| `OTEL_EXPORTER_OTLP[_<SIGNAL>]_HEADERS` with a malformed item (`a=1,broken`, empty item) | Helper parses headers in both languages (W3C-baggage-style, percent-decoded): malformed items are skipped with a warning naming the **key position only, never values**; valid pairs are passed explicitly to every signal | Go log SDK drops *all* headers on one bad item (auth header lost for logs only) while traces/metrics keep them (dev L7) |
+| Header parsing details (round 2, amended after dev round 2) | Keys must match `^[A-Za-z0-9._-]+$` — the intersection of HTTP tokens and gRPC metadata keys (others: warn by position, skip); keys compared case-insensitively, **last one wins** (one value per key on both protocols); keys are NOT percent-decoded, values are; an invalid `%` escape anywhere in a value — or a decode that isn't valid UTF-8 — keeps the **whole value literal** (no partial decoding) **and warns** (position only); a decoded value containing a control character (byte < 0x20 or 0x7F, e.g. `%0D%0A`) is **skipped** with a warning (it would fail every export); trim after decoding; when no valid item remains, Python still masks the env var during exporter construction so the SDK never re-parses and logs it | Go/Python diverged on all five points; Go dropped an auth value containing `%` (A3 round-2 observability M2) |
+| Fallback order for every per-signal value (endpoint, timeout, compression, headers) | Invalid per-signal → warn → **generic** → default; when a per-signal env endpoint is skipped, the helper passes the generic URL explicitly (the SDK would otherwise still read the bad per-signal var) | Go returned the default on the first invalid compression and let the SDK read a rejected `http://:4317` (round-2 H2, M1) |
+| Opaque-scheme values without `//` (`unix:/tmp/x`, `ftp:/x`, `collector:/v1/traces`) | A raw value with no `://` matching `^[A-Za-z][A-Za-z0-9+.-]*:/` is an **unsupported scheme** (warn, signal not configured) in both languages — schemeless endpoints must be `host[:port]` with a numeric port, no path | Python parsed `unix:/tmp/x` as host `unix` and dialed `https://unix:4317`; Go rejected it (A3 final code-review P2-a) |
+| Trimmed character set | Exactly ` \t\n\r\v\f` in both languages (not Unicode whitespace / `\x1c`–`\x1f`) | Python `str.strip()` and Go `TrimSpace` differ (P3-a) |
+| Effective export deadline | The resolved timeout must actually bound the export: Go also passes it to the batch span processor / log batch processor / periodic metric reader (their own export timeouts otherwise cap it at 30 s); Python honours it already (A3 round-3 dev D4) *Superseded 2026-10-29 (A18) by the row "Export deadline": the timeout is always passed, also by Python, and the processor/reader timeout variables are not honored* |
+| IPv6 zone IDs over `http/protobuf` in Python | Documented limitation: urllib3 cannot resolve `::1%25lo`; the helper warns when an http/protobuf endpoint carries a zone id (A3 round-3 dev D3) |
+| Timeout range / syntax | Plain decimal milliseconds only, matching `^[0-9]+(\.[0-9]+)?$` after trimming (no sign, exponent, hex, underscores or bare dot); anything else warns and falls back; valid values clamp to [1 ms, 24 h] with a warning. Fixture cases assert the **resolved value**, not only the warning | `1e30` overflowed Go's Duration (negative on amd64); `0x1p10` accepted by Go only (round-2 L1/L2) |
+| Unparseable endpoint in diagnostics | Print a constant (`<unparseable URL>`), never the raw value or the parser's exception text | Python printed the password when it contained `/`, `?` or `#` (round-2 H1) |
+| Endpoint env value with surrounding whitespace / control characters | Surrounding whitespace is trimmed and the trimmed URL is passed explicitly (never left for the SDK to re-read raw). A control character **inside** the value (byte < 0x20 or 0x7F after trimming) makes it unparseable: warn `<unparseable URL>`, fall back per the order rule (Python's `urlsplit` silently strips `\t\r\n` — the helper must check first; A3 round-3 dev D2) | Go lost all logs on a trailing `\n` (dev round-2 H) |
+| Go endpoint ownership (round 2) | For every configured signal the Go helper passes the fully resolved URL explicitly (`WithEndpointURL`) — never leaves an env endpoint for the SDK to re-read | Every round-2 Go HIGH (rejected per-signal fallback, per-signal schemeless regression, trailing newline) had the same root cause: the SDK re-reads raw env and disagrees with the helper (ADR-001 second correction) |
+| SDK's own log output of env values (Go `global.Error` for headers/URLs) | Out of the helper's control in Go (G7 forbids masking env); documented limitation in HOW-TO and CHANGELOG. Python masks the affected vars during exporter construction | Go/Python code-review round 2 *Extended 2026-10-29 (A18): the Go SDK also reads the TLS file variables at exporter `New()` and prints the **file path** in its own errors (`otlp*/internal/envconfig/envconfig.go:140`, `read tls ca cert file … file=<path>`; the log exporter: `failed to load TLS: open <path>`), even though the helper then passes its own TLS configuration — a documented Go limitation. Python and Node mask the TLS variables while the exporters are built, so their SDKs never read or print them* |
+| Whitespace-only `OTEL_SERVICE_NAME` / `SERVICE_NAME` | Trimmed; whitespace-only = unset | Python used `"  "` as the name (dev L8) |
+| Pre-fork setup on Python 1.42–1.44 (`--preload`) | `register_at_fork` child hook only **sets a flag** (never logs inside the hook — the OTel log pipeline may hold the parent's locks); the warning is emitted on the child's next helper call | Shared helper UUID would go unnoticed (observability M3) |
+| Code option equal to the helper default (A13 validation, 2026-10-28): `WithSampleRatio(1.0)` / `sample_ratio=1.0`, `WithPrometheusMetricsPort(9464)` / `prometheus_metrics_port=9464`, `WithDisabledMetrics([])` / `disabled_metrics=[]`, `disabled_signals=[]`, `debug_level=False`, `extra_instrumentation="SQL"`, `minimum_log_level=0` (Python) | **Set in code wins, whatever the value.** "Was it set" is tracked explicitly — Go: an option flag set by the `With*` option (`WithoutMetricsListener` counts as setting the port; a **nil** slice passed to `WithDisabledMetrics`/`WithDisabledSignals` means "not set", like Python's `None`); Python: the field defaults to `None` and **only ever holds the code value** — resolution stores the effective value privately (`TelemetryOptions.resolved`), so a value assigned after construction counts as code, `dataclasses.replace()` of a resolved object and a second `setup_telemetry()` with the same object re-read the environment for every field code left unset, except `service_name` and `environment`, which are still written back in place (pre-existing; moving them to `resolved` is a follow-up API change) (A13 review H1/M1) — never by comparing the value to the default. Python code types (A13 review M3): `disabled_signals`/`disabled_metrics` accept a list or tuple of strings (normalized to a list), `debug_level` a bool or int (truthiness, as in 0.2); any other type fails fast naming the option. A code sample ratio (any value, 1.0 included) selects `ParentBased(TraceIDRatioBased(ratio))` and beats `OTEL_TRACES_SAMPLER` and `OTEL_HELPER_SAMPLE_RATIO`. An explicit empty list (`disabled_metrics`, `disabled_signals`) means "none" and beats the env list. Empty strings stay "not set" for string options (endpoints, protocol, compression): an empty endpoint is not a usable value, as already documented on each option. Go has no code-side "debug off" (`WithDebug()` only enables), so the `debug_level=False` row is Python-only API, not a parity gap | D1 "explicit code > env"; a value-equals-default check silently handed the decision back to the env (`go/config.go`, `go/tracing.go` buildSampler `< 1.0`, `python/otel_helper/config.py` resolve_from_env) |
+| Code identity option vs the same key in code `resource_attributes` (Node B3 review, 2026-10-29): `service_name='a'` + `resource_attributes={'service.name':'b'}`; same for `environment` / `deployment.environment.name` | **The dedicated option wins**, in the resolved value **and** in the emitted resource (`a`) | Go and Python reported `a` but emitted `b` (Go `otelhelper.go` appends the option before the attribute loop; Python `setup.py` `update()`s attributes over the override) — the resolved value and the wire disagreed. Fix in Go/Python: task A16 |
+| Blank identity value inside `OTEL_RESOURCE_ATTRIBUTES` or code `resource_attributes` (`service.name=`, `deployment.environment.name=`, `service.instance.id=` — empty or contract-trim-set only) (Node B3 review, 2026-10-29) | **Counts as not provided**: the next precedence level applies (`service.name` → … → SDK default + warning; environment → absent + ADR-003 warning; instance id → generated) | Go emitted `service.name=""` and warned `using=""`; Go/Python emitted `deployment.environment.name=""` and kept a blank instance id. A16 |
+| Code-only `resource_attributes['service.name']` (no option, no env) (Node B3 review, 2026-10-29) | Resolves to that value, **no** "no service name configured" warning | Go resolved `unknown_service`, warned, and emitted the code value. A16 |
+| `OTEL_RESOURCE_ATTRIBUTES` parsing (Node B3 review, 2026-10-29) | **Helper-owned in every language** (not the SDK detector): split on `,`; blank items ignored; per item split at the first `=`; key and value trimmed with the contract trim set **after** percent-decoding; an item without `=`, with an empty key or with a key that is not valid UTF-8 is skipped with a warning naming the **item position only**; an invalid percent sequence or invalid UTF-8 keeps that value literal (still trimmed with the contract set) with a positional warning; a blank item is ignored **without** a warning; values are never echoed (R8) | The SDK parsers echo raw invalid items (Go `otel.Handle`, Python SDK warning — an R8 leak when values carry secrets), use Unicode trimming, and disagree on bad `%` and empty keys. The Node **helper** already implements this rule (the Node SDK's env detector instead discards the whole variable); Go/Python: A16 (parity cases cover each sub-rule). *Rationale, 2026-10-29 (A16):* the OTel SDK environment-variable spec says an SDK SHOULD discard the whole variable when it cannot be parsed; the helper deliberately keeps the valid items, because dropping them silently loses `service.name` and `deployment.environment.name` — wrong service and wrong log level in production — while one malformed item is already reported loudly. Raw invalid bytes are replaced with U+FFFD one per byte (Go and Python agree; Node sees an already-decoded environment, so a non-UTF-8 key cannot be detected there). *Reverse when* the spec makes the discard a MUST, or backends start relying on all-or-nothing resource parsing |
+| `telemetry.sdk.*` and the resource schema URL (A16, 2026-10-29) | **`telemetry.sdk.name`/`.language`/`.version` always come from the SDK**: a value for them in `OTEL_RESOURCE_ATTRIBUTES` (silently) or code `resource_attributes` (one warning per key, once per process, naming the key only) is ignored; other `telemetry.*` keys, e.g. `telemetry.distro.*`, are kept. The resource **declares the schema URL of the semconv version the helper targets**, one literal in every language: `https://opentelemetry.io/schemas/1.43.0` (Go `semconv/v1.43.0`, a test asserts the package matches; Python asserts it against `Schemas.V1_43_0` when the installed semconv package has it — on SDK 1.42–1.44 the literal is newer than that package, by design); bumping it is a contract change. Layering, lowest to highest: env parse < code attributes < resolved identity < `telemetry.sdk.*`. Parity cases `resource_attributes.telemetry_sdk_{env,code}_ignored`; the schema URL is asserted by unit tests (the fixture's `resolve` snapshot carries attributes only) | Go: the SDK won (telemetry detector last) and Go declared 1.43.0; Python and Node let env/code override them and declared no schema. Chosen direction: the SDK identifies itself — an app overriding `telemetry.sdk.*` would make backend SDK-version views lie, and Go already behaved this way, so only two languages move. Node D-JS14 row removed |
+| Go: SDK providers re-read `OTEL_RESOURCE_ATTRIBUTES` (A16, 2026-10-29) | `sdktrace`/`sdkmetric`/`sdklog.WithResource` do `resource.Merge(resource.Environment(), r)`: the SDK parses the variable again under the helper's resource. **Echo: fixed by the helper.** When its own parse found something the SDK parser reports (an item without `=`, a blank item included, or a bad escape), Setup installs a scoped `otel.ErrorHandler` filter while it builds the three providers: it drops only `errors.Is(err, resource.ErrPartialResource)` and a bare `url.EscapeError` (type assertion — an exporter's wrapping `*url.Error` passes) and forwards everything else to the handler installed before (or, when that is the API's default delegator or a filter, to `log.Print`, avoiding the delegator recursion); afterwards the previous handler is restored unless the application installed another meanwhile. Race window (microseconds): another goroutine's partial-resource error is dropped too. **Comeback: documented Go limitation.** A key the helper leaves absent comes back from the SDK parse (blank `deployment.environment.name=` → `""`), and a key with surrounding Unicode whitespace appears twice (helper: verbatim key; SDK: `strings.TrimSpace`). Only masking the env (G7 forbids it) or an exporter wrapper (rejected: rewrites every signal's resource) would fix it. Go `skip:no-upstream-go-resource-env-merge` on `identity.blank_env_environment_absent` and `resource_attributes.unicode_space_key_verbatim`; `resource_attributes.values_never_echoed` passes | `sdk/trace/provider.go:390`, `sdk/metric/config.go:115`, `sdk/log/provider.go:301` (v1.47.0). *Upstream issue draft:* "`WithResource` merges `resource.Environment()` under a caller-supplied resource, so a caller that builds its resource from `OTEL_RESOURCE_ATTRIBUTES` itself cannot drop or normalize keys, and malformed items are reported through `otel.Handle` with their raw text. Proposal: an option (e.g. `WithResource(r, resource.WithoutEnvironment())`) or not merging the env when the caller passes a resource." |
+| Python: SDK parse echo, resource detectors, after-fork refresh (A16, 2026-10-29) | The helper builds the resource itself (`Resource(attrs, schema_url)`, never `Resource.create()`). **SDK echo:** `opentelemetry.sdk._logs` calls `Resource.create({})` at import (a log-record class default), which runs the SDK env detector; a process-local `logging.Filter` on the `opentelemetry.sdk.resources` logger drops only its "Invalid key value resource attribute pair" record while the helper imports that module and while it sets up — the environment is never mutated. **Detectors:** see the detector-selection row. **Default service name:** helper-computed `unknown_service:<basename(sys.executable)>` (the ≥ 1.45 spelling) on every SDK version. **After fork (sdk ≥ 1.45):** the SDK's fork hook merges its process-dependent detectors on top of the resource, which replaced an explicit `service.instance.id` (pre-A16) and could re-add detector attributes; the helper registers its own `after_in_child` hook after the providers' (hooks run in registration order) that puts the helper's resource back, with the SDK's fresh per-process id unless code or env set one (private `_resource` / `_sdk_config.resource` + `_update_resource`, guarded by `hasattr`; the hook never logs or raises) | `opentelemetry/sdk/_logs/_internal/__init__.py:262` (1.42) / `:281` (1.45); `sdk/trace/__init__.py` `_handle_fork` (1.45). An app that imports the SDK log module before the helper still gets the SDK warning (out of the helper's control) |
+| Detector-selection variables (A16, 2026-10-29) | **Not honored in any language**: the helper builds the resource itself (principle 4: host/process/cloud attributes come from the Collector). A warning, once per process and naming only the variable, when it lists anything beyond the env and service-instance equivalents — Python `OTEL_EXPERIMENTAL_RESOURCE_DETECTORS` beyond `otel`/`service_instance`; Node `OTEL_NODE_RESOURCE_DETECTORS` beyond `env`/`serviceinstance`/`none`. Go: no warning (`OTEL_GO_X_RESOURCE` only gates the SDK's instance-id detector, and the helper generates the id itself). Parity case `resource.detector_var_ignored_warned` (Go `skip:no-detector-variable`) | Python honored the variable through `Resource.create()` before A16 (breaking, migration item 19); Node never ran detectors (D-JS4) |
+| Identity and resource-attribute warning cadence (A16, 2026-10-29) | **Once per process in every language**: "no service name configured", the ADR-003 environment warning, the two `OTEL_RESOURCE_ATTRIBUTES` parse warnings and the code `telemetry.sdk.*` warning — like the deprecations (D8). A later setup with the same problem stays silent | Node and Go wrote them on every setup, Python once per options object (Node D-JS14 row, removed) |
+| Invalid code `resource_attributes` (A16, 2026-10-29) | An empty or contract-trim-set-only key fails setup in every language (Go: `Setup` error naming `WithResourceAttributes`; Python `ValueError`; Node `TypeError`). Python only: a non-string value for `service.name`, `deployment.environment.name` or `service.instance.id` fails with `ValueError` naming the key (Go's map is typed; Node already rejects non-strings). Other non-string Python values (int, float, bool, sequences) are passed to the SDK as before — a deliberate Python-only API extension: Go's option is `map[string]string` and Node's `resourceAttributes` accepts strings only (A16 review, 2026-10-29; typed attribute values in Go/Node would be a separate, additive API change). Parity case `resource_attributes.code_empty_key_fails` | R8 fail fast on code values |
+| Unparseable `OTEL_EXPORTER_OTLP[_<SIGNAL>]_INSECURE` with no endpoint configured (Node B4a, 2026-10-29) | **Warn when the INSECURE variable that would be consulted for a signal is set and unparseable**, whether or not an endpoint is configured (env parse errors are loud, principle 8). "Would be consulted" = per-signal, else generic; none when code `insecure` is set (a shadowed variable stays silent — Go and Node agree). *Clarified 2026-10-29 (B4a code-review L5)* | Go warned (it resolves every signal); Python read INSECURE only for a chosen endpoint and stayed silent. A17 |
+| Control character inside an opaque-scheme endpoint (`unix:/x\x7f`) (Node B4a, 2026-10-29) | The control-character ruling applies first: the value is **invalid** (warn `<unparseable URL>`) and resolution falls back to the next level — not "unsupported scheme" | Go checked control characters first; Python classified the opaque scheme first and left the signal unconfigured. A17 |
+| Empty code `otlp_protocol` / `compression` (`""`) (Node B4a, 2026-10-29) | **Not set** (the A13 "empty strings stay not set" ruling) — env, then default apply; no error | Go and Node follow the ruling; Python raised `ValueError`. A17 |
+| Endpoint port outside 1–65535 (`http://h:70000`) (Node B4a, 2026-10-29) | **Invalid**: warn `<unparseable URL>`, fall back to the next level (env) or fail fast (code) | WHATWG URL (Node) and Python reject it; Go's `url.Parse` accepted it. A17 *Corrected 2026-10-29 (A17 refutation):* the port is compared after stripping leading zeros; nothing left or more than five digits remaining is invalid, so a port of any length is parsed without converting it whole (Python `int()` refuses more than 4300 digits and raised `ValueError` out of the resolver). Parity case `endpoint.port_long_digits` |
+| Text used for an endpoint that can't be parsed (`http://:4317`, control characters, bad port) (Node B4a, 2026-10-29) | Always the constant `<unparseable URL>` in every language (never a partial or host-less rendering) | Go printed the host-less URL. A17 |
+| Endpoint parsing follows RFC 3986, not WHATWG (Node B4a refutation, 2026-10-29) | The authority ends only at `/`, `?` or `#`; a **backslash** anywhere in the endpoint makes it **invalid** (`<unparseable URL>`, fall back / fail fast); a URL scheme must be followed by `//` and a **non-empty host**; a schemeless value starting with `/` or `\` is invalid; userinfo is cut at the **last** `@` of the RFC authority | Node's WHATWG parser treated `\` as an authority end: `http://user:12\pw@collector` leaked the password to diagnostics and onto the wire as a path (BLOCKING); `http:///x` and `//h:4317` resolved silently. Go already invalid; Python accepted some forms. A17 (Python), Node B4a |
+| Leading-zero ports (`http://h:04318`) (Node B4a refutation, 2026-10-29) | Compared **numerically** (`04318` = 4318): port-4318 inference applies; the rendered URL uses the numeric port | Go compared the string and dialed gRPC. A17 (Go) |
+| Percent-encoding in the endpoint path (`/%2F`, `/%zz`) (Node B4a refutation, 2026-10-29) | The path is kept **verbatim** (escaped form), never decoded; *(withdrawn 2026-10-29)* ~~an invalid escape in the path is kept as written, not an error~~ | Go decoded `%2F` (losing the segment) and rejected `%zz`. A17 (Go) *Corrected 2026-10-29 (A17 refutation):* "an invalid escape in the path is kept as written" is **withdrawn**. An invalid `%` escape (a `%` not followed by two hex digits) in an **http/protobuf** path is **invalid in every language**: env → warn `<unparseable URL>`, fall back; code → fail fast (gRPC drops the path, so it stays irrelevant there). Evidence: the Go OTLP/HTTP exporters `url.Parse` the endpoint in `WithEndpointURL` and on error `global.Error` the full URL and keep their **default endpoint** (otlptracehttp v1.47.0 `internal/otlpconfig/options.go:296-305`); Python `requests.utils.requote_uri` falls back to `quote(uri, safe=…without %)` once one escape is invalid, double-encoding **every** escape of the URL. Parity cases `endpoint.http_path_invalid_escape`, `config.code_http_path_invalid_escape_fails`. Go: see the row "Go: path escapes decoded" *Amended 2026-10-29 (A17 final review):* diagnostics render such an http/protobuf value as `<unparseable URL>` too (`redactURL`/`redact_url` take the protocol; without one, no escape check). |
+| Host characters (Node B4a refutation, 2026-10-29) | An unescaped IPv6 zone id, a space, or a percent-encoded byte in the **host** makes the endpoint **invalid** | Python accepted zone ids and spaces; Node decoded `%68` to `h`; Python passed `%68` raw. A17 (Python), Node B4a |
+| Empty query or fragment (`http://h:4317/?`, `#`) (Node B4a refutation, 2026-10-29) | Treated like any query/fragment: removed, with the userinfo/query warning (once per variable) | Python left `?` to the SDK (`…/?/v1/traces`). A17 (Python) |
+| `@` in the endpoint path or query (`http://user:4317/secret@collector`) (Node B4a refutation, 2026-10-29) | **Warn** ("endpoint path contains '@' — misplaced credentials?") naming the variable only, never the value; the endpoint is used as parsed | All three silently sent `…/secret@collector…` as the request path. A17 (Go, Python), Node B4a *Amended 2026-10-29 (A17 refutation):* a percent-encoded `%40` counts as `@`, for the warning and for diagnostics (the path is not rendered) |
+| Userinfo/query warning dedupe (Node B4a refutation, 2026-10-29) | Once per **variable and value** per setup (not per signal) | Node warned once per signal for a generic http/protobuf endpoint |
+| Internationalized (IDN) hosts (`http://bücher.de:4317`) (Node B4a re-refutation, 2026-10-29) | The host is converted to **punycode** (IDNA/UTS-46, `xn--bcher-kva.de`) before dialing and in every rendering; a host that fails IDNA conversion is **invalid** | Node (WHATWG) already punycodes; Go rendered `b%C3%BCcher.de`, Python passed raw unicode. A17 (Go, Python) *Corrected 2026-10-29 (A17 refutation):* "IDNA/UTS-46" means **UTS #46 non-transitional** in every language (Go: `x/net/idna` profile with WHATWG options; Node: `url.domainToASCII`; Python: the `idna` package, `idna.encode(host, uts46=True, transitional=False)`, a core dependency `idna>=3.7,<4` — 3.7 fixes CVE-2024-3651; the stdlib codec is IDNA 2003 and mapped `ß` to `ss`). Deviation characters are kept (`straße.de` → `xn--strae-oqa.de`); a ZWJ/ZWNJ outside its CONTEXTJ context is invalid. IDNA runs on non-ASCII hosts only. Parity cases `endpoint.idn_deviation_char`, `endpoint.idn_zwj_invalid` |
+| IDN hosts: Python residual divergence (A17 refutation, 2026-10-29) | **Recorded, not fixed.** The `idna` package validates labels by IDNA 2008 after the UTS #46 mapping, so it rejects some hosts WHATWG (Node) and the Go profile accept: emoji and other non-PVALID code points, `_` in a label that also holds non-ASCII text, labels longer than 63 characters, hyphens in the third and fourth position of a non-`xn--` label. Python treats them as invalid (warn `<unparseable URL>`, fall back / fail fast). No parity case on these hosts (they would fix the divergence in the fixture) | `idna` has no WHATWG profile (no `CheckHyphens=false`, no IDNA 2008 relaxation). *Reverse when* `idna` gains a WHATWG mode, or Go/Node move to IDNA 2008 validation *Corrected 2026-10-29 (A17 final review):* an **empty label** in a non-ASCII host and a non-ASCII host **longer than 253 characters** after punycode (one trailing `.` ignored) are now invalid in Go and Node too, matching Python's `idna`. What remains Python-only: emoji and other non-PVALID code points, `_` in a label that also holds non-ASCII text, labels over 63 characters, hyphens in the third and fourth position (recorded in the README gap list). |
+| One host rule (A17 refutation, 2026-10-29) | After the host-characters and IDN rows, the (ASCII) host must be an **IPv6 literal** (`[…]`, `net.ParseIP` / `ipaddress` / `net.isIPv6`) or an **RFC 3986 reg-name** (unreserved / sub-delims bytes only, so `a{b`, `"h"`, `h{` are invalid). A host that **ends in a number** (WHATWG term: its last label, a trailing empty label ignored, is decimal digits or `0x` + hex) must be a **canonical dotted-quad IPv4 address**, each octet 0–255 without leading zeros; otherwise it is invalid: `127.1`, `0x7f.0.0.1`, `2130706433`, `1.2.3.256`, `1.2.3.4.5`, `01.2.3.4` (`1.2.3.4.` was listed here; accepted since the correction below). Hosts are lowercased (IPv6 too, kept as written otherwise). Node implements the same rule itself instead of comparing with WHATWG `URL` output | Node normalized `127.1` to `127.0.0.1` (an address) while Go/Python passed it to the resolver as a DNS name, and Node accepted `{` and `"`, which Go/Python rejected — the same endpoint dialed different targets. Parity cases `endpoint.ipv4_shorthand_invalid`, `endpoint.ipv4_octet_out_of_range_invalid`, `endpoint.host_non_regname_invalid` *Corrected 2026-10-29 (A17 final review):* **one** trailing `.` is dropped before the canonical-quad check, so `10.0.0.1.` (and `1.2.3.4.`) is accepted, rendered as written; `1.2.3.4..` does not end in a number (WHATWG: last label empty after dropping one) and is a reg-name. Node runs `domainToASCII` on the host plus a guard label (`.x`, stripped afterwards): WHATWG `domainToASCII` also runs IPv4 parsing on its result, which turned fullwidth `１２７.１`, `２１３０７０６４３３` and `０１.２.３.４` into valid addresses in Node only; with the guard the rule sees `127.1` as Go and Python do. Parity cases `endpoint.ipv4_fullwidth_shorthand_invalid` and the export twins `export.{ipv4_shorthand,ipv4_octet_out_of_range,host_non_regname,ipv4_fullwidth_shorthand}_falls_back` (assert the fallback traces endpoint; Node `skip:B4b-otlp-endpoint`). Kubernetes: an all-digit namespace makes `collector.2024` end in a number — write the FQDN or the `.svc` form. |
+| Opaque-scheme rendering (A17 refutation, 2026-10-29) | An opaque value (`unix:/…`, `collector:/…`) renders as **`<scheme>:` only** (lowercased) in every diagnostic and error; the text after the scheme is never shown (it may hold credentials, and cutting at the last `@` still showed the rest). A schemeless value with a later `://` keeps its current handling | Parity case `redaction.opaque_scheme_renders_scheme_only` |
+| Rendering when the path or query holds `@` (A17 final review, 2026-10-29) | **Every diagnostic and error renders only `<scheme>://`** — the userinfo/query warning (`value` and `using`), the portless-gRPC warning, an unsupported-scheme value; a schemeless value renders as the constant **`<schemeless endpoint>`** (also the schemeless deprecation `value`), in every language. `%40` counts as `@` | `http://admin:1234/rest@collector?x` rendered `http://admin:1234` — the user name and the start of the password (R8). Parity case `redaction.at_in_path_numeric_password_prefix` |
+| Go: path escapes decoded (A17 refutation, 2026-10-29) | **Documented Go limitation.** The helper keeps the path verbatim in the resolved URL, but the Go OTLP/HTTP exporters send `url.URL.Path`, the decoded path: `/a%2Fb` reaches the Collector as `/a/b` (an escape of a character a path needs escaped, e.g. `%20`, survives the re-encoding). The helper warns, once per variable and naming only the variable, when the http/protobuf path has an escape the exporter will change ("endpoint path has percent-escapes the Go OTLP/HTTP exporter sends decoded"). `export.http_path_escape_verbatim` is Go `skip:no-upstream-go-http-raw-path` | otlptracehttp v1.47.0 `internal/otlpconfig/options.go:296-305` (`WithEndpointURL`: `cfg.Traces.URLPath = u.Path`) and `client.go:292` (`url.URL{Scheme, Host, Path: c.cfg.URLPath}`); otlpmetrichttp v1.47.0 `internal/oconf/options.go:310-313` and `client.go:88-92`; otlploghttp v0.23.0 `config.go:195-198` and `client.go:83-86`. `WithURLPath` does not help (the `%` is re-escaped to `%25`). `WithHTTPClient` is **rejected**: it replaces the exporter's TLS (`OTEL_EXPORTER_OTLP_*CERTIFICATE`/`CLIENT_KEY`), proxy and timeout handling, which the helper would have to re-implement (ADR-001). *Upstream issue text (not filed):* "**`WithEndpointURL` drops `url.URL.RawPath`.** `otlptracehttp`/`otlpmetrichttp`/`otlploghttp` `WithEndpointURL(u)` stores `u.Path` and the client rebuilds the request URL from it, so an endpoint whose path contains percent-escapes of characters that do not need escaping (e.g. `https://h/tenant%2Fa/v1/traces`) is sent decoded (`/tenant/a/v1/traces`). Expected: the escaped path is sent as configured. Proposal: keep `u.EscapedPath()` (or `RawPath`) in the config and build the request URL with `RawPath` set." *Reverse when* upstream keeps the raw path |
+| TLS files (Node B4b review, 2026-10-29; task A18) | Applies to gRPC and http/protobuf with a TLS endpoint. `OTEL_EXPORTER_OTLP[_<SIGNAL>]_CERTIFICATE`, `_CLIENT_KEY` and `_CLIENT_CERTIFICATE` each resolve **per-signal, then generic**; a per-signal file that cannot be read (or, for the CA, holds no PEM certificate) warns and falls back to the generic file, then to the default (system roots / no client certificate). The client key and certificate are **one pair**: when only one resolves, either cannot be read, or the TLS layer rejects them (bad PEM, mismatch, encrypted key), the helper never fails setup and never aborts the process — it warns naming **the variables only** (never the path, the file content or key material) and that signal uses **server authentication with the resolved CA**. A CA that cannot be read or has no PEM certificate warns and the system roots are used. The helper resolves the files itself and passes the result explicitly: Go a `tls.Config` (`WithTLSCredentials` / `WithTLSClientConfig`), Python gRPC channel credentials or the HTTP file paths (the TLS variables masked while the exporters are built), Node gRPC channel credentials or HTTPS agent options (`httpAgentOptions`; variables masked) | Python aborted the process on an incomplete pair (grpc C core CHECK, `grpc_tls_certificate_distributor.cc:344/345`); Go ignored it silently; the Go log exporter dropped the whole TLS config (CA included) on one bad file; Python ignored the generic CA when a per-signal one was set. Cases `export.grpc_certificate_unreadable_falls_back`, `export.grpc_certificate_not_pem_falls_back` (helper warning added), `export.grpc_client_key_without_certificate_server_auth`, `export.grpc_client_pair_mismatch_server_auth`, `export.grpc_certificate_per_signal_bad_generic_good`. Go limitation: SDK path printing (row "SDK's own log output"). *Python limitation (A18 final round, 2026-10-29): the pair is validated with CPython `ssl` (OpenSSL) while grpc uses BoringSSL; a pair one accepts and the other rejects fails every handshake (no abort, no export) instead of falling back to server authentication* |
+| Export deadline (Node B4b review, 2026-10-29; task A18) | The resolved OTLP timeout of a signal (code > `_<SIGNAL>_TIMEOUT` > `OTEL_EXPORTER_OTLP_TIMEOUT` > 10 000 ms) is its **single export deadline**: the helper always passes it to the exporter, the batch span processor, the batch log record processor and the periodic metric reader (the default 10 000 ms included). `OTEL_BSP_EXPORT_TIMEOUT`, `OTEL_BLRP_EXPORT_TIMEOUT` and `OTEL_METRIC_EXPORT_TIMEOUT` are **not honored**; when one is set the helper warns once pointing to `OTEL_EXPORTER_OTLP[_<SIGNAL>]_TIMEOUT`. Node caps the reader timeout at the export interval with a warning naming the timeout's source (the SDK requires timeout ≤ interval; Node design D-JS14) | Supersedes the 2026-10-29 contract follow-up (tasks.md). Its premise "Python lets the SDK read those variables" was wrong: the Python SDK 1.4x batch processors accept `export_timeout_millis` but do not use it (`_shared_internal/__init__.py`: "Not used. No way currently to pass timeout to export"), and only the periodic reader honored `OTEL_METRIC_EXPORT_TIMEOUT`; Go passed the timeout only when one was set, so the SDKs' own env reading (30 s) applied otherwise. Cases `export.batch_export_timeout_env_ignored_grpc`, `export.code_export_timeout_wins_grpc` |
+| Code export timeout bound (Node B4b review, 2026-10-29; task A18) | A code export timeout outside **[1, 86 400 000] ms** (the env clamp range) fails fast in every language. Go `WithExportTimeout` and Python `export_timeout_ms` take integers; Node `exportTimeoutMs` accepts any finite number in the range (decimals, as the env grammar) | Go and Python accepted any positive value; Node timers overflow above 2^31-1 ms. Case `config.code_export_timeout_above_24h_fails` |
+| Header bytes (Node B4b review, 2026-10-29; task A18) | A decoded header value must be **printable ASCII (0x20–0x7E)**; any other value (a control character, a decoded `%C3%A9`, a raw non-ASCII character) warns naming the variable and the item position in the env value, and the item is skipped — both protocols, every language. A `-bin` gRPC metadata key gets no special handling beyond that: the ASCII value is sent as its bytes (gRPC base64-encodes binary metadata on the wire). Go already did; Python now passes `bytes` for `-bin` keys (grpc requires them); Node passes a `Buffer` | grpc-go and Python grpc failed the **whole export** on a non-ASCII metadata value; Python failed it on a `str` value for a `-bin` key. Cases `export.headers_value_non_ascii_skipped`, `export.headers_bin_key_sent_as_bytes`; `export.per_signal_headers_replace_generic` pins the existing per-signal-replaces-generic rule |
+| Value-length limits (Node B4b review, 2026-10-29; task A18) | A value-length limit of **0 is invalid** (`OTEL_ATTRIBUTE_VALUE_LENGTH_LIMIT`, `OTEL_SPAN_ATTRIBUTE_VALUE_LENGTH_LIMIT`, `OTEL_LOGRECORD_ATTRIBUTE_VALUE_LENGTH_LIMIT`): it warns once and the next level applies (per-signal → generic → no limit). The helper passes the limit explicitly only when a 0 is set (Go `WithRawSpanLimits` / log `WithAttributeValueLengthLimit`, Python `SpanLimits` / `LogRecordLimits`, Node the provider limits). *Batch size above queue size: ruled 2026-10-29, see the next row* | Before: Go and Python truncated every value to `""`; the JS SDK ignored 0 with a `diag.warn` per attribute. Go limitation: the Go log SDK reads only `OTEL_LOGRECORD_ATTRIBUTE_VALUE_LENGTH_LIMIT` (no generic fallback), so the generic variable affects Go logs only through the 0 rule. Python limitation: the SDK 1.42 `LoggerProvider` takes no limits (1.45 does: `log_record_limits`), so a 0 still empties log attribute values there. *Corrected 2026-10-29 (A18 final round): a non-zero per-signal value is kept when only the generic variable is 0 (Python passed the generic fallback over it).* Cases `config.attribute_value_length_limit_zero_warns`, `config.attribute_value_length_limit_zero_signal_wins` |
+| Batch size above queue size (A18 final round, 2026-10-29) | When `OTEL_BSP_MAX_EXPORT_BATCH_SIZE` is larger than `OTEL_BSP_MAX_QUEUE_SIZE` (likewise `OTEL_BLRP_*`; defaults 512 / 2048), the helper warns **once naming both variables** and uses the **queue size** as the batch size, passing it explicitly (Go `WithMaxExportBatchSize` / `WithExportMaxBatchSize`, Python `max_export_batch_size`, Node the processor options). Setup never fails. Unparseable values are left to the SDKs | Python's SDK raised `ValueError` at processor construction and failed setup (`sdk/trace/export/__init__.py:288`); the Go span processor clamped silently to min(512, queue), the Go log processor to the queue; the JS SDK clamped with a `diag.warn`. Cases `config.bsp_batch_size_above_queue_clamped`, `config.blrp_batch_size_above_queue_clamped` |
+| Deprecated `OTEL_HELPER_DISABLED_SIGNALS` (Node B4c, 2026-10-29; task A19) | Each listed signal is disabled **unless that signal's `OTEL_<SIGNAL>_EXPORTER` is set** (non-blank): the standard variable wins for that signal (row "Signal on/off"). A code `disabledSignals` / `WithDisabledSignals` / `disabled_signals` still wins over the variable (`[]` included). An unknown entry **warns once** per setup in every language, echoing the entry (never a secret); the deprecation itself is warned once per process. *Amended 2026-10-29 (A19 fix round): (a) the standard variable counts as **set** only when it parses to at least one valid entry, `none` included — a blank value, only separators or only unknown entries count as unset (the unknown entries still warn), as the env spec ignores unrecognized values; (b) for metrics the **code** metric-exporter option wins over the deprecated variable too (principle 6); (c) code disabled signals are **trimmed, lowercased and de-duplicated** in every language (Go validated `" Traces "` and then disabled nothing); (d) a repeated unknown entry (`profiles,PROFILES`) still warns once. Cases `config.disabled_signals_unknown_only_standard_var_unset`, `config.disabled_signals_code_metric_exporters`, `config.code_disabled_signals_trimmed`* | Go applied the deprecated variable even when the standard one was set; Python dropped unknown entries silently. Cases `config.disabled_signals_standard_var_wins`, `config.disabled_signals_unknown_warns` |
+| Exporter alias `logging` (Node B4c, 2026-10-29; task A19) | In `OTEL_{TRACES,METRICS,LOGS}_EXPORTER`, `logging` is a **deprecated alias of `console`** and warns. In code (the metric-exporter option, the only exporter list settable in code) `logging` is an **unknown exporter and fails fast**. *Amended 2026-10-29 (A19 fix round): code entries are de-duplicated after normalization in every language, so `["none", "none"]` disables metrics (Python raised "cannot be combined"). Case `config.code_metric_exporters_none_duplicated`* | Go mapped a code `logging` to `console` with a warning; Python and Node rejected it. Case `config.code_exporter_logging_fails` |
+| Metric export interval (Node B4c, 2026-10-29; task A19) | `OTEL_METRIC_EXPORT_INTERVAL` is trimmed with the contract set, then must match **`^\+?[0-9]+$`** (ASCII digits only: no `_`, no `-`, no other sign, no non-ASCII digits) and be **> 0**; anything else warns and uses **30 000**. A value above **2 147 483 647 ms** (2^31-1, the Node.js timer limit) is **clamped** to it with a warning. A code interval (`WithExportInterval`, `export_interval_ms`, `exportIntervalMs`) outside **[1, 2 147 483 647] ms** fails fast. Formerly a Node-only bound (Node design D-JS14). *Amended 2026-10-29 (A19 fix round): any number of digits is accepted — the optional `+` and the leading zeros are dropped, more than 10 significant digits clamp, the rest is converted (the unreleased A19 draft of the Python helper raised in `int()` above 4300 digits; released Python fell back to 30 000). Case `metrics.interval_env_long_digits_clamped`* | Python `int()` accepted `5_000` and non-ASCII digits; Go `strconv.Atoi` rejected values beyond int64 and had no upper bound; neither bounded the code value. Cases `metrics.interval_env_underscore_invalid`, `metrics.interval_env_above_max_clamped`, `config.code_interval_above_max_fails` |
+| `OTEL_CONFIG_FILE` (Node B4c, 2026-10-29; task A19) | Declarative configuration is **not supported**. When the variable is set (non-blank) every helper warns **once per process**, naming only the variable, never the path, and ignores it. *Amended 2026-10-29 (A19 fix round): `OTEL_EXPERIMENTAL_CONFIG_FILE`, the deprecated name, is warned the same way. Case `config.experimental_config_file_warns`* | Only the Node spec (JS2) had the rule; Go and Python ignored the variable silently. Case `config.config_file_warns` |
+| Echoed values are truncated (A19 fix round, 2026-10-29) | A warning that echoes an environment value cuts it to **64 code points plus `…`** in every language (Go `truncateValue` in `warnEnv`, Python `_warn_once`, Node `truncateValue`). Secrets are never echoed at all | Go and Python echoed values of any length (a 5000-digit interval filled the log line) |
+| `OTEL_SDK_DISABLED` INFO (A19 fix round, 2026-10-29) | With `OTEL_SDK_DISABLED=true` every helper logs one INFO line `OTEL_SDK_DISABLED=true: telemetry disabled, only propagators installed` on its own channel (Go the stderr slog logger, Python `staffops_otel_helper.setup`, Node the diagnostics sink; Node also keeps its context manager — *amended 2026-10-30: the "until task B5" note is gone since Node B5 installs the propagators; A20: when Node installed no propagator (one was registered first, D-JS14) it logs `OTEL_SDK_DISABLED=true: telemetry disabled; the helper installed no propagator` instead*) | Only Python logged it |
+| Propagator diagnostics (Node B5 review, 2026-10-30; task A20) | Every `OTEL_PROPAGATORS` token is scanned (no early return at `none`). Each skipped token gets **one warning** with `variable`, `value` and `using`: `propagator not supported by the <language> helper, ignored` for spec values the helper does not link (`b3`, `b3multi`, `jaeger`, `xray`, `ottrace`), else `unknown propagator, ignored`. `none` with any other token (supported, unsupported or unknown) warns `"none" combined with other propagators; propagation disabled` (`using=none`) and wins. `using` names the **effective list, computed after parsing** (`foo,baggage` → `using=baggage`; nothing supported left → `tracecontext, baggage`; `none` → `none`). Cases `propagation.a20_none_combined_warns_each_token`, `propagation.a20_per_token_warnings`, `propagation.a20_warning_names_effective_list` | Python returned at the first `none` without warning and logged one combined line; Go and Node named the default as `using` |
+| Deprecated sample ratio (Node B5 review, 2026-10-30; task A20) | `OTEL_HELPER_SAMPLE_RATIO` that is not a plain decimal in [0, 1] (garbage, NaN spelling, above 1) **warns and is ignored** in every language: message `sample ratio is not a number in [0, 1]`, `using=parentbased_always_on`; the default sampler applies. No clamping. Case `sampler.a20_sample_ratio_alias_out_of_range_ignored` | Python clamped values above 1 to 1.0 (same sampler, different message); Go named `1.0` as `using` |
+| ASCII case folding (Node B5 review, 2026-10-30; task A20) | Environment enum values — sampler, exporter and propagator names, OTLP protocol, compression, booleans, the known environments — and **health paths** (request-path normalization of the health sampler and client exclusion) are **ASCII case-insensitive**: only A–Z/a–z fold. A non-ASCII letter never folds into a name (`PARENTBASED_TRACEİDRATIO`, U+0130, is unknown: warned, default). Go `asciiLower`/`asciiUpper` (`strings.ToLower` maps U+0130 to `i`, `strings.EqualFold` folds U+017F to `s`), Python `ascii_lower`/`ascii_upper` (`str.lower()` maps U+212A to `k`), Node `asciiLower`/`asciiUpper` (same). Python's `OTEL_SEMCONV_STABILITY_OPT_IN` token check also folds ASCII only. Hosts, schemes and header names keep their own rules. *Extended 2026-11-02 (B5 final review): health paths and the semconv opt-in tokens*. Case `sampler.a20_non_ascii_name_falls_back` | Go accepted `PARENTBASED_TRACEİDRATIO` silently |
+| Bare `traceidratio` across languages (2026-10-30, A20) | Documented, not pinned: the SDKs do not derive the ratio decision from the trace id the same way (Go and Python compare the low 64 bits against the bound, the JS SDK an XOR of the four 32-bit words; .NET differs again), so a bare `traceidratio` keeps different traces in different services. Mixed-language deployments use `parentbased_traceidratio`, where the root decides for the whole trace. No parity case pins a ratio decision | Node B5 review |
+| Disabled-metric patterns (Node B7, 2026-11-02; task A21) | `OTEL_HELPER_DISABLED_METRICS` is a comma-separated list; each item is trimmed with the contract set and blank items are ignored; the code option (`WithDisabledMetrics` / `disabled_metrics` / `disabledMetrics`) follows the same item rules, and a set one (`[]` included) wins over the variable. Each item is a **case-sensitive glob on the instrument name**: `*` matches any run of characters (`.` and `/` included), `?` exactly one character, **every other character is literal** (no `[...]` classes, no escapes). A matching instrument is dropped from **every** exporter. Go: own `globMatch` in a `Drop` View (was `path.Match`). Python: an SDK View per pattern, `[` escaped as `[[]` for `fnmatchcase`; the SDK stores instrument names lower-cased (`instrument.py` `self.name = name.lower()`) and lower-cases View patterns, so a pattern with an upper-case letter gets no View — the case-sensitive result against the name Python holds; a mixed-case instrument name therefore only matches a lower-case pattern in Python (SDK residual). Node: own matcher; a dropping wrapper around every push exporter (OTLP, console) plus the same filter on the scrape (the sdk-metrics 3.0 View wildcard expands only the first `*` and escapes `?`); dropped instruments are still aggregated in Node. Cases `metrics.disabled_metrics_glob_star_dot`, `_question_mark`, `_bracket_literal`, `_case_sensitive`. *Amended 2026-11-02 (B7/A21 fix round): Python warns once per process when it skips an upper-case pattern, naming `OTEL_HELPER_DISABLED_METRICS` / `disabled_metrics` but never the pattern; and because Python names are lower-cased, a lower-case pattern matches mixed-case instruments there (`parity.*` drops `Parity.Mixed`), where Go and Node keep it. Case `metrics.disabled_metrics_mixed_case_instrument` (Python `skip:no-upstream-python-case-preserving-names`)* | Go `path.Match` read `[...]` as a class and stopped `*` at `/`; Python `fnmatch` read `[...]` and folded case; Node did not implement the variable |
+| Unit 1 (Node B7, 2026-11-02; task A21) | OTel Prometheus compatibility spec: a **Gauge** in unit `1` (after `{…}` annotations are dropped) gets the `_ratio` suffix; no other instrument type does (an UpDownCounter in `1` has no suffix). Go: the upstream exporter already does it. Node: the helper's unit-suffix adapter (design D-JS8). Python: the upstream exporter maps `1` to no suffix for every type (`opentelemetry/exporter/prometheus/_mapping.py` `"1": ""`), so the helper's Prometheus reader rewrites the unit of Gauge metrics in `1` to `ratio` in its `_receive_metrics` (the `MetricReader` hook every reader implements) before the exporter translates them. Case `metrics.scrape_gauge_unit_one_ratio`. *Corrected 2026-11-02 (B7/A21 fix round): annotations are handled differently. Node and Python drop `{…}` annotations before comparing, so a Gauge in `{x}1` gets `_ratio`; Go's `otlptranslator` compares the raw unit with `1` and drops an annotated main unit (`unit_namer.go:94-119`), so `{x}1` gets no suffix in Go. A recorded Go difference; no case* | Python wrote `parity_utilization`, Go `parity_utilization_ratio` |
+| Metrics port grammar (Node B7, 2026-11-02; task A21) | `OTEL_HELPER_METRICS_PORT` is trimmed with the contract set, then must match **`^\+?[0-9]+$`** (ASCII digits only: no `-`, no `_`, no other digit scripts) with a value in [0, 65535]; leading zeros are allowed whatever the length (only the significant digits are converted, so a long digit string is never parsed); `0` = no listener. Anything else warns (`invalid port` / `is not a port`) and uses 9464. Code values outside [0, 65535] fail fast. Cases `metrics.port_env_underscore_invalid`, `_out_of_range_invalid`, `_long_digits_invalid`, `_leading_zeros_valid` | Go `strconv.Atoi` accepted `-0`; Python `int()` accepted `9_464` and non-ASCII digits |
+| Metrics listener (Node B7, 2026-11-02; task A21) | The helper's standalone listener serves **only `GET` and `HEAD /metrics`** (query ignored): any other path answers 404, another method on `/metrics` 405 with `Allow: GET, HEAD` (Go's `GET /metrics` mux pattern). It binds **dual-stack** (`[::]` accepting IPv4) when the platform allows, else IPv4 (`0.0.0.0`); a port in use is an error, never retried on IPv4. Go: `net.Listen(":port")` with the mux pattern. Node: `listen(port)` with the host omitted (design D-JS8). Python: a helper-owned `ThreadingHTTPServer` (`IPV6_V6ONLY` off, IPv4 fallback) serving `prometheus_client.generate_latest` of the dedicated registry, replacing `start_http_server` (which bound IPv4 only and served every path); requests are not logged. The mounted handlers (`MetricsHandler()`, `metrics_app()`, `metricsHandler()`) are unchanged: the app's router decides their path and methods. Cases `metrics.listener_other_path_404`, `metrics.listener_get_head_only`. *Amended 2026-11-02 (B7/A21 fix round): **every** method goes through the same check (TRACE, PROPFIND: 405 on `/metrics`, 404 elsewhere; Python's `BaseHTTPRequestHandler` answered 501); 404 and 405 carry Go's `text/plain` bodies (`404 page not found`, `Method Not Allowed`); absolute-form targets (`GET http://host/metrics`) are matched by path. Go checks the method in a handler wrapper around `/metrics` (not a `GET /metrics` pattern), so `GODEBUG=httpmuxgo121=1` cannot change it. The listener never keeps a process alive and never waits on a stalled client: Node `unref()`s every accepted connection and checks its 5 s header / 10 s request timeouts every second (`connectionsCheckingInterval`, 30 s by default); Python closes a connection idle for 10 s (`timeout`) on daemon threads. A failed collection answers 500 and is logged on the helper's logger (Python `handle_error` too, never a stderr traceback). With a **foreign global MeterProvider** no listener runs (Node never starts it; Python stops it at install); the mounted handler answers 503. `//metrics` differs by router: Go's `ServeMux` cleans the path (307 to `/metrics`); Node answers 404; Python answers 200 (`BaseHTTPRequestHandler.parse_request` collapses leading slashes before the handler sees the path; unit-tested in `tests/test_a21.py`) — recorded, no case* | Python served every path on IPv4 only; Go and Node answered any method |
+| Colliding label names (B7/A21 fix round, 2026-11-02) | Colliding label names are merged as Go does: attribute keys that are equal once sanitized (`a.b`, `a_b` → `a_b`) become **one** label whose values are joined with `;` ~~in the order of the original keys~~ *corrected 2026-11-02 (final round): **sorted as strings** — Go sorts the values, not the keys (`exporter.go:652` and `:692`, `slices.Sort(vals)`), so `a.b="y"`, `a_b="x"` give `a_b="x;y"`* (`a_b="x;y"`), on data points and on the `target_info` resource attributes. Colliding non-string values are rendered as Go and Node render them: `true`/`false`, numbers as written (`5`), arrays as compact JSON (`["a","b"]`; Python uses `json.dumps(..., separators=(",", ":"))` for merged values). Go: the upstream exporter. Node: the helper merges before serializing (`mergedLabels`; the scope labels are added only when no attribute has their name). Python: the helper's reader adapter merges data-point and resource attributes before the exporter, which kept the last value. A data-point attribute named `otel.scope.name` (or `_version`, `_schema_url`) collides with the scope label: Node and Python keep the data-point value, Go fails the whole scrape (`duplicate label names in constant and variable labels`) — recorded Go difference, no case. Cases `metrics.scrape_colliding_label_names_merged`, `metrics.scrape_colliding_label_values_sorted` | Node wrote `a_b="x",a_b="y"` (Prometheus rejects the scrape), Python kept `a_b="y"` |
+| Suffix semantics (B7/A21 fix round, 2026-11-02) | The unit word, `_total` and `_ratio` are appended **only when the name does not already end with them**; a trailing `_total` of a counter moves after the unit; a unit word or `total`/`ratio` inside the name is kept (`probe.bytes-sent` in `By` → `probe_bytes_sent_bytes_total`, `req.total.count` → `req_total_count_total`, a Gauge `ratio.load` in `1` → `ratio_load_ratio`). Node and Python. Go's exporter (`otlptranslator` v1.0.0, `metric_namer.go:273-276`, `removeItem`) works on name tokens and removes those words wherever they appear (`probe_bytes_sent_total`, `req_count_total`, `load_ratio`); no supported exporter option gives suffix semantics, so the Go cases are `skip:no-upstream-go-otlptranslator-tokens`. Cases `metrics.scrape_unit_word_inside_name`, `metrics.scrape_total_inside_name`, `metrics.scrape_ratio_inside_name` | — |
+| Exposition details (B7/A21 fix round, 2026-11-02) | Not pinned: Go's `promhttp` negotiates the protobuf format and gzip from `Accept` / `Accept-Encoding`, Python and Node always answer text 0.0.4 uncompressed; Python writes float bounds and values as `le="5.0"` / `1.0`, Go and Node `le="5"` / `1`. *Amended 2026-11-02 (final round): a non-colliding array attribute is rendered by the upstream Python exporter as `[1, 2]` (`json.dumps` defaults), by Go and Node as `[1,2]`; not changed by the helper.* Equivalent for Prometheus; recorded, no case | — |
+| Percent-encoded health paths (Node B6 fix round, 2026-11-02; task A22) | Health matching (D5) uses the **percent-decoded** path in every language, server spans and HTTP client exclusions alike: query and fragment cut on the raw target, then the path decoded, cut again at a decoded `?`/`#`, ASCII-lowercased and trailing slashes dropped. `/%68ealth` and `/HEALTH%2f` are `/health`. A malformed escape keeps the raw path. Go: the sampler and `NewHTTPTransport` see the decoded `req.URL.Path` (no change). Node: `normalizeHealthPath` decodes (instrumentation-http's `url.path` is raw). Python: the server sampler already sees the decoded path (the case passes with no change); the client `excluded_urls` regex is matched against the URL as sent, so an encoded client path is not excluded — recorded Python residual, no case. Case `http.health_percent_encoded_path` | Node traced `/%68ealth` and `/health%2F`; Go dropped them |
+| gRPC server span status (Node B6 fix round, 2026-11-02; task A22) | A gRPC **SERVER** span ends with status ERROR only for UNKNOWN, DEADLINE_EXCEEDED, UNIMPLEMENTED, INTERNAL, UNAVAILABLE and DATA_LOSS (RPC semconv); any other non-OK code leaves it UNSET; `rpc.grpc.status_code` is kept. Client spans keep their instrumentation's rule (ERROR on every non-OK code). Go: `otelgrpc` `serverStatus` (`interceptor.go:86-98`, v0.72.0). Python: `_utilities.py`. Node: instrumentation-grpc 0.300 marks every non-OK code ERROR, so the helper's `GrpcServerStatusProcessor` resets the others to UNSET in `onEnding` (before every processor's `onEnd`, the app's own `spanProcessors` included); only spans of the helper's TracerProvider. Case `grpc.server_not_found_status_unset` (new snapshot field `server_span_status`) | Node marked NOT_FOUND, INVALID_ARGUMENT, … as ERROR |
+| Stdout fallback time zone (Node B8, 2026-11-02; **ruled 2026-11-02, task A23**) | The stdout fallback writes the record time in **UTC**, RFC 3339 with milliseconds and **`Z`**, whatever the process zone (`TZ`), in every language. Go already did (`go/logging.go`, `stdoutTime`, `.UTC()`); Node does (`toISOString`). **Python changed (A23):** `_rfc3339_ms` (`python/staffops_otel_helper/_console.py`) formats an aware UTC datetime; before, it wrote local time with its offset (`TZ=America/Sao_Paulo`: `1969-12-31T21:00:00.000-03:00` for epoch 0, checked in `python:3.12-slim`) and `Z` only when the zone was UTC. Case `logging.stdout_time_utc_under_tz` (`TZ=America/Sao_Paulo`) | One timestamp form per pipeline: log processors parse a single layout, and comparing records across languages needs one zone. The A5 ruling ("`Z` for UTC") left the non-UTC case open; containers run in UTC, so it only showed on hosts or pods with `TZ` set |
+| Stdout fallback fields (Node B8, 2026-11-02; **ruled 2026-11-02, task A23**) | (a) **Reserved keys — unified:** a top-level attribute named `time`, `level`, `msg` or `logger` is **dropped** from the stdout line in every language, so the record's own field is the only one. Python already skipped them (`_console.py`, `key not in entry`; `msg` cannot be an `extra` at all, the stdlib refuses to overwrite a LogRecord attribute); Node skips them (`logging.ts` `RESERVED`); **Go changed (A23):** its slog JSON fallback wrote a duplicate key (`{"time":…,"level":"WARN","msg":"m","msg":"dup",…}` from `slog.NewJSONHandler`, `golang:1.26`, 2026-11-02) and now drops the attribute (`go/logging.go` `reservedStdoutKeys`, `stdoutRecord`, `filterReserved`; record attributes and `With` attributes; an attribute inside a `WithGroup` nests in the group object and is kept; members of an inline `slog.Group("", …)` are filtered, a `LogValuer` resolved first). *Amended 2026-11-02 (A23 fix round, owner):* in Go a top-level **`logger` attribute becomes the line's `logger` field**, written once **before the record's own attributes** (after any `With` attributes, which slog writes first), the **last non-error** one winning (a record attribute over a `With` one; an error under `logger` is the exception or dropped, never the field); without one Go writes no `logger` field. An **error under a reserved key** is renamed to `exception` like any other error (the first error of the record, or a `With` error under a reserved key when the scope has no exception yet); it is dropped only when an `exception` key already exists — same rule in Node (`logging.ts`); in Python a reserved name cannot hold an error as an `extra` (the stdlib refuses `msg`; `time`/`level`/`logger` extras are skipped). (b) **`logger` — accepted difference:** written when the language has a logger name — Python (`record.name`) and Node (`createLogger({name})`); Go's `NewLogger` / `NewSlogHandler` have no name, so Go writes it only when the record or its `With` attributes carry a top-level `logger` attribute (amended 2026-11-02, see (a); README "Known emitted-telemetry gaps"). (c) **`exception` — accepted, native form per language:** Go the `Error()` text of the first error attribute (`errorText`), Python the traceback of `exc_info`, Node the `Error` `stack` (else `Name: message`) of the first `Error` attribute; an attribute already named `exception` is kept and nothing is renamed (Go and Node). *Corrected 2026-11-02 (A23 fix round):* in Python an `exception` **extra** is kept only when the record has no `exc_info`; with `exc_info` set, the traceback overwrites it (`_console.py` `JSONFormatter.format`). (d) **Non-JSON values — text in all three:** Python `json.dumps(default=str)`; Go's slog JSON handler writes the encoder error as a string (`"fn":"!ERROR:json: unsupported type: func()"`, `"cycle":"!ERROR:json: unsupported value: encountered a cycle via *main.node"`, `"nan":"!ERROR:json: unsupported value: NaN"`, `"cplx":"!ERROR:json: unsupported type: complex128"`; `golang:1.26` probe, 2026-11-02 — confirmed, no Go change); Node renders bigint and symbols with `String()`, functions as `[Function: name]`, a `Map` as an object (string keys), a `Set` as an array, a value whose read or `toJSON` throws as `[unreadable <type>]` (`[unreadable accessor]` for a throwing getter or Proxy trap). **Cycles (corrected 2026-11-02, A23 fix round):** Python and Node write `"[Circular]"` at the repeated container (Python: before the fix round `json.dumps` raised and the stdlib dropped the record with a traceback on stderr); Go's slog writes `"!ERROR:json: unsupported value: encountered a cycle via …"`. Python's fast path is `json.dumps(…, allow_nan=False, separators=(",", ":"))`; only when it raises does a sanitizer run (cycles, non-finite floats, dict keys json cannot encode as `str(key)`, a `RecursionError` falls back to `str(value)`). All three use compact separators (`,` and `:`; Python changed in the fix round). *Corrected 2026-11-02 (A23 review):* the functions are Go `stdoutRecord` / `filterReserved` (`go/logging.go`; `dropReserved` / `withoutReserved` no longer exist), Python `_dumps` / `_json_safe` / `_text` (`_console.py`; `_finite` no longer exists) and Node `convert` (`logging.ts`). Python passes `default=_text` to every `json.dumps` and catches any exception around the fallback, so no extra can lose the record (a raising `__str__`, a dict subclass whose `items()` raises → that value as text or `[unprintable <type>]`); a NaN or ±Infinity dict key becomes `str(key)`. Node: a value whose prototype lookup throws (a Proxy trap, a revoked Proxy) is `[unreadable object]`; a `toJSON` returning `this` lists the object's own keys; a top-level `undefined` is `null` on stdout. **Non-finite floats (ruled 2026-11-02, owner):** every language writes **valid JSON**, the value as text: Python's `json.dumps` wrote bare `NaN` / `Infinity` / `-Infinity` (invalid JSON; probe `python:3.12-slim`, 2026-11-02: `"nan": NaN, "inf": Infinity, "nested": {"a": [NaN]}`) and now writes `"nan"`, `"inf"`, `"-inf"` (`_console.py` `_json_safe`, nested dicts/lists/tuples too); Node wrote `null` (`JSON.stringify`) and now writes `"NaN"`, `"Infinity"`, `"-Infinity"`; Go writes `"!ERROR:json: unsupported value: NaN"` (accepted as Go's native form, no change). The text differs per language; only "never a crash, never an invalid line" is the contract. No parity case: the `logging` kind emits a message without attributes, so a value-level case would need a record input in three drivers | Duplicate keys are read differently by different log pipelines (first or last wins), so they are removed; the other three are presentation details where each language's native rendering is what its developers expect, recorded so nobody "fixes" them one language at a time |
+| OTel log scope name (Node B8, 2026-11-02; **accepted difference, ruled 2026-11-02, task A23**) | On the OTel Logs API path, the instrumentation scope of a record is **the logger name** in Python (contrib `LoggingHandler.emit`: `get_logger(record.name, …)`, `opentelemetry-instrumentation-logging` 0.66b2 `handler.py:220`) and Node (`createLogger({name})`), and the fixed **`otel-helper`** in Go (`go/logging.go`, `otelslog.NewHandler("otel-helper", …)`; slog has no logger name). Severity text is `DEBUG`/`INFO`/`WARN`/`ERROR` in all three (Python maps `WARNING` → `WARN`, `CRITICAL` → `FATAL`, `handler.py:184-188`; Go `slog.Level.String()`; Node fixed table). Kept as is | Backends group or filter by scope; Go records cannot be told apart by logger without an API change. No fixture case asserts the scope (the `export` kind emits through the global LoggerProvider) |
+| Explicit instance id in a worker (Node B9b fix round, 2026-11-02; **ruled 2026-11-02, task A24**) | When `service.instance.id` comes from code or `OTEL_RESOURCE_ATTRIBUTES` in a worker the helper can detect (Python: forked after the helper was imported; Node: a `cluster` worker), the value is kept (D4) and the helper warns once, worded as a **conditional**, the same wording except the worker kind (`forked`/`cluster`) in every language: `service.instance.id is set explicitly in a <forked|cluster> worker: unless each worker sets a different value, every worker reports the same id; leave it unset so each process gets its own`. Python: `_build_resource` (`python/staffops_otel_helper/setup.py`); Node: `resolvePlan` (`nodejs/packages/otel-helper/src/internal/resolve.ts`). Go: no prefork model, no warning. Case `fork.env_instance_id_warns_and_kept` matches the shared wording with either worker kind (`in a (cluster|forked) worker: unless each worker sets a different value`); `fork.instance_ids_distinct_post_fork` asserts its absence (`not_contains`) | The old Python text ("every worker reports the same id") was wrong for an app that gives each worker its own id from code or a per-worker env; the helper cannot see the other workers' values, so it states the condition instead of a fact. One wording, apart from the worker kind, keeps the fixture regex and log searches language-neutral |
+| DB error status (Node B10a fix round, 2026-11-03; **ruled 2026-11-03, task A25**) | A database client span that fails keeps status **ERROR with no description** in every language: the description is the database's error text, which can quote a statement value (`Duplicate entry '<value>' for key …`, `invalid input syntax for type integer: "<value>"`). Go: XSAM otelsql sets `codes.Error, ""` (`utils.go:57-58`). Python: `ext/sql.py` passes contrib sqlalchemy a TracerProvider wrapper whose spans' `set_status` keeps the code and drops the description (contrib sets `Status(ERROR, str(exc))` in `engine.py` `_handle_error`; the `connect` span gets `"<type>: <exc>"` from `trace.use_span`) — scoped to the instrumentor's own tracer, no SDK hook. Node: `-sql` `dbTracerProvider` wraps each span's `setStatus` (pg and mysql2 set `message: err.message`) *Amended 2026-11-03 (second fix round, P1):* Python routes **both** paths through one helper, `ext.sql.wrapped_instrument_kwargs()` — `instrument_sql()` and the deprecated `SQL` flag of `setup_telemetry()` (`instrumentation.configure_instrumentations`; before, that default path called a bare `SQLAlchemyInstrumentor().instrument()` and kept the text, and a later `instrument_sql()` was a silent no-op). When SQLAlchemy was instrumented by other code without the wrapper, `instrument_sql()` keeps it and warns once instead of re-instrumenting: contrib `_uninstrument` removes the event listeners of every engine created so far (`EngineTracer.remove_all_event_listeners()`, 0.63b0 `__init__.py:296-304`, 0.66b1 `__init__.py:291-299`). Tests: `tests/test_a25_sql.py` setup-only, setup then `instrument_sql()`, instrumented elsewhere, failed `connect` (no description, exception event kept). Node also sets `error.type=_OTHER` when it drops a description and the span has none (N1); Go and Python set no `error.type` on DB spans (no change). *Amended 2026-11-03 (Node B10b ruling Q1, task A26):* the rule covers **every DB client, Redis included**. Redis errors can quote a command argument (`ERR unknown command 'X', with args beginning with: '<arg>'`; reproduced on redis:7.4.12-alpine). Go `ext/otelredis`: the `sanitizingProvider` tracer wraps each span so `SetStatus(codes.Error, d)` keeps the code and drops `d` (redisotel v9.23 `tracing.go:187-190` `recordError` sets `err.Error()`; spans from `tracing.go:95, 134, 176`). Python `ext.redis`: the `ext.sql` TracerProvider wrapper, moved to `_db_status`, on `instrument_redis()` and on the `REDIS` flag of `setup_telemetry()`; a Redis instrumented elsewhere without it is kept and warned once. Node `-redis`: `internal/db` `dbTracerProvider` with `error.type=_OTHER` (Go and Python set no `error.type`). Tests: Go `ext/otelredis/redis_test.go` `TestErrorStatusDropsDescription` (miniredis, and a real Redis with `OTELREDIS_TEST_ADDR`); Python `tests/test_a26_redis.py`; Node `-redis` `test/fixtures/scenario.cjs`. *Amended 2026-11-03 (A26 fix round, obs M4):* for **Redis** spans the dropped text's leading code, `^[A-Z][A-Z0-9_]{0,31}(?= )` (`WRONGTYPE`, `ERR`, `NOAUTH`, `WRONGPASS`, ...), becomes `db.response.status_code` and `error.type`; without one `error.type=_OTHER` (a dial error, `connect ECONNREFUSED`). Go: `statusSanitizingSpan.SetStatus`; Python: `_db_status` Redis wrapper, from the exception message (redis-py strips `ERR`, `NOAUTH`, `WRONGPASS` and other mapped codes from it, so those give `_OTHER` in Python); Node: `internal/db` `responseStatusCode`, set by `-redis` only (`-sql` unchanged). Caveat: a Lua `redis.error_reply()` can return any custom code of that shape (e.g. `MYCODE`), which then becomes `error.type`. Tests: Go `TestErrorStatusDropsDescription`, `TestDialErrorStatus`; Python `tests/test_a26_redis.py`; Node `test/fixtures/scenario.cjs`, `test/redis.test.cjs`. *Amended 2026-11-03 (A26 final round, rulings R1/R2; supersedes the Lua caveat above):* only a **known reply code** becomes `db.response.status_code`/`error.type`; anything else is `_OTHER`, so a Lua `error_reply(ARGV[1] .. ' bad')` — whose first word becomes the reply code (`script_lua.c` `luaPushErrorBuff`) — never puts data or a high-cardinality value in an attribute. The allowlist, the same in Go `replyCodes`, Node `REPLY_CODES` and Python `REPLY_CODES`, is every `-CODE` literal in Redis 7.4.12 `src/*.c` plus `MOVED`/`ASK` (`cluster.c:1205`) and redis-py's `BaseParser.EXCEPTION_CLASSES` keys (5.0.0 and 8.1.0): `ASK`, `BUSY`, `BUSYGROUP`, `BUSYKEY`, `CLUSTERDOWN`, `CROSSSLOT`, `DENIED`, `ERR`, `EXECABORT`, `INPROG`, `INVALIDOBJ`, `IOERR`, `LOADING`, `MASTERDOWN`, `MISCONF`, `MOVED`, `NOAUTH`, `NOGOODSLAVE`, `NOGROUP`, `NOMASTERLINK`, `NOPERM`, `NOPROTO`, `NOQUORUM`, `NOREPLICAS`, `NOSCRIPT`, `NOTBUSY`, `OOM`, `READONLY`, `TRYAGAIN`, `UNBLOCKED`, `UNKILLABLE`, `WRONGPASS`, `WRONGTYPE`. Verified against the source 2026-11-03 (e.g. `server.c:1875` NOSCRIPT, `cluster.c:1186` CROSSSLOT, `t_stream.c:2270` NOGROUP, `sentinel.c:4091` NOQUORUM); `NOTREADY` from the ruling's list is not a Redis reply code and is left out; `DENIED`, `INPROG`, `INVALIDOBJ`, `IOERR`, `NOGROUP`, `NOMASTERLINK`, `NOQUORUM`, `UNBLOCKED` were added from the source. **Python** resolves the code from the exception's `status_code` (redis-py 8.x, set for every code it maps — `ERR` included — and stripped from the message), else the message's leading token when allowlisted (`WRONGTYPE` stays in the text), else the class mapped back from `EXCEPTION_CLASSES` (unambiguous `ResponseError` subclasses: `NoPermissionError` → `NOPERM`), else — redis-py 5.x/7.x only — a plain `ResponseError` is `ERR` (redis-py strips it without a trace; so an ERR-stripped `EXEC without MULTI` or `DUMP payload …` is `ERR`, not `EXEC`/`DUMP`). A Lua first word is `_OTHER` on redis-py 8.x and `ERR` before (indistinguishable there; never the word). Tests: Go `TestReplyCodeAllowlist` and the `EvalRO` case, Python `test_reply_code_resolution` and the `SECRET_TOKEN42` case on both legs, Node `test/redis.test.cjs` and `scenario.cjs`. | Bound values never reach attributes (R10); the status was the remaining channel. A span processor cannot change the status (it is read-only after end in Python and JS), so each language wraps the tracer the DB instrumentation uses |
+| Database semconv opt-in (Node B10a fix round, 2026-11-03; **ruled 2026-11-03, task A25**) | The legacy `db.system` is emitted **unless `OTEL_SEMCONV_STABILITY_OPT_IN` holds `database` without `database/dup`**; tokens are trimmed with the contract set and ASCII-folded. Unset, empty, `http` or any database-less value: both keys. Go `ext/otelsql` `legacyKeysEnabled` (now `strings.Trim(trimChars)` + `asciiLower`, not `TrimSpace`/`ToLower`); Python normalizes the variable before contrib reads it (`_semconv.normalize_semconv_opt_in`: ASCII-fold, `database/dup` appended to an empty or database-less value, so contrib's own parser sees the rule); Node `-sql` `legacyKeysEnabled`, read once per process *Amended 2026-11-03 (second fix round):* an **empty or whitespace-only value is unset** (Python maps it to `http,database/dup`, as Node and the contract treat empty as unset; L-e). Python folds **every** token, so `HTTP` / `HTTP/DUP` now select stable / dup HTTP as well (M-a). In dup mode the full new attribute set and the full legacy set are emitted (L-f). Python writes the normalized value back to `os.environ` (contrib reads it there), so child processes started afterwards inherit the rewritten value (L-b). *Amended 2026-11-03 (A26 fix round, obs M1):* Go `ext/otelredis` applies the rule to its spans too (`legacyKeysEnabled`, copied from `ext/otelsql`: separate modules), read at each `Instrument` call: `database` without `/dup` drops redisotel's `db.system` from spans. Its **pool metrics keep `db.system`** in every mode — redisotel adds it to the metric attributes (`config.go:94`) and Go has no MeterProvider wrapper (recorded). Test: `TestSemconvStableModeDropsLegacySystem`. | Before A25 Python contrib switched to the legacy keys only for `http` or an empty value, and Go trimmed Unicode whitespace (U+00A0) |
+| DB error text in exception events (Node B10a fix round, 2026-11-03; **accepted residual, task A25**) | The `exception` event is semconv-defined and kept, so a database's error text can still quote a value in `exception.message`: Go — XSAM `span.RecordError(err)` (the driver's text); Node pg — sanitized upstream (`PostgreSQL error of type '<name>' occurred (code: <SQLSTATE>)`); Node mysql2 — no exception event; Python — none on statement spans (contrib records no exception), the `connect` span's event from `trace.use_span` carries `str(exc)` *Amended 2026-11-03:* Python's statement spans carry no exception event on either path (`instrument_sql()` or the `SQL` flag), and a failed `connect` keeps its event (`tests/test_a25_sql.py`). *Amended 2026-11-03 (Node B10b ruling Q2, task A26):* Redis has the same residual in all three languages — the exception event keeps the server text, which for an unknown command quotes its arguments (Go `span.RecordError`, Python `trace.use_span`, Node contrib `recordException`); pinned by the A26 tests. *Amended 2026-11-03 (A26 fix round, dev H1):* **Python Redis pipelines** — redis-py's `Pipeline.annotate_exception` (sync and asyncio) rewrites the message on the client to `Command # N (<command and its arguments>) of pipeline caused error: <reply>` (asyncio: the reply as a tuple repr), so keys and values reached `exception.message` and `exception.stacktrace`. `_db_status` wraps `record_exception` on Redis spans: the command name and one `?` per argument (`Command # 2 (LPUSH ? ?) of pipeline caused error: WRONGTYPE ...`), the stacktrace rebuilt from the frames and the sanitized message (chained exceptions left out). Go and Node record the reply only. The reply text itself stays the residual (an unknown command, a Lua `error_reply`). | Recorded in README "Known emitted-telemetry gaps"; dropping semconv exception events would cost debuggability in every language |
+| Redis span names (Node B10b ruling Q3, 2026-11-03; **parity gap**; *reworded 2026-11-03, A26 fix round obs M2/dev L2*) | Node and Python name a Redis command span by the command, uppercased (`SET`) — a **parity choice with Python, not semconv**: semconv captures `db.operation.name` as provided and names the span `{db.operation.name} {target}`. So the names differ from semconv in case (ioredis provides `set`), for MULTI/pipeline (ioredis `MULTI set` / `PIPELINE set`, node-redis `MULTI` / `PIPELINE`; Python one pipeline span `SET GET`) and by the omitted `{target}` (no language records the key). `db.operation.name` itself stays as provided. Node renames the contribs (`redis-SET`, `set`) and names connection spans `connect`; the Node contribs make one span per pipeline/MULTI command. **Go keeps redisotel's lower-case names** (`set`, `redis.pipeline set get`, `redis.dial`). **Backlog (not in A26):** rename Go `ext/otelredis` spans to the uppercased command (a tracer `Start` name rule in `sanitizingTracer`). | parity with Python; a Go rename changes existing dashboards/queries, so it gets its own change |
+| Redis `db.operation.name` (A26 fix round, 2026-11-03, obs M3; **parity gap**) | The command **as provided**: Node from the contribs (node-redis `SET`, `MULTI`, `PIPELINE`; ioredis `set`, `MULTI set`, `PIPELINE set`); Go adds it in `sanitizingTracer.Start` from the span name, which is redisotel's `cmd.FullName()`: go-redis lowercases the command and adds the subcommand only for `cluster` and `command` (`set`, `cluster info`; CLIENT SETINFO is `client`; go-redis `command.go:552-565`); none on `redis.pipeline …`/`redis.dial` spans or for an empty name (*corrected 2026-11-03, A26 final round obs LOW-2/LOW-3*). **Python emits none**: checked 2026-11-03 against contrib redis 0.63b0 (lower) and 0.66b2 (latest), in dup and stable mode. **Backlog:** Python `db.operation.name` (a contrib bump that adds it, or the `_db_status` wrapper setting it from the span name). | semconv: Required when the operation is known |
+| AWS error status (Node B10c ruling Q1, 2026-11-03; **ruled 2026-11-03, task A27**) | The A25 DB error rule extends to **AWS SDK clients** in every language: a failed AWS call span keeps status **ERROR with no description**, and `error.type` is the **AWS error code** when it matches `^[A-Z][A-Za-z0-9]{1,63}$` (AWS codes are a bounded set of PascalCase identifiers: `NoSuchKey`, `AccessDenied`, `ValidationException`, `ThrottlingException`), else `_OTHER` (a dotted query code such as `AWS.SimpleQueueService.NonExistentQueue` does not match). An error without an AWS code (a transport error) may give its error class name when that matches (Python `EndpointConnectionError`, Node `Error`/`TypeError`); Go gives `_OTHER` (its Go type names are not identifiers of that shape). Go `ext/otelaws`: contrib otelaws v0.72 calls `span.SetAttributes(semconv.ErrorType(err))` and `span.SetStatus(codes.Error, err.Error())` (`aws.go:76-79`) on the span from its tracer (`aws.go:66`); the helper passes `WithTracerProvider` a wrapper whose span drops the description and owns `error.type`, and an inner Initialize middleware hands it `smithy.APIError.ErrorCode()`. Python `ext.aws`: contrib botocore sets `span.set_status(StatusCode.ERROR, str(error))` (`__init__.py` `_patched_api_call`, 0.66b1 lines 298 and 304); `_aws_status` wraps botocore's TracerProvider on `instrument_aws()` and the deprecated `AWS` flag of `setup_telemetry()`; `error.type` from `ClientError.response["Error"]["Code"]` when the exception is recorded; botocore instrumented elsewhere without the wrapper is kept and warned once. Node `-aws`: `internal/db` `dbTracerProvider` + the contrib's `exceptionHook` (`err.name`, else `Code`). The `exception` event keeps the AWS error message (the accepted residual, as "DB error text in exception events"). Tests: Go `ext/otelaws/aws_test.go` `TestErrorStatusDropsDescription`; Python `tests/test_a27_aws.py`; Node `-aws` `test/sdk.test.cjs` *Amended 2026-11-03 (A27 fix round, dev M1/obs M1/obs L3/dev L3/code-review G-L1, P-L1, P-L3):* **the same `error.type` in all three languages**, the modeled error name: Go takes `smithy.APIError.ErrorCode()` when it matches, else the modeled error's type name from `service/*/types` (`*types.QueueDoesNotExist` → `QueueDoesNotExist`), else `_OTHER`; Python takes `ClientError.response["Error"]["Code"]`, else `Error.QueryErrorCode` (the query-compatible code), else the modeled exception class botocore raises (`client.exceptions.QueueDoesNotExist`; botocore 1.34's SQS Query protocol has no `QueryErrorCode`), else — for an all-digit `Code` of a body-less error — the HTTP reason phrase without spaces (`404` → `NotFound`, `403` → `Forbidden`), else `_OTHER`; Node takes `err.name` (the modeled name), else `Code`. Tests in all three: SQS `QueueDoesNotExist` (with `x-amzn-query-error: AWS.SimpleQueueService.NonExistentQueue;Sender`) → `QueueDoesNotExist`; S3 `HeadObject` 404 without a body → `NotFound`. Python's Bedrock extension writes the exception class name as `error.type`; the wrapper drops that write, so every `error.type` comes from `aws_error_type()`. **Transport errors (no AWS error) differ, accepted:** Go `_OTHER`; Python the exception class name (`EndpointConnectionError`); Node the Node `code` (`ECONNREFUSED`) else the JS class (`Error`, `TypeError`). No parity case: the fixture has no AWS or HTTP-client kind. **Exception events:** Python and Node keep the AWS error message in the `exception` event (the residual); Go otelaws records no exception event. Python covers botocore/boto3 only: aiobotocore (`AioBotocoreInstrumentor`) is not instrumented by the helper and gets no wrapper. Go's wrapper keeps the original SDK span in the call context and passes the code through a private context value (`codeHolderKey`); `Instrument` must be called once per `aws.Config`. *Amended 2026-11-03 (A27 fix round 2, obs M-A, dev L4):* body-less errors use **one fixed status → name table** in all three languages, Go's `http.StatusText` values with the spaces removed (the Go SDK derives the code from it for an S3 HEAD error): Python maps an all-digit `Code` and Node an all-digit `name`/`Code`, or an error the SDK names `Unknown` (what Node's SDK raises for a body-less S3 HEAD 403/503) by its `$metadata.httpStatusCode`, through it (`STATUS_CODES`: `403` → `Forbidden`, `503` → `ServiceUnavailable`, `413` → `RequestEntityTooLarge`; Python's `HTTPStatus` phrases differ, e.g. `Content Too Large`); a code outside the table is `_OTHER`. Tests: HEAD 404/403/503 → `NotFound`/`Forbidden`/`ServiceUnavailable` in Go, Python and Node. **Presigning:** Node's `getSignedUrl` and Go's `s3.PresignClient` run the client's middleware stack without sending, so the SDK span middleware can record a phantom `S3.<Operation>` CLIENT span with no request behind it (reported by the B10c dev review; not reproduced in tests); Python's `generate_presigned_url` does not call `_make_api_call`. | An AWS error message can quote request values (a DynamoDB `ValidationException` quoting the item) or name parameters; before A27 Go and Python kept it in the status description and Go wrote the Go error type (`semconv.ErrorType(err)`) as `error.type` |
+| AWS payload attributes (Node B10c ruling Q2, 2026-11-03; **ruled 2026-11-03, task A27**) | `aws.dynamodb.item_collection_metrics` is **never recorded** (it holds `ItemCollectionKey`, the partition-key value of the written item): Python `_aws_status` drops it from span-start attributes and every `set_attribute`/`set_attributes` (contrib botocore `extensions/dynamodb.py` `_RES_ITEM_COL_METRICS`); Node `-aws` `attributes.ts`; Go records none (otelaws attribute builders read the request only, `dynamodbattributes.go`). An SNS `Publish` to a phone number writes the destination as `phone_number:**`: Python contrib already does (`extensions/sns.py:85-86`), Node `-aws` redacts it the same way, Go records no phone number (`snsattributes.go:41-48` takes the topic or target ARN only) *Amended 2026-11-03 (A27 fix round, obs M3):* Go otelaws records `aws.s3.key`, `aws.s3.copy_source` and `aws.s3.delete` (its S3 attribute builder reads them from the request); the Go wrapper drops them (`droppedKeys`), as Node and Python, which never record them (Node contrib writes the bucket only; Python botocore has no S3 key attribute). `aws.s3.bucket`, `aws.s3.upload_id` and `aws.s3.part_number` are kept. Node also writes the semconv `aws.extended_request_id` next to the contrib's `aws.request.extended_id` (obs L5). | A partition-key value is data, not a measurement; a phone number is PII |
+| AWS RPC keys (Node B10c ruling Q3, 2026-11-03; **parity gap**, backlog) | Node (`@opentelemetry/instrumentation-aws-sdk` 0.79) and Python (botocore 0.63b0–0.66b1) write the legacy `rpc.system=aws-api`, `rpc.service`, `rpc.method=<Operation>`; Go (otelaws v0.72) writes the current `rpc.system.name=aws-api` and `rpc.method=<Service>/<Operation>`. Node AWS spans also lack Python's `server.address`/`server.port` and `retry_attempts` (the contrib does not see the endpoint or the attempt count). No change now. **Backlog:** align the AWS RPC keys when the Python and Node contribs move to the current RPC conventions (or map them in the helpers); add `server.address`/`server.port` to Node AWS spans | Upstream generations differ; a rename changes dashboards and queries, so it gets its own change |
+| AWS service attribute values (A27 fix round, 2026-11-03, obs M2; **parity gap**, backlog) | Recorded, not mapped: `messaging.system` is `aws_sns` (Go) vs `aws.sns` (Python, Node) and `aws.sqs` (Python) vs `aws_sqs` (Go, Node); DynamoDB `db.system.name` is `aws.dynamodb` (Go, semconv v1.43) vs `dynamodb` (Node; Python writes the legacy `db.system=dynamodb`); Go writes the SQS queue URL in `server.address` and `messaging.operation.name=publish_input` on SNS Publish; span kinds and names differ (Go: every call CLIENT, named `<Service>.<Operation>`; Node and Python: SQS/SNS send PRODUCER and receive CONSUMER, messaging names `<queue> send`, Lambda `<function> Invoke`). **Backlog:** map these to one semconv value set in the helpers (each a dashboard-visible change, so its own task) | Each value comes from its upstream instrumentation; a mapping changes queries and alerts |
+| URL query redaction (Node B10c review obs H1, 2026-11-03; **ruled 2026-11-03, task A28**) | Every language writes the **values** of the same query-parameter names as `REDACTED`, on client `url.full` (and the legacy `http.url`) and on server `url.query` (and the legacy `http.target`) where the instrumentation records them: `sig`, `Signature`, `AWSAccessKeyId`, `X-Goog-Signature`, `X-Amz-Signature`, `X-Amz-Credential`, `X-Amz-Security-Token` (AWS SigV4 and SigV2, Google Cloud Storage, Azure SAS and the SigV4 session token — the instrumentation-http default Node already uses, `REDACTED_QUERY_PARAMS`). The set is a **superset of the semconv / contrib util-http default** (`AWSAccessKeyId`, `Signature`, `sig`, `X-Goog-Signature`). Names match **exactly (case-sensitive)** after percent-decoding the name, as Node's `URLSearchParams.has`; every other byte of the query stays as written (no re-encoding, no reordering). Go: `NewHTTPTransport` passes otelhttp a tracer provider wrapper (`redactingProvider`, resolving the global provider at each span start) whose span rewrites `url.full` in `SetAttributes` (otelhttp v0.72 sets it after start, `RequestTraceAttrs`); otelhttp server spans carry no `url.query`. Python: a `UrlQueryRedactionProcessor` (`_url_redaction.py`) first on the helper's TracerProvider rewrites the attributes in `on_start` (requests, httpx and ASGI set them at span start; contrib util-http `PARAMS_TO_REDACT` covers only four of the names, and ASGI writes `url.query` unredacted) — one rule for every span, no instrumentation patched. Node: unchanged (instrumentation-http/-undici defaults, server `url.query` in the helper). Not added: other token names (`access_token`, `X-Goog-Credential`, `GoogleAccessId`): Node's client list is upstream's fixed default; backlog. No parity case: the fixture has no HTTP-client kind and Go records no server `url.query` *Amended 2026-11-03 (A28 fix round: three reviews, HIGHs in Python):* Python's processor also **patches the live span** in `on_start` — `set_attribute`/`set_attributes` (ASGI 0.66b2 writes `url.query`/`http.target` again after start, `__init__.py:748-750`, which overwrote the start rewrite), `set_status`, `record_exception` and `add_event` (a failed `requests` call puts the presigned URL in the status description and the exception event: urllib3 `MaxRetryError`). Free text — the description, `exception.message`, `exception.stacktrace` and string event attributes — is rewritten by `(?<=[?&])(<name>)=[^&\s'"#)]*` → `<name>=REDACTED`, the name percent-decoded and matched exactly; the wrappers never raise. For `http.url`, `http.target` and `url.query` everything after the first `?` is query (ASGI unquotes the whole query, `#` included); `url.full` keeps its fragment. Tests go through the real instrumentations (requests to a local server, a refused-port requests call, httpx, a FastAPI app on both helper paths, `OTEL_SEMCONV_STABILITY_OPT_IN=http/dup`) and sweep every attribute, status and event. Go picks the provider as otelhttp does: the request context span's `TracerProvider()` when valid, else the global one; `RedactedQueryParams()` returns a copy. Kept by design in Go and Python: a lower-case name (`x-amz-signature`), `;` (not a separator), a listed name without `=` (no value). Python: a **foreign global TracerProvider** (another SDK registered first) gets no redaction. Node re-serialises the query (D-JS14 row): its shape differs, its redaction does not. *Amended 2026-11-03 (final round, code-review L1, dev L1):* Go's wrapper starts the client span from the **parent span's TracerProvider when the request context has one, else the global provider** (as otelhttp without `WithTracerProvider`). Python's free-text rule matches an HTML-escaped `&amp;name=` (the `amp;` prefix is stripped before matching); a URL percent-encoded as a whole inside free text (`%3F…%3D`) is kept by design. | A presigned SigV4 URL the app fetches carried its credential, signature and session token into `url.full` in Go (all of them) and Python (three of them) |
+| SDK error text: response bodies and header values (owner decision 2026-11-05; **ruled 2026-11-05, task A29**; Deferred row "Exporter response body on stderr, Go") | Text an OTel SDK hands to the error channel never carries an export **response body** or a **configured OTLP header value**. **Masking rule, every language:** the values of `OTEL_EXPORTER_OTLP_HEADERS` and `OTEL_EXPORTER_OTLP_{TRACES,METRICS,LOGS}_HEADERS`, read again at each record (the env only: no language has a code headers option), the raw item value (after the first `=`, trimmed) and its percent-decoded value, each also JSON-escaped once and twice, are replaced by `<redacted>` wherever they appear; a value shorter than **4** characters is skipped (masking `1` everywhere protects nothing). **Go:** `Setup` installs the helper's `otel.ErrorHandler` once everything is built (a failed `Setup` leaves the global handler as it was). For each error it (1) replaces the response body: the `body: <text>` error the OTLP/HTTP exporters wrap (`otlptracehttp`/`otlpmetrichttp` v1.47.0 and `otlploghttp` v0.23.0 `client.go`, `fmt.Errorf("body: %s", respStr)`, every non-2xx status) is found in the error chain (`Unwrap() error` and `Unwrap() []error`) and its text becomes `body: <response body omitted: N bytes>`; when a wrapper flattened the chain into text, everything from the first `body: ` to the end is replaced; (2) masks the header values (plus their `strconv.Quote` form). The error passed on keeps the original as `Unwrap()` (`errors.Is`/`As` still work; only `Error()` is sanitized). **Precedence:** (a) no application handler when `Setup` runs (the global is the SDK's default delegator): the helper writes one ERROR record `otelhelper: OpenTelemetry SDK error` with `error=<sanitized>` on the package's stderr `*slog.Logger` — never `log.Print`; (b) an application handler installed **before** `Setup`: the helper's handler wraps it and the application handler receives the sanitized error, never the raw one; (c) an application handler installed **after** `Setup`: `otel.SetErrorHandler` is last-writer-wins, so it replaces the helper's handler and receives raw errors (body included) — the helper cannot see them; documented in HOW-TO; (d) `Shutdown` puts back the handler `Setup` found, only while the helper's handler is still the global one (the rule of `quietResourceEnvEcho`); the error `Shutdown` returns is sanitized the same way (a last flush can fail with a body). Every error reaching the global handler is sanitized, gRPC ones too (`rpc error: … desc = <server text>`: header values masked). **Python:** not exposed to bodies — the OTLP/HTTP exporters log the status code and the HTTP reason phrase only (`opentelemetry-exporter-otlp-proto-http` 1.42.0 `trace_exporter/__init__.py:205-220` `reason = resp.reason`; 1.45.2 through `opentelemetry-exporter-otlp-common` 0.66b2 `http.py:202-218`) — but the reason phrase is server-controlled, and the gRPC exporter 1.45.2 logs `error.details()`, the server's status message (`exporter.py:467-484`; 1.42.0 logs the code only), so **masking applies**: setup adds a `logging.Filter` to the SDK OTLP exporter loggers (`opentelemetry.exporter.otlp.proto.{grpc,http}.*`, `opentelemetry.exporter.otlp.common.http`) that renders the message, masks the header values (also their `repr` form) in it and in the exception text (`exc_info`, set for gRPC `UNKNOWN`), and never raises. Installed once per process, kept after `shutdown_telemetry()` (it reads the env at each record). **Node.js:** already done (B14, nodejs design D-JS5 corrections of 2026-11-04): `withoutResponseBodies` drops a response body before rendering, `maskLiterals` applies this masking rule (plus the `util.inspect` form), then `redactText` (pattern-based; Node only). Cases `export.http_error_body_header_values_not_logged`, `export.grpc_error_details_header_values_masked` (fakeotlp answers an error echoing the `x-parity-*` headers when the request carries `x-parity-echo-error`) *Amended 2026-11-05 (A29 fix round; observability, code-review and dev reviews):* **Masked forms, the same in every language:** for each configured value **and each of its whitespace-separated parts of 4+ characters** (the credential of `Bearer <token>`, which an auth proxy echoes alone: dev H1, obs M3) — the text, JSON-escaped once and twice, JSON with Go's HTML escaping (`\u0026`, `\u003c`, `\u003e`; a Go collector or proxy writes it) and that form JSON-escaped once more (Node renders an SDK error as JSON), form-encoded (space as `+`, Go `url.QueryEscape` / Python `quote_plus` / Node `formEncode`), plus the runtime's own quote form (Go `strconv.Quote`, Python `repr`, Node `util.inspect`); the raw item value and its percent-decoded value are both inputs. All forms of all values are replaced **in one pass, longest first** (Go `strings.Replacer`, Python one `re` alternation, Node one `RegExp`): a value contained in another never cuts it open (Node replaced in insertion order, so `team` left `<redacted>-secret-token`: code-review H1) and `<redacted>` is never re-scanned. Python's `ensure_ascii` form is dropped (header values are printable ASCII). Accepted false positives: any configured value or part of 4+ characters is masked wherever it appears (a value `prod` masks `prod` in a host name). **Go chain:** the handler (and `Shutdown`'s error, and the `releaseOnFailure` log) gets a rebuilt chain whose every level has its own sanitized text: walking `Unwrap` (both forms) never reaches a response body or a configured value; `errors.Is` delegates to the original level; `status.FromError` returns the original code, the sanitized text and no details (server data); `errors.As` into the SDK's own error types no longer finds them (they hold the raw text) — documented in the Go HOW-TO. An `(empty)` body is reported as 0 bytes, and every `body: ` left in a flattened text (not already omitted) is cut to the end. **Python filter scope:** records logged on the listed loggers only — a child logger or another SDK logger (`opentelemetry.sdk._shared_internal`) is not masked (the SDK logs no server text there today); a traceback that needed masking is folded into the message and `exc_info` cleared, so `exc_info` readers (OTel `LoggingHandler` `exception.*`, error trackers) see no exception for that record. **Not covered (Go):** the Go SDK's own internal logger (`otel.SetLogger`, stdr on stderr) prints a malformed `OTEL_EXPORTER_OTLP_HEADERS` item or a value with a bad `%` escape at exporter `New()` (`otlp*/internal/envconfig/envconfig.go:166,181`, all four exporters) and an unparseable endpoint value (`parse url`) — the row "SDK's own log output of env values" above. Cases `export.http_error_reason_token_header_values_masked`, `export.grpc_error_token_header_values_masked`, `export.grpc_error_overlapping_header_values_masked`; the two error-text cases gain a body-only marker (`parity-body-marker`, never logged) and positive controls (the failure is logged: `400|Bad Request`, `InvalidArgument|INVALID_ARGUMENT`). *Amended 2026-11-05 (A29 final round, after two confirmation passes):* the masked values are **the union of the values captured when setup builds the exporters and the variables' current values** — "read again at each record" alone stopped covering what the exporters still send once the app deleted or rotated `*_HEADERS` (dev R2-M1); the cache is rebuilt when either changes (Go `captureHeaderValues` in `Setup`, Python `capture_header_values` in `setup_telemetry`, Node `captureHeaderValues` in `setup()`). Masking marks **every occurrence of every form, overlapping ones included, and replaces each marked run by one `<redacted>`** (dev R2-L1: two overlapping values left a tail with longest-first replacement; adjacent masked values now collapse into one `<redacted>`). A leading auth-scheme name (`Bearer`, `Basic`, `Digest`, `Negotiate`, ASCII case-insensitive) is not a part of its own (code-review L-b); the whole value still is. Node caches the forms on the header set (was: one RegExp per record). **Go:** `errors.As` fails for **every** typed error of the original chain, standard-library ones (`*url.Error`) included — only `errors.Is` and the gRPC status are preserved; an error whose gRPC status carries details is always wrapped, so the details never reach a handler even when no text changed (code-review L-a); the chain walk visits each pointer error once within a 256-level budget, and finds the gRPC status itself (stdlib `errors.As` never ends on a self-referencing chain), so a cyclic or shared chain is sanitized in linear time (dev R2-L5). | Go printed the whole response body of a failed OTLP/HTTP export to stderr through the SDK default handler (`log.Print`): a collector or proxy echoing the request put the header values in the log; Python 1.45 logged the gRPC status message verbatim |
+| Path on a gRPC endpoint (owner decision 2026-11-05; **ruled 2026-11-05, task A29**; Deferred row "gRPC endpoint path warning") | When a signal's resolved protocol is `grpc` and the endpoint resolution **chose** (code `*Endpoint`, code generic, `OTEL_EXPORTER_OTLP_<SIGNAL>_ENDPOINT`, `OTEL_EXPORTER_OTLP_ENDPOINT`; a schemeless value too) has a path other than empty or `/`, the path is ignored (the gRPC target is `host:port`, as before) and the helper warns **naming the variable only** (R8: never the value or the path), message `endpoint path is ignored by the gRPC exporter` (Go `otelhelper: …`, Python `[OtelHelper] <variable>: …`, Node sink record). Cadence: the other endpoint warnings' — once per variable per setup, so a generic variable serving three signals warns once and each per-signal variable warns once. A code value warns too: a path is ignored, not invalid, so it does not fail setup (R8's fail-fast is for unusable values). A value the resolution skipped (an invalid per-signal endpoint that fell back) does not warn. HTTP endpoints are unchanged (the path is the URL prefix, D1). Cases `export.grpc_endpoint_path_ignored_warned`, `export.grpc_per_signal_endpoint_path_ignored_warned`, `export.grpc_code_endpoint_path_ignored_warned`, `export.grpc_endpoint_root_path_not_warned` *Amended 2026-11-05 (A29 fix round):* cadence confirmed by the owner (once per variable per setup). Cases `export.grpc_schemeless_endpoint_path_ignored_warned`, `export.grpc_skipped_endpoint_path_not_warned`, `export.http_endpoint_path_not_warned`; the variable or option is matched on the warning line itself (`log` regex). The Go SDK's internal logger still prints a schemeless value it cannot parse (row "SDK's own log output of env values"). | Go (SDK otlpconfig `options.go:303` "URLPath is ignored by gRPC exporters"), Python (`opentelemetry-exporter-otlp-proto-grpc` `exporter.py:315-327` keeps `netloc` only) and Node dropped the path silently: `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://collector:4317/v1/traces` looked accepted |
+| Prometheus exporter variables (owner decision 2026-11-05; **ruled 2026-11-05, task A29**; Deferred row "Prometheus exporter variables") | The helper honors the standard variables of the OTel spec "Prometheus Exporter" section (`specification/configuration/sdk-environment-variables.md`, status Development: `OTEL_EXPORTER_PROMETHEUS_HOST`, "Host used by the Prometheus exporter", default `"localhost"`, String; `OTEL_EXPORTER_PROMETHEUS_PORT`, "Port used by the Prometheus exporter", default `9464`, Integer; numeric values the implementation cannot parse SHOULD warn and be treated as not set; an empty value is unset) for the **standalone `/metrics` listener** (principle 6). **Port:** code (Go `WithPrometheusMetricsPort` / `WithoutMetricsListener`, Python `prometheus_metrics_port`, Node `prometheusMetricsPort`) > `OTEL_EXPORTER_PROMETHEUS_PORT` > `OTEL_HELPER_METRICS_PORT` > `9464`. Both variables use the row "Metrics port grammar" (`^\+?[0-9]+$`, [0, 65535], leading zeros allowed); **`0` = no standalone listener** on either (the helper's meaning, not an ephemeral port: a random port cannot be scraped — recorded deviation). An invalid `OTEL_EXPORTER_PROMETHEUS_PORT` warns once (`invalid port`, the variable and the truncated value) and resolution falls to the next level (`OTEL_HELPER_METRICS_PORT`, else 9464). `OTEL_HELPER_METRICS_PORT` stays supported, not deprecated; no warning when both are set. **Host:** `OTEL_EXPORTER_PROMETHEUS_HOST` sets the listener's bind address. Accepted, after the contract trim: an IPv4 literal (dotted quad, no leading zeros), an IPv6 literal with or without brackets and without a zone id, and `localhost` (ASCII case-insensitive), bound as `127.0.0.1`. `0.0.0.0` binds IPv4 only; `::` (or `[::]`) is the same as unset. **Unset: every interface** (dual-stack, else IPv4 — row "Metrics listener"), a **recorded deviation from the spec default `localhost`**: a loopback-only listener cannot be scraped from another pod, and the fallback exists for in-cluster scraping (ADR-007). Any other value — another host name (not resolved: names bind differently per runtime), `*`, a URL, a value with a port, a zone id — warns once (`invalid host`, the variable and the truncated value) and binds every interface. A valid address the host does not own fails like a busy port (Go: `Setup` error; Python: setup raises; Node: an error record, the mounted handler keeps working — design D-JS8). No code option for the host (backlog). **When the listener runs: unchanged** — the `prometheus` metrics exporter is active (no metrics OTLP endpoint and no `OTEL_METRICS_EXPORTER`, or `prometheus` listed in `OTEL_METRICS_EXPORTER` or code), metrics and the SDK are enabled, the resolved port is > 0 (Python: no foreign MeterProvider; Node: main thread). The two variables never select the exporter; they are parsed, and warned, at every setup as `OTEL_HELPER_METRICS_PORT` is. The mounted handlers are unaffected. Parity snapshot `prometheus_metrics_host` (kind `resolve`): `""` = every interface, else the literal without brackets, ASCII-lowercased (`localhost` → `127.0.0.1`). **.NET:** Phase C task C12 adopts this rule (superseding O10 (a), `specs/dotnet-otel-helper` note of 2026-11-05). Cases `metrics.port_prometheus_*`, `metrics.listener_prometheus_host_loopback` *Amended 2026-11-05 (A29 fix round):* **an invalid host fails open by design** (owner decision, confirmed): `OTEL_EXPORTER_PROMETHEUS_HOST` is set to restrict exposure, and a rejected value widens it to every interface; the warning says so in every language — `invalid host, not applied: the listener binds every interface, wider than a restriction (use an IP address or localhost)`. An echoed invalid host or port loses URL userinfo, query and fragment (obs L2). An IPv4-mapped address (`::ffff:a.b.c.d`, any spelling) binds as its IPv4 address in every language (Go `Unmap`, Python `ipv4_mapped`, Node WHATWG canonical form); only the all-zero IPv6 address is "every interface" (Python's `is_unspecified` also matched `::ffff:0.0.0.0`). Bind-failure hints and the Node worker/cluster notices name what set the port (`prometheus_metrics_port`/`prometheusMetricsPort`, `OTEL_EXPORTER_PROMETHEUS_PORT`, `OTEL_HELPER_METRICS_PORT`; the default → `OTEL_EXPORTER_PROMETHEUS_PORT`) and, when a host was set, `OTEL_EXPORTER_PROMETHEUS_HOST`. Python binds without `HTTPServer`'s reverse DNS (`getfqdn`) and its startup line names the host. Not cited: listener defaults of other SDKs (Node exporter, Java) as precedent for the unset-host deviation — not verified. The fixture `code` key `prometheus_metrics_port` is added. Cases `metrics.port_prometheus_code_beats_standard`, `_port_both_invalid`, `_host_ipv4_any`, `_host_ipv4_mapped`, `_host_leading_zeros_invalid`, `_host_bracketed_ipv4_invalid`, `_host_with_port_invalid`, `_host_name_invalid`, `_host_userinfo_not_echoed`. `metrics.listener_prometheus_host_loopback` cannot show that other addresses are refused (the runners connect to 127.0.0.1): the unit tests of each language carry that negative control. | The contract ruled only `OTEL_HELPER_METRICS_PORT`: a standard variable set by an operator had no effect in Go, Python and Node (.NET read it from the exporter options, then the helper overrode it) |
+
+### Decision D1.a: keep the port-4318 → `http/protobuf` inference
+
+**Choice**: with no protocol configured and endpoint port exactly 4318, select
+`http/protobuf` and log it once at INFO.
+
+**Justification, strongest first**:
+1. 4318 is the IANA-registered OTLP/HTTP port; gRPC on 4318 always fails, so
+   the inference cannot pick a working config over a broken one.
+2. Shipped in 0.2.0; consumers already rely on it.
+
+**Trade-offs accepted**:
+| Cost | Why acceptable |
+|---|---|
+| Not in the OTel spec | Only fires on an unambiguous port; logged |
+
+**When this decision would be wrong**: a consumer runs gRPC on 4318 behind a proxy.
+**Reversal action**: document `OTEL_EXPORTER_OTLP_PROTOCOL=grpc` (already wins).
+**Alternatives rejected**: drop inference (breaks 0.2.0 users); default
+`http/protobuf` as the spec suggests (breaks every in-cluster gRPC collector on
+4317). Note: the Go SDK has no protocol default (chosen by package) and Python's
+`otlp` exporter entry point maps to gRPC — the helper's `grpc` default matches
+the current behavior of both, not "most SDKs" (unmeasured beyond these two).
+
+### Decision D1.b: portless gRPC URLs keep 4317 (reversed)
+
+> **Reversed 2026-10-27.** First version: "scheme default in 0.3.0, `http://otel-collector` → 80".
+> Wrong on the fact (gRPC dials 443) and on the policy (silent breakage).
+
+**Choice**: `http/protobuf` + URL without port → scheme default (443/80) via
+the SDK. `grpc` + URL without port → the helper adds **:4317** and warns
+"set an explicit port".
+
+**Justification, strongest first**:
+1. gRPC has no scheme-default port: both SDKs dial 443 regardless of scheme, so
+   `http://otel-collector` (common in-cluster) would go to **443 plaintext** and
+   fail — a silent loss of telemetry (principle 8).
+2. 4317 is the IANA OTLP/gRPC port and today's behavior: no consumer breaks.
+3. For HTTP the scheme default is the SDK's spec behavior and fixes the real
+   bug (`https://vendor` → `:4317`).
+
+**Trade-offs accepted**:
+| Cost | Why acceptable |
+|---|---|
+| Another helper-owned shim against ADR-001's guiding rule | One line, fixture-covered, warned |
+| gRPC behind a 443 ingress needs `:443` explicitly | Warning says so; explicit is correct |
+
+**When this decision would be wrong**: consumers commonly point gRPC at
+`https://<ingress>` expecting 443.
+**Reversal action**: drop the shim (SDK behavior = 443), keep the warning.
+**Alternatives rejected**: scheme default for gRPC (443 plaintext breakage);
+warn in 0.3 / flip in 0.4 (no flip is planned now).
+
+### Decision D1.c: TLS conflicts are normalized — scheme wins (revised)
+
+> **Revised 2026-10-27.** First version only warned and accepted per-language
+> SDK behavior. Validation showed both SDKs violate the spec rule, in
+> different directions, so "accept" meant shipping a parity break.
+
+**Choice**: when `OTEL_EXPORTER_OTLP[_<SIGNAL>]_INSECURE` contradicts the URL
+scheme, the helper resolves that signal per spec (the scheme wins), passes
+explicit consistent options for **that signal only** (Go: `WithEndpointURL`
++ `WithInsecure`/TLS default; Python: `endpoint=` + `insecure=`), and warns.
+Non-conflicting configs stay with the SDK (ADR-001). Also warn when
+`OTEL_EXPORTER_OTLP_CERTIFICATE` is set with a plaintext endpoint.
+
+**Justification, strongest first**:
+1. Spec: `http`/`https` schemes "take precedence over the insecure
+   configuration setting"; `INSECURE` applies only to schemeless gRPC
+   endpoints ([exporter.md](https://github.com/open-telemetry/opentelemetry-specification/blob/main/specification/protocol/exporter.md)).
+2. Measured (dev prototype, otel-go v1.47, Python 1.42/1.45):
+
+   | Combination | Go gRPC | Go HTTP | Py gRPC | Py HTTP |
+   |---|---|---|---|---|
+   | `https://` + `INSECURE=true` | plaintext ✗ | plaintext ✗ | TLS | TLS |
+   | `http://` + `INSECURE=false` | TLS ✗ | TLS ✗ | TLS ✗ | plaintext |
+
+   With scheme and `INSECURE` consistent, all four exporters agree.
+3. Detection is a URL parse plus a comparison; the override is per signal, so
+   per-signal env handling for other signals is untouched.
+
+**Trade-offs accepted**:
+| Cost | Why acceptable |
+|---|---|
+| A fourth helper-owned shim | Only on conflicting (misconfigured) input; warned; fixture-covered by `export` TLS cases |
+| Go: `CERTIFICATE` + `http://` fails at exporter `New()` (`insecure HTTP endpoint cannot use TLS client configuration`) | Warned before construction; the config is contradictory |
+
+Corollary (A3, 2026-10-28): `OTEL_EXPORTER_OTLP_CERTIFICATE` with a plaintext
+`http://` endpoint under `http/protobuf` makes the Go SDK's `New()` fail
+(`insecure HTTP endpoint cannot use TLS client configuration`). The helper
+drops the TLS client config for that signal and warns, so env-only config
+never fails setup (R8) — Python's HTTP exporter already ignores the cert there.
+
+**When this decision would be wrong**: upstream fixes the SDKs (file issues:
+opentelemetry-go, opentelemetry-python). **Reversal action**: delete the shim
+once both SDK versions in range comply; keep the fixture cases.
+**Alternatives rejected**: warn only (parity break); helper parses every
+endpoint/TLS env var (re-implements the SDK, against ADR-001).
+
+### Decision D1.d: helper default compression `gzip`
+
+**Choice**: when neither code nor `OTEL_EXPORTER_OTLP[_<SIGNAL>]_COMPRESSION`
+set compression, pass `gzip` — in Go and Python alike.
+**Justification**: Go forces gzip today (`tracing.go:49,61`, `metrics.go:92`);
+deferring to the SDK default (`none`) would silently raise egress; Python
+never set it, so this also closes a parity gap. Same pattern as the helper's
+30 s export interval.
+**Trade-offs**: CPU cost of gzip on the app — negligible relative to egress.
+**When wrong**: a Collector receiver without gzip support. **Reversal action**:
+`OTEL_EXPORTER_OTLP_COMPRESSION=none`.
+**Alternatives rejected**: SDK default `none` (egress regression for Go users).
+
+Python corollary (A3, 2026-10-28): the Python gRPC exporters (1.42 and 1.45)
+raise `InvalidCompressionValueException` on the spec value
+`OTEL_EXPORTER_OTLP_COMPRESSION=none` (their map only has `gzip`), so the
+Python helper always resolves compression itself and passes `compression=`
+explicitly. The Go trace/metric gRPC exporters reject a `"none"` compressor
+via `otel.Handle`, so the Go helper translates `none` into "no compressor option".
+
+### Decision D1.e: Python timeout env is converted from milliseconds
+
+**Choice**: in Python, when `OTEL_EXPORTER_OTLP[_<SIGNAL>]_TIMEOUT` is set and
+no code value overrides it, the helper reads it as **milliseconds** (spec),
+converts to seconds and passes `timeout=` explicitly for that signal.
+
+**Justification, strongest first**:
+1. Spec: the OTLP timeout env vars are in milliseconds (default `10000`).
+   Python sdk 1.42/1.45 parse them as seconds —
+   `float(environ.get(OTEL_EXPORTER_OTLP_TIMEOUT, 10))`
+   (`exporter/otlp/proto/grpc/exporter.py:354` in 1.42, `:325` in 1.45; per
+   signal `trace_exporter/__init__.py:113-115`) — so `500` becomes 500 s.
+2. Same pattern as D1.c: where an SDK violates the spec, the helper owns that
+   one input; Go already behaves per spec once G10 lands.
+
+**Trade-offs accepted**:
+| Cost | Why acceptable |
+|---|---|
+| Behavior differs from a bare Python SDK with the same env | The bare SDK is the non-compliant one; documented |
+| Consumers who set seconds intentionally (e.g. `10`) get 10 ms | Migration note; values < 100 log a warning ("looks like seconds") |
+
+**When this decision would be wrong**: upstream changes the unit.
+**Reversal action**: drop the shim once every SDK version in range parses
+milliseconds (file an opentelemetry-python issue; keep the fixture cases).
+**Alternatives rejected**: document as a parity gap (silent 1000× timeout
+difference across languages); follow the SDK (contradicts the spec).
+
+Corollary (A3, 2026-10-28): the Python gRPC exporters parse
+`OTEL_EXPORTER_OTLP_<SIGNAL>_TIMEOUT` with an unconditional `float()` even when
+`timeout=` is passed, so a garbage value crashes construction. The helper hides
+that variable from `os.environ` only while constructing the exporter and
+restores it immediately (warned as an unparseable env value, R8).
+
+---
+
+## D2 — Parity fixture ([ADR-008](../decisions/ADR-008-shared-parity-fixture.md))
+
+```json
+{
+  "cases": [
+    {
+      "id": "endpoint.https_no_port_http",
+      "kind": "export",
+      "env": {"OTEL_EXPORTER_OTLP_ENDPOINT": "https://{receiver}",
+              "OTEL_EXPORTER_OTLP_PROTOCOL": "http/protobuf",
+              "OTEL_EXPORTER_OTLP_CERTIFICATE": "{receiver_ca}"},
+      "code": {},
+      "expect": {"received": {"traces": {"port": 443, "path": "/v1/traces"}}},
+      "status": {"go": "xfail:A3", "python": "xfail:A3",
+                 "dotnet": "xfail:phase-c", "nodejs": "skip:phase-b"}
+    }
+  ]
+}
+```
+
+- `kind`:
+  - `resolve` — snapshot of **decisions the helper owns** only:
+    `service_name`, `environment`, `service_instance_id_source`,
+    `otlp_signals[]`, `protocol{signal}`, `endpoint_source{signal: code|env|none}`,
+    `code_endpoint_url{signal}` (only URLs the helper itself passed),
+    `sampler{type,ratio}`, `metric_exporters`, `compression`, `log_level`,
+    `warnings[]`.
+  - `export` — fake OTLP receiver asserts proto/TLS/port/path of what was
+    actually received. **Final URLs and TLS are asserted only here.** Receiver:
+    one small Go binary (`testing/fakeotlp/`, run as a `docker compose`
+    service) — every port accepts gRPC and HTTP (dispatch on
+    `content-type: application/grpc`, h2c for plaintext), generates a test CA
+    at startup (`/out/ca.pem`), binds 80/443 as non-root (Docker
+    `ip_unprivileged_port_start=0`), and exposes `GET/DELETE :8888/requests`.
+    Assert on the recorded port, not `Host` (Python HTTP omits the port).
+    Prototyped: 132 lines; Go and Python exporters recorded all four modes.
+    Plus unit tests of the helper's pure resolution functions (upstream's
+    two-layer pattern: config-struct tests + mock collector).
+  - `sampler`, `http_server` / `grpc_server` (health: span + metric
+    assertions), `metrics_scrape`, `logging`.
+- `code` keys are snake_case; each runner maps them to its API.
+- `expect` operators: exact value, `{"prefix": …}`, `{"regex": …}`,
+  `{"absent": true}`; `error: "<substring>"` = code-level failure;
+  `warning: "<substring>"` = env value warned and ignored.
+- `status`: `pass` | `xfail:<task-or-phase>` | `skip:<reason>`; strict — an
+  `xfail` that passes fails the build. A1 lands the fixture describing today's
+  behavior; target cases carry `xfail:<task>` until that task flips them.
+- Runners: Go `go/parity_test.go`; Python `python/tests/test_parity.py` (one
+  subprocess per case — OTel globals are set-once). Docker test commands mount
+  the repo root.
+- Adapters read helper-owned state only; never private SDK fields, never a
+  re-derivation of SDK resolution.
+
+---
+
+## D3 — Sampler → [ADR-002](../decisions/ADR-002-parentbased-sampler.md)
+
+Ownership (A4, 2026-10-28; numeric grammar unified after validation): both
+helpers parse `OTEL_TRACES_SAMPLER`/`_ARG` themselves; `_ARG` and the deprecated
+`OTEL_HELPER_SAMPLE_RATIO` use the same plain-decimal grammar as timeouts
+(`^[0-9]+(\.[0-9]+)?$`, no hex/sign/exponent/full-width digits), NaN rejected,
+out-of-range values warn; spec-listed but unsupported names (`jaeger_remote`,
+`parentbased_jaeger_remote`, `xray`) warn "unsupported by this helper". Both helpers parse (ADR-001 owned-inputs list): six spec names, case-insensitive,
+trimmed; unknown name → warn + default; invalid/out-of-range/NaN `_ARG` → warn +
+1.0; one `build_sampler`/`buildSampler` function returns the sampler so the D5
+health wrapper can wrap it. P17 ("no `_internal` imports") applies to the
+package, not to test fixtures.
+
+*(Superseded by the Ownership paragraph above — kept for history:)* Implementation note: the Python SDK already defaults to `parentbased_always_on`
+and parses `OTEL_TRACES_SAMPLER` (`sdk/trace/sampling.py`); the Python bug is
+the helper passing a bare sampler. Fix = stop passing one unless code or the
+deprecated ratio alias sets it (then wrap in `ParentBased`).
+
+---
+
+## D4 — `service.instance.id`
+
+**Choice**: code > `OTEL_RESOURCE_ATTRIBUTES` > SDK > helper.
+- Go: the helper generates a per-process UUID (the Go SDK detector is behind
+  `OTEL_GO_X_RESOURCE`, `sdk/resource/resource.go:261`).
+- Python ≥ 1.45: the SDK's `ServiceInstanceIdResourceDetector` is on by
+  default and refreshes the id after fork — the helper adds nothing.
+  *Amended 2026-10-29 (A16): the SDK's fork refresh also replaced an
+  explicit (code/env) id; the helper now restores its resource after the
+  SDK hook, so an explicit id survives the fork (and still collides across
+  workers, as warned) — D1 row "Python: SDK parse echo, resource detectors,
+  after-fork refresh".*
+- Python 1.42–1.44: the helper generates a per-process UUID at setup.
+- Documented model for pre-fork servers: call setup in each worker
+  (gunicorn `post_fork`, uWSGI `@postfork`), per the OTel Python fork docs.
+- An env/code-provided id in a multi-worker server is a collision risk: the
+  helper warns when it can detect the fork (it was imported before forking,
+  e.g. `--preload`; when first imported inside the child it cannot tell) and
+  docs mark it unsupported. The
+  value is never rewritten by the helper.
+- Pod identity lives in `k8s.pod.uid` (via `k8sattributes`), not in
+  `service.instance.id`.
+
+**Justification, strongest first**:
+1. Semconv: the id MUST be unique per `service.namespace,service.name`; one id
+   for several processes is explicitly not recommended
+   ([service registry](https://opentelemetry.io/docs/specs/semconv/registry/attributes/service/)).
+   Shared ids make worker counters collide in VictoriaMetrics.
+2. Measured (dev, gunicorn 26.2, 2 workers):
+
+   | Case | sdk 1.42 | sdk 1.45 |
+   |---|---|---|
+   | `post_fork` setup, helper id | unique per worker | unique per worker |
+   | `--preload`, setup at import | **same id** in both | SDK replaces the helper's id with a fresh one per worker |
+   | `post_fork` + env id | collision | collision |
+   | `--preload` + env id | collision | env id **overwritten** per worker |
+
+3. Following the SDK where it already behaves correctly is ADR-001.
+
+**Trade-offs accepted**:
+| Cost | Why acceptable |
+|---|---|
+| VictoriaMetrics promotes all resource attributes to labels → series × workers, churn per restart (and per gunicorn `max_requests` recycle) | Required for correctness; platform drops other volatile attrs with `-opentelemetry.ignoreResourceAttributes` (D11) |
+| Behavior depends on SDK version in range | Fixture covers 1.42 and 1.45 legs |
+
+**When this decision would be wrong**: measured VM cardinality from worker
+churn becomes a problem. **Reversal action**: recommend one process per pod
+(horizontal scaling) for OTLP-push workloads.
+**Alternatives rejected**: `-<pid>` suffix on env ids (invented, mutates user
+data); raise the floor to 1.45 only for this (collapses the supported range to
+one minor); pod-level UUIDv5 recipe (per container — wrong for multi-worker).
+
+---
+
+## D5 — Health-check exclusion
+
+**Choice**: a **sampler wrapper** (both languages), deciding for SERVER spans
+with **no local parent** (absent or remote — a probe carrying a sampled
+`traceparent` is still dropped); children follow via ParentBased, so a DB call
+inside `/ready` is dropped too; returns DROP when the path — `url.path`, falling back to
+`http.target` (Python default semconv) — is a health path (exact,
+case-insensitive, trailing slash and query ignored), or when the gRPC span name
+(leading `/` stripped) is `grpc.health.v1.Health/Check|Watch`. Python gRPC
+instead uses the native `filters.negate(filters.health_check())`: that
+instrumentation emits no metrics at all (grep for any meter/histogram in
+`opentelemetry-instrumentation-grpc` 0.63b0 and 0.66b1 returns nothing), so
+there is nothing to keep. The parent's tracestate is kept on DROP. Defaults:
+`/health /healthz /ready /readyz /live /livez /ping /metrics`; list overridable
+in code. Instrumentation middleware keeps running, so metrics still count.
+Clarified 2026-10-28 (A7-go): the overridable list (`WithHealthPaths` /
+`health_paths`) covers **HTTP paths only**; the standard
+`grpc.health.v1.Health` service is always dropped (it has one well-known name).
+Children of a dropped health span are dropped only under a parent-based
+sampler (the default and both ratio aliases); with an explicit `always_on` or
+`traceidratio` they are sampled again — documented, since a sampler cannot
+mark the context.
+
+**Justification, strongest first**:
+1. Both instrumentation-level filters drop metrics too: Python
+   `instrumentation-asgi` returns before any span **or metric** when
+   `excluded_urls` matches; Go otelhttp `WithFilter` (`handler.go:88-90`) and
+   otelgrpc `WithFilter` skip metrics as well. Probe failures must stay visible.
+2. One mechanism, identical in both languages, sitting next to the sampler the
+   helper already builds.
+3. Exact matching keeps real routes (`/users/ping`) traced.
+
+**Trade-offs accepted**:
+| Cost | Why acceptable |
+|---|---|
+| Relies on path/method at span start | Verified by dev prototype: Python 1.42/1.45 (`http.target` default, `url.path` with `OTEL_SEMCONV_STABILITY_OPT_IN=http`), Go otelhttp v0.72 (`url.path`, query stripped), otelgrpc v0.72 (span name) — health spans dropped, `http.server.(request.)duration` / `rpc.server.call.duration` still counted |
+| Case-insensitive match also drops spans for unserved paths like `/HEALTH` (404) | Harmless; still counted in metrics |
+| Market practice mostly drops health from both signals (`excluded_urls`, Collector `filterprocessor`) | Keeping metrics is defensible (probe failures visible); SLI queries must exclude health routes — documented. Precedent for the sampler: java-contrib `RuleBasedRoutingSampler`, spec `ComposableRuleBased` (Development) |
+| Dropped health spans still propagate a non-sampled context downstream | Health handlers don't call downstream |
+| Users' own `OTEL_PYTHON_*_EXCLUDED_URLS` keep upstream meaning (drop span **and** metric) | That is what those vars mean upstream; documented |
+
+**When this decision would be wrong**: the span-start attributes don't carry
+the path in some instrumentation version.
+**Reversal action**: drop at a SpanProcessor/exporter stage (span is recorded
+but not exported), still keeping metrics.
+**Alternatives rejected**: `excluded_urls` / `WithFilter` (drop metrics);
+second otelhttp handler with a no-op TracerProvider (Go-only, no Python
+equivalent); prefix matching (drops real routes).
+
+---
+
+## D6 — Logging
+
+| Situation | Behavior |
+|---|---|
+| Logs exporter active | OTLP only |
+| No endpoint / `OTEL_LOGS_EXPORTER=none` | stdout only; never an OTel handler without a processor |
+| `OTEL_LOGS_EXPORTER=otlp,console` | both |
+| Helper self-diagnostics | always stderr |
+
+*Added 2026-11-02 (A23 fix round):* `OTEL_LOGS_EXPORTER=console` is the SDK's
+**debugging** format — multi-line in Node (`console.dir` of the record) and
+not line-parseable in any language; the **ingestible** stdout form is the
+helper's JSON fallback (one JSON object per line), which is what a no-exporter
+or `OTEL_LOGS_EXPORTER=none` process writes. Pipelines that tail stdout must
+not rely on the console exporter's output.
+
+**Choice**: OTLP-only when an exporter is active; stdout is the opt-in via the
+standard `OTEL_LOGS_EXPORTER` list.
+
+**Justification, strongest first**:
+1. Fluent Bit/filelog commonly tail stdout — teeing would ingest every log
+   twice into Loki.
+2. The real `kubectl logs` need (startup failures, collector unreachable) is
+   covered by stderr self-diagnostics.
+
+**Trade-offs accepted**:
+| Cost | Why acceptable |
+|---|---|
+| Logs emitted while the collector is down are lost after SDK retries | Same as traces/metrics; `otlp,console` exists |
+| New core dependency `opentelemetry-instrumentation-logging` (Apache-2.0) | Replaces the deprecated SDK `LoggingHandler`; same maintainers, lockstep-bounded with contrib (D9.a) — **approved by the owner 2026-10-27** |
+
+**When this decision would be wrong**: incidents where app logs were needed and
+the collector was down.
+**Reversal action**: default logs to `otlp,console`.
+**Alternatives rejected**: always tee (double ingestion); new `OTEL_HELPER_*`
+knob (spec already has one).
+
+Python level rule: the helper sets the root level only when, at setup, root
+has no handlers and `logging.root.level == WARNING` (stdlib default); helper
+handlers use the environment level (R4); the no-exporter stdout fallback is `logging.lastResort` (see A5 rulings below). Go: one handler deciding **per record** (atomic flag),
+used by `NewLogger` and `NewSlogHandler`, reset on `Shutdown`.
+
+Helper-diagnostics channel (decided 2026-10-28, A2 review L1): **Go** — one
+package-level `*slog.Logger` writing to **stderr** (`slog.NewTextHandler(os.Stderr, …)`),
+never `slog.Default()` (an app may have pointed it at the OTel bridge), never
+`fmt.Fprint*`; `otel.Handle` stays only for exporter/runtime errors raised by
+the SDK pipeline. The logger is a package var so tests can hook it.
+**Python** — named loggers under `otel_helper` (stdlib library convention, no
+handlers added by the library for its own diagnostics; with no app config,
+WARNING+ reaches stderr via `logging.lastResort`). Both are what the parity
+`helper_log` field captures; a test enforces it (A3).
+
+> **Amended 2026-10-29 (ADR-011).** The Python package is renamed
+> `staffops_otel_helper` (distribution `staffops-otel-helper`), so the
+> diagnostics channel is the named loggers under **`staffops_otel_helper`**;
+> every `otel_helper.*` logger name in this design (D6 A5 rulings, D14 ext
+> hints) reads `staffops_otel_helper.*`. The parity `helper_log` capture
+> (`python/tests/parity_driver.py`) keys on the new hierarchy. The
+> `otel_helper` compatibility module (0.3.x only, removed in 1.0) re-exports
+> the API but does **not** alias logger names: filters on `otel_helper.*`
+> must move.
+The enforcement test is a **backstop, not a sandbox**: after four review rounds
+it catches every realistic accidental pattern; deliberately obfuscated writes
+(paths in constants, function values of `os.WriteFile`, `vars(sys)`…) are out
+of scope and code review covers them (decided 2026-10-28 — further hardening
+has diminishing returns).
+
+A5 validation rulings (2026-10-28):
+- **Helper diagnostics always reach stderr** in both languages, INFO and above
+  (Go: the stderr diag logger; Python: while a logs exporter is active, a
+  root-level filter handler sends `otel_helper.*` and `opentelemetry.*` records
+  at INFO+ (`otel_helper.*`; Python sets that logger to INFO when it is NOTSET,
+  restored on detach) / WARN+ (`opentelemetry.*`, kept at WARN as noise) to the
+  original stderr `lastResort`, removed when the app configures root; loggers
+  of both hierarchies are re-enabled after an app `dictConfig`/`fileConfig`
+  with `disable_existing_loggers=True`). `opentelemetry.*` SDK/exporter records are **never** exported via OTLP
+  (avoids the export-failure feedback loop; Go equivalent: `otel.Handle`);
+  `otel_helper.*` records go to stderr and, additionally, to OTLP.
+- **Stdout fallback shape is identical**: single-line JSON with `time`
+  (RFC 3339, millisecond precision, `Z` for UTC — both languages),
+  `level` (`DEBUG/INFO/WARN/ERROR`), `msg`, the logger name (`logger`, Python) and
+  extra attributes, plus `exception` for tracebacks (one line); both languages
+  apply the environment level to it (R4).
+- Python installs the no-exporter fallback as `logging.lastResort` (not a root
+  `StreamHandler`) so a later `logging.basicConfig()` still works (P10).
+- **Client-side health exclusion**: exact path match only (same normalization
+  as D5), in both languages; Python passes anchored patterns via
+  `instrument(excluded_urls=…)` for requests; httpx only reads env, so its
+  variable is set **only during setup** and restored (does not cover
+  `instrument_client()`/transports the user builds later — documented); health
+  paths may not contain commas (they would split the upstream list). Client exclusion drops
+  the client span and metric (upstream behavior) — documented.
+- gRPC health matching is the whole service in both languages: method name
+  (leading `/` stripped) starts with `grpc.health.v1.Health/` (covers Check,
+  Watch and List).
+- Go's stdout fallback renders error values like `slog` does (typed-nil error →
+  `<nil>`, a panicking `Error()` → `!PANIC: …`), never crashing the caller.
+- **gRPC client** health calls (`grpc.health.v1.Health/*`) are excluded on the
+  client side too, in both languages — same rule as HTTP clients: the client
+  span **and** the client metric are dropped (the only upstream client-side
+  mechanism is a filter); server-side RED metrics still count health calls.
+- Go trace↔log correlation needs the `*Context` slog calls (`InfoContext`…);
+  Python correlates implicitly. Documented in both HOW-TOs.
+
+A13 validation ruling (2026-10-28):
+- **Go `NewSlogHandler` level-filters both paths.** The handler applies the level of the environment the last successful `Setup` resolved (`DefaultLogLevel`; Info before the first `Setup`) to records going through the OTel bridge too, not only to the stdout fallback — the LoggerProvider enables every level, so a `nil` minimum exported DEBUG/INFO in PRD. The level is read per record (a `slog.LevelVar` updated by `Setup`), so a handler created before `Setup` picks up the level `Setup` resolves. This is the Python behavior (`HelperLogHandler(level, …)`) and R4 ("helper-created log handlers SHALL use the environment level"). `NewLogger(env, debug)` keeps its explicit level. Parity fixture: not expressible yet — the `logging` kind is console-only and emits one WARN through `NewLogger`, and the `export` kind emits its log record on the global LoggerProvider, bypassing the handler; covered by Go unit tests until a wire-capturing logging kind with a record-level input exists.
+
+Coupling note: `OTEL_HELPER_DEBUG_LEVEL=true` turns on both DEBUG logs and the
+`debug=true` span marker — documented as coupled (ADR-006).
+
+---
+
+## D7 — Debug marker → [ADR-006](../decisions/ADR-006-debug-span-attribute.md)
+
+---
+
+## D8 — Deprecations
+
+**Choice**: warn once from 0.3, remove at 1.0: `SERVICE_NAME`, `ENVIRONMENT`
+(alias), `OTEL_HELPER_SAMPLE_RATIO`, `OTEL_HELPER_DISABLED_SIGNALS`, schemeless
+endpoints **for `http/protobuf` only** (schemeless gRPC is legal per spec and
+supported — D1, R1). `OTEL_HELPER_EXTRA_INSTRUMENTATION`: removed in Go (no effect
+today; warns if set — G9), deprecated in Python.
+
+**Justification**: standard vars already win, so duplicates add surface without
+capability; a dead knob silently accepted misleads users.
+
+**Trade-offs accepted**:
+| Cost | Why acceptable |
+|---|---|
+| Log noise for configs still on legacy vars | Once per process; the migration note gives the replacement |
+
+**When wrong**: consumers can't migrate before 1.0. **Reversal action**: extend
+the window; never drop silently.
+**Alternatives rejected**: remove now (no warning period).
+
+> **Amended 2026-10-29 (ADR-011).** The deprecated **import path** `otel_helper`
+> (Python, 0.3.x, removed in 1.0) is a code-level deprecation, so it uses the
+> stdlib channel for those: one `DeprecationWarning` attributed to the importing
+> line (Python ≥ 3.12 via `skip_file_prefixes`). Because the default filters hide
+> it outside `__main__` (an app module loaded by uvicorn/gunicorn), the same
+> notice is also logged once per process on the `staffops_otel_helper.compat`
+> logger, like the env-var deprecations above.
+
+---
+
+## D9 — Dependencies
+
+Go → [ADR-005](../decisions/ADR-005-go-1-26-floor-grpc-stats-handlers.md).
+
+### Decision D9.a: Python lockstep bounds
+
+**Choice**: api/sdk/otlp exporters `>=1.42,<1.46`; all contrib (core, extras,
+and `opentelemetry-instrumentation-logging`) `>=0.63b0,<0.67b0`. CI: py
+{3.10, 3.13} × {lower-bound constraints file, latest}.
+
+**Justification, strongest first**:
+1. Contrib betas pin the SDK exactly (`exporter-prometheus 0.66b1` →
+   `opentelemetry-sdk~=1.45.1`, `0.63b0` → `~=1.42.0`; `semantic-conventions
+   0.63b0` → `api==1.42.0`), so an unbounded `>=0.63b0` drags the SDK past
+   what was tested.
+2. Measured (dev prototype): all 4 matrix cells pass 153 tests (suite run with
+   `--ignore=tests/test_propagation.py`) at 95–96% once the private
+   `_metric_readers` assertion is removed.
+
+**Trade-offs accepted**:
+| Cost | Why acceptable |
+|---|---|
+| Caps must be raised by PR | That PR runs the latest leg — the point of the cap |
+
+**When wrong**: a consumer needs an SDK above the cap urgently.
+**Reversal action**: raise the cap in a patch release after the latest leg passes.
+**Alternatives rejected**: exact pins (packaging rule); no caps (status quo bug).
+
+---
+
+## D10 — Release
+
+> **Amended 2026-10-28 (owner):** there is no DEV/HML environment; the rc
+> soak is the local simulation in [`specs/soak-simulation/`](../soak-simulation/)
+> (Docker Compose; Kubernetes deferred as its Phase K). Its acceptance replaces
+> "soaked in DEV/HML" below.
+
+**Choice**: one coordinated `0.3.0` for Go + Python, preceded by
+`0.3.0-rc.1` soaked in DEV/HML; no legacy-behavior flag; .NET stays on 0.2.x
+until Phase C ([ADR-004](../decisions/ADR-004-phased-rollout-go-python-first.md)).
+
+**Justification**: the Go interceptor removal forces a breaking release anyway;
+staged flips would make users migrate twice; a legacy flag keeps two code
+paths in every language with no removal date.
+
+**Trade-offs accepted**:
+| Cost | Why acceptable |
+|---|---|
+| One large migration for Go/Python consumers | Single migration guide; rc soak first |
+| Go/Python and .NET versions diverge (0.3.x vs 0.2.x) | Tracked by fixture xfails; per-language docs |
+
+**When wrong**: rc soak shows widespread breakage from one change.
+**Reversal action**: hold that change behind a one-release compat shim, ship the rest.
+**Alternatives rejected**: staged 0.3/0.4 flips; `OTEL_HELPER_LEGACY_PRECEDENCE` flag.
+
+**A11 ruling (2026-10-28, owner approved the rc cut).** Release tags per
+language, because versions now diverge (ADR-004): `vX.Y.Z[-rc.N]` publishes the
+Python wheel/sdist to the GitHub Release (PEP 440 version in `pyproject.toml`,
+e.g. `0.3.0rc1`); `go/vX.Y.Z[-rc.N]` plus `go/ext/<module>/vX.Y.Z[-rc.N]` for
+each ext module (Go submodule tag rule); `dotnet/vX.Y.Z` publishes NuGet. Before
+this ruling every `v*` tag also published .NET under that version, so
+`v0.3.0-rc.1` would have shipped the unchanged 0.2.x .NET code as 0.3.0-rc.1.
+
+---
+
+## D12 — Python defaults HTTP semconv to stable
+
+> **Corrected 2026-10-28 (A13).** The default became `http,database/dup` in
+> A9/A10 (DB semconv parity with Go's `ext/otelsql`, requirements.md R-DB
+> bullet); this section still said `"http"`. The HTTP reasoning below is
+> unchanged; `database/dup` emits both `db.system` and `db.system.name`.
+
+**Choice**: `_ensure_semconv_default()` does
+`os.environ.setdefault("OTEL_SEMCONV_STABILITY_OPT_IN", "http,database/dup")`; called first
+in `setup_telemetry` and at the top of each `ext.*` entry point; detects late
+initialization via the private
+`_OpenTelemetrySemanticConventionStability._initialized` (guarded by
+try/except) and warns once.
+
+**Justification, strongest first**:
+1. Go can no longer emit the old generation (otelhttp v0.72), so without this
+   the two languages emit different metric names and units — no shared query.
+2. Contrib reads the variable once, at first `instrument()`
+   (`opentelemetry/instrumentation/_semconv.py`, identical in 0.63b0 and
+   0.66b1); there is no public programmatic API, and the helper already uses
+   `os.environ.setdefault` for `OTEL_PYTHON_*_EXCLUDED_URLS`.
+3. `http` over `http/dup`: dup doubles HTTP histogram series; the semconv HTTP
+   migration guide positions dup as a user opt-in transition phase.
+
+**Trade-offs accepted**:
+| Cost | Why acceptable |
+|---|---|
+| Breaking for Python dashboards on `http_server_duration_milliseconds` / `http_target` | Repo `dashboards/` use no HTTP metrics; `python/example/EXAMPLES.md` already uses stable names; escape hatch `http/dup` documented |
+| Affects every contrib instrumentor in the process and child processes | Desirable (one generation); documented |
+| Relies on a private attribute for the late-init warning | try/except; worst case no warning |
+
+**When this decision would be wrong**: a consumer must keep old names and
+cannot set an env var. **Reversal action**: code option to skip the default.
+**Alternatives rejected**: `http/dup` default (series ×2); leave Python old
+(parity break).
+
+---
+
+## D13 — Lifecycle: setup after shutdown (A6)
+
+**Choice**: Go rebuilds the whole pipeline on `Setup` after `Shutdown` — but only
+code that obtains tracers/meters **after** the new `Setup` uses it: the Go global
+delegates forward from their first provider once, so tracers, meters,
+instruments and otelhttp/otelgrpc handlers created before stay bound to the
+shut-down providers. Python rebuilds logs and propagators only; traces and metrics stay off after a
+successful shutdown in the same process, with a warning — a **documented parity
+gap**.
+
+**Justification, strongest first**:
+1. The Python API installs global tracer/meter providers once per process
+   (`set_tracer_provider`/`set_meter_provider` are guarded by a set-once flag);
+   resetting it needs private API (`_internal` for metrics/logs), which P17
+   forbids in the package.
+2. The only alternative — helper-owned forwarding providers installed once,
+   swapping SDK providers behind them — changes what `get_tracer_provider()`
+   returns (breaks `isinstance(..., sdk.TracerProvider)` in user code) and needs
+   forwarding instruments for metrics: high risk for a rare use case.
+3. Re-setup after shutdown is rare in production (tests, hot reconfiguration);
+   failure rollback — the common case — works fully in both languages because
+   nothing global is installed until every signal is built.
+
+**Trade-offs accepted**:
+| Cost | Why acceptable |
+|---|---|
+| Python: no traces/metrics after shutdown→setup in one process | Warned at setup; documented in HOW-TO and CHANGELOG |
+| Python has one global `shutdown_telemetry()` instead of a per-setup function, so the Go "stale shutdown" guard has no Python equivalent | Shutdown is serialized with setup under a lock |
+
+**When this decision would be wrong**: a consumer needs in-process
+reconfiguration of traces/metrics in Python (e.g. long-running workers that
+rotate collectors).
+**Reversal action**: implement forwarding providers behind an opt-in.
+**Alternatives rejected**: forwarding providers by default (isinstance break,
+metrics forwarding complexity); private-API reset (violates P17); reviving the
+old global Python `TracerProvider` with a new span processor via public
+`add_span_processor()` (works for traces — measured — but metrics cannot come
+back: a shut-down `MeterProvider` refuses new meters; a traces-only revival would
+be its own parity gap). After the downgrade `options.is_signal_enabled("traces")`
+/`("metrics")` must report False.
+
+### Shutdown result semantics (A6 validation)
+Both languages: the first shutdown call does the work; every later or
+concurrent call returns **the same result** (Go: the same `error`; Python:
+re-raises the same `RuntimeError`) until the next successful setup. A `Setup`
+called while a shutdown is in flight **waits** for it to finish and then builds
+a fresh pipeline (never returns the dying one).
+
+### Shutdown concurrency (A6 validation)
+Both languages shut down logs, metrics and traces **concurrently** under the
+caller's single deadline (Go previously ran them sequentially, so a logs exporter
+retrying against a dead collector could consume the whole deadline and traces
+would lose their buffer).
+
+### Process termination (A6 validation)
+Neither helper installs signal handlers (a library must not take over the app's
+signals). Documented in both HOW-TOs: Go — default SIGTERM kills without running
+deferred `Shutdown`; use `signal.NotifyContext` and call `Shutdown`. Python —
+default SIGTERM skips `atexit`, so buffered spans/logs (up to the batch delay)
+and the last metric interval are lost; handle SIGTERM (`sys.exit(0)` or the event
+loop's signal handler) or run under gunicorn/uvicorn, which do. The examples
+show the pattern (verified on the wire with `docker stop`).
+
+### Mounted `/metrics` handler status (A6/A8 validation)
+| State | Status |
+|---|---|
+| Before setup, or setup failed | 503 (transient — scrape retries) |
+| Prometheus deliberately not active (`OTEL_SDK_DISABLED=true`, or `OTEL_METRICS_EXPORTER` without `prometheus`) | **200 with an empty body** — a 503 would mark the target `up=0` and fire TargetDown-style alerts for a configuration choice |
+| After shutdown | 503 |
+Same in Go `MetricsHandler()` and Python `metrics_app()`; CHANGELOG marks the
+change BREAKING (0.2.0 served the global registry, incl. `process_*`/`python_*`).
+
+---
+
+## D14 — Go ext modules API (A10 validation)
+
+- `otelsql.Open(driver, dsn) (db *sql.DB, closeDB func() error, err error)`:
+  `closeDB` unregisters the pool-metrics callback and closes the pool (call it
+  instead of `db.Close`, mirroring `Setup`'s shutdown func) — otherwise every
+  open/close cycle leaks a callback that keeps exporting a closed pool.
+- `otelredis.Instrument`: tracing + metrics with
+  `redisotel.WithSemConvCompliantMetrics(true)` (metrics are new in 0.3, so no
+  consumer depends on the old instrument types); spans also carry
+  `db.system.name=redis` and never carry command values or the connection
+  string (`WithDBStatement(false)` or a sanitizer equivalent to Python's
+  `SET ? ?`). Metric names are `db.client.connections.*` (as emitted
+  by redisotel v9.23) — documented with their Prometheus names. Call once per
+  client; on a metrics error tracing may already be installed (documented).
+- Debug marker limit (ADR-006): under the default ParentBased sampler an entry
+  span with an unsampled remote parent is dropped before the marker runs, so
+  debug mode cannot force retention of traces an upstream caller didn't sample.
+
+**Reversal action** (added 2026-10-28, spec lint): if `closeDB` proves
+unwanted, keep `Open` returning it but make `db.Close` sufficient by
+registering the callback on a wrapper driver (one release with both paths);
+if semconv redis metrics churn, pin `WithSemConvCompliantMetrics(false)` and
+document the old instruments — the ext modules are versioned with the core,
+so either ships in the next minor.
+
+Python ext import failures (A13 validation, 2026-10-28): `otel_helper.ext.{aws,redis,sql}` raise an `ImportError` whose message claims a cause only when it is certain:
+- `ModuleNotFoundError` for the extra's instrumentor module (`opentelemetry.instrumentation.<lib>`, passed in by the entry point) or one of its parent packages → "instrumentation not installed. Install the staffops-otel-helper wheel with the [<extra>] extra (not on PyPI; see CONSUMING.md)" *(wheel name amended 2026-10-29, ADR-011; was "the otel-helper wheel")*. *(Corrected 2026-10-28, repo-tooling review H2: the first wording, "Run: pip install otel-helper[<extra>]", told users to install by name from PyPI, where `otel-helper` is not registered — a dependency-confusion vector in a public repo. The hint now points to the wheel and CONSUMING.md.)* *(Amended 2026-10-29, ADR-011: the module is `staffops_otel_helper.ext.*` and the hint names the `staffops-otel-helper` wheel; `otel_helper.ext.*` resolves to the same modules through the 0.3.x compatibility module.)*
+- `ModuleNotFoundError` whose missing top-level module is the instrumented library of that extra (`botocore` / `redis` / `sqlalchemy`, passed in by the entry point) → "library '<lib>' is not installed" (the extra does not pull it in).
+- Anything else — another `opentelemetry.*` module (`opentelemetry.semconv._incubating.attributes`: version skew inside the OTel namespace), a submodule of the instrumentor, no module name (A13 review M2), a plain `ImportError` (version skew: `cannot import name 'X' from 'sqlalchemy'`), a missing transitive dependency (`wrapt`) — → "failed to import the <label> instrumentation: <error>", without guessing a cause. Before this ruling both cases were reported as "library not installed".
+
+Node `@staffops/otel-helper-sql` (B10a fix round, 2026-11-03; Node design D-JS14): the same certainty rule, with one difference forced by npm layouts — a library is never reported missing on resolution alone (a nested, non-hoisted copy is invisible to the helper). `sqlInstrumentation()` throws only when a contrib module does not load (`SQL instrumentation not installed: <module> is missing…` when that module itself is not found, else `failed to import the SQL instrumentation: <first line>`), for the library named `true` or when none loads. An unresolved library is still instrumented and reported once: WARN when named `true`, `diag` debug in default mode.
+
+---
+
+## D11 — Collector / platform prerequisites (reference checklist)
+
+Owned outside this repo; each item blocks the 0.3.0 **rollout** (not the rc).
+
+1. Tail sampling: default branch for spans **without**
+   `deployment.environment.name` at the PRD rate (ADR-003).
+2. Tail sampling: the `debug=true` policy SHALL be combined (`and`) with an
+   environment allow-list and a `rate_limiting` sub-policy, so a debug-enabled
+   PRD service cannot force 100% retention of every trace it touches (ADR-006).
+3. Gateway: `loadbalancingexporter` with `routing_key: traceID`;
+   `decision_wait` ≥ observed p99 trace duration (unmeasured — measure first);
+   *corrected 2026-10-28 (soak S-D8): p99 trace duration alone is too short —
+   spans of one trace reach the gateway spread over the SDK batch schedule
+   delay (5 s default) and the agent batch timeout; use p99 duration + max
+   SDK batch delay + agent batch timeout + export time + margin, and enable
+   `decision_cache.sampled_cache_size` > 0 (default 0 = off)*;
+   sampled-decision cache enabled for late spans (ADR-006 rationale depends on it).
+4. Charts: set `OTEL_SERVICE_NAME`; `OTEL_RESOURCE_ATTRIBUTES` with
+   `deployment.environment.name`. Do **not** set `service.instance.id` for
+   multi-worker containers (D4); single-process pods may use the semconv K8s
+   recipe.
+5. Istio: mesh tracing at 100% or disabled (ADR-002).
+6. VictoriaMetrics OTLP ingest promotes every resource attribute to a label:
+   use `-opentelemetry.ignoreResourceAttributes` for volatile attributes
+   (e.g. `process.pid`); keep `service.instance.id` (D4).
+7. Collector `filterprocessor` dropping health spans as defense in depth (D5).
+8. Consumers using portless gRPC URLs: add an explicit `:4317` (D1.b warning).

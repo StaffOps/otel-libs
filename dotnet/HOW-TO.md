@@ -1,14 +1,24 @@
-# HOW-TO: Using OtelHelper
+# HOW-TO: Using StaffOps.OtelHelper
 
 Practical guide for developers. One line configures everything — traces, metrics, and correlated logs.
+
+> **Version note.** This guide describes the shipped **0.2.x** .NET behavior.
+> The `0.3.0` config contract ships in Go and Python first; .NET adopts it in
+> Phase C ([tasks](https://github.com/StaffOps/otel-libs/blob/main/specs/config-contract-v0.3/tasks.md),
+> ADR-004). See the [root README](https://github.com/StaffOps/otel-libs/blob/main/README.md) for the cross-language matrix.
 
 ---
 
 ## 1. Installation
 
 ```bash
-dotnet add package OtelHelper
+dotnet add package StaffOps.OtelHelper
 ```
+
+> **Package name**: `StaffOps.OtelHelper*` from `0.3.0-rc.1` (not published
+> yet); the released `0.2.x` is `OtelHelper*` with `using OtelHelper;`. Map
+> the IDs to the GitHub source with the `nuget.config` in
+> [`CONSUMING.md`](https://github.com/StaffOps/otel-libs/blob/main/CONSUMING.md).
 
 > **Note .NET 10**: the lib is compiled for net8.0 and works on .NET 10 via roll-forward. Use the `aspnet` image (not `runtime`) and ensure `DOTNET_ROLL_FORWARD=Major` is set.
 
@@ -51,27 +61,17 @@ Without any additional code, the lib instruments:
 
 | Signal | What is captured |
 |---|---|
-| **Traces** | Incoming HTTP requests (ASP.NET Core), outgoing HTTP requests (HttpClient), gRPC calls. Optionally: SQL queries (`SQL`) and AWS SDK calls (`AWS`) via `OTEL_HELPER_EXTRA_INSTRUMENTATION` |
+| **Traces** | Incoming HTTP requests (ASP.NET Core), outgoing HTTP requests (HttpClient), gRPC calls. SQL, AWS and Redis only through the opt-in subpackages (§14) |
 | **Metrics** | .NET Runtime (GC, thread pool), ASP.NET Core (duration, active requests), HttpClient (outbound requests) |
 | **Logs** | All logs via `ILogger` are exported via OTLP with automatic `traceId`/`spanId` |
 
 ### Extra Instrumentations
 
-By default, only `SQL` is enabled. To enable more:
-
-```bash
-# SQL only (default)
-OTEL_HELPER_EXTRA_INSTRUMENTATION=SQL
-
-# SQL + AWS
-OTEL_HELPER_EXTRA_INSTRUMENTATION=SQL,AWS
-
-# None
-OTEL_HELPER_EXTRA_INSTRUMENTATION=
-
-# Debug mode enables all automatically
-OTEL_HELPER_DEBUG_LEVEL=true
-```
+SQL, AWS and Redis instrumentation come only from the opt-in subpackages
+(`StaffOps.OtelHelper.Sql`, `StaffOps.OtelHelper.AWS`, `StaffOps.OtelHelper.Redis` — see §14).
+`OTEL_HELPER_EXTRA_INSTRUMENTATION` is still read into
+`TelemetryOptions.ExtraInstrumentation` but **has no effect** in core, and
+`OTEL_HELPER_DEBUG_LEVEL=true` does not turn instrumentations on.
 
 ### gRPC with Service Mesh (REQUIRED)
 
@@ -232,7 +232,7 @@ catch (Exception ex)
 In APIs, each request already creates a new trace automatically. In workers (loops, timers, consumers), you need to create the root trace manually. Use `StartRootActivity`:
 
 ```csharp
-using OtelHelper; // extension method
+using StaffOps.OtelHelper; // extension method
 
 while (!ct.IsCancellationRequested)
 {
@@ -303,7 +303,7 @@ Exemplars are automatic. When a metric is recorded during an active trace, the S
 ## 8. Complete Example
 
 ```csharp
-using OtelHelper;
+using StaffOps.OtelHelper;
 using System.Diagnostics;
 using System.Diagnostics.Metrics;
 
@@ -387,10 +387,10 @@ When you use placeholders in logs, values are extracted as **separate attributes
 |---|---|---|---|
 | `SERVICE_NAME` | Service name (resource attribute) | `my-service` | CI/CD |
 | `ENVIRONMENT` | Environment (controls log level) | `LOCAL` | Helm Chart |
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | Collector host | `http://localhost` | Helm Chart |
-| `OTEL_HELPER_DEBUG_LEVEL` | Debug mode (Debug logs, all instrumentations, 100% sampling) | `false` | Manual |
-| `OTEL_HELPER_EXTRA_INSTRUMENTATION` | Extra instrumentations (SQL, AWS) | `SQL` | Helm Chart |
-| `OTEL_HELPER_SAMPLE_RATIO` | Head sampling ratio (0.0-1.0). 1.0 = AlwaysOn | `1.0` | Helm Chart |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | Collector endpoint; unset → no OTLP export, Prometheus `/metrics` fallback | _(unset)_ | Helm Chart |
+| `OTEL_HELPER_DEBUG_LEVEL` | Debug mode: Debug log level + `debug=true` attribute on entry spans (no in-process parent, which includes spans continuing a remote trace) and `debug=true` prepended to the propagated tracestate (the Collector's debug policy keeps those traces) | `false` | Manual |
+| `OTEL_HELPER_EXTRA_INSTRUMENTATION` | No effect in core (use the subpackages, §14) | `SQL` | — |
+| `OTEL_HELPER_SAMPLE_RATIO` | Head sampling ratio (clamped 0.0–1.0; bare `TraceIdRatioBased`). 1.0 = AlwaysOn | `1.0` | Helm Chart |
 | `OTEL_HELPER_METRICS_PORT` | Standalone Prometheus `/metrics` listener port (`0` disables it) | `9464` | Helm Chart |
 | `OTEL_METRICS_EXPORTER` | Metric exporter(s): `otlp`, `prometheus`, `otlp,prometheus`, `none` | legacy inference | Manual |
 | `OTEL_METRIC_EXPORT_INTERVAL` | OTLP metric export interval (ms) | `30000` | Manual |
@@ -453,7 +453,9 @@ If you need to see **all** traces from a service:
 OTEL_HELPER_DEBUG_LEVEL=true
 ```
 
-When active, the lib injects `tracestate: debug=true` in all traces. The Collector recognizes this flag and keeps 100% of traces from that service.
+When active, the lib marks every **entry span** — a span with no in-process parent (`Activity.Parent == null`), which includes server spans that continue a remote trace — with the attribute `debug=true`, and prepends `debug=true` to that span's tracestate, so it propagates downstream. A Collector tail-sampling policy on either marker keeps those traces.
+
+Because a debug service marks every inbound request, not only the traces it starts, the Collector's `debug=true` policy must be combined (`and`) with an environment allow-list and a `rate_limiting` sub-policy ([design D11](https://github.com/StaffOps/otel-libs/blob/main/specs/config-contract-v0.3/design.md#d11--collector--platform-prerequisites-reference-checklist), item 2); otherwise one debug-enabled PRD service can force 100% retention of every trace it touches.
 
 ⚠️ **Do not leave debug enabled in production for long** — generates high volume and increases storage cost.
 
@@ -468,10 +470,10 @@ AWS, Redis, SQL, and Profiling instrumentations are available as **separate NuGe
 ### Installation
 
 ```bash
-dotnet add package OtelHelper.AWS
-dotnet add package OtelHelper.Redis
-dotnet add package OtelHelper.Sql
-dotnet add package OtelHelper.Profiling
+dotnet add package StaffOps.OtelHelper.AWS
+dotnet add package StaffOps.OtelHelper.Redis
+dotnet add package StaffOps.OtelHelper.Sql
+dotnet add package StaffOps.OtelHelper.Profiling
 ```
 
 ### Usage
@@ -493,14 +495,14 @@ builder.Services.AddOtelHelperProfiling();
 
 | Package | Extension Method | What it instruments |
 |---------|-----------------|---------------------|
-| `OtelHelper.AWS` | `AddOtelHelperAws()` | AWS SDK calls (S3, SQS, DynamoDB, etc.) |
-| `OtelHelper.Redis` | `AddOtelHelperRedis()` | StackExchange.Redis commands |
-| `OtelHelper.Sql` | `AddOtelHelperSql()` | SqlClient queries |
-| `OtelHelper.Profiling` | `AddOtelHelperProfiling()` | .NET CLR profiling via OTel |
+| `StaffOps.OtelHelper.AWS` | `AddOtelHelperAws()` | AWS SDK calls (S3, SQS, DynamoDB, etc.) |
+| `StaffOps.OtelHelper.Redis` | `AddOtelHelperRedis()` | StackExchange.Redis commands |
+| `StaffOps.OtelHelper.Sql` | `AddOtelHelperSql()` | SqlClient queries |
+| `StaffOps.OtelHelper.Profiling` | `AddOtelHelperProfiling()` | .NET CLR profiling via OTel |
 
 ### Profiling Prerequisites
 
-`OtelHelper.Profiling` requires the following environment variables for the .NET CLR profiler:
+`StaffOps.OtelHelper.Profiling` requires the following environment variables for the .NET CLR profiler:
 
 ```bash
 CORECLR_ENABLE_PROFILING=1
@@ -526,6 +528,16 @@ When `OTEL_EXPORTER_OTLP_ENDPOINT` is **not set**, the library automatically fal
 The port is configurable via `OTEL_HELPER_METRICS_PORT` env var (default: `9464`).
 
 This enables the standard Kubernetes scrape pattern: deploy without a Collector, and let Prometheus/VictoriaMetrics scrape `/metrics` directly from the pod.
+
+The listener binds `http://+:<port>/metrics/` — every IPv4 address (the
+managed `HttpListener` maps `+` to `IPAddress.Any`, as it did 0.2.x's `*`), so
+a scraper in another pod or container reaches it — and answers each scrape
+with a fresh collection (no response cache). There is no IPv6 bind: on an
+IPv6-only cluster a scrape of the pod IP fails (known limitation, unchanged
+from 0.2.x). The upstream exporter's own
+`OTEL_EXPORTER_PROMETHEUS_HOST` / `OTEL_EXPORTER_PROMETHEUS_PORT` have no
+effect; set the port with `OTEL_HELPER_METRICS_PORT`.
+`testing/e2e/dotnet-prom-scrape.sh` checks the scrape from another container.
 
 ### Running OTLP push AND `/metrics` at the same time
 
@@ -601,12 +613,12 @@ OTLP export uses TLS by default. The transport is derived from the endpoint sche
 Override via env var:
 
 ```bash
-# Force plaintext for a local collector without TLS
-OTEL_EXPORTER_OTLP_ENDPOINT=https://otel-gateway.example:4317  # TLS
-OTEL_EXPORTER_OTLP_INSECURE=true                                # forces plaintext regardless of scheme
+# Plaintext for a local collector without TLS: use http://, or a schemeless endpoint + INSECURE
+OTEL_EXPORTER_OTLP_ENDPOINT=otel-collector:4317
+OTEL_EXPORTER_OTLP_INSECURE=true                                # → http://otel-collector:4317
 ```
 
-Priority: code config (scheme in `TelemetryOptions.OtelCollectorEndpoint`) > `OTEL_EXPORTER_OTLP_INSECURE` env var > scheme-based detection.
+`OTEL_EXPORTER_OTLP_INSECURE` is consulted **only for schemeless endpoints** (`host:4317`): `true` → `http://`, otherwise `https://`. An explicit scheme — in env or in `TelemetryOptions.OtelCollectorEndpoint` — always wins, so `https://…` plus `INSECURE=true` still uses TLS.
 
 ---
 
@@ -635,4 +647,4 @@ Priority: code config (`TelemetryOptions.OtlpProtocol`) > `OTEL_EXPORTER_OTLP_PR
 
 `/v1/traces`, `/v1/metrics`, `/v1/logs` are appended to the endpoint automatically when `http/protobuf` is selected — do not include them in `OTEL_EXPORTER_OTLP_ENDPOINT`.
 
-For local development with a plaintext collector, the default `http://localhost` already resolves to plaintext — no changes needed.
+For local development with a plaintext collector, set `OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317` (there is no default endpoint: unset means no OTLP export).

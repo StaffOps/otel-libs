@@ -1,5 +1,5 @@
-using OtelHelper;
-using OtelHelper.Grpc;
+using StaffOps.OtelHelper;
+using Examples.Grpc;
 using Grpc.Net.Client;
 using OpenTelemetry;
 using System.Diagnostics;

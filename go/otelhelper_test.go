@@ -2,6 +2,7 @@ package otelhelper
 
 import (
 	"context"
+	"log/slog"
 	"testing"
 )
 
@@ -10,7 +11,12 @@ func resetGlobals() {
 	defer mu.Unlock()
 	setupDone = false
 	shutdownFn = nil
-	setupErr = nil
+	installed = nil
+	current = nil
+	activeLogBridge.Store(nil)
+	installedLogLevel.Set(slog.LevelInfo)
+	installedHealthPaths.Store(nil)
+	setPromRegistry(nil)
 }
 
 func TestSetupValidConfig(t *testing.T) {

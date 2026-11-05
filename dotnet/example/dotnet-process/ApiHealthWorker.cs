@@ -1,6 +1,6 @@
 using System.Diagnostics;
 using System.Diagnostics.Metrics;
-using OtelHelper;
+using StaffOps.OtelHelper;
 
 /// <summary>
 /// Runs every minute — calls all SampleApi endpoints and records results as metrics.

@@ -1,10 +1,36 @@
-# Tests — OtelHelper (.NET)
+# Tests — StaffOps.OtelHelper (.NET)
 
-179 unit tests (xUnit), 0 failed, 0 warnings.
+183 unit tests (xUnit), 0 failed, 0 warnings.
 
 ```bash
-docker run --rm -v "$(pwd):/src" -w /src mcr.microsoft.com/dotnet/sdk:8.0 dotnet test OtelHelper.Tests
+docker run --rm -v "$(pwd):/src" -w /src mcr.microsoft.com/dotnet/sdk:8.0 dotnet test StaffOps.OtelHelper.Tests
 ```
+
+Every project builds with warnings as errors (`Directory.Build.props`), so a
+new compiler warning or a public member without an XML doc comment (`CS1591`)
+fails the build. NuGet warnings that depend on the network or on advisory data
+stay warnings, so the tree also builds offline from a filled package cache:
+`NU1801`, `NU1900`–`NU1905`, and `NU5104` (prerelease dependencies, DN1).
+
+With coverage and the 90% gate, as CI runs it, on a container-local copy (the
+source mount stays read-only):
+
+```bash
+docker run --rm -e VSTEST_TESTHOST_SHUTDOWN_TIMEOUT=10000 -v "$PWD:/src:ro" mcr.microsoft.com/dotnet/sdk:8.0 sh -c '
+  mkdir /w && cd /src && tar --exclude=bin --exclude=obj --exclude=coverage -cf - . | tar -xf - -C /w
+  cd /w && dotnet test StaffOps.OtelHelper.Tests -c Release \
+    /p:CollectCoverage=true /p:CoverletOutputFormat=cobertura /p:CoverletOutput=./coverage/ \
+    /p:Threshold=90 /p:ThresholdType=line /p:ThresholdStat=total /p:Exclude="[xunit*]*"'
+```
+
+`VSTEST_TESTHOST_SHUTDOWN_TIMEOUT=10000` is required for a stable number:
+vstest kills the test host about 100 ms after the last test, often before
+`coverlet.msbuild` writes its hit files, and the total then drops (81.86%, or
+0%) and fails the gate while every test passed. CI's `dotnet-test` job sets
+the same variable. Long-term option: `coverlet.collector` (a data collector
+inside vstest's own shutdown sequence) instead of `coverlet.msbuild`; it needs
+a different threshold step, because the collector has no `Threshold`
+property.
 
 ---
 
@@ -273,7 +299,7 @@ Opt-in subpackage extensions (AWS, SQL, Redis) — each verifies the fluent `ISe
 
 ## ProfilingTests
 
-`OtelHelper.Profiling`'s `ProfilingPrerequisites` and extension registration. Uses `[Collection("EnvVarTests")]`.
+`StaffOps.OtelHelper.Profiling`'s `ProfilingPrerequisites` and extension registration. Uses `[Collection("EnvVarTests")]`.
 
 | Test | Description |
 |-------|-----------|
@@ -334,6 +360,21 @@ Opt-in subpackage extensions (AWS, SQL, Redis) — each verifies the fluent `ISe
 | `DualMode_CounterVisible_InInMemoryAndPrometheusReaders` | Single provider, two readers — same counter visible via an in-memory exporter AND a live Prometheus HTTP scrape, no double counting |
 | `ConfigureMetrics_PrometheusOnly_WithEndpoint_Builds` | `prometheus`-only with an endpoint set builds cleanly and serves `/metrics` |
 | `ConfigureMetrics_PortZero_SkipsListener` | Port 0 builds without binding any listener |
+
+## PrometheusListenerTests
+
+The Prometheus fallback on `OpenTelemetry.Exporter.Prometheus.HttpListener`
+1.20.x keeps the 0.2.x listener behavior (task C3, design D-NET11). Uses
+`[Collection("EnvVarTests")]`. No test needs a network (the suite runs with
+`--network none`): reachability from another container, in the text and
+OpenMetrics formats, is checked by `testing/e2e/dotnet-prom-scrape.sh`.
+
+| Test | Description |
+|-------|-----------|
+| `ListenerPrefix_IsWildcardHostMetricsPath` | The bind prefix is `http://+:<port>/metrics/` |
+| `ConfigurePrometheusListener_SetsHostPortCacheAndPrefixDelegate` | `Host` reset to `localhost`, helper port, response cache 0, and a delegate that replaces the listener prefixes with the `+` prefix only |
+| `Scrape_IsFresh_NoResponseCache` | Two scrapes back to back see the new value (upstream caches 300 ms by default) |
+| `PrometheusEnvVars_HaveNoEffect_HelperPortServed` | `OTEL_EXPORTER_PROMETHEUS_HOST=*` does not abort the build and `OTEL_EXPORTER_PROMETHEUS_PORT` does not move the listener: `OTEL_HELPER_METRICS_PORT` is served |
 
 ## SamplerPrecedenceTests
 

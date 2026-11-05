@@ -19,102 +19,7 @@ import (
 
 // --- resolvedOtlpProtocol precedence ---
 
-func Test_OtlpProtocol_DefaultIsGrpc(t *testing.T) {
-	o := resolvedOptions(t, WithEndpoint("collector:4317"))
-	if got := o.resolvedOtlpProtocol(); got != ProtocolGRPC {
-		t.Errorf("resolvedOtlpProtocol() = %q, want %q", got, ProtocolGRPC)
-	}
-}
-
-func Test_OtlpProtocol_NoEndpointDefaultsToGrpc(t *testing.T) {
-	t.Setenv(EnvCollectorEndpoint, "")
-	o := resolvedOptions(t)
-	if got := o.resolvedOtlpProtocol(); got != ProtocolGRPC {
-		t.Errorf("resolvedOtlpProtocol() = %q, want %q", got, ProtocolGRPC)
-	}
-}
-
-func Test_OtlpProtocol_Port4318InfersHttp(t *testing.T) {
-	o := resolvedOptions(t, WithEndpoint("collector:4318"))
-	if got := o.resolvedOtlpProtocol(); got != ProtocolHTTP {
-		t.Errorf("resolvedOtlpProtocol() = %q, want %q", got, ProtocolHTTP)
-	}
-}
-
-func Test_OtlpProtocol_Port4317InfersGrpc(t *testing.T) {
-	o := resolvedOptions(t, WithEndpoint("collector:4317"))
-	if got := o.resolvedOtlpProtocol(); got != ProtocolGRPC {
-		t.Errorf("resolvedOtlpProtocol() = %q, want %q", got, ProtocolGRPC)
-	}
-}
-
-func Test_OtlpProtocol_OtherPortInfersGrpc(t *testing.T) {
-	o := resolvedOptions(t, WithEndpoint("collector:9999"))
-	if got := o.resolvedOtlpProtocol(); got != ProtocolGRPC {
-		t.Errorf("resolvedOtlpProtocol() = %q, want %q", got, ProtocolGRPC)
-	}
-}
-
-func Test_OtlpProtocol_EnvVarBeatsPortInference(t *testing.T) {
-	t.Setenv(EnvOtlpProtocol, "http/protobuf")
-	o := resolvedOptions(t, WithEndpoint("collector:4317")) // would infer grpc
-	if got := o.resolvedOtlpProtocol(); got != ProtocolHTTP {
-		t.Errorf("resolvedOtlpProtocol() = %q, want %q", got, ProtocolHTTP)
-	}
-}
-
-func Test_OtlpProtocol_EnvVarGrpcBeatsHttpPortInference(t *testing.T) {
-	t.Setenv(EnvOtlpProtocol, "grpc")
-	o := resolvedOptions(t, WithEndpoint("collector:4318")) // would infer http
-	if got := o.resolvedOtlpProtocol(); got != ProtocolGRPC {
-		t.Errorf("resolvedOtlpProtocol() = %q, want %q", got, ProtocolGRPC)
-	}
-}
-
-func Test_OtlpProtocol_ExplicitOptionBeatsEnv(t *testing.T) {
-	t.Setenv(EnvOtlpProtocol, "http/protobuf")
-	o := resolvedOptions(t, WithEndpoint("collector:4317"), WithOtlpProtocol("grpc"))
-	if got := o.resolvedOtlpProtocol(); got != ProtocolGRPC {
-		t.Errorf("resolvedOtlpProtocol() = %q, want %q", got, ProtocolGRPC)
-	}
-}
-
-func Test_OtlpProtocol_EnvVarCaseAndWhitespaceTolerant(t *testing.T) {
-	t.Setenv(EnvOtlpProtocol, "  HTTP/PROTOBUF  ")
-	o := resolvedOptions(t, WithEndpoint("collector:4317"))
-	if got := o.resolvedOtlpProtocol(); got != ProtocolHTTP {
-		t.Errorf("resolvedOtlpProtocol() = %q, want %q", got, ProtocolHTTP)
-	}
-}
-
 // --- validation ---
-
-func Test_OtlpProtocol_UnknownValueFailsValidation(t *testing.T) {
-	o := resolvedOptions(t, WithServiceName("svc"), WithOtlpProtocol("http/json"))
-	err := o.validate()
-	if err == nil || !strings.Contains(err.Error(), "unknown OTLP protocol") {
-		t.Errorf("validate() = %v, want unknown-protocol error", err)
-	}
-}
-
-func Test_OtlpProtocol_HttpJsonRejectedEvenThoughSpecValid(t *testing.T) {
-	// http/json is a valid spec value but no OTel Go exporter implements it
-	// for traces/metrics/logs — must fail loud, not silently downgrade.
-	t.Setenv(EnvOtlpProtocol, "http/json")
-	o := resolvedOptions(t, WithServiceName("svc"))
-	if err := o.validate(); err == nil {
-		t.Error("validate() = nil, want error for http/json")
-	}
-}
-
-func Test_OtlpProtocol_GrpcAndHttpProtobufPassValidation(t *testing.T) {
-	for _, proto := range []string{"grpc", "http/protobuf"} {
-		o := resolvedOptions(t, WithServiceName("svc"), WithOtlpProtocol(proto))
-		if err := o.validate(); err != nil {
-			t.Errorf("validate() with protocol %q = %v, want nil", proto, err)
-		}
-	}
-}
 
 // --- live integration: HTTP protocol actually delivers to /v1/{signal} ---
 
@@ -179,7 +84,7 @@ func Test_OtlpProtocol_Metrics_Http_DeliversToV1Metrics(t *testing.T) {
 		ExportIntervalMs: 30_000,
 		OtlpProtocol:     ProtocolHTTP,
 	}
-	mp, _, err := configureMetrics(context.Background(), resource.Default(), opts)
+	mp, _, _, err := configureMetrics(context.Background(), resource.Default(), opts)
 	if err != nil {
 		t.Fatalf("configureMetrics error = %v", err)
 	}

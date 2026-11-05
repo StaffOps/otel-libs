@@ -1,0 +1,272 @@
+# .NET OTel helper — tasks
+
+> **Owner order 2026-11-05.** Phase C pauses after C3 (C1–C3 and C-patch done). It resumes with C4 **after the soak** (`specs/soak-simulation/`); the remaining contract backlog, the Node.js follow-ups and the soak run first. C8's redirect release blocker stays.
+
+**Status**: Reviewed r3 (2026-11-04; C1 closed after the C1c confirmations). Spec: [requirements](requirements.md) ·
+[design](design.md). Each task: implement + tests in Docker (C2/C3 run the
+existing suite with `docker run --rm -v "$PWD/dotnet:/src:ro"
+mcr.microsoft.com/dotnet/sdk:8.0` on a container-local copy, as CI's
+`dotnet test` does — true on the 0.3 branch, which stays `net8.0`-only until
+C0; the dual-target `0.2.1` lives on its own branch and builds with SDK 10;
+from C4 on, `docker compose -f testing/docker-compose.yml
+run --rm dotnet-tests`), flip its parity cases (`xfail:C<n>` / `skip:C5-no-api`
+→ `pass`, or a D-NET15 `skip:` reason), refutation (`observability` + `dev`),
+`code-review`, `CHANGELOG.md` (Unreleased, .NET section), commit. Sizes are
+relative (S < M < L < XL), not measured effort.
+
+`tools/spec_lint.py` checks `xfail:<task>` statuses only (rule `xfail-task`):
+after C4 rewrites `xfail:phase-c` to `xfail:C<n>`, a task cannot be marked ✅
+while a case still names it. `skip:C<n>-<reason>` statuses are guarded by the
+.NET runner (fails on a skip naming a missing or done task) and by
+`PARITY_RELEASE` (design D-NET12), not by the lint.
+
+| Task | Size | Depends on | Covers | Flips (cases) | Status |
+|---|---|---|---|---|---|
+| C-patch `0.2.1` (owner decision O1, 2026-11-04; D-NET0; plan below) on maintenance branch `release/dotnet-0.2` cut from tag `v0.2.0` (`33d66f0`): TFMs `net8.0;net10.0` (five libraries + tests, conditional `Microsoft.Extensions.*` 9.0.0 / 10.0.0), `<Version>0.2.1</Version>`, trimmed `ci.yml` (`dotnet-test` + `publish-dotnet-release` only, see plan), `dotnet-backend/Dockerfile` build stage on `sdk:10.0`, `LICENSE` + `PackageLicenseExpression` Apache-2.0 (O11), README ".NET 10 Note" + "Supported Targets", one runtime-metric test (`process.runtime.dotnet.*` when `Environment.Version.Major < 9`, `dotnet.*` otherwise), CHANGELOG `.NET 0.2.1`; OpenTelemetry stays 1.15.x; no library code change, no Redis DI fix. Forward port to `feat/v0.3-config-contract`: the CHANGELOG `.NET 0.2.1` entry and the ".NET 10 Note" text only. **Measured 2026-11-04**: SDK 10.0.403 builds both TFMs (52 warnings = 26 pre-existing CS1591 × 2), tests 179/179 on runtime 10.0.14 and on 8.0.33 (180/180 per leg with the runtime-metric test, plan applied to the `v0.2.0` tree, C1c), `net10.0` coverage 95.96%, `lib/net8.0` + `lib/net10.0` per package with identical dependency groups; SDK 8 cannot build it (`NETSDK1045`). **Shipped 2026-11-04**: PR #12 (code-review: runtime-major = TFM-major assertion added, release guards for a dated CHANGELOG entry and both `lib/` folders), merged as `f5e40f8` on `release/dotnet-0.2`, tag `dotnet/v0.2.1` run 41949827814 green; the five `0.2.1` packages on GitHub Packages carry `lib/net8.0` + `lib/net10.0`; CHANGELOG entry and README runtime notes forward-ported | S | — | DN0, ADR-009 (amended 2026-11-04) | — | ✅ |
+| C1 Adversarial review of this spec set (`spec-refuter`, `observability`, `dev`), r1 → r2; owner decisions O1–O3, O5, O6 recorded; ADR-013 written (refuter M8) | M | — | format rule | — | ✅ 2026-11-04 (r1 reviewed: 1 BLOCKING, 21 HIGH, 25 MEDIUM, 17 LOW; fixed in r2 — "r2 changes" below) |
+| C1b Re-review of r2 (C1b) and confirmation of r3 (C1c) by the same three reviewers; ADR-013 Accepted | S | C1 | format rule | — | ✅ 2026-11-04 (C1b: 0 BLOCKING, 3 HIGH, 14 MEDIUM, 16 LOW → r3; C1c: 0 BLOCKING/HIGH, 1 MEDIUM (owner pre-tag check), 8 LOW → applied, "C1c changes" below; owner decided O4, O7–O11) |
+| C2 Rename (N13) + build hygiene (N12): `StaffOps.OtelHelper*` package IDs, assemblies, root namespace, project folders, `.sln`, `InternalsVisibleTo`; `dotnet/Directory.Build.props` (metadata, SourceLink, deterministic, warnings as errors, no blanket CS1591; CS0618 suppressed locally where tests/examples use the `[Obsolete]` member); CI pack/publish project lists (`ci.yml` `build-lib`, `publish-dotnet`, `publish-dotnet-release`), example `Dockerfile(.demo)`s, `CONSUMING.md` `nuget.config` source mapping; still `0.2.x` behavior, the existing suite green (156 `[Fact]`/`[Theory]` attributes, 179 test cases on the 0.3 branch); writes the 26 missing XML doc comments that `CS1591` reports today; the nuget.org prefix reservation (O4) is an independent owner action | M | C1b | DN10, ADR-011 | — | ✅ 2026-11-05 (dev refutation + code-review + confirmation pass: no BLOCKING/HIGH left; consumer end-to-end telemetry diff vs pre-C2 empty). Implemented 2026-11-04: projects, folders, `.sln`, package IDs, assemblies and namespaces renamed (`git mv`); `dotnet/Directory.Build.props` (deterministic, `TreatWarningsAsErrors` with only NuGet audit/source and `NU5104` codes kept as warnings, built-in SourceLink, embedded PDB; CI pack steps pass `/p:ContinuousIntegrationBuild=true`); the 26 `CS1591` members documented; no CS0618 suppression needed yet (no `[Obsolete]` member before C5); CI `dotnet-test`, `build-lib` (asserts five `StaffOps.OtelHelper*` nupkgs), `publish-dotnet`, `publish-dotnet-release`; example `Dockerfile(.demo)`s copy the props/targets; `CONSUMING.md` source mapping; docs, release skill, CHANGELOG. Verified in Docker: `sdk:8.0` suite 179/179 green, line 95.96% = the pre-C2 baseline; SDK 10 leg (`DOTNET_ROLL_FORWARD=Major`) 179/179; five `StaffOps.OtelHelper*.0.2.0.nupkg`, SourceLink URLs and `/_/` paths read from the embedded PDB; the three examples build from source and from the packed core. *Fix round 2026-11-05 (dev 1 HIGH + 1 MEDIUM, code-review 3 MEDIUM, LOWs):* `NU1801`, `NU1900`, `NU1905` added to `WarningsNotAsErrors` (offline build with `--network none` from a filled cache passes, `NU1900` printed); coverage flake (vstest kills the testhost before coverlet.msbuild flushes, SDK 8 and 10) fixed by `VSTEST_TESTHOST_SHUTDOWN_TIMEOUT=10000` (CI `dotnet-test` env, `dotnet/TESTS.md` recipe) — 4/4 `sdk:8.0` and 4/4 `sdk:10.0` runs at 95.96%; `coverlet.collector` noted as the long-term option; package metadata moved to `dotnet/Directory.Build.targets` gated on `IsPackable` != false; example Dockerfile build stages replayed without `.git`: no warning; `publish-dotnet` and `publish-dotnet-release` assert the five packages before the push; example proto namespace `Examples.Grpc` (owner; supersedes "kept `OtelHelper.Grpc`"); .NET current release `0.2.1` in README and CONSUMING (owner); Profiling logger category kept, scheduled in C13 and noted in the API part of the migration guide. Open LOW: the SourceLink/PDB group in props is gated on the project name, so a future non-packable `StaffOps.OtelHelper.*` project (C4 driver) gets an embedded PDB — harmless) |
+| C3 Dependency bump (D-NET1, O6): OTel 1.15.x → 1.20.x core + contrib, Prometheus HttpListener 1.20.1-beta.1 with the `+` prefix (D-NET11 — never `Host = "*"`), test deps (`Microsoft.Extensions.*` 8.x, InMemory 1.20.x); recorded before/after `/metrics` and span diffs of the three examples, walking the breaking items of the package table (no redirects, `byte[]` truncation, attribute-limit fallbacks, GrpcNetClient 1.16.0/1.20.0, Prometheus 1.10–1.19); re-read contrib CHANGELOGs at their tags; SDK-bump checklist added to the `release` skill (constructor env reads, default client hardening, experimental flags) | M | C2 | DN1, N7 | — | ✅ 2026-11-05 (dev refutation + observability + code-review, fix round, confirmation pass: no BLOCKING/HIGH left; known regression: redirects, release blocker in C8). History: 2026-11-05 (implemented; awaiting the owner's independent review). Every `OpenTelemetry*` reference on the pinned 1.20.x set (core 1.20.1, Prometheus HttpListener 1.20.1-beta.1, AspNetCore/Http/Runtime/SqlClient 1.20.1, GrpcNetClient/StackExchangeRedis 1.20.1-beta.1, AWS 1.20.3), `net8.0`; tests `Microsoft.Extensions.*` 8.0.1, InMemory 1.20.1; nuspecs carry only `net8.0` groups. `MetricsSetup.ConfigurePrometheusListener`: `Host = "localhost"` (an env `OTEL_EXPORTER_PROMETHEUS_HOST=*` would abort the build), helper `Port`, cache 0, `ConfigureHttpListener` → `Prefixes.Clear()` + `http://+:{port}/metrics/` (D-NET11; design corrections of 2026-11-05). Five `PrometheusListenerTests` (non-loopback reachability, fresh scrape, env vars without effect, delegate), each killed by a one-line mutation of the setup; `testing/e2e/dotnet-prom-scrape.sh` (verify `dotnet-scrape`, CI `dotnet-prom-scrape`, needed by `publish-dotnet*`) passes on this tree and fails (exit 1) with the prefix lines removed. Verified in Docker: `sdk:8.0` 184/184, line 96.31% (was 95.96%), same on `sdk:10.0` with `DOTNET_ROLL_FORWARD=Major`; pack of the five packages; consumer of the packed packages → throwaway Collector 0.160.0 (span, counter, log arrive) and scraped from a second container. **Diff** (three examples, same .NET 8 runtime, before = `76f9a05`): HTTP spans, OTLP metric names, logs unchanged; schema URL 1.44.0 on resource batches; gRPC client `rpc.system`/`rpc.service`/`rpc.method`/`rpc.grpc.status_code` → `rpc.system.name`/full `rpc.method`/`rpc.response.status_code`, parentage unchanged; `/metrics`: `target_info` added, timestamps, `# UNIT`, `# EOF` dropped, `<unit>_total` names no longer doubled, paths/methods and cross-container reach unchanged. **Breaking items** (probe through `AddOtelHelper`): `byte[]` truncated to the value-length limit; event/link and scope attribute counts fall back to `OTEL_ATTRIBUTE_COUNT_LIMIT`; redirects not followed with the exporter's own client but still followed with an app `IHttpClientFactory` (corrected in design). Contrib CHANGELOGs re-read at their tags. Migration guide telemetry rows 1–6 and CHANGELOG entry added (lines added only). *Fix round 2026-11-05 (code-review 9 LOW, observability 3 MEDIUM + 5 LOW, dev 2 MEDIUM + 3 LOW; no BLOCKING/HIGH):* migration rows rewritten — AWS `messaging.*`/`aws.sns.topic.arn` only under `V1_40_0` (obs M1), `otel_scope_version` churn (obs M2), OpenMetrics measured before/after (`_created` 0 → 44 series, exemplars 0 → 34, `otel_scope_info` 7 → 0, `# UNIT`/`# EOF` kept; obs M3), gRPC client `server.socket.address` → `network.peer.address` + `network.peer.port`/`server.address`, scope schema URL 1.42.0 (dev M1), AspNetCore 5xx `error.type` marked measured, SqlClient sanitization `[TO VERIFY C14a]`, exporter HttpClient log suppression, dashboards vs fallback `service_name`, full de-doubled list; IPv4-only bind stated with the IPv6-only limitation. **Known regression (dev M2), recorded 2026-11-05:** a `3xx` from an `http/protobuf` endpoint drops all three signals silently when the app registers no `IHttpClientFactory` (0.2.x followed it); C8 row now makes the loud refusal a release blocker; no helper warning added in C3 — detecting it needs an `EventListener` on the OTLP exporter's `EventSource` and a diagnostics channel, both C5 work, so it is left to C8. `Listener_ReachableOnNonLoopbackAddress` moved out of the unit suite (the e2e script covers it; suite runs with `--network none`); e2e script also asks for OpenMetrics, copies without bin/obj, accepts either runtime scope; shared `TestPorts.FreeTcpPort()`; `verify.sh` usage/`--quick` text; CI `dotnet-prom-scrape` limited to PRs, `main` and `dotnet/v*`; C12 row names the O10 warning as its own. Re-verified: `sdk:8.0` 183/183 at line 96.31% (also with `--network none`), `sdk:10.0` roll-forward 183/183, pack of the five packages, `dotnet-prom-scrape.sh` PASS (text and OpenMetrics) |
+| C4 Parity runner + driver (D-NET12): `ParityTests` (repo-root fixture lookup, validation, matchers, strict xfail, `PARITY_REQUIRE_FAKEOTLP`, `PARITY_RELEASE`, skip-names-an-open-task check), `StaffOps.OtelHelper.ParityDriver` (all kinds; `fork` skipped; normal exit for coverage), compose `fakeotlp-dotnet` + `dotnet-tests`, CI `dotnet-test` with the fakeotlp action and `PARITY_RELEASE` on `dotnet/v*`, coverlet child coverage, `testing/verify.sh` step, `tools/trace_matrix.py` C# support and the `DN` id prefix (today `ID_PATTERN` knows `SR`, `RT`, `JS`, `R`, `G`, `P` only) with `tools/trace-allow.txt` lines for the DN ids no test cites, `parity/README.md` .NET runner section; **record current behavior**: each case `pass`, `xfail:C<n>` by the ownership table below, `skip:C5-no-api` (the 13 cases of D-NET12), or a D-NET15 skip (`fork.*`, `resource.detector_var_ignored_warned`, `grpc.health_*_counted_in_metrics`, `metrics.listener_*` per O9 (a)) | XL | C3 | DN11, ADR-008 | whatever already passes | ☐ |
+| C5 Resolver core (ADR-013, D-NET3, D-NET5, D-NET6): eager registration (Prometheus reader always) + deferred values, directly constructed OTLP exporters with every option assigned, helper `HttpClientFactory` skeleton, nullable options + every new member of the API table incl. `long? ExportIntervalMs` (moves the 13 `skip:C5-no-api` cases to their owning `xfail:C<n>`), keyed DI instrumentation, diagnostics sink (DI + static fallback, redaction, truncation, line-forging escapes) + SDK `EventListener` forwarding, env-warns/code-fails validator split (validator message redacted, refuter L2), `OTEL_CONFIG_FILE` / `OTEL_EXPERIMENTAL_CONFIG_FILE` warning, `OTEL_SDK_DISABLED` INFO (read from `IConfiguration` like the SDK), double `AddOtelHelper` warning; N8, N10; bound-options-as-code test; `IConfiguration` neutralization test (env plus in-memory `IConfiguration` for `OTEL_EXPORTER_OTLP_{ENDPOINT,TIMEOUT,COMPRESSION,HEADERS,CERTIFICATE}`: exporter options equal the resolved values, an `IConfiguration`-only key has no effect — C1b refuter M4); Prometheus "no listener" by clearing the prefixes (D-NET3) | L | C4 | DN2, DN3, DN4, DN5, R8 | 13 `skip:C5-no-api` → `xfail:C<n>` | ☐ |
+| C6 Identity and resource (D-NET7): service name and environment precedence, `Environment` as string, R4 log levels, helper-owned `OTEL_RESOURCE_ATTRIBUTES` parsing (A16), `Build()`-then-`Clear()` rebuild with explicit `unknown_service:<process>` and instance id via `AddAttributes`, schema URL, `telemetry.sdk.*` rules (code and env) | M | C5 | R4, R5, D4, A16, A24 | 46 (C6 group; `fork.*` and the detector case stay skipped) | ☐ |
+| C7a Endpoint parsing and diagnostics: RFC 3986 rules of D1/A17 (userinfo/query strip with a redacted warning, IDN, zone ids, ports, backslash, `<unparseable URL>`), schemeless rewrite, portless gRPC warning, protocol resolution and 4318 inference, `INSECURE` grammar and conflicts | L | C5 | R1, R2, D1.a–c, A17 | 60 (C7a group: 59 resolve + `protocol.env_unknown_warns_and_defaults`) | ☐ |
+| C7b Exporters per signal on the wire: generic / per-signal / code endpoints passed explicitly, `/v1/<signal>` for generic HTTP only, per-signal "configured", TLS scheme rule, IPv6, path escapes | L | C7a | R1, R2, DN2 | 48 (C7b group) | ☐ |
+| C8 Exporter settings (A18, ADR-013): headers on the helper `HttpClient` (contract parser, dedup, per-signal replaces generic, `-bin` base64, never logged; `Headers` always empty), client on `SocketsHttpHandler` (or a handler forwarding both `Send` and `SendAsync` — HTTP/protobuf uses the synchronous `Send`) with an export test per protocol, one client per exporter instance, `MaxResponseContentBufferSize` asserted (custom clients get no SDK limit, `OtlpExporterOptions.cs:236-239`), gRPC TLS through the handler as a wire test (skip only if it fails, D-NET15), timeout (ms, clamp, bounds BSP/BLRP/reader, code bound, `HttpClient.Timeout`), compression (`GZip` assigned), TLS files read/validated by the helper, client duties (no redirects, response size), value-length limit (skip unless a public override exists), batch-size clamp. **Release blocker (added 2026-11-05, C3 review dev M2):** since C3 an `http/protobuf` endpoint that answers `3xx` drops traces, metrics and logs silently when the app registers no `IHttpClientFactory` (0.2.x followed redirects); C8 must refuse redirects loudly — a helper diagnostic naming the signal and the status, never silent (AGENTS.md principle 8) — with a test per signal, before the C19 rc | L | C7b | R2, R8, G10, A18 | 52 (C8 group) | ☐ |
+| C9 Signals and exporters (A19): `OTEL_{TRACES,METRICS,LOGS}_EXPORTER` lists incl. `console`/`logging`/`none`, env `otlp` without endpoint warns, disabled-signals precedence, interval grammar + clamp, exemplar filter parsed by the helper (default `trace_based`, always set — .NET defaults to `AlwaysOff`), `OTEL_SDK_DISABLED` short-circuit | M | C7b | R2, R8, A19 | 36 (C9 group) | ☐ |
+| C10 Sampler, propagators, debug (D-NET9): ParentBased default, helper-parsed `OTEL_TRACES_SAMPLER`, ratio alias, `OTEL_PROPAGATORS` per token (also under `OTEL_SDK_DISABLED`), debug attribute on `ParentSpanId == default` or `HasRemoteParent` only (N2; unit test with an explicit-context child), `StartRootActivity` restore (N3) | M | C5 | R6, R9, A20, ADR-002, ADR-006 | 32 (C10 group) | ☐ |
+| C11 HTTP/gRPC instrumentation and health (D-NET8): contract health normalization, default list, `HealthPaths`, gRPC server tracing with the app-set key (O7 (b)) + the one-time warning (endpoint metadata `GrpcMethodMetadata` by type name, key read from `IConfiguration`) + health drop + RPC conventions, one CLIENT span per gRPC call, HTTP client health exclusion, keyed DI instrumentation test (N1) incl. what unkeyed injection resolves to, `AdditionalMeters` + `ServiceName.*` (N5); README rows: gRPC span names, gRPC errors counted as HTTP 200 | L | C5 | R7, R10, D5, A22, DN5, DN7 | 19 (C11 group; two RPC-metric cases stay skipped) | ☐ |
+| C12 Prometheus fallback (D-NET11): port grammar, code wins, `+` prefix, cache 0, `OTEL_EXPORTER_PROMETHEUS_*` ignored with one warning each (O10 (a); C3 already makes them ineffective but prints nothing — the warning, through the C5 diagnostics sink, is this task's) — *superseded 2026-11-05 (owner decision, contract task A29): C12 must **honor** `OTEL_EXPORTER_PROMETHEUS_PORT` (> `OTEL_HELPER_METRICS_PORT`, code wins) and `OTEL_EXPORTER_PROMETHEUS_HOST` (bind address, unset = every interface) per the contract design D1 row "Prometheus exporter variables" (D-NET11 note); A29 adds the cases `metrics.port_prometheus_*` and `metrics.listener_prometheus_host_loopback` to this group as `xfail:C12`* — *note 2026-11-05 (A29 fix round, code-review L9): the O9 (a) rule above ("`metrics.listener_*` stay `skip:no-upstream-dotnet-prom-listener`") covers the two A21 method/path cases only; `metrics.listener_prometheus_host_loopback` is `xfail:C12` and C12 must pass it (bind the resolved host)*, `metrics.listener_*` stay `skip:no-upstream-dotnet-prom-listener` (O9 (a)), no-listener via empty prefixes, contract glob for disabled metrics (case-sensitive), exposition checks; residuals as `skip:no-upstream-dotnet-prom-*` | M | C3, C9 | ADR-007, A21, N8 | 22 (C12 group) | ☐ |
+| C13 Logging (D-NET10): OTLP only when active, JSON-line stdout fallback (UTC `Z`, reserved keys, level words), `console` exporter, R4 levels, N9 filters on helper providers only; the Profiling logger category `OtelHelper.Profiling` and its prerequisite-warning text, kept by C2 (added 2026-11-04): rename to `StaffOps.OtelHelper.Profiling` or keep, decided here, and either way a telemetry-part item of the migration guide (C18; `Logging:LogLevel` filters on that category) | M | C9 | D6, R4, A23, DN8 | 3 (C13 group) | ☐ |
+| C14a Sql (O5): core sanitizer rule set for DB spans, SqlClient on 1.20.x (A25 upstream), Npgsql and MySqlConnector sources/meters (package only if needed), tests on `sql-postgres` / `sql-mysql` (SQL Server only if a SqlClient test needs one); README gap row for `db.system` | M | C5 | DN9, A25, R10 | — (no fixture kind) | ☐ |
+| C14b Redis: DI-overload crash fixed (C1 dev B1), O8 (c) HOW-TO line + README gap row for `database/dup`, README gap row (no ERROR status upstream), span-name check, tests on `redis-test` | S | C5 | DN9, A26, R10 | — | ☐ |
+| C14c AWS + URL redaction: A27 sanitizer rules (description cleared, `error.type`, `aws.s3.*` keys and `item_collection_metrics` dropped, SNS phone number) with tests asserting each absence against a local HTTP endpoint; O3 rows per target framework and the disabled-redaction rule | M | C5 | DN9, A27, A28 | — | ☐ |
+| C15 Profiling (N11): start in an `IHostedService`, prerequisites incl. `CORECLR_PROFILER(_PATH)`, warning through the D-NET5 sink | S | C5 | DN9 | — | ☐ |
+| C16 Deprecations sweep (D8): one warning each for `SERVICE_NAME`, `ENVIRONMENT`, `OTEL_HELPER_SAMPLE_RATIO`, `OTEL_HELPER_DISABLED_SIGNALS`, and "no effect" for `OTEL_HELPER_EXTRA_INSTRUMENTATION` | S | C6, C9, C10 | R8, D8, DN3 | 6 (C16 group) | ☐ |
+| C17 e2e and examples: `dotnet-smoke` compose service + rows in `testing/e2e/smoke.sh` (grpc, http/protobuf, path prefix, per-signal endpoint, custom CA, markers `e2e-smoke-span`, `e2e.smoke.runs`, `e2e-smoke-log`), a Prometheus scrape from another container; examples on the new API (gRPC flag per O7); custom-signals example with the Go/Python/Node names; Dockerfiles consume packed `.nupkg`s | L | C6–C16 | acceptance | — | ☐ |
+| C18 Docs (mandatory, after everything is validated): `dotnet/README.md`, `HOW-TO.md` (SDK-owned rows and their `IConfiguration` source, `appsettings.json` change, bound options, keyed DI, `ClearProviders`), `TESTS.md`, `example/EXAMPLES.md`; root README (env table without a .NET column, gaps, D-NET15 rows), `AGENTS.md`, `CONSUMING.md`, MkDocs, `CHANGELOG.md` .NET section + migration guide 0.2 → 0.3 — .NET in two parts (API; telemetry — design "Migration guide inputs" items 1–13); `release` and `parity-case` skills | L | C17 | acceptance, DN4 | — | ☐ |
+| C19 Final validation: whole-package refutation (`observability`, `dev` re-probe) and `code-review`, zero BLOCKING/HIGH; consumer probe (fresh `net8.0` worker and ASP.NET Core app installing `StaffOps.OtelHelper*` from GitHub Packages with `nuget.config` source mapping; exports to a real Collector); `testing/verify.sh --release` green with `PARITY_RELEASE=1` (no `xfail:*`, `skip:phase-c` or `skip:C<n>-…` left); `<Version>0.3.0-rc.1</Version>` in every project; tag `dotnet/v0.3.0-rc.1` published by the existing `publish-dotnet-release` job | M | C18 | acceptance | — (gate) | ☐ |
+| **C0** Retarget to `net10.0` only (ADR-009, N6), **last** (owner order 2026-10-28, confirmed with O1 2026-11-04): every csproj, test and example `net10.0`; CI `dotnet-test` matrix `10.0.x` only, `DOTNET_ROLL_FORWARD` removed, `setup-dotnet` `10.0.x` in `build-lib` / `publish-dotnet*`; compose `dotnet-tests` on `sdk:10.0`; Dockerfiles `sdk:10.0` / `aspnet:10.0`; `Microsoft.Extensions.*` 10.x in tests (NU1605); README "Supported Targets"; before/after metric and span diff of the same app on the .NET 8 runtime (last `net8.0` build) and the .NET 10 runtime (C0 build) — the `System.Runtime` metrics, runtime HttpClient spans and `?*` query follow the runtime, not the TFM — HttpClient filter re-verified on .NET 10, and the migration guide's C0 section for consumers still on .NET 8 (item 14); D-NET8 reversal only as a follow-up spec; release `dotnet/v0.3.0` after the rc | M | C19 | DN12, ADR-009 | — | ☐ |
+
+## C-patch branch plan (reference; recommended option)
+
+**Options considered** (C1b refuter H2):
+
+| Option | Consequence |
+|---|---|
+| (A) **maintenance branch `release/dotnet-0.2` from tag `v0.2.0`** — recommended | the release contains exactly the 0.2.0 .NET source plus the TFM change; the 0.3 branch is untouched (DN1, the `sdk:8.0` commands and D-NET1 stay true); nothing to revert |
+| (B) maintenance branch from `main` (`114a062`) | same .NET code (`main` adds only `.github/FUNDING.yml` and a Go fix since `v0.2.0`), but `main`'s CHANGELOG `[Unreleased]` holds the Go entry, so the 0.2.1 notes would sit next to unrelated text |
+| (C) tag on `feat/v0.3-config-contract`, revert in the same PR | the published 0.2.1 would build from a tree with 0.3 docs/CI; DN1 and the C2/C3 commands false between the two commits; a revert to track |
+
+**Content of `release/dotnet-0.2`** (one PR into the new branch, reviewed like
+any task; the agent prepares the commits only when asked, the owner pushes):
+
+1. `dotnet/OtelHelper*/*.csproj` (five libraries): `<TargetFrameworks>net8.0;net10.0</TargetFrameworks>`, `<Version>0.2.1</Version>`; `<RepositoryUrl>https://github.com/StaffOps/otel-libs</RepositoryUrl>` (the repository's current name); `LICENSE` at the root and `<PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>` (owner decision O11, 2026-11-04; as on the 0.3 branch since `72d82c6`).
+2. `dotnet/OtelHelper.Tests/OtelHelper.Tests.csproj`: `<TargetFrameworks>net8.0;net10.0</TargetFrameworks>`; `Microsoft.Extensions.DependencyInjection` / `.Hosting` 9.0.0 on `net8.0`, 10.0.0 on `net10.0` (conditional `ItemGroup`s); one test asserting the runtime-metric names by runtime — `process.runtime.dotnet.*` when `Environment.Version.Major < 9`, `dotnet.*` otherwise — so a leg that silently ran on another runtime fails (no library change; measured C1c: 16 and 18 names).
+3. `dotnet/example/dotnet-backend/Dockerfile` (the only `ProjectReference` Dockerfile still on `sdk:8.0` at `v0.2.0`; `dotnet-api` and `dotnet-process` already use `sdk:10.0`): build stage `mcr.microsoft.com/dotnet/sdk:10.0` (SDK 8 cannot build the dual-target library; runtime stages unchanged).
+4. `.github/workflows/ci.yml` on the branch, reduced to .NET:
+   - top-level `permissions: contents: read` (the `v0.2.0` workflow grants `contents: write, packages: write` to every job); `packages: write` only on the publish job;
+   - `on:` `push` to `release/dotnet-0.2`, `pull_request` to `release/dotnet-0.2`, `tags: ['dotnet/v*']` (never `v*`: on this tree a `v*` tag would also run the 0.2.0 Python/Go publish jobs);
+   - `dotnet-test`: matrix `tfm: [net8.0, net10.0]`; every leg installs SDK `10.0.x` (the `net8.0` leg also installs `8.0.x`, for the .NET 8 runtime); `dotnet --list-runtimes` step; `dotnet test -f ${{ matrix.tfm }}` with the existing coverlet threshold and `CoverletOutput=./coverage/${{ matrix.tfm }}/`; no `DOTNET_ROLL_FORWARD`;
+   - `publish-dotnet-release` backported from the 0.3 branch (`ci.yml:631-690` today): `if: startsWith(github.ref, 'refs/tags/dotnet/v')`, `needs: [dotnet-test]`, tag/`<Version>` check over the five projects, `setup-dotnet` `10.0.x`, pinned action SHAs and `persist-credentials: false` as there, job `permissions: contents: read, packages: write`, `NUGET_API_KEY` from `GITHUB_TOKEN` via `env`, push to `https://nuget.pkg.github.com/StaffOps/index.json` with `GITHUB_TOKEN`;
+   - Go, Python, e2e, image-build and dev-publish jobs removed from the branch's workflow (they belong to `main` and the 0.3 branch).
+5. `dotnet/README.md`: "Supported Targets" (`net8.0` and `net10.0` assets) and the ".NET 10 Note" rewritten — no roll-forward needed for `net10.0` apps; on the .NET 9+/10 runtime runtime metrics come from `System.Runtime` (`dotnet.*`), HttpClient `url.full` queries are `?*` with userinfo removed, ASP.NET Core 10 meters appear.
+6. `CHANGELOG.md`: a `.NET 0.2.1` section — dual target; the runtime notes of item 5; "Profiling on .NET 10 not validated (the native Pyroscope profiler is not exercised by the tests)"; the `AddOtelHelperRedis()` workaround (pass the multiplexer).
+
+**Forward port to `feat/v0.3-config-contract`** (a separate commit there):
+the CHANGELOG `.NET 0.2.1` section (released history) and the ".NET 10 Note"
+runtime text in `dotnet/README.md` (it applies to the 0.3 rc on .NET 10 too).
+Nothing on the 0.3 branch is reverted: no TFM, CI or code change lands there.
+
+**Checked 2026-11-04** (read-only `gh api`): the tag ruleset `release-tags`
+(active) covers `refs/tags/dotnet/v*` with creation/update/deletion rules and
+a repository-role bypass, so only a bypass actor can push the tag; the
+`dotnet/v*` release job uses **no** GitHub environment (unlike Node's
+`nodejs-release`, which has a branch policy), so no environment or approval
+needs configuring. The `v0.2.0` tag run `29436966578` (2026-07-15) finished
+"Publish .NET release to GitHub NuGet: success" with `GITHUB_TOKEN` (C1c dev;
+logs expired, so push vs `--skip-duplicate` is unknown). Not checked: the
+packages' repository link (`gh` lacks `read:packages`) — owner step 3.
+
+**Owner's steps** (before 2026-11-10):
+1. O11 is decided (license metadata backported); nothing to do.
+2. Create and push the branch: `git branch release/dotnet-0.2 v0.2.0 && git push origin release/dotnet-0.2` (no ruleset covers branches today; optionally add one requiring PRs on `release/*`).
+3. **Before tagging**, confirm that `GITHUB_TOKEN` can push the five packages
+   (they were first published under the repository's earlier name). With a
+   token that has `read:packages`:
+   `for p in OtelHelper OtelHelper.AWS OtelHelper.Redis OtelHelper.Sql OtelHelper.Profiling; do gh api "/orgs/StaffOps/packages/nuget/$p" --jq '.name + " " + (.repository.full_name // "unlinked")'; done`
+   — each line must end with `StaffOps/otel-libs`. Otherwise, on each package's
+   page: Package settings → "Manage Actions access" → add `StaffOps/otel-libs`
+   with the **Write** role. (A 403 at tag time would otherwise surface days
+   before the deadline.)
+4. Merge the C-patch PR into `release/dotnet-0.2` after its CI is green (both `tfm` legs).
+5. Create and push the tag as a bypass actor: `git tag dotnet/v0.2.1 <branch head> && git push origin dotnet/v0.2.1`.
+6. Confirm on GitHub Packages that the five `OtelHelper*` `0.2.1` packages exist with `lib/net8.0` and `lib/net10.0` (needs a token with `read:packages`).
+7. Approve the forward-port commit on `feat/v0.3-config-contract`.
+
+Open owner action (O4, decided 2026-11-04; no deadline, blocks nothing):
+reserve the `StaffOps.` ID prefix on nuget.org. Publishing stays on GitHub
+Packages only.
+
+## Case ownership (reference)
+
+Assignment rule used for the counts in design "Gap inventory" (324 cases,
+`c966d58`); C4 applies it when it rewrites `xfail:phase-c`, and moves a case
+to another task only with a note in that task's row. The 13 `skip:C5-no-api`
+cases (D-NET12) keep their owner below once C5 maps them.
+
+| Task | Rule (first match wins, by case id) | Cases |
+|---|---|---|
+| C6 | prefix `svc.`, `identity.`, `env.`, `resource.`, `resource_attributes.`, `log_level.`, `fork.` | 46 |
+| C16 | prefix `deprecation.` | 6 |
+| C10 | prefix `sampler.`, `debug.`, `propagation.`; `config.code_sample_ratio_*` | 32 |
+| C11 | prefix `http.`, `grpc.`; `metrics.http_server_duration_histogram_name` | 19 |
+| C13 | prefix `logging.` | 3 |
+| C12 | kind `metrics_scrape` or `metrics_listener`; `metrics.port_*`, `metrics.disabled_metrics_*` | 22 |
+| C9 | other `metrics.*`; id containing `exporter_`, `disabled_signals`, `interval`, `sdk_disabled`, `config_file`; `config.code_metric_*` | 36 |
+| C8 | id containing `header`, `compression`, `timeout`, `certificate`, `client_key`, `client_pair`, `attribute_value_length`, `bsp_`, `blrp_`, `batch_export` | 52 |
+| C7a | prefix `endpoint.`, `tls.`, `protocol.`, `redaction.`, other `config.` | 60 |
+| C7b | other `export.` | 48 |
+
+> **Added 2026-11-05 (contract task A29).** New cases, owners by the rule above:
+> C7b — `export.grpc_endpoint_path_ignored_warned`, `export.grpc_per_signal_endpoint_path_ignored_warned`,
+> `export.grpc_code_endpoint_path_ignored_warned`, `export.grpc_endpoint_root_path_not_warned` (a path on a gRPC
+> endpoint warns, name only); C8 — `export.http_error_body_header_values_not_logged`,
+> `export.grpc_error_details_header_values_masked` (no response body, no configured header value in SDK error
+> text); C12 — the `metrics.port_prometheus_*` cases and `metrics.listener_prometheus_host_loopback`. The
+> counts above are those of `c966d58` and are not updated.
+> *A29 fix round (2026-11-05):* C8 — `export.http_error_reason_token_header_values_masked`,
+> `export.grpc_error_token_header_values_masked`, `export.grpc_error_overlapping_header_values_masked`;
+> C7b — `export.grpc_schemeless_endpoint_path_ignored_warned`, `export.grpc_skipped_endpoint_path_not_warned`,
+> `export.http_endpoint_path_not_warned`; C12 — nine more `metrics.port_prometheus_*`. C4's .NET driver also
+> maps the new fixture `code` key `prometheus_metrics_port`.
+
+## Promotion triggers (deferred or conditional work)
+
+| Item | Trigger |
+|---|---|
+| A `0.2.x` patch with the Redis DI-overload fix (C1 dev B1) | a consumer needs `AddOtelHelperRedis()` without passing the multiplexer before 0.3.0 |
+| A `.NET`-only `0.2.x` patch for N1 or N2 | a consumer hits N1 (server spans under the service scope) or N2 (tracestate dropped) in production (ADR-004 "When wrong") |
+| `tools/spec_lint.py` decision-heading regex extended to `(?:[A-Z]+-)?D(?:-[A-Z]+)?\d+` so D-NET (and D-JS) decisions are checked for a Reversal action (repo-tooling; C1b refuter M3 — today checked by hand: every D-NET decision has one, D-NET2 delegates to ADR-013, D-NET15 is reference) | a decision without a reversal action is found in review |
+| `tools/spec_lint.py` rule for `skip:<task>-<reason>` statuses (repo-tooling) | a `skip:C<n>-…` or `skip:B<n>-…` status survives a done task unnoticed; today the language runners and `PARITY_RELEASE` guard them |
+| D-NET8 reversal (sampler wrapper on ASP.NET Core 10 creation tags) | after C0, if a measured case shows the `Filter` losing `http.server.request.duration` |
+| D-NET5 reversal (`ILogger` replay of helper diagnostics) | a consumer needs helper warnings in its log backend |
+| D-NET13 reversal (`OtelHelper` 0.3 compatibility package) | the owner reverses O2 |
+| Contract follow-ups that land in Go + Python first (gRPC endpoint path warning; Go exporter response body; parity string-only matchers in Go/Python; Prometheus exporter variables, O10) | the Deferred rows of `config-contract-v0.3/tasks.md`; .NET follows in the same change once C4 exists |
+
+## r2 changes (C1 findings, 2026-11-04)
+
+Reports: `dev` (B/H/M/L), `observability` (H/M/L, prefixed **o**),
+`spec-refuter` (H/M/L, prefixed **r**). "Merged" = one fix for overlapping
+findings.
+
+| Finding | Change in r2 |
+|---|---|
+| dev B1 | D-NET3 rewritten: eager registration of service-registering calls, deferred values only, directly constructed OTLP exporters (ADR-013), "off" = instrumentation without exporter, Prometheus existence decided at `AddOtelHelper()` (prototype in C5); Redis DI crash in the inventory, requirements Context, promotion triggers and C14b |
+| dev H1, oH9 (merged) | D-NET11: `ConfigureHttpListener` `+` prefix, never `Host = "*"` (aborts), `localhost` default called out; e2e scrape from another container (C17); citations moved to `coreunstable-1.20.1-beta.1` |
+| dev H2 | inventory row with the measured method/path behavior; D-NET11 fallback removed (no collection API); owner decision O9; D-NET15 row |
+| dev H3, oM8 (merged) | owner decision O7 (reflection / app sets the key / skip); inventory row; D-NET15 row; driver and examples follow O7 |
+| dev H4, oH7, rH3 (merged) | ADR-013 "neutralizing" table: `Headers` always empty, headers on the helper `HttpClient` (dedup, `-bin` base64), wire check for gRPC in C8 with the `%25` re-encoding fallback and a comma skip; inventory: malformed/duplicate header items fail provider build today; `skip:dotnet-sdk-logs-env-values` dropped (no echo) |
+| dev H5, oH8, rH3 (merged) | ADR-013: TLS only through the helper `HttpClientFactory` (`MtlsOptions` internal), client duties listed (no redirects, response size, timeout), named-client migration row; gRPC TLS wire check and skip candidate (D-NET15) |
+| dev H6 | inventory row (legacy-only default, env-only switch); owner decision O8 |
+| dev M1 | "throws inside `AddOtelHelper()`" in requirements Context, inventory rows, D-NET6 |
+| dev M2 | A16 row: env also overrides `telemetry.sdk.*` today |
+| dev M3, oH1, rH2 (merged) | D-NET7 rewritten: `Build()` before `Clear()` keeps earlier app/detector attributes, explicit `unknown_service:<process>`, instance id via `AddAttributes`, schema URL, warning + "call `AddOtelHelper()` first" when `Build()` throws |
+| dev M4 | D-NET5: DI sink with injectable writer, static fallback, per-sink "once", no `Console.SetError` in tests; `EventSource` secondary channel considered, not adopted (one-channel rule), recorded as an option |
+| dev M5 | DN4 + D-NET4: bound options count as code (test + migration row); CS0618 suppression in C2 |
+| dev M6 | inventory row (exporter-side limit, 0 → empty); D-NET15 skip candidate decided in C8 |
+| dev M7 | measured `/metrics` diff in the Prometheus inventory row; `metrics.scrape_gauge_unit_one_ratio` skip candidate |
+| dev L1 | ADR-013: `Compression = GZip` assigned explicitly |
+| dev L2 | package table: `Microsoft.Extensions.*` 8.0.0 groups, AWSSDK range unchanged |
+| dev L3, rL5 (merged) | D-NET12 cost: 261–336 ms per process measured; the unsourced Python figure removed |
+| dev L4 | none needed (agreement recorded in D-NET13) |
+| oH2 | DN9: Redis not marked ERROR upstream → permanent gap row (D-NET15), A26 reply-code rule unmeetable, recorded |
+| oH3 | C9 + inventory: exemplar filter parsed by the helper, default `trace_based`, always set (ADR-013 owned row) |
+| oH4, rM4 (merged with O3) | D-NET14 target-framework rows (server `Redacted`; client `Redacted` on net8, `?*` on net10), security argument, contract names redacted when upstream redaction is disabled (DN9) |
+| oH5 | DN12 + C0: telemetry diff for the framework change; migration guide C0 section |
+| oH6 | DN4 + C18: two-part migration guide; design "Migration guide inputs" (checklist items 1–14) |
+| oH10 | DN9 + D-NET14: `aws.s3.key`/`copy_source`/`delete` dropped, `error.type` set by the helper, tests assert absences |
+| oM1 | package table rewritten (AWS `V1_28_0`, GrpcNetClient breaking 1.16.0/1.20.0, SqlClient 1.20.0 status fix — A25 met upstream, Prometheus 1.10.0 meter tags, contrib tags cited) |
+| oM2 | inventory gRPC row (RPC semconv 1.42, A22 upstream); README rows in C11 and D-NET15 |
+| oM3 | DN7 + D-NET8: one CLIENT span per gRPC call; C11 |
+| oM4 | DN9 + D-NET14: one core sanitizer registered before every export processor |
+| oM5 | DN8 + D-NET10: level words |
+| oM6, rH6 (merged) | owner decision O10; inventory row; contract Deferred row added to `config-contract-v0.3/tasks.md` (2026-11-04); `ScrapeResponseCacheDurationMilliseconds = 0` in D-NET11 |
+| oM7 | Prometheus inventory row + migration item 12 |
+| oM9 | C0 row: HttpClient filter re-verified on net10 |
+| oL1, rM6 (merged) | DN6 + D-NET9: `ParentSpanId == default` or `HasRemoteParent`; C10 unit test |
+| oL2 | Filter citation replaced by `HttpInListener.cs:257-261` + README lines 298-301 |
+| oL3 | `skip:C<n>-<reason>` form everywhere (`http.health_paths_override` → `skip:C5-no-api`) |
+| oL4 | Sql `RecordException = true` recorded as a deliberate parity choice with Go (inventory, D-NET14) |
+| oL5 | Runtime row filled; C0 change recorded |
+| oL6 | positive results recorded (Redis dup additive; SqlClient stable-only already in 0.2.x) |
+| rH1 | D-NET12 status scheme: 12 `skip:C5-no-api` cases listed, C5 maps them; runner checks skip names; lint gap recorded (promotion trigger), requirements "Cross-language" amended |
+| rH4 | DN3 + D-NET5: SDK `EventSource` forwarding at Warning, origin `sdk`, opt-out `ForwardSdkDiagnostics` |
+| rH5 | DN5 + API table: keyed DI replacement, migration row, C11 test of unkeyed injection |
+| rM1 | D-NET0: measured the actual `0.2.1` shape (1.15.3) on `sdk:10.0` |
+| rM2 | DN1 scoped to libraries/tests; example `dotnet-api` on `net10.0` recorded |
+| rM3 | opt-in inventory rows for Redis span names, Redis `db.operation.name`, AWS RPC keys/service values, DB error text in exception events (with C14x verification marks) |
+| rM5 | owner-decision table: options with consequences for every open decision; decided ones moved to "Decided" |
+| rM7 | DN2 + ADR-013: SDK-owned rows and their `IConfiguration` source; helper reads `OTEL_SDK_DISABLED` from the same source |
+| rM8 | ADR-013 written now (Proposed; Accepted at C1b); ADR-001 amendment note; specs/README index row |
+| rM9 | DN3 + D-NET5: line-forging escapes + unit test (C5) |
+| rL1 | `OtelHelper.csproj:4` (TFM) — D-NET16 no longer cites the line |
+| rL2 | DN3 + inventory: validator echoes the raw code endpoint; C5 redacts it |
+| rL3 | "no production caller" wording (DN3, API table) |
+| rL4 | C7a = 59 resolve + 1 export; `tls.certificate_with_plaintext_warns` counted in C8 |
+| rL6 | C3: core 1.20.x breaking items listed |
+| rL7 | D-NET12 repo-root fixture lookup; how C2/C3 run in Docker (header of this file) |
+
+## r3 changes (C1b findings, 2026-11-04)
+
+Reports: `dev` (M/L), `observability` (N-H/N-M/LOW, prefixed **o**),
+`spec-refuter` (H/M/L, prefixed **r**). Owner decisions of 2026-11-04 (O7 (b),
+O8 (c), O9 (a), O10 (a)) recorded in design "Owner decisions".
+
+| Finding | Change in r3 |
+|---|---|
+| dev M1 | ADR-013 + D-NET2: `%25` fallback and the gRPC comma skip removed (measured: the helper client reaches gRPC, comma kept); client on `SocketsHttpHandler` or a handler forwarding `Send` and `SendAsync` (HTTP/protobuf uses `Send`); test per protocol and gRPC TLS wire test in C8 |
+| dev M2 | DN5 + migration guide: the silent web-host resolution of unkeyed `ActivitySource` is the first API item; C11 asserts it; a "never resolved" warning considered and not adopted (no reliable moment) |
+| dev M3 | D-NET7: when `Build()` throws, no `Clear()`; helper attributes appended last, app detectors kept, warning on reduced A16 strictness |
+| dev M4 | D-NET3/D-NET11/DN4: Prometheus reader always registered; "no listener" = prefixes cleared (measured); eager decision and its warning removed |
+| dev M5, r H2 (merged) | C-patch on `release/dotnet-0.2` from `v0.2.0` with its own CI (SDK 10 on every leg, per-TFM `-f`, no roll-forward, `--list-runtimes`, per-TFM coverage); branch plan with options, content, forward port, owner steps |
+| dev M6 | DN0 + plan item 6: release-note line "Profiling on .NET 10 not validated" (a smoke run needs the native profiler; not planned) |
+| dev M7, o O7 conditions (merged) | D-NET8: detection by `GrpcMethodMetadata` type name in `EndpointDataSource` at `ApplicationStarted`, key read from `IConfiguration`; README, migration item 5 and D-NET12 conditions |
+| dev L1, L2, r L2 (merged) | D-NET0 and the ADR-009 amendment: warnings classified (26 CS1591 × 2), `net8.0` tests 179/179 on 8.0.33, packages and dependency groups as measured |
+| dev L3 | ADR-013: one long-lived client per exporter instance |
+| dev L4 | D-NET11 + ADR-013 O10 row: `HOST` has no effect once the prefix is replaced; warning text |
+| o N-H1 | DN0 "no behavior change on the same runtime"; release notes and README ".NET 10 Note" list the three runtime changes; `net10.0` leg asserts a `System.Runtime` metric name |
+| o N-M1, o LOW-4 (merged) | runtime, not TFM: package table, migration item 14, D-NET14 O3 rows, D-NET15 row, DN12, D-NET16 and the C0 row (diff compares the .NET 8 and .NET 10 runtimes), D-NET8 reversal |
+| o N-M2 | DN8 + D-NET10: four stdout level words (`Critical` → `ERROR`), Python/Node lines cited; OTLP keeps the SDK severity |
+| o LOW-1 | D-NET7: precedence order stated (app `ConfigureResource` = code, beats env; helper options beat it); C6 tests it |
+| o LOW-2 | D-NET11 "When wrong": IPv6-only clusters; reversal adds an IPv6 prefix |
+| o LOW-3 | D-NET11: concurrent scrapers each trigger a collection with cache 0 |
+| o O8 view | O8 (c) recorded with the split (observability (b), dev (c)); (b) is the reversal (D-NET14) |
+| r H1 | `long? ExportIntervalMs` (API table, D-NET4); `config.code_interval_above_max_fails` is the 13th `skip:C5-no-api` case (DN11, D-NET12, C5) |
+| r M1 | ADR-013 Decision and the ADR-001 note: "every D1 row the Go helper owns except `OTEL_SDK_DISABLED` and attribute value-length limits, plus the exemplar default" |
+| r M2 | ADR-013: exemplar filter recorded as an exception to ADR-001's fixture rule, unit test named, parity note in C9 |
+| r M3 | promotion trigger for the spec_lint decision regex; D-NET16 gets Justification and Trade-offs; reversal actions checked by hand |
+| r M4 | C5 `IConfiguration` neutralization test; ADR-013 quotes the measured outputs with the SDK version; the unrequired warning dropped from Risks |
+| r M5 | resolved by O10 (a): ADR-013 row states the decided behavior |
+| r L1 | ADR-013 status: "written in r2, reviewed in C1b" |
+| r L3 | DN1 `Microsoft.Extensions.*` bullet scoped to the 0.3 line |
+| r L4 | version `0.2.1` (no .NET 0.2.1 exists; versions diverge per language, ADR-004) — all `0.2.2` mentions changed, ADR-009 amendment too |
+| r L5 | plan item 3: example Dockerfiles with a `ProjectReference` build on `sdk:10.0` |
+| r L6 | DN12: "after C19" |
+| r L7 | specs/README ADR-009 index row reworded (last step of Phase C; 0.2.x dual-targets) |
+| r L8 | C8: `MaxResponseContentBufferSize` set on the helper client and asserted (`OtlpExporterOptions.cs:236-239`) |
+| new | open decision O11 (license metadata in 0.2.1: the `v0.2.0` tree has no `LICENSE`) |
+
+## C1c changes (confirmation of r3, 2026-11-04)
+
+| Finding | Change |
+|---|---|
+| refuter L1 | `config-contract-v0.3/tasks.md` Deferred row: "decided O10 (a), 2026-11-04" (the row was added in this change, never committed) |
+| refuter L2, dev L3 (merged) | DN0 + D-NET0: evidence named (no `#if`/`Environment.Version`/`RuntimeInformation` in `dotnet/`); the runtime-metric test asserts both branches by `Environment.Version.Major` |
+| refuter L3, dev L1 (merged) | plan item 3: only `dotnet-backend/Dockerfile` moves to `sdk:10.0`; DN2: non-D1 upstream switches (the gRPC flag) are read where upstream reads them |
+| dev MEDIUM-1 | owner step 3: pre-tag package-link check (`gh api /orgs/StaffOps/packages/nuget/<p>` with `read:packages`) or "Manage Actions access" → Write |
+| dev L2 | plan item 4: top-level `contents: read`, `packages: write` on the publish job only (DN0) |
+| dev L4 | test count 180 with the new test (C-patch row, D-NET0) |
+| dev L5 / O11 | decided 2026-11-04: `LICENSE` + `PackageLicenseExpression` Apache-2.0 backported (DN0, plan item 1) |
+| O4 | decided 2026-11-04: reserve the prefix — open owner action, no deadline, blocks nothing; GitHub Packages only (D-NET13, design "Owner decisions") |
+| status | C1 and C1b ✅ 2026-11-04; ADR-013 Accepted 2026-11-04; files "Reviewed r3" |
