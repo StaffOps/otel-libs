@@ -1,5 +1,7 @@
 # .NET OTel helper — tasks
 
+> **Owner order 2026-11-05.** Phase C pauses after C3 (C1–C3 and C-patch done). It resumes with C4 **after the soak** (`specs/soak-simulation/`); the remaining contract backlog, the Node.js follow-ups and the soak run first. C8's redirect release blocker stays.
+
 **Status**: Reviewed r3 (2026-11-04; C1 closed after the C1c confirmations). Spec: [requirements](requirements.md) ·
 [design](design.md). Each task: implement + tests in Docker (C2/C3 run the
 existing suite with `docker run --rm -v "$PWD/dotnet:/src:ro"
