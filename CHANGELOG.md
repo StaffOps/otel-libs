@@ -9,7 +9,7 @@ currently aligned at the same version.
 
 ## [Unreleased]
 
-## [.NET 0.2.1] - Unreleased
+## [.NET 0.2.1] - 2026-11-04
 
 .NET-only patch (tag `dotnet/v0.2.1`, branch `release/dotnet-0.2` cut from
 `v0.2.0`) for the .NET 8 end of support on 2026-11-10. Go and Python are not
@@ -35,11 +35,12 @@ under roll-forward:
 
 - Runtime metrics come from the built-in `System.Runtime` meter: `dotnet.*`
   instead of `process.runtime.dotnet.*`. Update dashboards and alerts.
-- HttpClient spans: the `url.full` query is redacted to `?*` and URL userinfo
-  is removed.
+- HttpClient `url.full`: query redaction changes from per-value
+  `?key=Redacted` to `?*` (the runtime's own redaction); userinfo was already
+  removed on .NET 8.
 - ASP.NET Core 10 adds the `Microsoft.AspNetCore.Authorization`,
-  `.Authentication`, `.Identity` and `.MemoryPool` meters, which the ASP.NET
-  Core instrumentation subscribes to.
+  `.Authentication`, `.Identity` and `.MemoryPool` meters and the Blazor
+  Components meters, which the ASP.NET Core instrumentation subscribes to.
 
 ### Known issues
 

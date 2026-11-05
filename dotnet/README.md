@@ -207,7 +207,7 @@ AWS, Redis, SQL, and Profiling instrumentations are **no longer bundled in core*
 | Package | Registration | What it instruments |
 |---------|--------------|---------------------|
 | `OtelHelper.AWS` | `services.AddOtelHelperAws()` | AWS SDK calls (S3, SQS, DynamoDB, etc.) |
-| `OtelHelper.Redis` | `services.AddOtelHelperRedis()` | StackExchange.Redis commands |
+| `OtelHelper.Redis` | `services.AddOtelHelperRedis(multiplexer)` | StackExchange.Redis commands |
 | `OtelHelper.Sql` | `services.AddOtelHelperSql()` | SqlClient queries |
 | `OtelHelper.Profiling` | `services.AddOtelHelperProfiling()` | Pyroscope continuous profiling |
 
@@ -218,15 +218,14 @@ services.AddOtelHelper();
 
 // Add only the instrumentations you need:
 services.AddOtelHelperAws();
-services.AddOtelHelperRedis();
+services.AddOtelHelperRedis(connectionMultiplexer); // pass the IConnectionMultiplexer
 services.AddOtelHelperSql();
 ```
 
-Redis with explicit connection:
-
-```csharp
-services.AddOtelHelperRedis(connectionMultiplexer);
-```
+> **Known issue in 0.2.x — see [CHANGELOG](../CHANGELOG.md):** the
+> no-argument overload `services.AddOtelHelperRedis()` (resolves
+> `IConnectionMultiplexer` from DI) throws `NotSupportedException` when the
+> tracer provider is built. Pass the multiplexer explicitly as above.
 
 ### Profiling (Pyroscope)
 
@@ -303,11 +302,12 @@ the upstream instrumentation, not from the helper, and were already true for
   named `dotnet.*` (for example `dotnet.gc.collections`) instead of
   `process.runtime.dotnet.*`. Update dashboards and alerts that query the old
   names.
-- **HttpClient `url.full`**: the query string is redacted to `?*` and URL
-  userinfo is removed.
+- **HttpClient `url.full`**: query redaction changes from per-value
+  `?key=Redacted` to `?*` (the runtime's own redaction); userinfo was already
+  removed on .NET 8.
 - **ASP.NET Core 10** adds meters that the ASP.NET Core instrumentation
   subscribes to: `Microsoft.AspNetCore.Authorization`, `.Authentication`,
-  `.Identity` and `.MemoryPool`.
+  `.Identity` and `.MemoryPool`, and the Blazor Components meters.
 
 Runtime image: use `aspnet` (not `runtime`) — the lib depends on
 `Microsoft.AspNetCore.App` for ASP.NET Core instrumentation.

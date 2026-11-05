@@ -1,3 +1,5 @@
+using System.Reflection;
+using System.Runtime.Versioning;
 using OpenTelemetry;
 using OpenTelemetry.Metrics;
 using OtelHelper.Metrics;
@@ -10,18 +12,37 @@ namespace OtelHelper.Tests;
 /// on .NET 8 OpenTelemetry.Instrumentation.Runtime emits
 /// <c>process.runtime.dotnet.*</c>; on .NET 9+ it forwards to the built-in
 /// <c>System.Runtime</c> meter, which emits <c>dotnet.*</c> (DN0, D-NET0).
-/// Asserting both branches makes a test leg that silently ran on another
-/// runtime fail.
+/// The runtime-major vs TFM-major assertion is what catches a test leg that
+/// rolled forward to another runtime; the name assertions then check the
+/// names that runtime produces.
 /// </summary>
 [Collection("EnvVarTests")]
-public class RuntimeMetricNamesTests
+public class RuntimeMetricNamesTests : IDisposable
 {
     private const string LegacyPrefix = "process.runtime.dotnet.";
     private const string RuntimeMeterPrefix = "dotnet.";
 
+    // A set OTEL_HELPER_DISABLED_METRICS could drop the instruments under test.
+    private readonly string? _savedDisabledMetrics =
+        Environment.GetEnvironmentVariable(TelemetryOptions.DisabledMetricsEnvVar);
+
+    public RuntimeMetricNamesTests() =>
+        Environment.SetEnvironmentVariable(TelemetryOptions.DisabledMetricsEnvVar, null);
+
+    public void Dispose() =>
+        Environment.SetEnvironmentVariable(TelemetryOptions.DisabledMetricsEnvVar, _savedDisabledMetrics);
+
     [Fact]
     public void RuntimeMetricNames_FollowTheRuntimeVersion()
     {
+        // The leg must run on the runtime of the TFM it was compiled for; a
+        // net8.0 assembly rolled forward to runtime 10 fails here.
+        var attribute = typeof(RuntimeMetricNamesTests).Assembly
+            .GetCustomAttribute<TargetFrameworkAttribute>();
+        Assert.NotNull(attribute);
+        var tfmMajor = new FrameworkName(attribute!.FrameworkName).Version.Major;
+        Assert.Equal(tfmMajor, Environment.Version.Major);
+
         var opts = new TelemetryOptions
         {
             ServiceName = "runtime-metrics-svc",

@@ -384,9 +384,12 @@ OTLP wire protocol selection (grpc vs http/protobuf) — tracing and metrics. Cr
 
 ## RuntimeMetricNamesTests
 
-Runtime metric names follow the runtime, not the target framework, so a test
-leg that silently ran on another runtime fails.
+Runtime metric names follow the runtime, not the target framework. The test
+first asserts that the runtime major equals the TFM major of the compiled test
+assembly (`TargetFrameworkAttribute`), which is what fails a leg that rolled
+forward to another runtime; the name assertions then check what that runtime
+emits.
 
 | Test | Description |
 |-------|-----------|
-| `RuntimeMetricNames_FollowTheRuntimeVersion` | `Environment.Version.Major < 9` → `process.runtime.dotnet.*` names and no `dotnet.*`; otherwise → `dotnet.*` (built-in `System.Runtime` meter) and no `process.runtime.dotnet.*` |
+| `RuntimeMetricNames_FollowTheRuntimeVersion` | runtime major = TFM major; then `Environment.Version.Major < 9` → `process.runtime.dotnet.*` names and no `dotnet.*`; otherwise → `dotnet.*` (built-in `System.Runtime` meter) and no `process.runtime.dotnet.*` |
