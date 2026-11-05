@@ -114,6 +114,10 @@ jobs:
         working-directory: dotnet
     env:
       DOTNET_ROLL_FORWARD: Major
+      # vstest kills the test host ~100 ms after the last test, often before
+      # coverlet.msbuild writes its hit files (total drops, gate fails); give
+      # the host 10 s to exit (dotnet/TESTS.md).
+      VSTEST_TESTHOST_SHUTDOWN_TIMEOUT: '10000'
     steps:
       - uses: actions/checkout@v4
         with:
@@ -121,9 +125,9 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: ${{ matrix.dotnet }}
-      - run: dotnet restore OtelHelper.Tests/OtelHelper.Tests.csproj
+      - run: dotnet restore StaffOps.OtelHelper.Tests/StaffOps.OtelHelper.Tests.csproj
       - run: >
-          dotnet test OtelHelper.Tests
+          dotnet test StaffOps.OtelHelper.Tests
           --configuration Release
           --no-restore
           /p:CollectCoverage=true
@@ -137,7 +141,7 @@ jobs:
         if: always()
         with:
           name: dotnet-coverage-${{ matrix.dotnet }}
-          path: dotnet/OtelHelper.Tests/coverage/
+          path: dotnet/StaffOps.OtelHelper.Tests/coverage/
 
   python-test:
     name: Python ${{ matrix.python }} / ${{ matrix.deps }} deps (test + parity + coverage)
@@ -419,9 +423,16 @@ jobs:
           python-version: '3.11'
       - name: Pack all .NET packages (core + subpackages)
         run: |
-          for proj in OtelHelper OtelHelper.AWS OtelHelper.Redis OtelHelper.Sql OtelHelper.Profiling; do
-            dotnet pack "dotnet/$proj/$proj.csproj" -c Release -o packages
+          for proj in StaffOps.OtelHelper StaffOps.OtelHelper.AWS StaffOps.OtelHelper.Redis StaffOps.OtelHelper.Sql StaffOps.OtelHelper.Profiling; do
+            dotnet pack "dotnet/$proj/$proj.csproj" -c Release -o packages /p:ContinuousIntegrationBuild=true
           done
+          # Exactly the five StaffOps.* packages, no bare OtelHelper* ID (DN10, ADR-011).
+          shopt -s nullglob
+          all=(packages/*.nupkg) ours=(packages/StaffOps.OtelHelper*.nupkg)
+          printf '%s\n' "${all[@]}"
+          if [ "${#all[@]}" -ne 5 ] || [ "${#ours[@]}" -ne 5 ]; then
+            echo "::error::expected exactly the five StaffOps.OtelHelper* packages"; exit 1
+          fi
       - run: pip install build -q && python -m build --outdir packages python
       - name: Python wheel ships py.typed (P17) and the otel_helper compat module (ADR-011)
         run: |
@@ -612,13 +623,21 @@ jobs:
       - name: Pack with dev version
         run: |
           SHORT_SHA=${GITHUB_SHA::7}
-          for proj in OtelHelper OtelHelper.AWS OtelHelper.Redis OtelHelper.Sql OtelHelper.Profiling; do
+          for proj in StaffOps.OtelHelper StaffOps.OtelHelper.AWS StaffOps.OtelHelper.Redis StaffOps.OtelHelper.Sql StaffOps.OtelHelper.Profiling; do
             dotnet pack "$proj/$proj.csproj" \
               -c Release \
               -o nupkgs \
               /p:Version="0.1.0-dev-${SHORT_SHA}" \
-              /p:RepositoryUrl="https://github.com/StaffOps/otel-libs"
+              /p:RepositoryUrl="https://github.com/StaffOps/otel-libs" \
+              /p:ContinuousIntegrationBuild=true
           done
+          # Exactly the five StaffOps.* packages, no bare OtelHelper* ID (DN10, ADR-011).
+          shopt -s nullglob
+          all=(nupkgs/*.nupkg) ours=(nupkgs/StaffOps.OtelHelper*.nupkg)
+          printf '%s\n' "${all[@]}"
+          if [ "${#all[@]}" -ne 5 ] || [ "${#ours[@]}" -ne 5 ]; then
+            echo "::error::expected exactly the five StaffOps.OtelHelper* packages"; exit 1
+          fi
       - name: Push to GitHub Packages
         env:
           NUGET_API_KEY: ${{ secrets.GITHUB_TOKEN }}
@@ -659,7 +678,7 @@ jobs:
           VERSION: ${{ steps.version.outputs.VERSION }}
         run: |
           status=0
-          for proj in OtelHelper OtelHelper.AWS OtelHelper.Redis OtelHelper.Sql OtelHelper.Profiling; do
+          for proj in StaffOps.OtelHelper StaffOps.OtelHelper.AWS StaffOps.OtelHelper.Redis StaffOps.OtelHelper.Sql StaffOps.OtelHelper.Profiling; do
             declared=$(sed -n 's:.*<Version>\(.*\)</Version>.*:\1:p' "$proj/$proj.csproj" | head -n 1)
             if [ "$declared" != "$VERSION" ]; then
               echo "::error::$proj/$proj.csproj <Version> is '$declared', the tag says '$VERSION'"; status=1
@@ -670,13 +689,28 @@ jobs:
         env:
           VERSION: ${{ steps.version.outputs.VERSION }}
         run: |
-          for proj in OtelHelper OtelHelper.AWS OtelHelper.Redis OtelHelper.Sql OtelHelper.Profiling; do
+          for proj in StaffOps.OtelHelper StaffOps.OtelHelper.AWS StaffOps.OtelHelper.Redis StaffOps.OtelHelper.Sql StaffOps.OtelHelper.Profiling; do
             dotnet pack "$proj/$proj.csproj" \
               -c Release \
               -o nupkgs \
               /p:Version="$VERSION" \
-              /p:RepositoryUrl="https://github.com/StaffOps/otel-libs"
+              /p:RepositoryUrl="https://github.com/StaffOps/otel-libs" \
+              /p:ContinuousIntegrationBuild=true
           done
+      # Exactly the five StaffOps.* packages at the tag version, nothing else (DN10, ADR-011).
+      - name: Five StaffOps.OtelHelper* packages at the tag version
+        env:
+          VERSION: ${{ steps.version.outputs.VERSION }}
+        run: |
+          shopt -s nullglob
+          all=(nupkgs/*.nupkg)
+          printf '%s\n' "${all[@]}"
+          status=0
+          for proj in StaffOps.OtelHelper StaffOps.OtelHelper.AWS StaffOps.OtelHelper.Redis StaffOps.OtelHelper.Sql StaffOps.OtelHelper.Profiling; do
+            [ -f "nupkgs/$proj.$VERSION.nupkg" ] || { echo "::error::missing nupkgs/$proj.$VERSION.nupkg"; status=1; }
+          done
+          [ "${#all[@]}" -eq 5 ] || { echo "::error::expected 5 packages, found ${#all[@]}"; status=1; }
+          exit $status
       - name: Push to GitHub Packages
         env:
           NUGET_API_KEY: ${{ secrets.GITHUB_TOKEN }}

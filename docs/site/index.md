@@ -17,7 +17,7 @@ engineers who run the Collector it exports to.
 |----------|-----------|---------|---------|----------|
 | Go | [`go/`](go/README.md) | `github.com/staffops/otel-libs/go` + `ext/*` modules | `0.3.0` (unreleased, this branch); latest release `go/v0.2.1` | 0.3 |
 | Python | [`python/`](python/README.md) | `staffops-otel-helper` (extras `aws`, `redis`, `sql`) | `0.3.0` (unreleased, this branch); latest release `0.2.0` | 0.3 |
-| .NET | [`dotnet/`](dotnet/README.md) | `OtelHelper` + `.AWS` / `.Redis` / `.Sql` / `.Profiling` (NuGet) | `0.2.0` | 0.2.x — the 0.3 contract lands in Phase C |
+| .NET | [`dotnet/`](dotnet/README.md) | `StaffOps.OtelHelper` + `.AWS` / `.Redis` / `.Sql` / `.Profiling` (NuGet; on this branch, not published yet — released `0.2.x` is `OtelHelper*`, ADR-011) | latest release `0.2.1` (`OtelHelper*`, tag `dotnet/v0.2.1`) | 0.2.x — the 0.3 contract lands in Phase C |
 | Node.js | [`nodejs/`](nodejs/README.md) | `@staffops/otel-helper` + `-sql` / `-redis` / `-aws` / `-pino` / `-winston` (npm) | `0.3.0` (unreleased); release candidate `0.3.0-rc.1` (tag `nodejs/v0.3.0-rc.1`, npm dist-tag `next`; install the exact version) | 0.3 |
 
 The rollout order is Go + Python, then Node.js, then .NET
@@ -246,7 +246,7 @@ lightweight. Node.js also ships its pino and winston log destinations as
 | Go | `ext/otelaws` | `ext/otelredis` | `ext/otelsql` |
 | Python | `staffops-otel-helper[aws]` | `staffops-otel-helper[redis]` | `staffops-otel-helper[sql]` |
 | Node.js | `@staffops/otel-helper-aws` | `@staffops/otel-helper-redis` | `@staffops/otel-helper-sql` |
-| .NET | `OtelHelper.AWS` | `OtelHelper.Redis` | `OtelHelper.Sql` |
+| .NET | `StaffOps.OtelHelper.AWS` | `StaffOps.OtelHelper.Redis` | `StaffOps.OtelHelper.Sql` |
 
 ## Cross-language parity
 

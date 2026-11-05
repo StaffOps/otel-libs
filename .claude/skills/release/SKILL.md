@@ -13,7 +13,7 @@ Decision record: `specs/config-contract-v0.3/design.md` D10 (+ "A11 ruling").
 | Python | `vX.Y.Z[-rc.N]` | CI `publish-python-release` → GitHub Release (wheel + sdist) |
 | Go core | `go/vX.Y.Z[-rc.N]` | nothing (module proxy reads the tag) |
 | Go ext | `go/ext/{otelaws,otelredis,otelsql}/vX.Y.Z[-rc.N]` | same |
-| .NET | `dotnet/vX.Y.Z[-rc.N]` | CI `publish-dotnet-release` → GitHub NuGet |
+| .NET | `dotnet/vX.Y.Z[-rc.N]` | CI `publish-dotnet-release` → GitHub NuGet: the five `StaffOps.OtelHelper*` packages (from `0.3.0-rc.1`, task C2; `0.2.x` stays published as `OtelHelper*`, no compatibility package, O2) |
 | Node.js | `nodejs/vX.Y.Z[-rc.N]` | CI `publish-nodejs-npmjs` → npmjs (trusted publishing, provenance), then `publish-nodejs-ghp` → GitHub Packages; the six packages at one version. **The first release needs the one-time bootstrap below** |
 
 A `v*` tag never publishes .NET or Node.js (`*` does not match `/`). Every
@@ -26,8 +26,13 @@ normalization (`v0.3.0-rc.3` = `0.3.0rc3`), .NET with every project
 1. All tasks for the release done and validated (change-loop); CHANGELOG
    section states the version and date; migration guide current.
 2. Versions: `python/pyproject.toml` in **PEP 440** (`0.3.0rc2`, not
-   `0.3.0-rc.2`); Go needs no file change; .NET: every
-   `dotnet/*/*.csproj` `<Version>` equals the tag version.
+   `0.3.0-rc.2`); Go needs no file change; .NET: the `<Version>` of the five packed
+   projects (`dotnet/StaffOps.OtelHelper*/*.csproj` except `.Tests`; the CI
+   loops list them by name) equals the tag version; the release job packs them
+   with `/p:ContinuousIntegrationBuild=true` (SourceLink, normalized paths —
+   `dotnet/Directory.Build.props`). Before the tag, pack locally in Docker with
+   `.git` present and check five `StaffOps.OtelHelper*.nupkg`, none named
+   `OtelHelper*` (CI `build-lib` and `publish-dotnet` assert it; `publish-dotnet-release` also checks each file name carries the tag version before the push).
    Node.js (SemVer, not PEP 440), in Docker from the repository root:
    ```bash
    docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp -v "$PWD/nodejs:/w" -w /w node:24-slim node ci/version.mjs set 0.3.0-rc.1

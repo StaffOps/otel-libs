@@ -1,9 +1,10 @@
 FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
 WORKDIR /src
-COPY OtelHelper/OtelHelper.csproj OtelHelper/
+COPY Directory.Build.props Directory.Build.targets ./
+COPY StaffOps.OtelHelper/StaffOps.OtelHelper.csproj StaffOps.OtelHelper/
 COPY example/dotnet-process/dotnet-process.csproj example/dotnet-process/
 RUN dotnet restore example/dotnet-process/dotnet-process.csproj
-COPY OtelHelper/ OtelHelper/
+COPY StaffOps.OtelHelper/ StaffOps.OtelHelper/
 COPY example/dotnet-process/ example/dotnet-process/
 RUN dotnet publish example/dotnet-process/dotnet-process.csproj -c Release -o /app
 

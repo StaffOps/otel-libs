@@ -1,4 +1,4 @@
-using OtelHelper;
+using StaffOps.OtelHelper;
 
 var builder = Host.CreateApplicationBuilder(args);
 

@@ -1,4 +1,4 @@
-# OtelHelper — OpenTelemetry Helper for .NET
+# StaffOps.OtelHelper — OpenTelemetry Helper for .NET
 
 Observability library for .NET 8+ applications. Abstracts OpenTelemetry SDK configuration to provide standardized instrumentation.
 
@@ -10,6 +10,14 @@ Observability library for .NET 8+ applications. Abstracts OpenTelemetry SDK conf
 > [`specs/config-contract-v0.3/`](https://github.com/StaffOps/otel-libs/blob/main/specs/config-contract-v0.3/tasks.md)
 > (ADR-004). Until then the differences below are expected and tracked as
 > `xfail` cases in the shared parity fixture.
+>
+> **Names.** On this branch the packages, assemblies and namespace are
+> `StaffOps.OtelHelper*` (ADR-011, task C2 of
+> [`specs/dotnet-otel-helper/`](https://github.com/StaffOps/otel-libs/blob/main/specs/dotnet-otel-helper/tasks.md));
+> they are first published as `0.3.0-rc.1`. The released `0.2.x` packages
+> keep the IDs `OtelHelper*` and `using OtelHelper;` — no compatibility
+> package. Environment variable names and the `AddOtelHelper*()` entry points
+> do not change.
 
 📖 **[HOW-TO.md](HOW-TO.md)** — Developer guide (logs, traces, metrics, examples)
 🧪 **[TESTS.md](TESTS.md)** — Full list of unit tests
@@ -154,8 +162,8 @@ How the 0.2.x helper treats the standard variables. Some are read by the .NET SD
 | ASP.NET Core | Incoming HTTP requests (server spans) |
 | HttpClient | Outgoing HTTP requests (client spans) |
 | gRPC Client | Outgoing gRPC calls |
-| SqlClient | SQL queries — only with the `OtelHelper.Sql` subpackage (`AddOtelHelperSql()`) |
-| AWS SDK | S3, SQS, DynamoDB calls, etc. — only with the `OtelHelper.AWS` subpackage (`AddOtelHelperAws()`) |
+| SqlClient | SQL queries — only with the `StaffOps.OtelHelper.Sql` subpackage (`AddOtelHelperSql()`) |
+| AWS SDK | S3, SQS, DynamoDB calls, etc. — only with the `StaffOps.OtelHelper.AWS` subpackage (`AddOtelHelperAws()`) |
 | Custom Sources | Spans created via `ActivitySource(serviceName)` |
 
 Sampler: `AlwaysOnSampler` in all environments (configurable via `opts.Sampler`). It ignores the parent's sampled flag; Go/Python 0.3 use `parentbased_always_on` (ADR-002), .NET follows in Phase C. Tail-based sampling is done in the Collector.
@@ -216,10 +224,10 @@ AWS, Redis, SQL, and Profiling instrumentations are **no longer bundled in core*
 
 | Package | Registration | What it instruments |
 |---------|--------------|---------------------|
-| `OtelHelper.AWS` | `services.AddOtelHelperAws()` | AWS SDK calls (S3, SQS, DynamoDB, etc.) |
-| `OtelHelper.Redis` | `services.AddOtelHelperRedis()` | StackExchange.Redis commands |
-| `OtelHelper.Sql` | `services.AddOtelHelperSql()` | SqlClient queries |
-| `OtelHelper.Profiling` | `services.AddOtelHelperProfiling()` | Pyroscope continuous profiling |
+| `StaffOps.OtelHelper.AWS` | `services.AddOtelHelperAws()` | AWS SDK calls (S3, SQS, DynamoDB, etc.) |
+| `StaffOps.OtelHelper.Redis` | `services.AddOtelHelperRedis()` | StackExchange.Redis commands |
+| `StaffOps.OtelHelper.Sql` | `services.AddOtelHelperSql()` | SqlClient queries |
+| `StaffOps.OtelHelper.Profiling` | `services.AddOtelHelperProfiling()` | Pyroscope continuous profiling |
 
 ### Usage
 
@@ -277,7 +285,7 @@ All telemetry goes through the Collector. The SDK does NOT export directly to ba
 ### Run unit tests
 
 ```bash
-docker run --rm -v "$(pwd):/src" -w /src mcr.microsoft.com/dotnet/sdk:8.0 dotnet test OtelHelper.Tests
+docker run --rm -v "$(pwd):/src" -w /src mcr.microsoft.com/dotnet/sdk:8.0 dotnet test StaffOps.OtelHelper.Tests
 ```
 
 Coverage: see [TESTS.md](TESTS.md) for the full list.
@@ -323,8 +331,10 @@ instrumentation, not from the helper (same as the `0.2.1` release notes):
 ## Project Structure
 
 ```
-OtelHelper.sln
-├── OtelHelper/                         # Main library
+StaffOps.OtelHelper.sln
+├── Directory.Build.props               # Shared build settings: SourceLink, warnings as errors
+├── Directory.Build.targets             # Package metadata of the five packed libraries
+├── StaffOps.OtelHelper/                # Main library
 │   ├── TelemetryExtensions.cs          # Entry point AddOtelHelper()
 │   ├── ActivitySourceExtensions.cs     # StartRootActivity() for workers
 │   ├── TracerSetup.cs                  # Tracing + health filter + sampler
@@ -337,7 +347,8 @@ OtelHelper.sln
 │   │   ├── TelemetryOptions.cs         # Configuration POCO
 │   │   ├── TelemetryOptionsPostConfigure.cs  # Env var resolution
 │   │   └── TelemetryOptionsValidator.cs      # Startup validation
-├── OtelHelper.Tests/                   # Unit tests (xUnit)
+├── StaffOps.OtelHelper.{AWS,Redis,Sql,Profiling}/  # Opt-in subpackages
+├── StaffOps.OtelHelper.Tests/          # Unit tests (xUnit)
 └── example/                            # Sample apps
     ├── dotnet-api/        # API frontend
     ├── dotnet-backend/    # Backend with DB + external call

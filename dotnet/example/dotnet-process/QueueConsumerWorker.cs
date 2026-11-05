@@ -1,6 +1,6 @@
 using System.Diagnostics;
 using System.Diagnostics.Metrics;
-using OtelHelper;
+using StaffOps.OtelHelper;
 
 /// <summary>
 /// Simulates consuming messages from a queue (SQS/Kafka pattern).

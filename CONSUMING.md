@@ -13,7 +13,7 @@ release candidate `0.3.0-rc.1`, always installed at an exact version
 
 | Language | Latest release | Next | Requirements |
 |----------|----------------|------|--------------|
-| .NET | `0.2.0` | 0.3 contract in Phase C (from now on .NET releases are tagged `dotnet/vX.Y.Z`) | .NET 8 (runs on .NET 10 via roll-forward) |
+| .NET | `0.2.1` (tag `dotnet/v0.2.1`, 2026-11-04) | 0.3 contract in Phase C (.NET releases are tagged `dotnet/vX.Y.Z`) | `net8.0` and `net10.0` assets from `0.2.1` (`0.2.0`: `net8.0` only, .NET 10 via roll-forward) |
 | Python | `0.2.0` (`otel-helper`) | `0.3.0-rc.2` published as `otel-helper` (tag `v0.3.0-rc.2`, wheel `otel_helper-0.3.0rc2-py3-none-any.whl`); next `0.3.0-rc.3` (tag `v0.3.0-rc.3`, wheel `staffops_otel_helper-0.3.0rc3-py3-none-any.whl`) — the first under the new name (ADR-011) | Python ≥ 3.10; OpenTelemetry `>=1.42,<1.46`, contrib `>=0.63b0,<0.67b0` from 0.3 |
 | Go | `go/v0.2.1` | `v0.3.0-rc.2` (tags `go/v0.3.0-rc.2`, `go/ext/<module>/v0.3.0-rc.2`; new module path, see ADR-010) | Go ≥ 1.22 for 0.2.x, **Go ≥ 1.26 from 0.3** |
 | Node.js | — (no stable release; npm `latest` is the deprecated `0.0.0-bootstrap.0` placeholder) | `0.3.0-rc.1` (tag `nodejs/v0.3.0-rc.1`, npm dist-tag `next`; packages `@staffops/otel-helper*` on npmjs and GitHub Packages), then `0.3.0` | Node.js ≥ 22.15.0; `@opentelemetry/api` `>=1.10.0 <1.11.0` (peer) |
@@ -29,7 +29,16 @@ defaults, metric names and APIs.
 
 Registry: `https://nuget.pkg.github.com/StaffOps/index.json`
 
-Packages: `OtelHelper` (core), `OtelHelper.AWS`, `OtelHelper.Redis`, `OtelHelper.Sql`, `OtelHelper.Profiling`. Subpackages pull the core transitively at the same version.
+Packages: `StaffOps.OtelHelper` (core), `StaffOps.OtelHelper.AWS`, `StaffOps.OtelHelper.Redis`, `StaffOps.OtelHelper.Sql`, `StaffOps.OtelHelper.Profiling`; namespace `StaffOps.OtelHelper` (ADR-011). Subpackages pull the core transitively at the same version.
+
+> **Package names.** The `StaffOps.OtelHelper*` IDs exist from `0.3.0-rc.1`
+> on and are not published yet (the `-dev-<sha>` builds of `main` use them
+> once the rename is merged). The released `0.2.x` packages keep the old IDs
+> `OtelHelper*` and the namespace `OtelHelper`; there is no `OtelHelper` 0.3
+> package. Moving from 0.2 to 0.3: replace each `PackageReference` and each
+> `using OtelHelper…` — see the migration guide in
+> [`CHANGELOG.md`](CHANGELOG.md). The install commands below still name the
+> released `0.2.x` IDs.
 
 ### Add the NuGet source (once per machine or CI)
 
@@ -43,12 +52,14 @@ dotnet nuget add source "https://nuget.pkg.github.com/StaffOps/index.json" \
 
 In CI (GitHub Actions): `--password ${{ secrets.GITHUB_TOKEN }}`.
 
-### Map `OtelHelper*` to the GitHub source (required)
+### Map `StaffOps.OtelHelper*` and `OtelHelper*` to the GitHub source (required)
 
-The `OtelHelper*` package IDs are **not registered on nuget.org**. Without
+The `StaffOps.OtelHelper*` and `OtelHelper*` package IDs are **not registered
+on nuget.org** (reserving the `StaffOps.` ID prefix there is an open owner
+action, decision O4). Without
 source mapping, NuGet queries every configured source and takes the best
-match from any of them, so anyone who registers `OtelHelper` (or
-`OtelHelper.Sql`, …) on nuget.org with a higher version would be restored
+match from any of them, so anyone who registers `StaffOps.OtelHelper` (or
+`StaffOps.OtelHelper.Sql`, `OtelHelper`, …) on nuget.org with a higher version would be restored
 instead of ours — dependency confusion. Commit a `nuget.config` next to your
 solution that pins those IDs to the GitHub source and everything else to
 nuget.org (NuGet 6.0+ / .NET 6 SDK or later):
@@ -62,8 +73,11 @@ nuget.org (NuGet 6.0+ / .NET 6 SDK or later):
     <add key="staffops" value="https://nuget.pkg.github.com/StaffOps/index.json" />
   </packageSources>
   <packageSourceMapping>
-    <!-- The most specific pattern wins: OtelHelper* only ever comes from the GitHub source. -->
+    <!-- The most specific pattern wins: the helper packages only ever come from the GitHub source. -->
     <packageSource key="staffops">
+      <package pattern="StaffOps.OtelHelper" />
+      <package pattern="StaffOps.OtelHelper.*" />
+      <!-- 0.2.x IDs; remove these two lines once no project references them. -->
       <package pattern="OtelHelper" />
       <package pattern="OtelHelper.*" />
     </packageSource>
@@ -92,18 +106,18 @@ package matches no mapped source — that is the mapping working.
 
 ```bash
 # Core package
-dotnet add package OtelHelper --version 0.2.0
+dotnet add package OtelHelper --version 0.2.1
 
 # Opt-in subpackages (each pulls OtelHelper core transitively)
-dotnet add package OtelHelper.AWS --version 0.2.0
-dotnet add package OtelHelper.Redis --version 0.2.0
-dotnet add package OtelHelper.Sql --version 0.2.0
-dotnet add package OtelHelper.Profiling --version 0.2.0
+dotnet add package OtelHelper.AWS --version 0.2.1
+dotnet add package OtelHelper.Redis --version 0.2.1
+dotnet add package OtelHelper.Sql --version 0.2.1
+dotnet add package OtelHelper.Profiling --version 0.2.1
 ```
 
 > **Note**: plain `dotnet add package OtelHelper` (no flags) also resolves to
 > the latest stable version, since NuGet excludes prereleases from default
-> resolution once a stable version exists. Pinning `--version 0.2.0` explicitly is
+> resolution once a stable version exists. Pinning `--version 0.2.1` explicitly is
 > still recommended for reproducible builds. Prerelease versions also exist
 > (`-dev-<sha>` published on every push to `main`, `-rc.N` from RC tags) — use
 > `--prerelease` only if you deliberately want to track those.

@@ -1,8 +1,8 @@
-# OtelHelper — Examples
+# StaffOps.OtelHelper — Examples
 
 📖 **[EXAMPLES.md](EXAMPLES.md)** — Detailed description of each check, internals, and Grafana queries
 
-Three services demonstrating complete instrumentation with `OtelHelper`:
+Three services demonstrating complete instrumentation with `StaffOps.OtelHelper`:
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
@@ -63,7 +63,7 @@ activity?.SetTag("order.id", id);
 ### 3. Create spans in Workers (independent root)
 
 ```csharp
-using OtelHelper;
+using StaffOps.OtelHelper;
 
 using var span = activitySource.StartRootActivity("process-api-order");
 span?.SetTag("endpoint", "/order/1");
@@ -111,7 +111,7 @@ counter.Add(1, new KeyValuePair<string, object?>("source", "http-get"));
 | Variable | Description | Default |
 |---|---|---|
 | `OTEL_HELPER_DEBUG_LEVEL` | Debug mode: Debug log + `debug=true` attribute on entry spans (no in-process parent, including spans continuing a remote trace) and prepended to the propagated tracestate | `false` |
-| `OTEL_HELPER_EXTRA_INSTRUMENTATION` | No effect in core 0.2.x — use the `OtelHelper.AWS` / `OtelHelper.Sql` subpackages. | `SQL` |
+| `OTEL_HELPER_EXTRA_INSTRUMENTATION` | No effect in core 0.2.x — use the `StaffOps.OtelHelper.AWS` / `StaffOps.OtelHelper.Sql` subpackages. | `SQL` |
 
 ---
 
@@ -178,7 +178,7 @@ For a real service (own repo), the complete setup is:
 
 **Program.cs:**
 ```csharp
-using OtelHelper;
+using StaffOps.OtelHelper;
 
 var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddOtelHelper();
@@ -212,7 +212,7 @@ ENTRYPOINT ["dotnet", "MyService.dll"]
 ```
 example/
 ├── Protos/
-│   └── order.proto                         # Shared proto (5 RPCs, namespace OtelHelper.Grpc)
+│   └── order.proto                         # Shared proto (5 RPCs, namespace Examples.Grpc)
 ├── dotnet-api/
 │   ├── dotnet-api.csproj                   # net10.0, Grpc.Net.Client
 │   ├── Program.cs                          # 8 endpoints, gRPC client, metrics

@@ -1,6 +1,6 @@
 using System.Diagnostics;
 using System.Diagnostics.Metrics;
-using OtelHelper;
+using StaffOps.OtelHelper;
 
 /// <summary>
 /// Simulates a scheduled job with timeout detection.

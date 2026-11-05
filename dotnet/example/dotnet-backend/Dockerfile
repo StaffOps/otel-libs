@@ -1,10 +1,11 @@
 FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
 WORKDIR /src
-COPY OtelHelper/OtelHelper.csproj OtelHelper/
+COPY Directory.Build.props Directory.Build.targets ./
+COPY StaffOps.OtelHelper/StaffOps.OtelHelper.csproj StaffOps.OtelHelper/
 COPY example/dotnet-backend/dotnet-backend.csproj example/dotnet-backend/
 COPY example/Protos/ example/Protos/
 RUN dotnet restore example/dotnet-backend/dotnet-backend.csproj
-COPY OtelHelper/ OtelHelper/
+COPY StaffOps.OtelHelper/ StaffOps.OtelHelper/
 COPY example/dotnet-backend/ example/dotnet-backend/
 RUN dotnet publish example/dotnet-backend/dotnet-backend.csproj -c Release -o /app
 

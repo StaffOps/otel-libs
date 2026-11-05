@@ -1,4 +1,4 @@
-# HOW-TO: Using OtelHelper
+# HOW-TO: Using StaffOps.OtelHelper
 
 Practical guide for developers. One line configures everything — traces, metrics, and correlated logs.
 
@@ -12,8 +12,13 @@ Practical guide for developers. One line configures everything — traces, metri
 ## 1. Installation
 
 ```bash
-dotnet add package OtelHelper
+dotnet add package StaffOps.OtelHelper
 ```
+
+> **Package name**: `StaffOps.OtelHelper*` from `0.3.0-rc.1` (not published
+> yet); the released `0.2.x` is `OtelHelper*` with `using OtelHelper;`. Map
+> the IDs to the GitHub source with the `nuget.config` in
+> [`CONSUMING.md`](https://github.com/StaffOps/otel-libs/blob/main/CONSUMING.md).
 
 > **Note .NET 10**: the lib is compiled for net8.0 and works on .NET 10 via roll-forward. Use the `aspnet` image (not `runtime`) and ensure `DOTNET_ROLL_FORWARD=Major` is set.
 
@@ -63,7 +68,7 @@ Without any additional code, the lib instruments:
 ### Extra Instrumentations
 
 SQL, AWS and Redis instrumentation come only from the opt-in subpackages
-(`OtelHelper.Sql`, `OtelHelper.AWS`, `OtelHelper.Redis` — see §14).
+(`StaffOps.OtelHelper.Sql`, `StaffOps.OtelHelper.AWS`, `StaffOps.OtelHelper.Redis` — see §14).
 `OTEL_HELPER_EXTRA_INSTRUMENTATION` is still read into
 `TelemetryOptions.ExtraInstrumentation` but **has no effect** in core, and
 `OTEL_HELPER_DEBUG_LEVEL=true` does not turn instrumentations on.
@@ -227,7 +232,7 @@ catch (Exception ex)
 In APIs, each request already creates a new trace automatically. In workers (loops, timers, consumers), you need to create the root trace manually. Use `StartRootActivity`:
 
 ```csharp
-using OtelHelper; // extension method
+using StaffOps.OtelHelper; // extension method
 
 while (!ct.IsCancellationRequested)
 {
@@ -298,7 +303,7 @@ Exemplars are automatic. When a metric is recorded during an active trace, the S
 ## 8. Complete Example
 
 ```csharp
-using OtelHelper;
+using StaffOps.OtelHelper;
 using System.Diagnostics;
 using System.Diagnostics.Metrics;
 
@@ -465,10 +470,10 @@ AWS, Redis, SQL, and Profiling instrumentations are available as **separate NuGe
 ### Installation
 
 ```bash
-dotnet add package OtelHelper.AWS
-dotnet add package OtelHelper.Redis
-dotnet add package OtelHelper.Sql
-dotnet add package OtelHelper.Profiling
+dotnet add package StaffOps.OtelHelper.AWS
+dotnet add package StaffOps.OtelHelper.Redis
+dotnet add package StaffOps.OtelHelper.Sql
+dotnet add package StaffOps.OtelHelper.Profiling
 ```
 
 ### Usage
@@ -490,14 +495,14 @@ builder.Services.AddOtelHelperProfiling();
 
 | Package | Extension Method | What it instruments |
 |---------|-----------------|---------------------|
-| `OtelHelper.AWS` | `AddOtelHelperAws()` | AWS SDK calls (S3, SQS, DynamoDB, etc.) |
-| `OtelHelper.Redis` | `AddOtelHelperRedis()` | StackExchange.Redis commands |
-| `OtelHelper.Sql` | `AddOtelHelperSql()` | SqlClient queries |
-| `OtelHelper.Profiling` | `AddOtelHelperProfiling()` | .NET CLR profiling via OTel |
+| `StaffOps.OtelHelper.AWS` | `AddOtelHelperAws()` | AWS SDK calls (S3, SQS, DynamoDB, etc.) |
+| `StaffOps.OtelHelper.Redis` | `AddOtelHelperRedis()` | StackExchange.Redis commands |
+| `StaffOps.OtelHelper.Sql` | `AddOtelHelperSql()` | SqlClient queries |
+| `StaffOps.OtelHelper.Profiling` | `AddOtelHelperProfiling()` | .NET CLR profiling via OTel |
 
 ### Profiling Prerequisites
 
-`OtelHelper.Profiling` requires the following environment variables for the .NET CLR profiler:
+`StaffOps.OtelHelper.Profiling` requires the following environment variables for the .NET CLR profiler:
 
 ```bash
 CORECLR_ENABLE_PROFILING=1

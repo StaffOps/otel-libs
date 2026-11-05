@@ -523,6 +523,36 @@ Telemetry and runtime:
     `http.url`, `http.target` and the server `url.query` (contrib redacted
     four names in client URLs and none in `url.query`).
 
+### Migration guide 0.2 → 0.3 — .NET (in progress, Phase C)
+
+.NET `0.3.0` is not released; this guide grows with each Phase C task
+([`specs/dotnet-otel-helper/`](https://github.com/StaffOps/otel-libs/tree/main/specs/dotnet-otel-helper)).
+It has two parts, API and telemetry (requirement DN4). The telemetry part
+starts when the first behavior task lands; the rename below changes no
+emitted telemetry.
+
+**API part.**
+
+1. **The packages and the namespace were renamed** ([ADR-011](https://github.com/StaffOps/otel-libs/blob/main/specs/decisions/ADR-011-owner-prefixed-package-names.md), task C2).
+   There is no `OtelHelper` 0.3 compatibility package (owner decision O2):
+   the `0.2.x` packages stay published under the old IDs, and `0.3.0-rc.1`
+   and later exist only under the new ones. The compiler lists every place
+   to change.
+
+   | 0.2.x | 0.3 |
+   |---|---|
+   | `<PackageReference Include="OtelHelper" Version="0.2.*" />` | `<PackageReference Include="StaffOps.OtelHelper" Version="0.3.0-rc.1" />` (exact: a floating `0.3.*` matches no prerelease; use it once stable `0.3.0` is out) |
+   | `OtelHelper.AWS`, `OtelHelper.Redis`, `OtelHelper.Sql`, `OtelHelper.Profiling` | `StaffOps.OtelHelper.AWS`, `StaffOps.OtelHelper.Redis`, `StaffOps.OtelHelper.Sql`, `StaffOps.OtelHelper.Profiling` |
+   | `using OtelHelper;` (also `OtelHelper.AWS`, `.Redis`, `.Sql`, `.Profiling`, `.Tracing`, `.Metrics`, `.Logging`) | `using StaffOps.OtelHelper;` (and the same sub-namespaces under `StaffOps.OtelHelper`) |
+   | fully qualified names `OtelHelper.TelemetryOptions` | `StaffOps.OtelHelper.TelemetryOptions` |
+   | `nuget.config` source mapping `OtelHelper`, `OtelHelper.*` | add `StaffOps.OtelHelper`, `StaffOps.OtelHelper.*` ([`CONSUMING.md`](https://github.com/StaffOps/otel-libs/blob/main/CONSUMING.md)) |
+
+   Unchanged: the entry points `AddOtelHelper()`, `AddOtelHelper(Action<TelemetryOptions>)`
+   and `AddOtelHelper{Aws,Redis,Sql,Profiling}()`, the type names, and every
+   environment variable name. The Profiling package's logger category stays
+   `OtelHelper.Profiling` (its prerequisite warning still names it): do not
+   rename `Logging:LogLevel` filters for that category.
+
 ### Collector / platform prerequisites (before rolling 0.3.0 out)
 
 Owned outside this repo (design D11); each item blocks the rollout, not the rc:
@@ -557,6 +587,47 @@ Owned outside this repo (design D11); each item blocks the rollout, not the rc:
 
 No changes in this release. .NET stays on 0.2.x; the 0.3 contract and the
 .NET backlog (`specs/config-contract-v0.3/tasks.md`, Phase C) land later.
+
+Phase C work on this branch (no .NET release yet; the first will be
+`dotnet/v0.3.0-rc.1`, spec
+[`specs/dotnet-otel-helper/`](https://github.com/StaffOps/otel-libs/tree/main/specs/dotnet-otel-helper)):
+
+- **.NET: packages, assemblies and namespace renamed to `StaffOps.OtelHelper*`
+  (task C2, ADR-011, N13). BREAKING (source).** Package IDs
+  `StaffOps.OtelHelper` and `StaffOps.OtelHelper.{AWS,Redis,Sql,Profiling}`,
+  root namespace `StaffOps.OtelHelper`, project folders and
+  `dotnet/StaffOps.OtelHelper.sln`; no `OtelHelper` 0.3 compatibility package
+  (owner decision O2). Same code and behavior as `0.2.x` (the 179 existing
+  test cases pass unchanged, line coverage unchanged at 95.96%). Migration:
+  the .NET guide above. CI (`dotnet-test`, `build-lib`, `publish-dotnet`,
+  `publish-dotnet-release`), the example `Dockerfile`/`Dockerfile.demo`s and
+  `CONSUMING.md` use the new names; `build-lib`, `publish-dotnet` and
+  `publish-dotnet-release` fail unless they packed exactly the five
+  `StaffOps.OtelHelper*` packages (the release job: each at the tag version).
+- **.NET: build hygiene (task C2, N12).** New `dotnet/Directory.Build.props`
+  for every project: deterministic build, warnings as errors (no blanket
+  `CS1591` exemption; NuGet warnings that depend on the network or on advisory
+  data, `NU1801` and `NU1900`–`NU1905`, stay warnings so the tree builds
+  offline from a filled cache, as does `NU5104`, stable package with a
+  prerelease dependency), and SourceLink for the libraries (the SDK's
+  built-in one, with `PublishRepositoryUrl`, `EmbedUntrackedSources` and the
+  PDB embedded in the assembly, because GitHub Packages hosts no symbol
+  packages). `dotnet/Directory.Build.targets` gives the packable
+  `StaffOps.OtelHelper*` projects their package metadata (`Authors`,
+  `PackageLicenseExpression`, `PackageProjectUrl`, `RepositoryUrl`,
+  `RepositoryType`); tests and examples get none. The CI pack
+  steps pass `/p:ContinuousIntegrationBuild=true`. The 26 public members that
+  had no XML doc comment (`DeploymentEnvironment` and its values, the
+  `TelemetryOptions` `*EnvVar` constants, `ServiceName`, `Environment`,
+  `OtelCollectorEndpoint`, `TelemetryOptionsValidator`, `TelemetryExtensions`)
+  are documented. The nuspec of every package carries the repository URL and
+  commit (before, only the CI pack steps passed `RepositoryUrl` for the core).
+  CI `dotnet-test` sets `VSTEST_TESTHOST_SHUTDOWN_TIMEOUT=10000`: vstest
+  killed the test host before `coverlet.msbuild` wrote its hit files, so the
+  coverage total sometimes dropped below the gate with every test green. The
+  example proto's generated namespace is `Examples.Grpc` (was
+  `OtelHelper.Grpc`; example code only, the gRPC service names on the wire are
+  unchanged).
 
 ### Breaking — telemetry output changes (dashboards/alerts)
 

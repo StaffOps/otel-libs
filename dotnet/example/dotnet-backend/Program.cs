@@ -1,4 +1,4 @@
-using OtelHelper;
+using StaffOps.OtelHelper;
 using DotnetBackend.Services;
 
 var builder = WebApplication.CreateBuilder(args);

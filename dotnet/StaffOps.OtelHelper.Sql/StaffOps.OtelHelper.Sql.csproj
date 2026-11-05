@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFrameworks>net8.0</TargetFrameworks>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <LangVersion>latest</LangVersion>
+
+    <PackageId>StaffOps.OtelHelper.Sql</PackageId>
+    <Version>0.2.0</Version>
+    <Description>SQL Client instrumentation opt-in subpackage for StaffOps.OtelHelper</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\StaffOps.OtelHelper\StaffOps.OtelHelper.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="OpenTelemetry.Instrumentation.SqlClient" Version="1.15.2" />
+  </ItemGroup>
+</Project>

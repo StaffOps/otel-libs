@@ -33,6 +33,14 @@ Projects after N13 (task C2): `StaffOps.OtelHelper` (core),
 `services.AddOtelHelper()` / `AddOtelHelper(Action<TelemetryOptions>)` and
 `AddOtelHelper{Aws,Redis,Sql,Profiling}()`.
 
+> **Note 2026-11-04 (C2).** File and line references to `dotnet/OtelHelper*/…`
+> in this spec set, the ADRs and older specs point at the pre-rename tree
+> (commit `9c93bea`). After C2 the files live under `dotnet/StaffOps.OtelHelper*/`,
+> and the new XML doc comments shifted the lines of `Models/TelemetryOptions.cs`,
+> `Models/TelemetryOptionsValidator.cs`, `Models/DeploymentEnvironment.cs` and
+> `TelemetryExtensions.cs` (for example `ServiceName` `:37` → `:57`). The
+> references stay as recorded evidence.
+
 `TelemetryOptions` today (`OtelHelper/Models/TelemetryOptions.cs`) and in 0.3
 (all new members are added in C5, so the `skip:C5-no-api` cases can be mapped
 from C5 on):

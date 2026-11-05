@@ -1,0 +1,16 @@
+<Project>
+  <!--
+    Package metadata for the five packed libraries (StaffOps.OtelHelper and
+    StaffOps.OtelHelper.{AWS,Redis,Sql,Profiling}). Here, not in
+    Directory.Build.props, because IsPackable is set in the project file:
+    test projects, examples and a future non-packed tool (IsPackable=false)
+    get none of it. Spec: specs/dotnet-otel-helper (DN10, N12, task C2).
+  -->
+  <PropertyGroup Condition="'$(IsPackable)' != 'false' and $(MSBuildProjectName.StartsWith('StaffOps.OtelHelper'))">
+    <Authors>DevOps Team</Authors>
+    <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
+    <PackageProjectUrl>https://github.com/StaffOps/otel-libs</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/StaffOps/otel-libs</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+  </PropertyGroup>
+</Project>

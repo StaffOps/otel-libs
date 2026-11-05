@@ -1,0 +1,44 @@
+<Project>
+  <!--
+    Shared build settings for every project under dotnet/ (libraries, tests,
+    examples). Spec: specs/dotnet-otel-helper (DN10, N12, task C2).
+    Package metadata is in Directory.Build.targets: it needs IsPackable,
+    which a project sets after this file is imported.
+    Version stays in each library csproj: the release job checks the tag
+    against every project's <Version>.
+  -->
+
+  <!-- Every project: deterministic output, warnings fail the build. -->
+  <PropertyGroup>
+    <Deterministic>true</Deterministic>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <!--
+      NuGet warnings that depend on the network or on advisory data, not on
+      the tree, stay warnings, so an unchanged tree builds offline and after a
+      new advisory. Every restore still prints them.
+        NU1900       vulnerability data could not be fetched (offline, source down)
+        NU1901-NU1904 a package has a known vulnerability (low to critical)
+        NU1905       an audit source provides no vulnerability data
+        NU1801       a source failed while the package came from another source or the cache
+      NU5104 (stable package, prerelease dependency) stays a warning: DN1
+      requires the prerelease-only contrib packages (GrpcNetClient,
+      StackExchangeRedis, Prometheus.HttpListener).
+    -->
+    <WarningsNotAsErrors>$(WarningsNotAsErrors);NU1801;NU1900;NU1901;NU1902;NU1903;NU1904;NU1905;NU5104</WarningsNotAsErrors>
+  </PropertyGroup>
+
+  <!--
+    SourceLink build settings for the helper libraries (StaffOps.OtelHelper*,
+    not the test project). The .NET 8+ SDK ships SourceLink, no package needed.
+    The PDB is embedded in the assembly because GitHub Packages hosts no symbol
+    packages. CI passes /p:ContinuousIntegrationBuild=true to `dotnet pack`
+    only (normalized source paths would hide the sources from coverlet).
+    Without a .git directory (example Docker builds) SourceLink finds no
+    repository and is skipped without a warning.
+  -->
+  <PropertyGroup Condition="$(MSBuildProjectName.StartsWith('StaffOps.OtelHelper')) and !$(MSBuildProjectName.EndsWith('.Tests'))">
+    <PublishRepositoryUrl>true</PublishRepositoryUrl>
+    <EmbedUntrackedSources>true</EmbedUntrackedSources>
+    <DebugType>embedded</DebugType>
+  </PropertyGroup>
+</Project>

@@ -19,7 +19,7 @@ equivalent**: `go/` (module `github.com/staffops/otel-libs/go` +
 `ext/*` submodules), `python/` (`staffops-otel-helper`, import `staffops_otel_helper`, extras
 `aws`/`redis`/`sql`; `otel_helper` is a deprecated re-export until 1.0 —
 [ADR-011](specs/decisions/ADR-011-owner-prefixed-package-names.md)),
-`dotnet/` (`OtelHelper` + `.AWS`/`.Redis`/`.Sql`/`.Profiling`), `nodejs/`
+`dotnet/` (`StaffOps.OtelHelper` + `.AWS`/`.Redis`/`.Sql`/`.Profiling`; `0.2.x` released as `OtelHelper*`), `nodejs/`
 (npm workspaces: `@staffops/otel-helper` + `-sql`/`-redis`/`-aws`/`-pino`/`-winston`;
 release candidate `0.3.0-rc.1`, tag `nodejs/v0.3.0-rc.1`, on npmjs with dist-tag `next` and on GitHub Packages; `latest` stays the deprecated bootstrap placeholder until the first stable release). Shared Grafana dashboards in `dashboards/`, MkDocs site in
 `docs/site/`, specs in [`specs/`](specs/README.md).
@@ -111,7 +111,7 @@ without effect; the code option `replaceGlobals`, not an env var) are in [`nodej
 
 - **Core stays lightweight.** AWS/Redis/SQL instrumentations are opt-in:
   `ext/otel{aws,redis,sql}` (Go), `staffops-otel-helper[aws,redis,sql]` (Python — core
-  must NOT depend on them), `OtelHelper.{AWS,Redis,Sql}` (NuGet),
+  must NOT depend on them), `StaffOps.OtelHelper.{AWS,Redis,Sql}` (NuGet),
   `@staffops/otel-helper-{aws,redis,sql}` (npm; peer-depend on the core at the
   same version). Node.js log libraries likewise: `-pino`, `-winston`.
 - **Libraries use version ranges, not exact pins.** Exact pins only in

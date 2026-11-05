@@ -1,12 +1,13 @@
 FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
 WORKDIR /src
-# Prebuilt OtelHelper package (built once in CI, passed via artifact)
+# Prebuilt StaffOps.OtelHelper package (built once in CI, passed via artifact)
 COPY packages/ /packages/
+COPY Directory.Build.props Directory.Build.targets ./
 COPY example/Protos/ example/Protos/
 COPY example/dotnet-api/dotnet-api.csproj example/dotnet-api/
 # Consume the prebuilt package instead of compiling the lib from source
-RUN ver=$(ls /packages/OtelHelper.[0-9]*.nupkg | sed 's#.*/OtelHelper\.\(.*\)\.nupkg#\1#') && \
-    sed -i "s#<ProjectReference[^/]*/>#<PackageReference Include=\"OtelHelper\" Version=\"$ver\" />#" example/dotnet-api/dotnet-api.csproj
+RUN ver=$(ls /packages/StaffOps.OtelHelper.[0-9]*.nupkg | sed 's#.*/StaffOps\.OtelHelper\.\(.*\)\.nupkg#\1#') && \
+    sed -i "s#<ProjectReference[^/]*/>#<PackageReference Include=\"StaffOps.OtelHelper\" Version=\"$ver\" />#" example/dotnet-api/dotnet-api.csproj
 RUN dotnet restore example/dotnet-api/dotnet-api.csproj -s /packages -s https://api.nuget.org/v3/index.json
 COPY example/dotnet-api/ example/dotnet-api/
 RUN dotnet publish example/dotnet-api/dotnet-api.csproj -c Release --no-restore -o /app

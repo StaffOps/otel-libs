@@ -2,7 +2,7 @@ package otelhelper
 
 // Contract tests for OTEL_METRICS_EXPORTER / OTEL_METRIC_EXPORT_INTERVAL (US-1, US-2, US-6).
 // Cross-language parity: python/tests/test_metrics_contract.py and
-// dotnet/OtelHelper.Tests/MetricsContractTests.cs assert the same table.
+// dotnet/StaffOps.OtelHelper.Tests/MetricsContractTests.cs assert the same table.
 
 import (
 	"context"

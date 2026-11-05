@@ -1,6 +1,6 @@
 using System.Diagnostics;
 using System.Diagnostics.Metrics;
-using OtelHelper.Grpc;
+using Examples.Grpc;
 using Grpc.Core;
 using OpenTelemetry;
 

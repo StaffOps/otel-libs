@@ -1,6 +1,6 @@
 syntax = "proto3";
 
-option csharp_namespace = "OtelHelper.Grpc";
+option csharp_namespace = "Examples.Grpc";
 
 package order;
 
