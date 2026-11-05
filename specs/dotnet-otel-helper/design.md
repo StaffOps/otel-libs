@@ -153,7 +153,7 @@ the C4 runner records.
 |---|---|---|
 | Listener `GET`/`HEAD /metrics` only, other paths 404, other methods 405 | 1.9.0-beta.2 on `UriPrefixes http://*:<port>/` (`MetricsSetup.cs:53-56`) answers 200 to `POST`/`PUT` (measured); 1.20.1-beta.1 with the `+` prefix answers 200 to `POST`, `PUT`, `DELETE`, `HEAD`, `GET` on `/metrics`, `/metrics/` and `/metrics/foo`, 404 on `/`, `/foo`, `/METRICS` (measured, C1 dev H2); no public collection API exists to serve `/metrics` differently (exported types: options, translation-strategy enum, builder extension) — owner decision O9 (a), 2026-11-04: both cases `skip:no-upstream-dotnet-prom-listener` | `metrics.listener_*` (2) |
 | Port `^\+?[0-9]+$` in [0, 65535], code wins | env port parsed with `int.TryParse` and applied over code (`TelemetryOptionsPostConfigure.cs:47-49`; measured code 1234 + env `" 9999"` → 9999, N8) | `metrics.port_*` (4) |
-| Bind all interfaces | 0.2.x binds `http://*:<port>/`; 1.20.1-beta.1 defaults `Host` to `localhost` (Prometheus README line 61) and **aborts** the MeterProvider build for `Host` `*`, `+` or `0.0.0.0` (`UriFormatException`, measured, C1 dev H1); working pattern: `ConfigureHttpListener` with `Prefixes.Clear()` + `http://+:{port}/metrics/` (README lines 180-213); `UriPrefixes` removed in 1.17.0-beta.1, `Host`/`Port` added in 1.16.0-beta.1 | e2e scrape from another container (C17) |
+| Bind all interfaces | 0.2.x binds `http://*:<port>/`; 1.20.1-beta.1 defaults `Host` to `localhost` (Prometheus README line 61) and **aborts** the MeterProvider build for `Host` `*`, `+` or `0.0.0.0` (`UriFormatException`, measured, C1 dev H1); working pattern: `ConfigureHttpListener` with `Prefixes.Clear()` + `http://+:{port}/metrics/` (README lines 180-213); `UriPrefixes` removed in 1.17.0-beta.1, `Host`/`Port` added in 1.16.0-beta.1 | e2e scrape from another container (C17; landed in C3, see the D-NET11 correction of 2026-11-05) |
 | `OTEL_EXPORTER_PROMETHEUS_HOST` / `_PORT` | read by the 1.20.1-beta.1 listener options from env/`IConfiguration` (README lines 105-106); not ruled by the contract — owner decision O10 (a), 2026-11-04: ignored with one warning each (D-NET11) | no case |
 | Disabled-metric glob: `*`, `?`, rest literal, **case-sensitive** | `Regex.Escape` + `*` → `.*`, `IgnoreCase` (`MetricsSetup.cs:62-65`); `?` literal | `metrics.disabled_metrics_*` (5) |
 | Suffixes (`_total`, unit, Gauge unit `1` → `_ratio`), `target_info`, `otel_scope_name`, colliding labels | measured diff 1.9.0-beta.2 → 1.20.1-beta.1 (C1 dev M7): `target_info` added; timestamps dropped; `# UNIT` lines and `# EOF` dropped; a Gauge in unit `1` gets **no** `_ratio` suffix in either version. CHANGELOG 1.10.0–1.19.0: meter tags as labels (1.10.0), `otel_scope_*` labels on every series, invalid characters → `_`, `le` canonicalization; scrape responses cached 300 ms by default (`ScrapeResponseCacheDurationMilliseconds`, README line 114) | `metrics.scrape_*` (11) |
@@ -220,6 +220,20 @@ and source files at the tags listed under "Upstream citations" (fetched by the
 author and by the C1 reviewers); .NET support dates from
 `builds.dotnet.microsoft.com/dotnet/release-metadata/releases-index.json`
 (8.0 and 9.0: end of support 2026-11-10; 10.0: 2028-11-14).
+
+> **Corrected 2026-11-05 (C3).** (1) The `byte[]` truncation, the event/link
+> attribute-limit fallback and the scope attribute limit are in the **OTLP
+> exporter** CHANGELOG (`1.20.0-rc.1`, lines 130-145 at `core-1.20.1`), not in
+> the `OpenTelemetry` one. (2) "No redirects" (OTLP CHANGELOG `1.20.1-rc.1`,
+> lines 22-27) covers only the `HttpClient` the exporter creates itself: with
+> `http/protobuf` and an app that registers `IHttpClientFactory`
+> (`services.AddHttpClient()`, as the `dotnet-api` and `dotnet-process`
+> examples do), the exporter's factory client still follows a `307` — measured
+> through `AddOtelHelper` on 1.20.1: without the factory the span is lost at the
+> redirect, with it the span arrives. The helper's own client (C8, ADR-013)
+> makes it uniform. (3) The 1.9.0-beta.2 listener had no response cache
+> (`ScrapeResponseCacheDurationMilliseconds` arrived in 1.16.0-beta.1), so
+> D-NET11's cache 0 is the 0.2.x behavior, not a change.
 
 ## Migration guide inputs (reference, for C18)
 
@@ -638,6 +652,18 @@ from env, documented. **Alternatives**: helper-owned listener delegating to
 the exporter (rejected: no public collection API, C1 dev H2); the
 `Prometheus.AspNetCore` middleware (rejected with O9: excludes worker
 services).
+
+> **Corrected 2026-11-05 (C3).** (1) The helper also sets `Host = "localhost"`
+> in its options delegate: the delegate runs after the options factory, and an
+> `OTEL_EXPORTER_PROMETHEUS_HOST=*` left in `Host` would abort the provider
+> build before `ConfigureHttpListener` replaces the prefix (measured: the test
+> `PrometheusEnvVars_HaveNoEffect_HelperPortServed` fails without that line).
+> Until C12 adds the O10 warnings, both variables have no effect and print
+> nothing — the 0.2.x behavior (1.9.0-beta.2 read neither). (2) The e2e scrape
+> from another container landed in C3, not C17: `testing/e2e/dotnet-prom-scrape.sh`
+> (`testing/verify.sh --only dotnet-scrape`), CI job `dotnet-prom-scrape`, which
+> `publish-dotnet` and `publish-dotnet-release` need; C17 may fold it into the
+> `dotnet-smoke` service.
 
 ### D-NET12 — Parity runner: xUnit theory over the fixture, one process per case
 **Choice**: a test class `ParityTests` in the test project finds

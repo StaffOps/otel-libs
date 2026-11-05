@@ -553,6 +553,118 @@ emitted telemetry.
    `OtelHelper.Profiling` (its prerequisite warning still names it): do not
    rename `Logging:LogLevel` filters for that category.
 
+**Telemetry part.** Each row: before (0.2.x) → after, and what to check in
+dashboards and alerts.
+
+1. **OpenTelemetry .NET 1.15.x → 1.20.x** (task C3, owner decision O6; still
+   `net8.0`). Measured on the three examples, same .NET 8 runtime: HTTP server
+   and client spans, OTLP metric names and log records unchanged;
+   `telemetry.sdk.version` `1.20.1`, the instrumentation scope versions follow
+   the packages, and the OTLP `ResourceSpans`/`ResourceMetrics`/`ResourceLogs`
+   carry the schema URL `https://opentelemetry.io/schemas/1.44.0` (was empty).
+   Series of versioned instrumentation meters get a new `otel_scope_version`
+   label value (`OpenTelemetry.Instrumentation.Runtime` `1.15.1` → `1.20.1`)
+   wherever the scope version becomes a label (the Prometheus fallback; on the
+   OTLP path, if the Collector or backend promotes it): a one-time series
+   churn. Check recording rules and alerts that match the full label set, and
+   `absent()` or `count` panels across the deploy.
+2. **gRPC client spans** (`OpenTelemetry.Instrumentation.GrpcNetClient`
+   1.16.0, semconv 1.42): `rpc.system=grpc` → `rpc.system.name=grpc`;
+   `rpc.service` removed; `rpc.method` is the full name
+   (`CancelOrder` → `order.OrderService/CancelOrder`);
+   `rpc.grpc.status_code=0` → `rpc.response.status_code=OK` (a string: a
+   failed call gives `UNIMPLEMENTED` where 0.2.x gave `12`), and a failed call
+   adds `error.type` (`UNIMPLEMENTED`; measured with a consumer, the examples
+   make no failing call). For a target given as an IP address,
+   `server.socket.address` is removed and replaced by `network.peer.address`,
+   and `network.peer.port` and `server.address` are added (0.2.x emitted only
+   `server.port` beside it); a host-name target keeps `server.address` and
+   `server.port`, as before. The GrpcNetClient scope carries the schema URL
+   `https://opentelemetry.io/schemas/1.42.0`. Span names and parentage are
+   unchanged (the HttpClient CLIENT span stays a child of the gRPC CLIENT
+   span; one CLIENT span per call comes later, task C11). Check queries,
+   dashboards and alerts that use the `rpc.*` or `server.socket.address` keys
+   on .NET clients.
+3. **Prometheus `/metrics` fallback** (`OpenTelemetry.Exporter.Prometheus.HttpListener`
+   1.9.0-beta.2 → 1.20.1-beta.1). Still reachable from other pods: the
+   listener binds `http://+:<port>/metrics/` (was `http://*:<port>/`); both bind
+   every IPv4 address (`IPAddress.Any`); the upstream default `localhost`
+   would not be reachable. No IPv6 bind, as before: on an IPv6-only cluster a
+   pod-IP scrape fails. Still a fresh collection per scrape (no response
+   cache). Same answers per path and method (`/metrics`, `/metrics/` and
+   `/metrics/<x>` 200; `/` and `/METRICS` 404). `OTEL_EXPORTER_PROMETHEUS_HOST`
+   / `_PORT` have no effect (use `OTEL_HELPER_METRICS_PORT`). Exposition
+   changes, measured in both formats:
+   - both: a `target_info` gauge with the resource attributes as labels
+     (`service_name`, `service_instance_id`, `deployment_environment_name`,
+     `telemetry_sdk_*` and the app's own); no sample timestamps; the
+     `otel_scope_version` churn of row 1;
+   - both: every counter whose name already ends in `<unit>_total` no longer
+     gets the unit and `_total` again — in the examples `errors_total`,
+     `external_calls_total`, `heavy_work_items_total`,
+     `heavy_work_batches_total`, `heavy_work_errors_total` and
+     `api_health_checks_total` (was `errors_total_errors_total` and so on); a
+     name that does not end in its unit keeps the doubled form
+     (`orders.received_total`, unit `orders` → `orders_received_total_orders_total`).
+     Check recording rules, dashboards and alerts on the old doubled names;
+   - Prometheus text format (`text/plain; version=0.0.4`): no `# UNIT` lines
+     and no `# EOF` line;
+   - OpenMetrics 1.0.0 (what a Prometheus server negotiates first; the
+     `Content-Type` adds `escaping=underscores`): `_created` series for
+     counters and histograms, exemplars (`trace_id`, `span_id`) on counters and
+     histogram buckets, and no `otel_scope_info` series (the scope stays in
+     the `otel_scope_name`/`otel_scope_version` labels); `# UNIT` and `# EOF`
+     kept.
+   The fallback series carry no `service_name` label (only `target_info`
+   does), as in 0.2.x, so the repository dashboards, which filter on
+   `service_name`, work on the OTLP → Collector path only; do not change them
+   for the fallback.
+4. **Attribute limits, only when the app sets the `OTEL_*_LIMIT` variables**
+   (OTLP exporter 1.20.0): a `byte[]` attribute is truncated to
+   `OTEL_ATTRIBUTE_VALUE_LENGTH_LIMIT` bytes (was exported whole); event and
+   link attribute counts fall back to `OTEL_ATTRIBUTE_COUNT_LIMIT` (was
+   `OTEL_SPAN_ATTRIBUTE_COUNT_LIMIT`), as does the instrumentation-scope
+   attribute count (`ActivitySource` tags). Measured with
+   `OTEL_ATTRIBUTE_VALUE_LENGTH_LIMIT=10`, `OTEL_SPAN_ATTRIBUTE_COUNT_LIMIT=2`,
+   `OTEL_ATTRIBUTE_COUNT_LIMIT=3`: 100-byte array → 10 bytes; event, link and
+   scope attributes 2 → 3.
+5. **Known regression on this branch — OTLP `http/protobuf` behind a
+   redirect** (OTLP exporter 1.20.1): when the exporter uses its own
+   `HttpClient` (the app registers no `IHttpClientFactory`), a `3xx` answer is
+   a failed export and **traces, metrics and logs are all dropped with no
+   diagnostic**; 0.2.x followed the redirect. When the app calls
+   `services.AddHttpClient()`, the exporter uses a factory client, which still
+   follows redirects (both measured). Worker services without an `HttpClient`
+   and an HTTP→HTTPS redirect at a load balancer are the exposed case. It must
+   be fixed before the .NET release (task C8: the helper's own client refuses
+   redirects loudly, with a diagnostic); until then point endpoints at the
+   final URL.
+6. Upstream fixes now included, visible only in the affected cases:
+   - ASP.NET Core server spans and `http.server.request.duration` get
+     `error.type` for a 5xx answer without an unhandled exception
+     (AspNetCore 1.20.0; measured with a consumer: the 500 server span and the
+     metric gain `error.type=500`, so 5xx series get an `error_type` label —
+     alerts on `http_response_status_code=~"5.."` are unaffected, label-set
+     matches split);
+   - SqlClient spans no longer put the exception message in the status
+     description (SqlClient 1.20.0; still recorded as an exception event with
+     `RecordException`), and the query-sanitization fixes of SqlClient 1.16.0,
+     1.18.0 and 1.20.0 (bracketed identifiers in `FROM`, `)` inside
+     `IN (...)`, quoted identifiers, nested comments, PostgreSQL `E'...'`,
+     quoted logins) remove literals that leaked into `db.statement` /
+     `db.query.text` and change some `db.query.summary` values — and with
+     them the span names that use the summary `[TO VERIFY C14a]`;
+   - AWS client spans add `cloud.region` (AWS 1.16.0/1.17.0). The SNS/SQS
+     `messaging.*` attributes and `aws.sns.topic.arn` (1.16.0) appear only
+     with `SemanticConventionVersion.V1_40_0`/`Latest`, not under the default
+     `V1_28_0`, which the helper keeps;
+   - the OTLP exporters' own HttpClient Information logs are suppressed by
+     default (OTLP 1.20.0/1.20.1): with `IHttpClientFactory` at Debug level
+     those records no longer reach stdout or the log backend;
+   - `OTEL_EXPORTER_OTLP_COMPRESSION=gzip` set by the deployment now
+     compresses (OTLP exporter 1.16.0; the helper sets no compression yet).
+   From the upstream CHANGELOGs unless marked measured.
+
 ### Collector / platform prerequisites (before rolling 0.3.0 out)
 
 Owned outside this repo (design D11); each item blocks the rollout, not the rc:
@@ -628,6 +740,29 @@ Phase C work on this branch (no .NET release yet; the first will be
   example proto's generated namespace is `Examples.Grpc` (was
   `OtelHelper.Grpc`; example code only, the gRPC service names on the wire are
   unchanged).
+- **.NET: OpenTelemetry 1.15.x → 1.20.x (task C3, owner decision O6, design
+  D-NET1).** Core `OpenTelemetry`, `.Api`, `.Extensions.Hosting`,
+  `.Exporter.OpenTelemetryProtocol` 1.20.1; `Exporter.Prometheus.HttpListener`
+  1.20.1-beta.1 (was 1.9.0-beta.2); `Instrumentation.AspNetCore`, `.Http`,
+  `.Runtime`, `.SqlClient` 1.20.1; `.GrpcNetClient` and `.StackExchangeRedis`
+  1.20.1-beta.1; `.AWS` 1.20.3; still `net8.0`. Tests: `Microsoft.Extensions.*`
+  8.0.1 (was 9.0.0), `OpenTelemetry.Exporter.InMemory` 1.20.1. Telemetry
+  changes: the .NET migration guide above, telemetry part. The Prometheus
+  listener keeps the 0.2.x behavior on the new exporter: bound on every IPv4
+  address with the `http://+:<port>/metrics/` prefix (the upstream default
+  `localhost` is unreachable from other pods, and `Host = "*"` aborts the
+  build; no IPv6 bind, as before), no response cache, and
+  `OTEL_EXPORTER_PROMETHEUS_HOST`/`_PORT` without effect (the one-time
+  warning comes with task C12). Known regression until task C8: an
+  `http/protobuf` endpoint that redirects drops all telemetry silently when the
+  app registers no `IHttpClientFactory` (migration guide, telemetry row 5).
+  New `testing/e2e/dotnet-prom-scrape.sh` (verify step `dotnet-scrape`, CI job
+  `dotnet-prom-scrape` on PRs, `main` and `dotnet/v*`, required by
+  `publish-dotnet` and `publish-dotnet-release`) scrapes the `dotnet-process`
+  example from another container in the text and OpenMetrics formats; four new
+  unit tests (`PrometheusListenerTests`, no network needed); suite 183/183,
+  line coverage 96.31%.
+  The `release` skill has a .NET SDK-bump checklist.
 
 ### Breaking — telemetry output changes (dashboards/alerts)
 

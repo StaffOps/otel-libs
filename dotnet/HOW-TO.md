@@ -529,6 +529,16 @@ The port is configurable via `OTEL_HELPER_METRICS_PORT` env var (default: `9464`
 
 This enables the standard Kubernetes scrape pattern: deploy without a Collector, and let Prometheus/VictoriaMetrics scrape `/metrics` directly from the pod.
 
+The listener binds `http://+:<port>/metrics/` — every IPv4 address (the
+managed `HttpListener` maps `+` to `IPAddress.Any`, as it did 0.2.x's `*`), so
+a scraper in another pod or container reaches it — and answers each scrape
+with a fresh collection (no response cache). There is no IPv6 bind: on an
+IPv6-only cluster a scrape of the pod IP fails (known limitation, unchanged
+from 0.2.x). The upstream exporter's own
+`OTEL_EXPORTER_PROMETHEUS_HOST` / `OTEL_EXPORTER_PROMETHEUS_PORT` have no
+effect; set the port with `OTEL_HELPER_METRICS_PORT`.
+`testing/e2e/dotnet-prom-scrape.sh` checks the scrape from another container.
+
 ### Running OTLP push AND `/metrics` at the same time
 
 `OTEL_METRICS_EXPORTER` selects which exporter(s) are active on the metrics pipeline, independent of the legacy endpoint-based fallback above:

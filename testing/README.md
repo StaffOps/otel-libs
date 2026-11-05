@@ -5,11 +5,13 @@
 | `fakeotlp/` | Fake OTLP receiver for the parity fixture's `export` cases. Own Go module (not part of `go/`). Every listen address accepts OTLP/gRPC and OTLP/HTTP; `PLAIN`, `TLS` and `ADMIN` set the addresses (TLS uses a CA generated at startup, `$OUT/ca.pem`); `GET/DELETE <admin>/requests`. Defaults to the case addresses below. Records destination IP, port, protocol, TLS, path, content/`grpc-encoding`, `grpc-timeout` and `x-parity*` headers — never payloads. `CERTS_ONLY=1` writes a CA + server cert/key for `TLS_HOSTS` and exits (used by the e2e Collector). Runs as uid 65534 (`cap_net_bind_service` for 80/443). Test-only: no auth. |
 | `docker-compose.yml` | `go-tests` / `python-tests` / `node-tests`, each sharing the network namespace of its own receiver (`fakeotlp-go` / `fakeotlp-py` / `fakeotlp-node`), and the `e2e` profile (`e2e-certs`, `collector`, `go-smoke`, `python-smoke`, `node-smoke`). |
 | `e2e/` | `smoke.sh` + `combos.sh` + `run-go.sh` / `run-python.sh` / `run-node.sh`: the Go and Node smoke programs (`go-smoke/`, `node-smoke/`) and the Python `python-process` example export to `otel/opentelemetry-collector-contrib` over gRPC, http/protobuf with an `/otlp` path prefix, a per-signal traces endpoint, and TLS with a generated CA. Each receiver tags its data (`e2e.receiver`); the script checks every signal arrived at the right receiver in a batch with the combination's `service.name`, reports known bugs as `XFAIL <task>`, and checks the per-signal traces did not also reach the default receiver. |
+| `e2e/dotnet-prom-scrape.sh` | .NET Prometheus fallback (design D-NET11): runs the `dotnet-process` example from source with no OTLP endpoint and scrapes `http://<container>:9464/metrics` from a separate curl container on a private network; fails when the listener binds loopback only. Creates and removes one network and one container. `DOTNET_DIR` points it at another tree. |
 
 ```bash
 docker compose -f testing/docker-compose.yml run --rm go-tests
 PY_VERSION=3.10 PY_DEPS=lower docker compose -f testing/docker-compose.yml run --rm python-tests   # defaults: 3.13 / latest
 testing/e2e/smoke.sh
+testing/e2e/dotnet-prom-scrape.sh
 docker compose -f testing/docker-compose.yml --profile e2e stop   # stop the receivers / Collector when done
 ```
 
@@ -56,4 +58,5 @@ runs of the same suite at once need separate compose projects (`-p <name>`).
 `.github/workflows/ci.yml` runs the receiver on the runner's loopback
 (`--network host`) through the composite action, the Go suite (merged parity
 coverage, ≥ 90% gate), the Python grid (3.10 / 3.11 / 3.13 × `lower` /
-`latest` constraints from `python/ci/`), and the e2e smoke as its own job.
+`latest` constraints from `python/ci/`), and the e2e smoke as its own job; `dotnet-prom-scrape` runs the .NET scrape
+check, and the .NET publish jobs need it.

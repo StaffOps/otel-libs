@@ -110,6 +110,14 @@ The Prometheus metrics port is configurable via `OTEL_HELPER_METRICS_PORT` env v
 
 This enables the standard Kubernetes pattern: deploy without a collector, and let Prometheus/VictoriaMetrics scrape `/metrics` directly from the pod.
 
+The listener binds `http://+:<port>/metrics/`: every IPv4 address (the managed
+`HttpListener` maps `+` to `IPAddress.Any`, as it did 0.2.x's `*`), so other
+pods and containers can scrape it, and it serves a fresh collection on every
+scrape. There is no IPv6 bind: on an IPv6-only cluster a scrape of the pod IP
+fails (known limitation, unchanged from 0.2.x). `OTEL_EXPORTER_PROMETHEUS_HOST` and `OTEL_EXPORTER_PROMETHEUS_PORT`,
+which the upstream exporter reads since 1.16, have no effect: use
+`OTEL_HELPER_METRICS_PORT`.
+
 
 ### Standard OpenTelemetry SDK Variables
 
@@ -300,6 +308,14 @@ See [example/README.md](example/README.md) for sample apps with distributed trac
 
 - .NET 8 (LTS)
 - .NET 10 (LTS) — via roll-forward
+
+OpenTelemetry .NET 1.20.x (core and contrib, one generation; minimum
+versions, NuGet semantics). Three packages exist only as prereleases, so the
+helper depends on the newest prerelease of the matching minor: the contrib
+instrumentations `OpenTelemetry.Instrumentation.GrpcNetClient` and
+`OpenTelemetry.Instrumentation.StackExchangeRedis` (`StaffOps.OtelHelper.Redis`),
+and the Prometheus listener `OpenTelemetry.Exporter.Prometheus.HttpListener`,
+all `1.20.1-beta.1`.
 
 ### .NET 10 Note
 

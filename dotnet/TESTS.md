@@ -1,6 +1,6 @@
 # Tests — StaffOps.OtelHelper (.NET)
 
-179 unit tests (xUnit), 0 failed, 0 warnings.
+183 unit tests (xUnit), 0 failed, 0 warnings.
 
 ```bash
 docker run --rm -v "$(pwd):/src" -w /src mcr.microsoft.com/dotnet/sdk:8.0 dotnet test StaffOps.OtelHelper.Tests
@@ -360,6 +360,21 @@ Opt-in subpackage extensions (AWS, SQL, Redis) — each verifies the fluent `ISe
 | `DualMode_CounterVisible_InInMemoryAndPrometheusReaders` | Single provider, two readers — same counter visible via an in-memory exporter AND a live Prometheus HTTP scrape, no double counting |
 | `ConfigureMetrics_PrometheusOnly_WithEndpoint_Builds` | `prometheus`-only with an endpoint set builds cleanly and serves `/metrics` |
 | `ConfigureMetrics_PortZero_SkipsListener` | Port 0 builds without binding any listener |
+
+## PrometheusListenerTests
+
+The Prometheus fallback on `OpenTelemetry.Exporter.Prometheus.HttpListener`
+1.20.x keeps the 0.2.x listener behavior (task C3, design D-NET11). Uses
+`[Collection("EnvVarTests")]`. No test needs a network (the suite runs with
+`--network none`): reachability from another container, in the text and
+OpenMetrics formats, is checked by `testing/e2e/dotnet-prom-scrape.sh`.
+
+| Test | Description |
+|-------|-----------|
+| `ListenerPrefix_IsWildcardHostMetricsPath` | The bind prefix is `http://+:<port>/metrics/` |
+| `ConfigurePrometheusListener_SetsHostPortCacheAndPrefixDelegate` | `Host` reset to `localhost`, helper port, response cache 0, and a delegate that replaces the listener prefixes with the `+` prefix only |
+| `Scrape_IsFresh_NoResponseCache` | Two scrapes back to back see the new value (upstream caches 300 ms by default) |
+| `PrometheusEnvVars_HaveNoEffect_HelperPortServed` | `OTEL_EXPORTER_PROMETHEUS_HOST=*` does not abort the build and `OTEL_EXPORTER_PROMETHEUS_PORT` does not move the listener: `OTEL_HELPER_METRICS_PORT` is served |
 
 ## SamplerPrecedenceTests
 

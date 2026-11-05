@@ -375,6 +375,24 @@ jobs:
         if: failure()
         run: docker compose -f testing/docker-compose.yml --profile e2e logs collector || true
 
+  dotnet-prom-scrape:
+    # The .NET Prometheus fallback must answer a scrape from another container:
+    # the 1.20.x listener binds localhost unless the helper sets the "+"
+    # prefix (design D-NET11, task C3).
+    name: .NET Prometheus fallback scraped from another container
+    # Gates only the .NET publish jobs: skip it on the Python (v*) and Node.js
+    # (nodejs/v*) tags. Runs on PRs, main (publish-dotnet) and dotnet/v*
+    # (publish-dotnet-release); on the other tags those jobs are skipped by
+    # their own if:, so the skipped need blocks nothing.
+    if: ${{ !startsWith(github.ref, 'refs/tags/') || startsWith(github.ref, 'refs/tags/dotnet/v') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - run: testing/e2e/dotnet-prom-scrape.sh
+
   spec-checks:
     # specs/repo-tooling RT7: spec format lint, requirement traceability and
     # docs/site/index.md freshness. Stdlib-only tools (T-D3), no install step.
@@ -608,7 +626,7 @@ jobs:
       contents: read
       packages: write
     runs-on: ubuntu-latest
-    needs: [dotnet-test, go-test, python-test, e2e-smoke]
+    needs: [dotnet-test, dotnet-prom-scrape, go-test, python-test, e2e-smoke]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     defaults:
       run:
@@ -653,7 +671,7 @@ jobs:
       contents: read
       packages: write
     runs-on: ubuntu-latest
-    needs: [dotnet-test, go-test, python-test, e2e-smoke]
+    needs: [dotnet-test, dotnet-prom-scrape, go-test, python-test, e2e-smoke]
     # .NET versions diverge from Go/Python (ADR-004): only dotnet/vX.Y.Z publishes NuGet.
     if: startsWith(github.ref, 'refs/tags/dotnet/v')
     defaults:

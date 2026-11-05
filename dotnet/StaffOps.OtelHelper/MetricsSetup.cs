@@ -50,10 +50,8 @@ namespace StaffOps.OtelHelper.Metrics
             // MapPrometheusScrapingEndpoint() on their own pipeline.
             if (exporters.Contains("prometheus") && options.PrometheusMetricsPort > 0)
             {
-                builder.AddPrometheusHttpListener(opts =>
-                {
-                    opts.UriPrefixes = new[] { $"http://*:{options.PrometheusMetricsPort}/" };
-                });
+                var port = options.PrometheusMetricsPort;
+                builder.AddPrometheusHttpListener(opts => ConfigurePrometheusListener(opts, port));
             }
 
             // Drop metrics matching wildcard patterns
@@ -74,6 +72,39 @@ namespace StaffOps.OtelHelper.Metrics
             }
 
             return builder;
+        }
+
+        /// <summary>
+        /// Prefix the Prometheus listener binds: every IPv4 address (the managed
+        /// <c>HttpListener</c> maps <c>+</c> to <c>IPAddress.Any</c>; no IPv6), path
+        /// <c>/metrics/</c> (design D-NET11). The upstream default host is
+        /// <c>localhost</c>, which other containers and pods cannot reach, and a
+        /// <c>*</c>, <c>+</c> or <c>0.0.0.0</c> <c>Host</c> aborts the provider build.
+        /// </summary>
+        internal static string PrometheusListenerPrefix(int port) => $"http://+:{port}/metrics/";
+
+        /// <summary>
+        /// Keeps the 0.2.x listener behavior on the 1.20.x exporter: bind all
+        /// interfaces on the helper's port and serve a fresh collection on every
+        /// scrape. This delegate runs after the options factory has read
+        /// <c>OTEL_EXPORTER_PROMETHEUS_HOST</c>/<c>_PORT</c>, so the values set
+        /// here win and those variables have no effect, as in 0.2.x.
+        /// </summary>
+        internal static void ConfigurePrometheusListener(PrometheusHttpListenerOptions opts, int port)
+        {
+            // A valid host for the exporter's own prefix, which the delegate below
+            // replaces; an env-provided "*" would otherwise abort the build.
+            opts.Host = "localhost";
+            opts.Port = port;
+            // 0.2.x (1.9.0-beta.2) had no response cache; upstream now defaults to 300 ms.
+            opts.ScrapeResponseCacheDurationMilliseconds = 0;
+            opts.ConfigureHttpListener = static (o, listener) =>
+            {
+                // Clear first: keeping the localhost prefix next to "+" fails on
+                // Linux with "Address already in use" (exporter README).
+                listener.Prefixes.Clear();
+                listener.Prefixes.Add(PrometheusListenerPrefix(o.Port));
+            };
         }
     }
 }

@@ -3,14 +3,14 @@
 # step at a time, one summary at the end.
 #
 #   testing/verify.sh                 # every step
-#   testing/verify.sh --quick         # skip e2e and the extra Python legs
+#   testing/verify.sh --quick         # skip e2e, dotnet-scrape and the extra Python legs
 #   testing/verify.sh --only <step>   # one step (repeatable)
 #   testing/verify.sh --release       # also run the parity release gate (PARITY_RELEASE=1)
 #                                     # in EVERY step run: scope with --only (e.g. --release --only node)
 #   testing/verify.sh --list          # step names
 #
 # Steps: go, go-ext, py-3.10-lower, py-3.13-lower, py-3.13-latest, node, e2e,
-# mkdocs, spec-lint, trace, index, tools-tests. `node` runs the Node.js
+# dotnet-scrape, mkdocs, spec-lint, trace, index, tools-tests. `node` runs the Node.js
 # workspace, parity runner included, on node:${NODE_VERSION:-24}-slim (CI
 # covers 22.15.0/22/24/26).
 #
@@ -18,7 +18,8 @@
 # removes volumes or images. At exit it stops only the compose services it
 # started itself (fakeotlp-go, fakeotlp-py, fakeotlp-node, collector: the ones
 # not running when it began). The e2e step is testing/e2e/smoke.sh, which
-# applies the same rule to the Collector.
+# applies the same rule to the Collector; dotnet-scrape removes only the
+# network and container it created.
 set -uo pipefail
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
@@ -27,10 +28,10 @@ compose=(docker compose -f "$root/testing/docker-compose.yml")
 MKDOCS_IMAGE="squidfunk/mkdocs-material:9.5.39"
 TOOLS_IMAGE="python:3.12-slim"
 
-ALL_STEPS=(go go-ext py-3.10-lower py-3.13-lower py-3.13-latest node e2e mkdocs spec-lint trace index tools-tests)
-QUICK_SKIP=" e2e py-3.10-lower py-3.13-lower "
+ALL_STEPS=(go go-ext py-3.10-lower py-3.13-lower py-3.13-latest node e2e dotnet-scrape mkdocs spec-lint trace index tools-tests)
+QUICK_SKIP=" e2e dotnet-scrape py-3.10-lower py-3.13-lower "
 
-usage() { sed -n '2,21p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,22p' "$0" | sed 's/^# \{0,1\}//'; }
 
 quick=0
 only=()
@@ -104,6 +105,9 @@ step_node() {
 
 step_e2e() { "$root/testing/e2e/smoke.sh"; }
 
+# .NET Prometheus fallback scraped from another container (design D-NET11).
+step_dotnet_scrape() { "$root/testing/e2e/dotnet-prom-scrape.sh"; }
+
 step_mkdocs() {
   # Read-only mount; the site is written inside the container only.
   docker run --rm -v "$root:/docs:ro" -w /docs "$MKDOCS_IMAGE" build --strict --site-dir /tmp/site
@@ -133,6 +137,7 @@ run_step() {
     py-3.13-latest) step_python 3.13 latest ;;
     node) step_node ;;
     e2e) step_e2e ;;
+    dotnet-scrape) step_dotnet_scrape ;;
     mkdocs) step_mkdocs ;;
     spec-lint) tools_run python tools/spec_lint.py ;;
     trace) tools_run python tools/trace_matrix.py --check ;;

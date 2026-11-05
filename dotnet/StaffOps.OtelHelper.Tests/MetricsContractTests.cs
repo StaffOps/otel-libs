@@ -190,14 +190,14 @@ public class MetricsContractTests : IDisposable
         // Single MeterProvider, two readers: an in-memory reader standing in for
         // the OTLP periodic reader, plus the Prometheus HTTP listener on a free
         // port. The same instrument must be visible in both without double counting.
-        var port = FreeTcpPort();
+        var port = TestPorts.FreeTcpPort();
         var exportedItems = new List<Metric>();
         using var meter = new Meter("contract-test");
 
         using var provider = Sdk.CreateMeterProviderBuilder()
             .AddMeter("contract-test")
             .AddInMemoryExporter(exportedItems)
-            .AddPrometheusHttpListener(o => o.UriPrefixes = new[] { $"http://localhost:{port}/" })
+            .AddPrometheusHttpListener(o => o.Port = port)
             .Build();
 
         var counter = meter.CreateCounter<long>("dual_mode_hits");
@@ -217,7 +217,7 @@ public class MetricsContractTests : IDisposable
     {
         // prometheus-only with an endpoint set must not register the OTLP exporter;
         // builder must build cleanly with only the listener (on a free port).
-        var port = FreeTcpPort();
+        var port = TestPorts.FreeTcpPort();
         var opts = Resolved(o =>
         {
             o.ServiceName = "prom-svc";
@@ -247,14 +247,5 @@ public class MetricsContractTests : IDisposable
         // Builds without binding anything — no listener, reader stays passive.
         using var provider = Sdk.CreateMeterProviderBuilder().ConfigureMetrics(opts).Build();
         Assert.NotNull(provider);
-    }
-
-    private static int FreeTcpPort()
-    {
-        var listener = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0);
-        listener.Start();
-        var port = ((System.Net.IPEndPoint)listener.LocalEndpoint).Port;
-        listener.Stop();
-        return port;
     }
 }

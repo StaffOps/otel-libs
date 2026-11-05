@@ -164,7 +164,7 @@ public class OtlpProtocolTests : IDisposable
     [Fact]
     public async Task Tracing_Http_DeliversToV1Traces()
     {
-        var port = FreeTcpPort();
+        var port = TestPorts.FreeTcpPort();
         string? gotPath = null;
         using var listener = new HttpListener();
         listener.Prefixes.Add($"http://localhost:{port}/");
@@ -198,7 +198,7 @@ public class OtlpProtocolTests : IDisposable
     [Fact]
     public async Task Metrics_Http_DeliversToV1Metrics()
     {
-        var port = FreeTcpPort();
+        var port = TestPorts.FreeTcpPort();
         string? gotPath = null;
         using var listener = new HttpListener();
         listener.Prefixes.Add($"http://localhost:{port}/");
@@ -227,14 +227,5 @@ public class OtlpProtocolTests : IDisposable
 
         await Task.WhenAny(listenTask, Task.Delay(TimeSpan.FromSeconds(5)));
         Assert.Equal("/v1/metrics", gotPath);
-    }
-
-    private static int FreeTcpPort()
-    {
-        var listener = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0);
-        listener.Start();
-        var port = ((System.Net.IPEndPoint)listener.LocalEndpoint).Port;
-        listener.Stop();
-        return port;
     }
 }

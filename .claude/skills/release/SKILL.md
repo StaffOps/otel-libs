@@ -1,6 +1,6 @@
 ---
 name: release
-description: Use when cutting a release or release candidate of otel-libs (Go, Python, .NET, Node.js) — version bumps, per-language tags, GitHub Release, npmjs/GitHub Packages publish, the Node.js first-publish bootstrap and SDK-bump checklist, verification before and after tagging. Encodes the pitfalls found cutting 0.3.0-rc.1/rc.2.
+description: Use when cutting a release or release candidate of otel-libs (Go, Python, .NET, Node.js) — version bumps, per-language tags, GitHub Release, npmjs/GitHub Packages publish, the Node.js first-publish bootstrap, the Node.js and .NET SDK-bump checklists, verification before and after tagging. Encodes the pitfalls found cutting 0.3.0-rc.1/rc.2.
 ---
 
 # Release procedure (otel-libs)
@@ -322,6 +322,38 @@ D-JS2) or the `@opentelemetry/api` peer range:
 - Run the whole Node CI set locally: `testing/verify.sh node` on 24, with
   `NODE_VERSION=22.15.0` and `26`; `sh ci/api-range-install.sh`;
   `SMOKE_LANGS=node NODE_VERSION=22.15.0 testing/e2e/smoke.sh`.
+
+## .NET SDK-bump checklist
+Before raising any `OpenTelemetry*` `PackageReference` in `dotnet/` (core and
+contrib move together on one generation, requirement DN1; first walked in
+task C3, 1.15.x → 1.20.x):
+- **Constructor and options-factory env reads.** For every options type the
+  helper configures (`OtlpExporterOptions`, `PrometheusHttpListenerOptions`,
+  `SdkLimitOptions`, instrumentation options), list the `OTEL_*` variables the
+  new version reads from `IConfiguration`/env and when. The helper's configure
+  delegate runs after the options factory: a value it sets wins, a value it
+  leaves alone is now env-controlled. Example: the Prometheus listener reads
+  `OTEL_EXPORTER_PROMETHEUS_HOST`/`_PORT` since 1.16.0-beta.1, and `HOST=*`
+  aborts the provider build unless the helper sets `Host` (C3,
+  `MetricsSetup.ConfigurePrometheusListener`).
+- **Default client hardening.** Diff the exporter's default `HttpClient`
+  (redirects, response size, timeout, TLS) against what the helper's own
+  client does (ADR-013 duties list, C8). 1.20.1 stopped following redirects
+  only for clients the exporter creates itself; an app's `IHttpClientFactory`
+  client still follows them (measured in C3).
+- **Experimental flags.** List the `OTEL_DOTNET_EXPERIMENTAL_*` switches the
+  new versions add or change (AspNetCore gRPC spans, new root span, SqlClient
+  returned rows): the helper never sets them; the migration guide says which
+  ones change telemetry.
+- **Breaking entries.** Re-read each package's CHANGELOG at its tag (core
+  `core-<v>`, Prometheus `coreunstable-<v>`, contrib `Instrumentation.<X>-<v>`)
+  and walk every **Breaking** line with a before/after measurement.
+- **Telemetry diff.** Before/after diff of the three examples (spans, OTLP
+  metrics, logs, the `/metrics` exposition) on the same runtime, then
+  `testing/e2e/dotnet-prom-scrape.sh` (scrape from another container).
+- The suite on `sdk:8.0` with coverage (`dotnet/TESTS.md`), `dotnet pack` of
+  the five packages, and a consumer of the packed packages against a
+  throwaway Collector.
 
 ## Tagging (the owner pushes tags; auto mode blocks it for the agent)
 - Annotated tags on the exact commit.
