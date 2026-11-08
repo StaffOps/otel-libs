@@ -73,7 +73,7 @@ func TestInstrumentEmitsSpansAndPoolMetrics(t *testing.T) {
 			}
 		}
 	}
-	if !contains(names, "set") || !contains(names, "get") {
+	if !contains(names, "SET") || !contains(names, "GET") {
 		t.Errorf("spans = %v, want set and get", names)
 	}
 
@@ -252,7 +252,7 @@ func TestErrorStatusDropsDescription(t *testing.T) {
 			}
 			spans := exp.GetSpans()
 			assertNoSecret(t, spans)
-			for _, tt := range []struct{ span, code string }{{"lpush", "WRONGTYPE"}, {"nosuchcmd", "ERR"}, {"eval", "ERR"}} {
+			for _, tt := range []struct{ span, code string }{{"LPUSH", "WRONGTYPE"}, {"NOSUCHCMD", "ERR"}, {"EVAL", "ERR"}} {
 				sp := spanByName(t, spans, tt.span)
 				if sp.Status.Code != codes.Error || sp.Status.Description != "" {
 					t.Errorf("%s status = %+v, want Error with no description", tt.span, sp.Status)
@@ -263,18 +263,18 @@ func TestErrorStatusDropsDescription(t *testing.T) {
 				if v, _ := attr(sp, "error.type"); v != tt.code {
 					t.Errorf("%s error.type = %q, want %q", tt.span, v, tt.code)
 				}
-				if v, _ := attr(sp, "db.operation.name"); v != tt.span {
+				if v, _ := attr(sp, "db.operation.name"); v != strings.ToLower(tt.span) {
 					t.Errorf("%s db.operation.name = %q, want the command as provided", tt.span, v)
 				}
 			}
-			pipe := spanByName(t, spans, "redis.pipeline set lpush")
+			pipe := spanByName(t, spans, "SET LPUSH")
 			if pipe.Status.Code != codes.Error || pipe.Status.Description != "" {
 				t.Errorf("pipeline status = %+v, want Error with no description", pipe.Status)
 			}
 			if _, ok := attr(pipe, "db.operation.name"); ok {
 				t.Error("pipeline spans carry no db.operation.name")
 			}
-			custom := spanByName(t, spans, "eval_ro")
+			custom := spanByName(t, spans, "EVAL_RO")
 			if v, _ := attr(custom, "error.type"); v != "_OTHER" {
 				t.Errorf("eval_ro error.type = %q, want _OTHER (not an allowlisted reply code)", v)
 			}
@@ -282,7 +282,7 @@ func TestErrorStatusDropsDescription(t *testing.T) {
 				t.Error("eval_ro: no db.response.status_code for a custom first word")
 			}
 			assertNoValue(t, spans, "SECRET_TOKEN42")
-			if sp := spanByName(t, spans, "set"); sp.Status.Code != codes.Unset {
+			if sp := spanByName(t, spans, "SET"); sp.Status.Code != codes.Unset {
 				t.Errorf("set status = %+v, want Unset (passed through)", sp.Status)
 			}
 		})
@@ -306,7 +306,7 @@ func TestDialErrorStatus(t *testing.T) {
 	if err := rdb.Get(context.Background(), "k").Err(); err == nil {
 		t.Fatal("want a dial error")
 	}
-	dial := spanByName(t, exp.GetSpans(), "redis.dial")
+	dial := spanByName(t, exp.GetSpans(), "connect")
 	if dial.Status.Code != codes.Error || dial.Status.Description != "" {
 		t.Errorf("dial status = %+v, want Error with no description", dial.Status)
 	}
@@ -336,7 +336,7 @@ func TestSemconvStableModeDropsLegacySystem(t *testing.T) {
 				t.Fatal(err)
 			}
 			_ = rdb.Get(context.Background(), "k")
-			sp := spanByName(t, exp.GetSpans(), "get")
+			sp := spanByName(t, exp.GetSpans(), "GET")
 			if _, ok := attr(sp, "db.system"); ok != tt.legacy {
 				t.Errorf("db.system present = %v, want %v", ok, tt.legacy)
 			}
@@ -401,4 +401,45 @@ func TestStatusSanitizingSpanPassesOtherStatuses(t *testing.T) {
 	if _, ok := attr(spans[0], "error.type"); ok {
 		t.Error("no error.type on a non-error status")
 	}
+}
+
+// Span names (contract D1 "Redis span names", A30): uppercased command, the
+// pipeline's command names, "connect" for the dial span.
+func TestSpanName(t *testing.T) {
+	for in, want := range map[string]string{
+		"set": "SET", "cluster info": "CLUSTER INFO", "eval_ro": "EVAL_RO",
+		"redis.pipeline set get": "SET GET", "redis.pipeline ": "redis.pipeline ",
+		"redis.dial": "connect", "redis.other": "redis.other", "": "",
+	} {
+		if got := spanName(in); got != want {
+			t.Errorf("spanName(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// A30: the span is renamed, db.operation.name keeps go-redis's value.
+func TestSpanNamesAndOperationName(t *testing.T) {
+	exp, _ := installProviders(t)
+	rdb := redis.NewClient(&redis.Options{Addr: miniredis.RunT(t).Addr()})
+	t.Cleanup(func() { _ = rdb.Close() })
+	if err := Instrument(rdb); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	_ = rdb.Set(ctx, "k", "v", 0)
+	if _, err := rdb.Pipelined(ctx, func(p redis.Pipeliner) error {
+		p.Set(ctx, "k", "v", 0)
+		p.Get(ctx, "k")
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	spans := exp.GetSpans()
+	if v, _ := attr(spanByName(t, spans, "SET"), "db.operation.name"); v != "set" {
+		t.Errorf("SET db.operation.name = %q, want set (as provided)", v)
+	}
+	if _, ok := attr(spanByName(t, spans, "SET GET"), "db.operation.name"); ok {
+		t.Error("pipeline span carries db.operation.name")
+	}
+	spanByName(t, spans, "connect")
 }

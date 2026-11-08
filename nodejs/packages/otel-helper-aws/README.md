@@ -20,10 +20,19 @@ setup({ instrumentations: [awsInstrumentation()] }); // no options yet: any key 
 const { S3Client } = require('@aws-sdk/client-s3'); // every send() produces a span
 ```
 
-- One span per `send()`, retries included, no HTTP span under it, with the
-  legacy `rpc.system=aws-api`, `rpc.service`, `rpc.method`,
+- One span per `send()`, retries included, no HTTP span under it, named
+  `<Service>.<Operation>` (`SQS.SendMessage`; Bedrock GenAI spans keep their
+  name), PRODUCER on SQS/SNS send and publish, CONSUMER on SQS receive, CLIENT
+  otherwise, with the legacy `rpc.system=aws-api`, `rpc.service`, `rpc.method`
+  (`OTEL_SEMCONV_STABILITY_OPT_IN=http,rpc`: `rpc.system.name` and
+  `rpc.method=<Service>/<Operation>`; `http,rpc/dup`: both),
+  `messaging.operation.name` = the AWS operation on SQS and SNS spans,
   `cloud.region`, `aws.region`, `aws.request_id` and the service
-  attributes (S3, DynamoDB, SQS, SNS, Lambda).
+  attributes (S3, DynamoDB, SQS, SNS, Lambda). DynamoDB spans carry
+  `db.system.name=aws.dynamodb` (semconv v1.43; the contrib writes
+  `dynamodb`) and the legacy `db.system=dynamodb` unless
+  `OTEL_SEMCONV_STABILITY_OPT_IN` holds `database` without `database/dup`.
+  No `server.address`/`server.port`: the contrib does not see the endpoint.
 - Never recorded: credentials, request and response bodies, DynamoDB
   `item_collection_metrics`, an SNS phone number (`phone_number:**`).
 - A failed call keeps status ERROR without a description; `error.type` is

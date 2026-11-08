@@ -261,8 +261,8 @@ services):
 POST /notify                                          Server   python-api
 ├── POST /notify http receive                         Internal
 ├── api.send-notification                             Internal
-│   └── /notification.NotificationService/SendNotification   Client
-│       └── /notification.NotificationService/SendNotification   Server   python-backend
+│   └── notification.NotificationService/SendNotification   Client
+│       └── notification.NotificationService/SendNotification   Server   python-backend
 │           └── backend.send-notification             Internal
 │               ├── backend.render-template           Internal
 │               └── backend.deliver                   Internal

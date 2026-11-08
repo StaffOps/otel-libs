@@ -61,6 +61,8 @@ export interface DbTracerOptions {
 export function dbTracerProvider(provider: TracerProvider, opts: DbTracerOptions): TracerProvider {
   return coreDbTracerProvider(provider, {
     legacyKeys: opts.legacyKeys,
+    // The legacy db.statement next to db.query.text in the legacy-keys mode (A30, ruling Q5, 2026-11-06).
+    legacyStatement: true,
     spanName: opts.normalizeSpanName
       ? (requested, attrs) => {
           const system = attrs?.[ATTR_DB_SYSTEM_NAME];

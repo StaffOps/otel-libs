@@ -17,7 +17,7 @@ const CHILD_TIMEOUT_MS = 120_000; // export cases may wait up to 75 s for a long
 const DRAIN_MS = 2_000; // after the child exits, wait at most this long for its pipes to close
 const LANGS = ['go', 'python', 'dotnet', 'nodejs'];
 // D-JS14 statuses that are not waiting for a task (a recorded Node difference).
-const PERMANENT_SKIPS = new Set(['skip:no-upstream-rpc-metrics', 'skip:no-upstream-resource-proto-key']);
+const PERMANENT_SKIPS = new Set(['skip:no-upstream-rpc-metrics', 'skip:no-upstream-resource-proto-key', 'skip:no-upstream-node-http-opt-in-metrics']);
 
 // ── schema (mirrors python/tests/test_parity.py and go/parity_match_test.go) ──
 const COMMON_EXPECT = new Set(['error', 'warning', 'warning_count', 'log', 'diagnostics', 'helper_log', 'console']);
@@ -25,12 +25,12 @@ const CASE_KEYS = new Set(['id', 'kind', 'requirement', 'note', 'env', 'code', '
 const REQUIRED_KEYS = ['id', 'kind', 'env', 'code', 'expect', 'status'];
 const OVERRIDE_RE = /^python@sdk>=[\d.]+$/;
 const SCHEMA = {
-  resolve: ['resource', 'metric_exporters', 'metric_export_interval_ms', 'log_level', 'prometheus_metrics_port', 'prometheus_metrics_host'],
+  resolve: ['resource', 'metric_exporters', 'metric_export_interval_ms', 'log_level', 'prometheus_metrics_port', 'prometheus_metrics_host', 'http_opt_in_metrics'],
   export: ['received'],
   sampler: ['sampled', 'attributes'],
   propagation: ['headers'],
   http_server: ['server_spans', 'requests_counted', 'handler_child_spans', 'scrape'],
-  grpc_server: ['server_spans', 'rpcs_counted', 'call_ok', 'server_span_status'],
+  grpc_server: ['server_spans', 'rpcs_counted', 'call_ok', 'server_span_status', 'server_span_name', 'client_span_name'],
   logging: [],
   metrics_scrape: ['scrape', 'scrape_status'],
   metrics_listener: ['listener_statuses'],

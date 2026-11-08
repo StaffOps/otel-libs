@@ -179,14 +179,14 @@ sum(rate(http_server_request_duration_seconds_count{service_name="python-api", h
 ## 2. python-backend (gRPC :50051)
 
 Every RPC gets an automatic server span named
-`/notification.NotificationService/<Method>` (attributes `rpc.system`,
+`notification.NotificationService/<Method>` (attributes `rpc.system`,
 `rpc.service`, `rpc.method`, `rpc.grpc.status_code`), child of the caller's
 client span. `grpc.health.v1.Health/*` calls are not traced.
 
 ### 2.1 SendNotification
 
 ```text
-/notification.NotificationService/SendNotification   (server span)
+notification.NotificationService/SendNotification   (server span)
 └── backend.send-notification
     ├── backend.render-template
     └── backend.deliver
@@ -278,8 +278,8 @@ increase(notifications_cleaned_total{service_name="python-process"}[1h])
     └── [python-process] POST (httpx client)
         └── [python-api] POST /notify
             └── [python-api] api.send-notification
-                └── [python-api] /notification.NotificationService/SendNotification (client)
-                    └── [python-backend] /notification.NotificationService/SendNotification (server)
+                └── [python-api] notification.NotificationService/SendNotification (client)
+                    └── [python-backend] notification.NotificationService/SendNotification (server)
                         └── [python-backend] backend.send-notification
                             ├── backend.render-template
                             └── backend.deliver

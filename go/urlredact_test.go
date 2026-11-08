@@ -28,6 +28,11 @@ func TestRedactQuery(t *testing.T) {
 		"x=1;sig=a":                        "x=1;sig=a",
 		"%zz=1&X-Goog-Signature=g":         "%zz=1&X-Goog-Signature=REDACTED",
 		"X-Amz-Security-Token=t%2Bk&a=b=c": "X-Amz-Security-Token=REDACTED&a=b=c",
+		// A30: three more names.
+		"access_token=tok&a=1":                       "access_token=REDACTED&a=1",
+		"X-Goog-Credential=sa%40p.iam%2F20261105&x=": "X-Goog-Credential=REDACTED&x=",
+		"GoogleAccessId=sa@p.iam&Signature=s":        "GoogleAccessId=REDACTED&Signature=REDACTED",
+		"Access_Token=tok":                           "Access_Token=tok",
 	} {
 		if got := redactQuery(raw); got != want {
 			t.Errorf("redactQuery(%q) = %q, want %q", raw, got, want)
@@ -45,8 +50,8 @@ func TestRedactQuery(t *testing.T) {
 	}
 	names := RedactedQueryParams()
 	names[0] = "changed"
-	if RedactedQueryParams()[0] != "sig" || len(names) != 7 {
-		t.Error("RedactedQueryParams returns a copy of the seven names")
+	if RedactedQueryParams()[0] != "sig" || len(names) != 10 {
+		t.Error("RedactedQueryParams returns a copy of the ten names")
 	}
 	plain := []attribute.KeyValue{attribute.String("a", "b"), urlFullKey.String("https://h/?a=1")}
 	if got := redactAttrs(plain); &got[0] != &plain[0] {

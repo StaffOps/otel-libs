@@ -87,6 +87,7 @@ without effect; the code option `replaceGlobals`, not an env var) are in [`nodej
 | `OTEL_HELPER_SAMPLE_RATIO`, `OTEL_HELPER_DISABLED_SIGNALS` | Deprecated, warned once → standard vars. A set `OTEL_<SIGNAL>_EXPORTER` (a valid entry, `none` included) — and code metric exporters, for metrics — wins over `OTEL_HELPER_DISABLED_SIGNALS`; its unknown entries warn once (A19) | Supported |
 | `OTEL_HELPER_EXTRA_INSTRUMENTATION` | Go: removed (warns). Python: deprecated, default `SQL` | Read but no effect |
 | `OTEL_HELPER_DISABLED_METRICS`, `OTEL_HELPER_METRICS_PORT` | Supported (`9464`, `0` = no listener) | Supported |
+| `OTEL_HELPER_HTTP_OPT_IN_METRICS` | `false`: only the two HTTP durations; `true` adds `http.server.active_requests` and the body sizes where upstream has them (A30) | Not read: 0.2.x records what its instrumentations record (C11) |
 | `OTEL_EXPORTER_PROMETHEUS_PORT` / `_HOST` | Honored (A29): port beats `OTEL_HELPER_METRICS_PORT` (code wins, `0` = no listener); host = bind address, unset = every interface (not the spec's `localhost`) | Ignored; honored from Phase C C12 |
 | gRPC endpoint with a path | Path ignored, warned once per variable, name only (A29) | Path ignored, no warning (C7b) |
 

@@ -233,8 +233,8 @@ process.queue-consume                                    Internal  node-process
         └── POST /notify                                 Server    node-api
             └── request handler - /notify                Internal  node-api
                 └── api.send-notification                Internal  node-api
-                    └── grpc.notification.NotificationService/SendNotification  Client  node-api
-                        └── grpc.notification.NotificationService/SendNotification  Server  node-backend
+                    └── notification.NotificationService/SendNotification  Client  node-api
+                        └── notification.NotificationService/SendNotification  Server  node-backend
                             └── backend.send-notification    Internal  node-backend
                                 ├── backend.render-template  Internal  node-backend
                                 └── backend.deliver          Internal  node-backend
@@ -242,8 +242,8 @@ process.queue-consume                                    Internal  node-process
 
 Differences from the Python trace are the instrumentations' own (design
 D-JS14): express adds a `request handler - <route>` span, FastAPI adds
-`http receive`/`http send` spans; gRPC span names are `grpc.<service>/<method>`
-in Node and `/<service>/<method>` in Python; the route template is
+`http receive`/`http send` spans; gRPC span names are `<service>/<method>` in
+both (and in Go) since contract task A30; the route template is
 `/notify/:notificationId` (express) instead of `/notify/{notification_id}`.
 The `Notification sent` log record of node-api carries the trace id and the
 span id of `api.send-notification`.

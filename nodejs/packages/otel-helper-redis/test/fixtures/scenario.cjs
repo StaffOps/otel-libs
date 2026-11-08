@@ -108,6 +108,8 @@ function assertScenario(spans, { url, refusedUrl }) {
     assert.equal(s.kind, 2 /* CLIENT */, s.name);
     assert.equal(s.attributes['db.system.name'], 'redis', s.name);
     assert.equal(s.attributes['db.system'], 'redis', `${s.name}: legacy key by default (database/dup)`);
+    // A30: the legacy db.statement is db.query.text in dup mode (as Python contrib redis).
+    assert.equal(s.attributes['db.statement'], s.attributes['db.query.text'], `${s.name}: legacy db.statement by default`);
     assert.equal(typeof s.attributes['server.address'], 'string', s.name);
   }
   // No value, key, password or connection string anywhere but in exception events.

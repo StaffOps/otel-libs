@@ -3,7 +3,7 @@
  * `@opentelemetry/instrumentation-aws-sdk` records (design D-JS14 rows of
  * 2026-11-03).
  */
-import type { Attributes } from '@opentelemetry/api';
+import { SpanKind, type Attributes } from '@opentelemetry/api';
 
 /**
  * Never recorded: the DynamoDB `ItemCollectionMetrics` response field holds
@@ -25,6 +25,87 @@ export const ALIASES: Readonly<Record<string, string>> = Object.freeze({
   'cloud.region': 'aws.region',
 });
 
+/**
+ * Contrib `db.system.name` values → the semconv v1.43 registry values
+ * (`registry/attributes/db.md`: `aws.dynamodb`; instrumentation-aws-sdk 0.79
+ * writes `dynamodb`, `services/dynamodb.cjs:16`, `semconv.cjs:402`). Contract
+ * D1 "AWS service attribute values", A30; the legacy `db.system` stays
+ * `dynamodb` (core `LEGACY_DB_SYSTEM`).
+ */
+export const DB_SYSTEM_NAMES: Readonly<Record<string, string>> = Object.freeze({ dynamodb: 'aws.dynamodb' });
+
+/**
+ * The RPC generation of AWS spans (contract D1 "AWS RPC keys", ruled
+ * 2026-11-06, A30): `legacy` (default; the contrib's `rpc.system`,
+ * `rpc.service`, `rpc.method=<Operation>`), `rpc` (`rpc.system.name`,
+ * `rpc.method=<Service>/<Operation>`) or `rpc/dup` (both; `rpc.method` holds
+ * the current value, `rpc.service` keeps the service). `rpc/dup` wins over
+ * `rpc` (semconv `rpc-spans.md`); tokens trimmed (contract set) and
+ * ASCII-folded, as the database tokens. The same rule in Go and Python.
+ */
+export type RpcMode = 'legacy' | 'rpc' | 'rpc/dup';
+
+export function rpcModeFrom(value: string | undefined): RpcMode {
+  const tokens = new Set(
+    (value ?? '').split(',').map((t) => t.replace(/^[ \t\n\r\v\f]+|[ \t\n\r\v\f]+$/g, '').replace(/[A-Z]+/g, (m) => m.toLowerCase())),
+  );
+  if (tokens.has('rpc/dup')) return 'rpc/dup';
+  return tokens.has('rpc') ? 'rpc' : 'legacy';
+}
+
+let mode: RpcMode | undefined;
+/** {@link rpcModeFrom} of `OTEL_SEMCONV_STABILITY_OPT_IN`, read once per process (as `legacyKeysMode`). */
+export function rpcMode(): RpcMode {
+  mode ??= rpcModeFrom(process.env.OTEL_SEMCONV_STABILITY_OPT_IN);
+  return mode;
+}
+/** Test seam: forget the cached mode. */
+export function resetRpcModeForTests(): void {
+  mode = undefined;
+}
+
+/** `<Service>` and `<Operation>` of an AWS SDK call span's start attributes (the contrib's legacy keys), if any. */
+function awsCall(attributes: Attributes | undefined): readonly [string, string] | undefined {
+  if (attributes?.['rpc.system'] !== 'aws-api') return undefined;
+  const service = attributes['rpc.service'];
+  const method = attributes['rpc.method'];
+  return typeof service === 'string' && typeof method === 'string' && !method.includes('/') ? [service, method] : undefined;
+}
+
+const isGenAi = (attributes: Attributes): boolean => Object.keys(attributes).some((k) => k.startsWith('gen_ai.'));
+
+/**
+ * The span name of an AWS SDK call (contract D1 "AWS service attribute
+ * values", ruled 2026-11-06, owner Q3 (b)): `<Service>.<Operation>` (semconv
+ * `aws-sdk.md` `span.aws.client`), as Go and Python — the contrib names SQS
+ * `<queue> send` / `<queue> receive`, SNS `<topic> send` and Lambda
+ * `<function> Invoke`. Bedrock spans (`gen_ai.*`) keep their GenAI name.
+ */
+export function awsSpanName(requested: string, attributes: Attributes | undefined): string {
+  if (attributes === undefined) return requested;
+  const call = awsCall(attributes);
+  return call === undefined || isGenAi(attributes) ? requested : `${call[0]}.${call[1]}`;
+}
+
+/**
+ * The span kind of an AWS SDK call (contract D1 "AWS service attribute
+ * values", owner amendment 2026-11-08): PRODUCER on SQS/SNS send and publish,
+ * CONSUMER on SQS receive (what the contrib does, so a worker entered only by
+ * polling keeps its inbound service-graph edge), CLIENT on every other call.
+ */
+const MESSAGING_KINDS: Readonly<Record<string, SpanKind>> = Object.freeze({
+  'SQS.SendMessage': SpanKind.PRODUCER,
+  'SQS.SendMessageBatch': SpanKind.PRODUCER,
+  'SQS.ReceiveMessage': SpanKind.CONSUMER,
+  'SNS.Publish': SpanKind.PRODUCER,
+  'SNS.PublishBatch': SpanKind.PRODUCER,
+});
+
+export function awsSpanKind(requested: SpanKind | undefined, attributes: Attributes | undefined): SpanKind | undefined {
+  const call = awsCall(attributes);
+  return call === undefined ? requested : (MESSAGING_KINDS[`${call[0]}.${call[1]}`] ?? SpanKind.CLIENT);
+}
+
 /** The SNS destination of a `Publish` to a phone number, as Python botocore writes it (the number is PII). */
 export const REDACTED_PHONE = 'phone_number:**';
 
@@ -38,6 +119,7 @@ const SNS_DESTINATION_KEYS = ['messaging.destination', 'messaging.destination.na
  *
  * - {@link DROPPED_ATTRIBUTES} are removed;
  * - each {@link ALIASES} key with a value gets its semconv twin (unless set);
+ * - `db.system.name` is mapped by {@link DB_SYSTEM_NAMES} (A30);
  * - an SNS span whose `messaging.destination.name` is neither an ARN nor
  *   `unknown` is a `Publish` to a phone number (the contrib writes
  *   `TopicArn || TargetArn || PhoneNumber || 'unknown'`): both destination
@@ -56,6 +138,25 @@ export function sanitizeAttributes(attributes: Attributes): Attributes {
     const value = attributes[from];
     if (value !== undefined && attributes[to] === undefined) copy()[to] = value;
   }
+  const call = awsCall(attributes);
+  if (call !== undefined) {
+    // SNS and SQS: messaging.operation.name is the AWS operation (semconv Required; A30; Go maps otelaws's publish_input).
+    const messaging = attributes['messaging.system'];
+    if ((messaging === 'aws.sns' || messaging === 'aws_sqs') && attributes['messaging.operation.name'] === undefined) {
+      copy()['messaging.operation.name'] = call[1];
+    }
+    const rpc = rpcMode();
+    if (rpc !== 'legacy') {
+      copy()['rpc.system.name'] = 'aws-api';
+      copy()['rpc.method'] = `${call[0]}/${call[1]}`;
+      if (rpc === 'rpc') {
+        delete copy()['rpc.system'];
+        delete copy()['rpc.service'];
+      }
+    }
+  }
+  const system = attributes['db.system.name'];
+  if (typeof system === 'string' && DB_SYSTEM_NAMES[system] !== undefined) copy()['db.system.name'] = DB_SYSTEM_NAMES[system];
   const destination = attributes['messaging.destination.name'];
   if (attributes['messaging.system'] === 'aws.sns' && typeof destination === 'string' && destination !== 'unknown' && !destination.startsWith('arn:')) {
     for (const key of SNS_DESTINATION_KEYS) if (attributes[key] !== undefined) copy()[key] = REDACTED_PHONE;

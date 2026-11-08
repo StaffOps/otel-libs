@@ -32,6 +32,8 @@ export const ENV_RESOURCE_ATTRIBUTES = 'OTEL_RESOURCE_ATTRIBUTES';
 export const ENV_SERVICE_NAME = 'SERVICE_NAME';
 export const ENV_ENVIRONMENT = 'ENVIRONMENT';
 export const ENV_DEBUG_LEVEL = 'OTEL_HELPER_DEBUG_LEVEL';
+/** The HTTP opt-in metrics switch (contract D1 "HTTP opt-in metrics", ruled 2026-11-06, A30). */
+export const ENV_HTTP_OPT_IN_METRICS = 'OTEL_HELPER_HTTP_OPT_IN_METRICS';
 export const ENV_DISABLED_SIGNALS = 'OTEL_HELPER_DISABLED_SIGNALS';
 export const ENV_EXTRA_INSTRUMENTATION = 'OTEL_HELPER_EXTRA_INSTRUMENTATION';
 export const ENV_NODE_RESOURCE_DETECTORS = 'OTEL_NODE_RESOURCE_DETECTORS';
@@ -72,6 +74,14 @@ export interface SetupOptions {
   readonly debug?: boolean | undefined;
   /** Log level of the helper's logger; default `defaultLogLevel(environment, debug)`. */
   readonly minimumLogLevel?: LogLevel | undefined;
+  /**
+   * Record the HTTP metrics semconv makes opt-in (`http.server.active_requests`,
+   * the body sizes); wins over `OTEL_HELPER_HTTP_OPT_IN_METRICS`, default false
+   * (contract D1 "HTTP opt-in metrics", A30). **No effect in Node.js today**:
+   * instrumentation-http 0.300 records only the two durations, so there is
+   * nothing to switch on (accepted for the shared contract; README gap row).
+   */
+  readonly httpOptInMetrics?: boolean | undefined;
   /**
    * Install the helper's stderr `DiagLogger` for OpenTelemetry SDK messages
    * (default true: level `OTEL_LOG_LEVEL`, else WARN). `false` leaves `diag` alone.
@@ -213,6 +223,8 @@ export interface Resolved {
    * variables", A29).
    */
   readonly prometheusMetricsHost: string;
+  /** `httpOptInMetrics` > `OTEL_HELPER_HTTP_OPT_IN_METRICS` > false (A30; no effect in Node.js, see the option). */
+  readonly httpOptInMetrics: boolean;
   /** Disabled-metric globs (`disabledMetrics` > `OTEL_HELPER_DISABLED_METRICS`), trimmed, blanks dropped. */
   readonly disabledMetrics: readonly string[];
   /**
@@ -279,6 +291,7 @@ const OPTION_KEYS: ReadonlySet<string> = new Set([
   'prometheusMetricsPort',
   'disabledMetrics',
   'disabledSignals',
+  'httpOptInMetrics',
   'sampleRatio',
   'healthPaths',
   'replaceGlobals',
@@ -396,6 +409,7 @@ export function validateOptions(options: unknown): SetupOptions {
     o.resourceAttributes = Object.freeze(copy);
   }
   checkBoolean('debug', o.debug);
+  checkBoolean('httpOptInMetrics', o.httpOptInMetrics);
   checkBoolean('installDiagLogger', o.installDiagLogger);
   checkBoolean('replaceGlobals', o.replaceGlobals);
   for (const option of ['otelEndpoint', 'tracesEndpoint', 'metricsEndpoint', 'logsEndpoint', 'otlpProtocol', 'compression']) {
@@ -609,6 +623,9 @@ export function resolvePlan(options: SetupOptions, defaultServiceName: string, q
   const propagators = resolvePropagators(reporter.warn);
   const prometheusMetricsPort = resolveMetricsPort(options.prometheusMetricsPort, reporter.warn);
   const prometheusMetricsHost = resolveMetricsHost(reporter.warn);
+  const httpOptInMetrics = options.httpOptInMetrics ?? envBool(ENV_HTTP_OPT_IN_METRICS, reporter.warn) ?? false;
+  // Principle 8: the switch is accepted for the shared contract and has nothing to switch on here (A30, review L8).
+  if (httpOptInMetrics) reporter.info('http-opt-in-metrics', 'HTTP opt-in metrics requested; instrumentation-http records only the two durations, so nothing changes in Node.js', {});
 
   const resolved: Resolved = Object.freeze({
     serviceName,
@@ -624,6 +641,7 @@ export function resolvePlan(options: SetupOptions, defaultServiceName: string, q
     metricExportIntervalMs: signals.metricExportIntervalMs,
     prometheusMetricsPort,
     prometheusMetricsHost,
+    httpOptInMetrics,
     disabledMetrics: resolveDisabledMetrics(options.disabledMetrics),
     sampler,
     propagators,

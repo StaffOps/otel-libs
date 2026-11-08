@@ -111,6 +111,9 @@ class TestVersionMatrix:
 def _fake_module(monkeypatch, module_name: str, cls: type) -> None:
     module = ModuleType(module_name)
     setattr(module, cls.__name__, cls)
+    if module_name.endswith(".botocore"):
+        # Real contrib surface the helper patches (A30); its absence is warned (test_a30.py).
+        module.get_server_attributes = lambda endpoint_url: {}
     monkeypatch.setitem(sys.modules, module_name, module)
 
 

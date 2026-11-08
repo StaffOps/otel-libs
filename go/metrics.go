@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/netip"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -193,6 +194,11 @@ func configureMetrics(ctx context.Context, res *resource.Resource, opts *Options
 	if patterns := trimPatterns(opts.DisabledMetrics); len(patterns) > 0 {
 		mpOpts = append(mpOpts, sdkmetric.WithView(disabledMetricsView(patterns)))
 	}
+	if !opts.HTTPOptInMetrics {
+		mpOpts = append(mpOpts, sdkmetric.WithView(httpOptInMetricsView))
+	} else {
+		diagLogger.Info("otelhelper: HTTP opt-in metrics on: otelhttp records the body sizes, and has no http.server.active_requests instrument")
+	}
 
 	mp := sdkmetric.NewMeterProvider(mpOpts...)
 
@@ -202,6 +208,34 @@ func configureMetrics(ctx context.Context, res *resource.Resource, opts *Options
 	}
 
 	return mp, release, registry, nil
+}
+
+// httpOptInMetrics are the HTTP metrics semconv v1.43 makes opt-in
+// (docs/http/http-metrics.md): dropped from the OTel contrib instrumentation
+// scopes unless HTTPOptInMetrics is on (contract D1 "HTTP opt-in metrics",
+// ruled 2026-11-06, scoped 2026-11-08, A30), so an application's own
+// instrument of the same name is kept. The same list in Python; Node.js has
+// no view (instrumentation-http records only the two durations). otelhttp
+// v0.72 records the three body sizes (internal/semconv/server.go:40-55,
+// client.go:28,36).
+var httpOptInMetrics = map[string]bool{
+	"http.server.active_requests": true, "http.client.active_requests": true,
+	"http.server.request.body.size": true, "http.server.response.body.size": true,
+	"http.client.request.body.size": true, "http.client.response.body.size": true,
+	"http.server.request.size": true, "http.server.response.size": true,
+	"http.client.request.size": true, "http.client.response.size": true,
+	"http.client.open_connections": true, "http.client.connection.duration": true,
+}
+
+// contribScopePrefix is the instrumentation scope prefix of the OTel Go contrib instrumentations.
+const contribScopePrefix = "go.opentelemetry.io/contrib/instrumentation/"
+
+// httpOptInMetricsView drops the httpOptInMetrics instruments of the contrib scopes.
+func httpOptInMetricsView(inst sdkmetric.Instrument) (sdkmetric.Stream, bool) {
+	if httpOptInMetrics[inst.Name] && strings.HasPrefix(inst.Scope.Name, contribScopePrefix) {
+		return sdkmetric.Stream{Aggregation: sdkmetric.AggregationDrop{}}, true
+	}
+	return sdkmetric.Stream{}, false
 }
 
 // disabledMetricsView returns a View that drops the instruments whose name

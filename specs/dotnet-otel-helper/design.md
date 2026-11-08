@@ -822,7 +822,8 @@ failure is upstream.
 | (no case) SqlClient legacy `db.system` absent | README gap row | stable-only upstream | C14a |
 | (no case) URL query redaction text and scope (.NET 8 vs .NET 9+ runtime) | README gap row | O3 | C14c, C-patch notes |
 | (no case) gRPC failures counted as HTTP 200 in `http.server.request.duration`; no RPC metrics | README gap row | upstream | C11 |
-| (no case) gRPC span names `pkg.Svc/Method` | README row: same as Go | upstream | C11 |
+| (no case) gRPC span names `pkg.Svc/Method` *(amended 2026-11-08, A30: cases `grpc.server_span_name_semconv` and `grpc.client_span_name_semconv` now cover it)* | README row: same as Go | upstream | C11 |
+| `http.opt_in_metrics_scrape_body_size_on`, `http.opt_in_metrics_scrape_code_on` *(added 2026-11-08, A30)*: ASP.NET Core and `System.Net.Http` have no HTTP body-size instrument (Microsoft Learn built-in metrics pages read 2026-11-08), so the opt-in switch brings back active requests and connection metrics only | `skip:no-upstream-dotnet-http-body-size` | upstream | C11 |
 
 `skip:dotnet-sdk-logs-env-values` (r1 candidate) is not needed: the SDK
 throws on malformed headers but echoes no value (measured, C1 dev H4).

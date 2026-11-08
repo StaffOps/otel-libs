@@ -204,7 +204,7 @@ rejected never reaches the SDK or the wire.
 | `OTEL_METRIC_EXPORT_INTERVAL` | `30000` | Milliseconds (the SDK default is 60000): ASCII digits with an optional `+` (any number of digits), > 0, else warned and 30 000; above 2 147 483 647 clamped with a warning |
 | `OTEL_TRACES_SAMPLER` / `OTEL_TRACES_SAMPLER_ARG` | `parentbased_always_on` | The six spec names, case-insensitive. Unknown name → warning + default; invalid `_ARG` → warning + 1.0. Across languages prefer `parentbased_traceidratio` to a bare `traceidratio` ([HOW-TO §7](HOW-TO.md#7-sampling)) |
 | `OTEL_PROPAGATORS` | `tracecontext,baggage` | `tracecontext`, `baggage`, `none`. Other values are warned and skipped. A propagator registered before `setup()` is kept (warned) unless `replaceGlobals` is set |
-| `OTEL_SEMCONV_STABILITY_OPT_IN` | _(unset)_ | Not set by the helper. HTTP: the Node.js instrumentations emit only the stable conventions, so a value without `http`, or with `http/dup`, is warned once and has no HTTP effect. Database keys (opt-in packages): both `db.system.name` and the legacy `db.system` unless the value holds `database` without `database/dup`; read once per process by the first `sqlInstrumentation()`, `redisInstrumentation()` or `awsInstrumentation()` |
+| `OTEL_SEMCONV_STABILITY_OPT_IN` | _(unset)_ | Not set by the helper. HTTP: the Node.js instrumentations emit only the stable conventions, so a value without `http`, or with `http/dup`, is warned once and has no HTTP effect. Database keys (opt-in packages): both `db.system.name` and the legacy `db.system` unless the value holds `database` without `database/dup`; read once per process by the first `sqlInstrumentation()`, `redisInstrumentation()` or `awsInstrumentation()` AWS RPC keys (`-aws`, A30): `http,rpc` for the current keys, `http,rpc/dup` for both; keep `http` in the value, a value without it is warned |
 | `OTEL_BSP_*`, `OTEL_BLRP_*`, `OTEL_*_LIMIT` | spec defaults | Batch processor sizes and delays and the attribute, span, event, link and log record limits are read by the helper (SDK 3.0 no longer does). A value-length limit of `0` is invalid (warned); a batch size above the queue size warns and uses the queue size |
 | `OTEL_LOG_LEVEL` | `WARN` | **Node only.** Level of the OpenTelemetry SDK's own messages (`NONE`, `ERROR`, `WARN`, `INFO`, `DEBUG`, `VERBOSE`, `ALL`), written by the helper's `DiagLogger` to stderr. Unset → WARN (not the spec's INFO); another value warns and uses WARN. `installDiagLogger: false` leaves `diag` alone |
 | `OTEL_METRICS_EXEMPLAR_FILTER` | — | Not honored: `@opentelemetry/sdk-metrics` 3.0 exports no exemplar filter, so Node.js metric points carry no exemplars (Go and Python do) |
@@ -218,6 +218,7 @@ rejected never reaches the SDK or the wire.
 | `OTEL_EXPORTER_PROMETHEUS_HOST` | every interface | Listener bind address: an IPv4/IPv6 literal (brackets allowed, no zone id) or `localhost` (= `127.0.0.1`); `::` = every interface. Unset binds every interface — **not** the spec default `localhost`, so other pods can scrape. Other values (host names, `*`) are warned and every interface is used; no code option (A29) |
 | `OTEL_HELPER_METRICS_PORT` | `9464` | Standalone Prometheus `/metrics` listener (dual-stack `::`, `GET`/`HEAD /metrics` only: other paths 404, other methods 405); ASCII digits with an optional `+`, in [0, 65535]; `0` disables it (mount `metricsHandler()` instead). A busy port does not fail `setup()`: it is reported. Used when `OTEL_EXPORTER_PROMETHEUS_PORT` is unset or invalid. |
 | `OTEL_HELPER_DISABLED_METRICS` | _(unset)_ | Comma list of patterns, each a case-sensitive glob on the instrument name (`*` any run of characters, `?` one character, everything else literal); items trimmed, blank items ignored; matching instruments are dropped from every exporter |
+| `OTEL_HELPER_HTTP_OPT_IN_METRICS` | `false` | Accepted for the shared contract (`httpOptInMetrics` wins; `Resolved.httpOptInMetrics`), **no effect in Node.js**: instrumentation-http records only the two durations (A30) |
 | `OTEL_HELPER_SAMPLE_RATIO` | `1.0` | **Deprecated** → `OTEL_TRACES_SAMPLER=parentbased_traceidratio` + `OTEL_TRACES_SAMPLER_ARG`. Used only while `OTEL_TRACES_SAMPLER` is unset |
 | `OTEL_HELPER_DISABLED_SIGNALS` | _(unset)_ | **Deprecated** → `OTEL_{TRACES,METRICS,LOGS}_EXPORTER=none`. A standard variable with a valid entry wins for its signal, and `metricExporters` wins for metrics; unknown entries warn once |
 | `OTEL_HELPER_EXTRA_INSTRUMENTATION` | — | **No effect in Node.js** (warned once): pass `sqlInstrumentation()`, `redisInstrumentation()` or `awsInstrumentation()` in `setup({ instrumentations })` |
@@ -310,10 +311,10 @@ full Node.js record, with the status of each item, is
 [design D-JS14](https://github.com/StaffOps/otel-libs/blob/main/specs/nodejs-otel-helper/design.md#d-js14--known-node-differences-reference-each-with-a-fixture-status).
 The ones you meet first:
 
-- gRPC spans carry the legacy `rpc.*` attributes, names `grpc.<pkg.Svc>/<Method>`,
-  and no RPC metrics; a handler that throws synchronously leaves its SERVER
+- gRPC spans carry the legacy `rpc.*` attributes (named `<pkg.Svc>/<Method>`,
+  as in Go and Python) and no RPC metrics; a handler that throws synchronously leaves its SERVER
   span unended.
-- Only two HTTP metrics; `http.route` only with express; `node:http2` is not
+- Only two HTTP metrics (the default in every language since A30; `OTEL_HELPER_HTTP_OPT_IN_METRICS` has nothing to add in Node.js); `http.route` only with express; `node:http2` is not
   instrumented.
 - No runtime metrics and no exemplars.
 - A TracerProvider, MeterProvider or propagator registered before `setup()` is

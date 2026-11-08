@@ -29,7 +29,7 @@ from staffops_otel_helper.config import (
     ascii_lower,
 )
 from staffops_otel_helper._url_redaction import UrlQueryRedactionProcessor
-from staffops_otel_helper.processors import DebugProcessor
+from staffops_otel_helper.processors import DebugProcessor, GrpcSpanNameProcessor
 
 # HTTP paths whose server spans the helper drops unless TelemetryOptions.health_paths
 # replaces the list (R7, design D5) — same list as Go's DefaultHealthPaths.
@@ -183,8 +183,10 @@ def build_tracer_provider(resource: Resource, options: TelemetryOptions) -> Trac
             max_span_attribute_length=limits.get("span"),  # None: the SDK reads a non-zero env value
         )
     provider = TracerProvider(resource=resource, sampler=sampler, shutdown_on_exit=False, **kwargs)
-    # Before any exporting processor: URL query values redacted at span start (A28).
+    # Before any exporting processor: URL query values redacted at span start (A28),
+    # contrib gRPC spans renamed to the semconv name (A30).
     provider.add_span_processor(UrlQueryRedactionProcessor())
+    provider.add_span_processor(GrpcSpanNameProcessor())
     try:
         exporters = options.resolved_exporters("traces")
         plan = options.otlp_export("traces")

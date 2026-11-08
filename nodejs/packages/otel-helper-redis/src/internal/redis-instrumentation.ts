@@ -117,7 +117,7 @@ export const registry = contribRegistry<Library>({
   build,
   patchedFiles: PATCHED_FILES,
   tracerProvider: (_library, provider) =>
-    dbTracerProvider(provider, { legacyKeys: legacyKeysMode(), spanName: commandSpanName, responseStatusCode: redisResponseCode }),
+    dbTracerProvider(provider, { legacyKeys: legacyKeysMode(), legacyStatement: true, spanName: commandSpanName, responseStatusCode: redisResponseCode }),
   // Neither contrib records metrics today (design D-JS14); bound through the
   // same wrapper as `-sql` so a contrib release that adds them gets the
   // legacy key and the generation guard without a change here.

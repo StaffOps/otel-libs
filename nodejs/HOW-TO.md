@@ -186,10 +186,11 @@ Client spans write `url.full`, server spans `url.path` and `url.query`:
 - userinfo in a `node:http` client URL is written as `REDACTED:REDACTED`
   (`fetch` rejects URLs with credentials);
 - the values of `sig`, `Signature`, `AWSAccessKeyId`, `X-Goog-Signature`,
-  `X-Amz-Signature`, `X-Amz-Credential` and `X-Amz-Security-Token` are written
-  as `REDACTED` in client `url.full` and server `url.query`, as in Go and
+  `X-Amz-Signature`, `X-Amz-Credential`, `X-Amz-Security-Token`,
+  `access_token`, `X-Goog-Credential` and `GoogleAccessId` are written as
+  `REDACTED` in client `url.full` and server `url.query`, as in Go and
   Python. Names are matched case-sensitively (`SIG` is kept);
-- every other value (`token`, `access_token`) is recorded as sent.
+- every other value (`token`, `api_key`) is recorded as sent.
 
 Do not put secrets in query strings. When a listed name is present, the
 recorded query is re-serialized through `URLSearchParams` for `node:http`
@@ -225,11 +226,11 @@ server.addService(service, {
   synchronously in a handler.** A handler that throws leaves its SERVER span
   unended, so it is never exported (upstream `@opentelemetry/instrumentation-grpc`);
   Go and Python record the call as `UNKNOWN`.
-- Spans are named `grpc.<package.Service>/<Method>` and carry the legacy
-  `rpc.system`, `rpc.service`, `rpc.method`, `rpc.grpc.status_code`; error
-  spans add `grpc.error_name` / `grpc.error_message` and no `error.type`. No
-  RPC metrics are emitted. Go and Python name the spans differently (README,
-  known gaps): a query on gRPC span names is per language.
+- Spans are named `<package.Service>/<Method>` (semconv `{rpc.method}`, as Go
+  and Python; instrumentation-grpc's own `grpc.` prefix is removed since
+  contract task A30) and carry the legacy `rpc.system`, `rpc.service`,
+  `rpc.method`, `rpc.grpc.status_code`; error spans add `grpc.error_name` /
+  `grpc.error_message` and no `error.type`. No RPC metrics are emitted.
 - A SERVER span is ERROR only for the server-fault codes (as the semconv gRPC
   rule): `UNKNOWN`, `DEADLINE_EXCEEDED`, `UNIMPLEMENTED`, `INTERNAL`,
   `UNAVAILABLE`, `DATA_LOSS`. The rule also clears an `ERROR` status your
@@ -617,7 +618,7 @@ sqlInstrumentation({ pg: true, mysql2: false });   // true: warn once when pg do
   wrapper no error code); the SQLSTATE is only on pg's
   `db.client.operation.duration` as `error.type`, and only for the callback
   form (`pool.query(…, cb)`), not for a rejected `client.query()` promise.
-- Spans carry `db.system.name` (+ legacy `db.system`), `db.namespace`,
+- Spans carry `db.system.name` (+ legacy `db.system` and `db.statement` = `db.query.text`, until 1.0 and unless `OTEL_SEMCONV_STABILITY_OPT_IN` holds `database` without `database/dup`; A30), `db.namespace`,
   `server.address`, `server.port` and `db.query.text` **as written**
   (placeholders kept, never the bound values; a literal you inline is kept).
   No connection string, user or password.
@@ -645,12 +646,16 @@ redisInstrumentation({ ioredis: true, redis: false });
 ```
 
 - Spans are named by the command, uppercased (`SET`; connection spans
-  `connect`; as Python — Go writes `set`), with `db.system.name=redis`, `db.operation.name`,
+  `connect`; as Python and Go), with `db.system.name=redis`, `db.operation.name`,
   `server.address`/`server.port` and `db.query.text` as the command and one
-  `?` per argument (`SET ? ?`): **no keys, values or `AUTH` passwords**.
+  `?` per argument (`SET ? ?`): **no keys, values or `AUTH` passwords**. In
+  the legacy-keys mode (the default; `OTEL_SEMCONV_STABILITY_OPT_IN` without
+  `database`, or with `database/dup`) the legacy `db.system` and
+  `db.statement` (the same `SET ? ?`) are written too, as Python.
 - `db.operation.name` is the command **as the client provides it**, not
   normalized: node-redis `SET`, `MULTI`, `PIPELINE`; ioredis `set`,
-  `MULTI set`, `PIPELINE set` (Go `set`, Python none). Semconv recommends
+  `MULTI set`, `PIPELINE set` (Go `set`, Python `SET`; none on Go and Python
+  pipeline spans). Semconv recommends
   capturing it "as provided by the application without attempting to do any
   case normalization"; group by the span name (always uppercased) or compare
   case-insensitively when one dashboard mixes both clients.
@@ -705,12 +710,19 @@ awsInstrumentation(); // no options yet: any key throws a TypeError
 const { S3Client, PutObjectCommand } = require('@aws-sdk/client-s3');
 ```
 
-- One span per `send()`, retries included, named `<Service>.<Operation>`
-  (SQS `<queue> send`/`receive`, SNS `<topic> send`, Lambda
-  `<function> Invoke`), with the legacy `rpc.system=aws-api`, `rpc.service`,
-  `rpc.method` (as Python; Go writes the current keys), `cloud.region`,
-  `aws.region`, `aws.request_id` and the service attributes. No
-  `server.address` on Node.js AWS spans.
+- One span per `send()`, retries included, named `<Service>.<Operation>` for
+  every service (`SQS.SendMessage`, `SNS.Publish`, `Lambda.Invoke`; since
+  contract task A30 — the contrib names messaging calls `<queue> send`;
+  Bedrock GenAI spans keep their name). Kind: PRODUCER on SQS/SNS send and
+  publish, CONSUMER on SQS receive, CLIENT otherwise. The legacy
+  `rpc.system=aws-api`, `rpc.service`, `rpc.method` by default, as Go and
+  Python (`OTEL_SEMCONV_STABILITY_OPT_IN=http,rpc`: `rpc.system.name` and
+  `rpc.method=<Service>/<Operation>`; `http,rpc/dup`: both, `rpc.method`
+  holding `<Service>/<Operation>`), `cloud.region`, `aws.region`,
+  `aws.request_id`, `messaging.operation.name` = the AWS operation on SQS and
+  SNS spans, and the service attributes. No
+  `server.address`/`server.port` on Node.js AWS spans (the contrib does not
+  see the endpoint; a documented gap).
 - **No HTTP span under it**, and the SDK's own requests are not counted in
   `http.client.request.duration`.
 - Never recorded: credentials, request and response bodies, DynamoDB

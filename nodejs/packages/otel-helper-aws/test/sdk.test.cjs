@@ -120,7 +120,7 @@ test('JS8 every service: one span per send(), the contrib semconv plus aws.regio
     }
     const ddb = byOrder('DynamoDB.PutItem').concat(byOrder('DynamoDB.GetItem'));
     const [ddbPut, ddbQuoting, ddbGet, ddbMissing, ddbThrottled, ddbOnce] = ddb;
-    assertHas(ddbPut, { ...rpc('DynamoDB', 'PutItem'), 'db.system.name': 'dynamodb', 'db.system': 'dynamodb', 'db.namespace': 'Orders', 'db.operation.name': 'PutItem', 'aws.dynamodb.table_names': ['Orders'] });
+    assertHas(ddbPut, { ...rpc('DynamoDB', 'PutItem'), 'db.system.name': 'aws.dynamodb', 'db.system': 'dynamodb', 'db.namespace': 'Orders', 'db.operation.name': 'PutItem', 'aws.dynamodb.table_names': ['Orders'] });
     assert.ok(ddbPut.attributes['aws.dynamodb.consumed_capacity'], 'capacity is a measurement: kept');
     assert.equal(ddbPut.attributes['aws.dynamodb.item_collection_metrics'], undefined, 'holds the partition-key value: dropped');
     assert.equal(ddbPut.attributes['db.query.text'], undefined, 'no statement (the request input)');
@@ -139,30 +139,33 @@ test('JS8 every service: one span per send(), the contrib semconv plus aws.regio
     assert.equal(ddbQuoting.attributes['error.type'], 'ValidationException');
     assert.ok(ddbQuoting.events[0].attributes['exception.message'].includes('quoted-in-error'));
     assert.ok(!JSON.stringify({ ...ddbQuoting, events: [] }).includes('quoted-in-error'), 'never in the status or the attributes');
-    const [send, sqsMissing] = byOrder('orders send').concat(byOrder('missing send').filter((s) => s.attributes['rpc.service'] === 'SQS'));
-    const [receive] = byOrder('orders receive');
+    // A30: every AWS call span is named `<Service>.<Operation>`; SQS/SNS keep PRODUCER on send/publish and CONSUMER on receive (owner amendment 2026-11-08).
+    const by = (name, key, value) => byOrder(name).filter((s) => s.attributes[key] === value);
+    const [send] = by('SQS.SendMessage', 'messaging.destination.name', 'orders');
+    const [sqsMissing] = by('SQS.SendMessage', 'messaging.destination.name', 'missing');
+    const [receive] = byOrder('SQS.ReceiveMessage');
     assert.equal(send.kind, SpanKind.PRODUCER);
     assertHas(send, { ...rpc('SQS', 'SendMessage'), 'messaging.system': 'aws_sqs', 'messaging.destination.name': 'orders', 'messaging.message.id': 'msg-1', 'url.full': `${fake.url}/123456789012/orders` });
     assert.equal(receive.kind, SpanKind.CONSUMER);
     assertHas(receive, { 'messaging.operation.type': 'receive', 'messaging.batch.message_count': 1 });
     assert.deepEqual(receive.links, [{ traceId: send.traceId, attributes: { 'messaging.message.id': 'msg-1' } }], 'the producer context travels in the message attributes');
     assertHas(sqsMissing, { 'error.type': 'QueueDoesNotExist' });
-    const [publish] = byOrder('alerts send');
-    const [phone, invalidPhone] = byOrder('phone_number send');
-    const [snsMissing] = byOrder('missing send').filter((s) => s.attributes['rpc.service'] === 'SNS');
+    const [publish] = by('SNS.Publish', 'messaging.destination', 'alerts');
+    const [phone, invalidPhone] = by('SNS.Publish', 'messaging.destination', 'phone_number:**');
+    const [snsMissing] = by('SNS.Publish', 'messaging.destination', 'missing');
     assert.equal(publish.kind, SpanKind.PRODUCER);
-    assertHas(publish, { ...rpc('SNS', 'Publish'), 'messaging.system': 'aws.sns', 'messaging.destination.name': 'arn:aws:sns:us-east-1:123456789012:alerts', 'aws.sns.topic.arn': 'arn:aws:sns:us-east-1:123456789012:alerts' });
+    assertHas(publish, { ...rpc('SNS', 'Publish'), 'messaging.operation.name': 'Publish', 'messaging.system': 'aws.sns', 'messaging.destination.name': 'arn:aws:sns:us-east-1:123456789012:alerts', 'aws.sns.topic.arn': 'arn:aws:sns:us-east-1:123456789012:alerts' });
     assertHas(phone, { 'messaging.destination': 'phone_number:**', 'messaging.destination.name': 'phone_number:**' });
     assertHas(snsMissing, { 'error.type': 'NotFoundException' });
     // M2: SNS quotes an invalid number in its error message: attributes, name and status never carry it; the exception event does (the A25 residual).
     assertHas(invalidPhone, { 'error.type': 'InvalidParameterException', 'messaging.destination.name': 'phone_number:**' });
     assert.ok(invalidPhone.events[0].attributes['exception.message'].includes('+15555550000'));
     assert.ok(!JSON.stringify({ ...invalidPhone, events: [] }).includes('+15555550000'));
-    const [invoke] = byOrder('resize Invoke');
-    const [lambdaError] = byOrder('boom Invoke');
+    const [invoke] = by('Lambda.Invoke', 'faas.invoked_name', 'resize');
+    const [lambdaError] = by('Lambda.Invoke', 'faas.invoked_name', 'boom');
     // L5: a function that threw (200 + X-Amz-Function-Error: Unhandled) is a successful AWS call: not an
     // ERROR span (as Python botocore), and the error payload is never recorded.
-    const [unhandled] = byOrder('unhandled Invoke');
+    const [unhandled] = by('Lambda.Invoke', 'faas.invoked_name', 'unhandled');
     assert.deepEqual(unhandled.status, { code: SpanStatusCode.UNSET });
     assertHas(unhandled, { 'http.response.status_code': 200, 'faas.invoked_name': 'unhandled' });
     assert.equal(unhandled.attributes['error.type'], undefined);
@@ -278,14 +281,14 @@ test('re-setup: shutdown() stops the spans of clients built earlier; the next se
     const client = new sqs.SQSClient(clientConfig(fake));
     const send = () => client.send(new sqs.SendMessageCommand({ QueueUrl: `${fake.url}/123456789012/resetup`, MessageBody: 'm' }));
     await send();
-    assert.deepEqual(ended.filter((n) => n === 'resetup send'), ['resetup send']);
+    assert.deepEqual(ended.filter((n) => n === 'SQS.SendMessage'), ['SQS.SendMessage']);
     await helper.shutdown();
     await send();
-    assert.deepEqual(ended.filter((n) => n === 'resetup send'), ['resetup send'], 'nothing after shutdown()');
+    assert.deepEqual(ended.filter((n) => n === 'SQS.SendMessage'), ['SQS.SendMessage'], 'nothing after shutdown()');
     const next = new InMemorySpanExporter();
     setupWith(next);
     await send();
-    assert.deepEqual(spansOf(next).map((s) => [s.name, s.instrumentationScope.name]), [['resetup send', AWS_SCOPE]], 'the client built earlier reports again');
+    assert.deepEqual(spansOf(next).map((s) => [s.name, s.instrumentationScope.name]), [['SQS.SendMessage', AWS_SCOPE]], 'the client built earlier reports again');
   } finally {
     await fake.close();
   }
@@ -297,7 +300,7 @@ test('an SDK loaded (and a client built) before awsInstrumentation() and setup()
     const out = await runNode([path.join(FIXTURES, 'preload.cjs')], { AWS_FAKE_URL: fake.url });
     assert.equal(out.status, 0, out.stderr);
     assert.ok(out.preloaded, 'the SDK was in require.cache first');
-    assert.deepEqual(out.spans.map((s) => [s.name, s.scope, s.attributes['rpc.method']]), [['early send', AWS_SCOPE, 'SendMessage']]);
+    assert.deepEqual(out.spans.map((s) => [s.name, s.scope, s.attributes['rpc.method']]), [['SQS.SendMessage', AWS_SCOPE, 'SendMessage']]);
   } finally {
     await fake.close();
   }
@@ -329,8 +332,27 @@ test('OTEL_SEMCONV_STABILITY_OPT_IN=database: DynamoDB spans carry db.system.nam
       const out = await runNode([path.join(FIXTURES, 'preload.cjs')], { AWS_FAKE_URL: fake.url, FIXTURE_NO_PRELOAD: '1', FIXTURE_DYNAMODB: '1', OTEL_SEMCONV_STABILITY_OPT_IN: value });
       assert.equal(out.status, 0, out.stderr);
       const [span] = out.spans.filter((s) => s.name === 'DynamoDB.GetItem');
-      assert.equal(span.attributes['db.system.name'], 'dynamodb');
+      assert.equal(span.attributes['db.system.name'], 'aws.dynamodb', 'semconv v1.43 value (A30)');
       assert.equal(span.attributes['db.system'], legacy, JSON.stringify(value));
+    }
+  } finally {
+    await fake.close();
+  }
+});
+
+test('A30 OTEL_SEMCONV_STABILITY_OPT_IN rpc / rpc/dup: AWS RPC keys (legacy by default, as Go and Python)', async () => {
+  const fake = await startAwsFake();
+  try {
+    for (const [value, want, absent] of [
+      ['', { 'rpc.system': 'aws-api', 'rpc.service': 'SQS', 'rpc.method': 'SendMessage' }, ['rpc.system.name']],
+      ['http, RPC ', { 'rpc.system.name': 'aws-api', 'rpc.method': 'SQS/SendMessage' }, ['rpc.system', 'rpc.service']],
+      ['rpc,rpc/dup', { 'rpc.system.name': 'aws-api', 'rpc.system': 'aws-api', 'rpc.service': 'SQS', 'rpc.method': 'SQS/SendMessage' }, []],
+    ]) {
+      const out = await runNode([path.join(FIXTURES, 'preload.cjs')], { AWS_FAKE_URL: fake.url, FIXTURE_NO_PRELOAD: '1', OTEL_SEMCONV_STABILITY_OPT_IN: value });
+      assert.equal(out.status, 0, out.stderr);
+      const [span] = out.spans.filter((s) => s.name === 'SQS.SendMessage');
+      for (const [k, v] of Object.entries(want)) assert.equal(span.attributes[k], v, `${JSON.stringify(value)} ${k}`);
+      for (const k of absent) assert.equal(span.attributes[k], undefined, `${JSON.stringify(value)} ${k}`);
     }
   } finally {
     await fake.close();

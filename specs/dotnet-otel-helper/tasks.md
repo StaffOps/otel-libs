@@ -140,6 +140,21 @@ cases (D-NET12) keep their owner below once C5 maps them.
 > C7b — `export.grpc_schemeless_endpoint_path_ignored_warned`, `export.grpc_skipped_endpoint_path_not_warned`,
 > `export.http_endpoint_path_not_warned`; C12 — nine more `metrics.port_prometheus_*`. C4's .NET driver also
 > maps the new fixture `code` key `prometheus_metrics_port`.
+>
+> **Added 2026-11-08 (contract task A30).** New cases, owner C11 by the rule above (prefixes `http.`, `grpc.`):
+> `http.opt_in_metrics_default_off`, `_env_true`, `_env_invalid_false_warned`, `_code_wins`, the scrape cases
+> `http.opt_in_metrics_scrape_durations_only_by_default`, `_scrape_active_requests_on`,
+> `_scrape_disabled_pattern_wins`, and `grpc.server_span_name_semconv`, `grpc.client_span_name_semconv` — `xfail:C11`;
+> `http.opt_in_metrics_scrape_body_size_on` and `_scrape_code_on` (it asserts a body size) are `skip:no-upstream-dotnet-http-body-size`: neither
+> `Microsoft.AspNetCore.Hosting` nor `System.Net.Http` has a body-size instrument (Microsoft Learn built-in metrics
+> pages read 2026-11-08), so those cases can never pass on .NET (set from the upstream docs, ahead of the D-NET15 rule that a `skip:` follows a C4 run; C4 confirms it). The C11 count of 19 above predates these cases and, as
+> for A29, is not updated. C4's .NET driver maps the new fixture `code` key `http_opt_in_metrics` and the snapshot
+> fields `resolve.http_opt_in_metrics`, `grpc_server.server_span_name` and `grpc_server.client_span_name`. **C11
+> implements the switch** (`OTEL_HELPER_HTTP_OPT_IN_METRICS`, a code option, `Resolved` field): by default only
+> `http.server.request.duration` and `http.client.request.duration`, so the views must drop what .NET records by
+> default — `http.server.active_requests`, `http.client.active_requests`, `http.client.open_connections`,
+> `http.client.connection.duration` and `http.client.request.time_in_queue` (a .NET-only instrument, not in the
+> contract list of D1 "HTTP opt-in metrics") — unless the switch is on; a gRPC span is named `pkg.Svc/Method`.
 
 ## Promotion triggers (deferred or conditional work)
 

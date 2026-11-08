@@ -52,6 +52,14 @@ type Options struct {
 	// Default: 9464 (OTEL_HELPER_METRICS_PORT). 0 disables the listener while
 	// keeping the Prometheus reader active for MetricsHandler().
 	PrometheusMetricsPort int
+	// HTTPOptInMetrics records the HTTP metrics semconv v1.43 makes opt-in:
+	// http.server.active_requests and the request/response body sizes (contract
+	// D1 "HTTP opt-in metrics", ruled 2026-11-06, A30). false (default) =
+	// only http.server.request.duration and http.client.request.duration.
+	// Resolved from OTEL_HELPER_HTTP_OPT_IN_METRICS unless set in code. otelhttp
+	// v0.72 has no active-requests instrument, so in Go the switch brings back
+	// the body sizes only.
+	HTTPOptInMetrics bool
 	// OtlpProtocol selects the OTLP wire protocol: "grpc" or "http/protobuf".
 	// Empty = OTEL_EXPORTER_OTLP_<SIGNAL>_PROTOCOL > OTEL_EXPORTER_OTLP_PROTOCOL
 	// > port-4318 inference on that signal's endpoint > grpc.
@@ -75,6 +83,7 @@ type Options struct {
 	disabledSignalsSet bool
 	disabledMetricsSet bool
 	metricsPortSet     bool
+	httpOptInSet       bool
 	// prometheusHost: the standalone listener's bind address from
 	// OTEL_EXPORTER_PROMETHEUS_HOST ("" = every interface; A29).
 	prometheusHost string
@@ -199,6 +208,13 @@ func WithDisabledSignals(signals []string) Option {
 // disables nothing and still overrides the env; nil means "not set" (env).
 func WithDisabledMetrics(patterns []string) Option {
 	return func(o *Options) { o.DisabledMetrics = patterns; o.disabledMetricsSet = patterns != nil }
+}
+
+// WithHTTPOptInMetrics turns the HTTP opt-in metrics on or off (the body
+// sizes; see Options.HTTPOptInMetrics), overriding
+// OTEL_HELPER_HTTP_OPT_IN_METRICS whatever the value (A30).
+func WithHTTPOptInMetrics(on bool) Option {
+	return func(o *Options) { o.HTTPOptInMetrics = on; o.httpOptInSet = true }
 }
 
 // WithPrometheusMetricsPort sets the standalone /metrics listener port in

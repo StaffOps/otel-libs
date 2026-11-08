@@ -11,11 +11,12 @@
  * `http.server.request.duration` too (Go `middleware.go`, Python
  * `instrumentation.py`). The instrumentations only have to start their spans
  * with what the sampler reads: `url.path` at start (instrumentation-http) and
- * the span name `grpc.<service>/<method>` (instrumentation-grpc), both asserted
+ * the span name `<service>/<method>` (instrumentation-grpc's `grpc.<service>/<method>`,
+ * started under the semconv name by the helper since A30), both asserted
  * by tests. Client calls are filtered like Go `NewHTTPTransport` and the Python
  * `excluded_urls`: a request to a health path gets no span and no metric. gRPC
  * client health calls are dropped by the sampler (CLIENT spans of
- * `grpc.health.v1.Health`); instrumentation-grpc records no RPC metrics, so
+ * `grpc.health.v1.Health/`); instrumentation-grpc records no RPC metrics, so
  * nothing else is counted (D-JS14, as Python).
  *
  * Excluded besides: the helper's own `/metrics` listener (neither traced nor
@@ -48,7 +49,10 @@ import { redactErrorText, report, reportOnce, truncateValue } from './diagnostic
 import { isHelperServer } from './metrics-endpoint';
 import { getState } from './state';
 import type { OtlpPlan } from './otlp';
-import { normalizeHealthPath } from './tracing';
+import { grpcNamingTracerProvider, normalizeHealthPath } from './tracing';
+
+/** `instrumentationName` of instrumentation-grpc. */
+const GRPC_INSTRUMENTATION = '@opentelemetry/instrumentation-grpc';
 
 /** One OTLP/HTTP export URL, split for comparison with an outgoing request. */
 export interface HttpTarget {
@@ -179,7 +183,17 @@ export function ignoreUndici(request: UndiciRequestLike, exclusions: ClientExclu
   }
 }
 
-/** Query parameters whose values instrumentation-http redacts (`internal-types.cjs` DEFAULT_QUERY_STRINGS_TO_REDACT, 0.300). */
+/**
+ * Query parameters whose values are written as `REDACTED` (contract D1 "URL
+ * query redaction"): instrumentation-http's default (`internal-types.cjs`
+ * DEFAULT_QUERY_STRINGS_TO_REDACT, 0.300: the first seven) plus, since A30
+ * (2026-11-05), the OAuth 2.0 bearer token in a query (`access_token`, RFC
+ * 6750 section 2.3) and the Google Cloud Storage signed-URL credential
+ * (`X-Goog-Credential`, V4; `GoogleAccessId`, V2) — the same list in Go and
+ * Python. Passed to instrumentation-http as `redactedQueryParams` (clients)
+ * and `redactedQueryParamsServer` (`url.query` of server spans), and used by
+ * the undici hook.
+ */
 export const REDACTED_QUERY_PARAMS: readonly string[] = Object.freeze([
   'sig',
   'Signature',
@@ -188,6 +202,9 @@ export const REDACTED_QUERY_PARAMS: readonly string[] = Object.freeze([
   'X-Amz-Signature',
   'X-Amz-Credential',
   'X-Amz-Security-Token',
+  'access_token',
+  'X-Goog-Credential',
+  'GoogleAccessId',
 ]);
 const REDACTED = 'REDACTED';
 
@@ -291,6 +308,9 @@ export function createInstrumentations(): HelperInstrumentations {
       new HttpInstrumentation({
         ignoreIncomingRequestHook: (req) => ignoreIncoming(req),
         ignoreOutgoingRequestHook: (options) => ignoreOutgoing(options, holder.exclusions),
+        // The helper's list, upstream's default plus three names (A30); copies, as upstream mutates nothing but takes `string[]`.
+        redactedQueryParams: [...REDACTED_QUERY_PARAMS],
+        redactedQueryParamsServer: [...REDACTED_QUERY_PARAMS],
       }),
     () =>
       new UndiciInstrumentation({
@@ -424,7 +444,8 @@ export function enableInstrumentations(holder: HelperInstrumentations, exclusion
  */
 export function bindProviders(holder: HelperInstrumentations, tracerProvider: TracerProvider, meterProvider: MeterProvider): void {
   for (const instrumentation of holder.instrumentations) {
-    instrumentation.setTracerProvider(tracerProvider);
+    // instrumentation-grpc starts its spans under the semconv name (A30).
+    instrumentation.setTracerProvider(instrumentation.instrumentationName === GRPC_INSTRUMENTATION ? grpcNamingTracerProvider(tracerProvider) : tracerProvider);
     instrumentation.setMeterProvider(meterProvider);
   }
 }

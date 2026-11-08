@@ -558,6 +558,25 @@ if err := otelredis.Instrument(rdb); err != nil { // once per client
 }
 ```
 
+Span names and values since 0.3.0 (contract task A30), the same as Python and
+Node.js: Redis spans are `SET`, `SET GET` (pipeline) and `connect` (dial),
+not redisotel's `set` / `redis.pipeline set get` / `redis.dial`; AWS SNS
+spans carry `messaging.system="aws.sns"` (was `aws_sns`) and every AWS span
+the request's `server.address`/`server.port` (SQS's queue URL is no longer
+`server.address`). `messaging.operation.name` is the AWS operation
+(`Publish` was `publish_input`). SQS and SNS send/publish spans are PRODUCER
+and SQS receive spans CONSUMER (they were CLIENT); every other AWS call stays
+CLIENT. The RPC keys are the legacy `rpc.system`, `rpc.service`,
+`rpc.method=<Operation>` by default, as Python and Node.js (0.3.0 release
+candidates wrote `rpc.system.name` and `rpc.method=<Service>/<Operation>`);
+set `OTEL_SEMCONV_STABILITY_OPT_IN=rpc` for the current keys or `rpc/dup`
+for both. `rpc/dup` also switches otelgrpc to dup, doubling the RPC metric
+series; `rpc` changes nothing for gRPC. HTTP body-size histograms are dropped
+unless `OTEL_HELPER_HTTP_OPT_IN_METRICS=true` (or `WithHTTPOptInMetrics(true)`);
+an application's own instrument of those names is kept. Update queries and
+dashboards on the old names, and the service-graph, spanmetrics and alert
+rules listed under "Trace-derived telemetry" in the migration guide.
+
 On Redis before 8, the **first connection of each client** records one
 ERROR `client` span (`error.type=ERR`): go-redis v9.23 sends
 `CLIENT MAINT_NOTIFICATIONS ON …` in its handshake (the default mode is

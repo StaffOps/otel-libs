@@ -21,7 +21,8 @@ const { createClient } = require('redis'); // after setup()
 
 - Spans are named by the command, uppercased (`SET`; connection spans
   `connect`), with `db.system.name=redis` (and, until 1.0, the legacy
-  `db.system`), `db.operation.name`, `server.address`/`server.port` and
+  `db.system`, and the legacy `db.statement` = `db.query.text` in the same
+  mode), `db.operation.name`, `server.address`/`server.port` and
   `db.query.text` as `SET ? ?`: no keys, values or passwords.
   `db.operation.name` is the command as the client provides it (node-redis
   `SET`, ioredis `set`; not normalized, as semconv recommends).

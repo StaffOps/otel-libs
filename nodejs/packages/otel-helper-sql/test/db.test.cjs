@@ -147,6 +147,8 @@ test('pg: query spans carry db.system.name and db.system, the statement as writt
   for (const s of spans) {
     assert.equal(s.attributes['db.system.name'], 'postgresql', s.name);
     assert.equal(s.attributes['db.system'], 'postgresql', s.name);
+    // A30 (Q5, 2026-11-06): the legacy db.statement = db.query.text in the legacy-keys mode (pg sets it after start).
+    assert.equal(s.attributes['db.statement'], s.attributes['db.query.text'], s.name);
     assert.equal(s.attributes['db.postgresql.values'], undefined, 'enhancedDatabaseReporting stays off');
   }
   assert.equal(queries[0].kind, 2 /* CLIENT */);
@@ -226,6 +228,7 @@ test('mysql2: callback, promise and prepared statements; the statement as writte
   for (const s of spans) {
     assert.equal(s.attributes['db.system.name'], 'mysql');
     assert.equal(s.attributes['db.system'], 'mysql');
+    assert.equal(s.attributes['db.statement'], s.attributes['db.query.text'], 'A30: legacy db.statement (Q5)');
     assert.equal(s.attributes['db.namespace'], MYSQL.db);
     assert.equal(s.attributes['server.address'], MYSQL.host);
   }
@@ -334,6 +337,7 @@ test('OTEL_SEMCONV_STABILITY_OPT_IN=database: only db.system.name, on spans and 
   for (const s of out.spans) {
     assert.equal(s.attributes['db.system.name'], 'postgresql');
     assert.equal(s.attributes['db.system'], undefined, s.name);
+    assert.equal(s.attributes['db.statement'], undefined, `${s.name}: no legacy db.statement in the stable mode (A30)`);
   }
   assert.match(out.metrics, /db_system_name="postgresql"/);
   assert.doesNotMatch(out.metrics, /db_system="/);

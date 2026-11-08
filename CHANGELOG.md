@@ -250,6 +250,55 @@ Runtime and operations:
     `X-Amz-Credential` and `X-Amz-Security-Token` as `REDACTED` in
     `url.full` (a presigned S3 URL kept its credential, signature and session
     token). Queries on those values in `url.full` no longer match.
+29. **BREAKING (narrow) — Redis span names and AWS attribute values (A30).**
+    `ext/otelredis` spans are named as in Python and Node.js: the command
+    uppercased (`set` → `SET`, `cluster info` → `CLUSTER INFO`), a pipeline
+    by its command names uppercased (`redis.pipeline set get` → `SET GET`),
+    the dial span `connect` (was `redis.dial`); `db.operation.name` keeps
+    go-redis's lower-case value. `ext/otelaws` SNS spans carry
+    `messaging.system="aws.sns"` (was `aws_sns`), SQS spans no longer carry
+    the queue URL as `server.address`, every AWS span carries
+    `server.address`/`server.port` of the request, and DynamoDB spans add the
+    legacy `db.system="dynamodb"` next to `db.system.name="aws.dynamodb"`
+    unless `OTEL_SEMCONV_STABILITY_OPT_IN` holds `database` without
+    `database/dup`. URL query redaction also covers `access_token`,
+    `X-Goog-Credential` and `GoogleAccessId`. Update span-name queries,
+    dashboards and alerts on those names and values.
+30. **BREAKING — HTTP opt-in metrics and AWS RPC keys (A30, owner rulings
+    of 2026-11-06).** `NewHTTPHandler` / `NewHTTPTransport` record only
+    `http.server.request.duration` and `http.client.request.duration` by
+    default: the body-size histograms (`http.server.request.body.size`,
+    `http.server.response.body.size`, `http.client.request.body.size`) are
+    gone until you set `OTEL_HELPER_HTTP_OPT_IN_METRICS=true` or
+    `WithHTTPOptInMetrics(true)`. `ext/otelaws` spans carry the **legacy**
+    RPC keys by default — `rpc.system="aws-api"`, `rpc.service="SQS"`,
+    `rpc.method="SendMessage"` — instead of the 0.3.0 release candidates'
+    `rpc.system.name` and `rpc.method="SQS/SendMessage"`; set
+    `OTEL_SEMCONV_STABILITY_OPT_IN=rpc` to keep the current keys, or `rpc/dup`
+    for both (`rpc.method` then holds `SQS/SendMessage`); `rpc/dup` also
+    switches otelgrpc to dup, doubling the RPC metric series (`rpc` is
+    harmless: otelgrpc's default is already the new mode).
+    `messaging.operation.name` on SQS and SNS spans is the AWS operation
+    (`Publish`, `SendMessage`; was `publish_input` on SNS, absent on SQS).
+    Span names stay `<Service>.<Operation>`; SQS/SNS send and publish spans
+    become PRODUCER and SQS receive spans CONSUMER (they were CLIENT); other
+    calls stay CLIENT.
+    **Trace-derived telemetry (Go):** SQS/SNS service-graph edges change with
+    the kinds: a root SQS receive — one with no parent span — becomes a server-side edge
+    that expires as `client="user"`, `connection_type=virtual_node`: Go and
+    Python gain these edges on upgrade. The edge counts polls, empty ones
+    included, and its latency includes the long-poll wait; a receive with a
+    parent span adds none; the DynamoDB node moves from
+    `server="aws.dynamodb"` to `server="dynamodb.<region>.amazonaws.com"`
+    (`server.address` outranks the db name), and in the Collector connector
+    from `aws.dynamodb` to `dynamodb` (the new legacy `db.system`); other AWS
+    nodes appear by host too. Spanmetrics series change with `span_kind` and
+    with the Redis `span_name` values. Collector `filter` / tail-sampling rules
+    and TraceQL on the old Redis names or `kind = client` for those calls stop
+    matching. Alerts, recording rules and KEDA or HPA triggers on the removed
+    body-size series go quiet without an error unless they use `absent()`.
+    Check rules keyed on `span_kind`, `connection_type`, `server`,
+    `client="user"` or span names.
 
 ### Migration guide 0.2 → 0.3 — Python
 
@@ -522,6 +571,49 @@ Telemetry and runtime:
     `X-Amz-Credential` and `X-Amz-Security-Token` as `REDACTED` in `url.full`,
     `http.url`, `http.target` and the server `url.query` (contrib redacted
     four names in client URLs and none in `url.query`).
+29. **BREAKING (narrow) — gRPC span names, Redis and AWS attributes (A30).**
+    gRPC client and server spans are named `pkg.Svc/Method` (semconv, as Go
+    and Node.js) instead of contrib's `/pkg.Svc/Method`; the `rpc.*`
+    attributes are unchanged. Redis command spans carry `db.operation.name`
+    (`SET`; none on pipeline spans). botocore SQS spans carry
+    `messaging.system="aws_sqs"` (was `aws.sqs`), and DynamoDB spans add
+    `db.system.name="aws.dynamodb"` next to `db.system="dynamodb"` (the legacy
+    key is dropped when `OTEL_SEMCONV_STABILITY_OPT_IN` holds `database`
+    without `database/dup`). URL query redaction also covers `access_token`,
+    `X-Goog-Credential` and `GoogleAccessId`. Update span-name queries and
+    dashboards that match the leading `/`, and queries on `aws.sqs`.
+30. **BREAKING — HTTP opt-in metrics and AWS spans (A30, owner rulings of
+    2026-11-06).** Only `http.server.request.duration` and
+    `http.client.request.duration` are recorded by default: contrib's
+    `http.server.active_requests` and the HTTP body-size histograms (both
+    semconv generations) are dropped until you set
+    `OTEL_HELPER_HTTP_OPT_IN_METRICS=true` or
+    `TelemetryOptions(http_opt_in_metrics=True)`. Every botocore call span is
+    named `<Service>.<Operation>` (an SNS publish was `<topic> send`); SQS
+    send spans become PRODUCER and receive spans CONSUMER (contrib's were
+    CLIENT), SNS publishes stay PRODUCER, other calls CLIENT; SQS and SNS
+    spans carry `messaging.operation.name` = the AWS operation.
+    The RPC keys stay the legacy `rpc.*` unless `OTEL_SEMCONV_STABILITY_OPT_IN`
+    holds `rpc` (`rpc.system.name`, `rpc.method="<Service>/<Operation>"`) or
+    `rpc/dup` (both): set `http,rpc` / `http,rpc/dup`, because a value
+    without `http` moves contrib to the old HTTP conventions. A portless
+    `http://` endpoint records `server.port=80` (was 443); an out-of-range
+    port records none.
+    **Trace-derived telemetry (Python):** SQS service-graph edges change with
+    the kinds: a root SQS receive — one with no parent span — becomes a server-side edge
+    that expires as `client="user"`, `connection_type=virtual_node`: Go and
+    Python gain these edges on upgrade. The edge counts polls, empty ones
+    included, and its latency includes the long-poll wait; a receive with a
+    parent span adds none. TraceQL `kind = client` on SQS spans stops matching. Spanmetrics series change with
+    the gRPC names (`/pkg.Svc/Method` → `pkg.Svc/Method`), the SNS name
+    (`<topic> send` → `SNS.Publish`) and `span_kind`. Collector `filter` /
+    tail-sampling rules and TraceQL on `/grpc.health.v1.Health/Check`, other
+    leading-`/` names or `<topic> send` stop matching. Alerts, recording rules
+    and KEDA or HPA triggers on `http_server_active_requests` and the
+    body-size series go quiet without an error unless they use `absent()`:
+    move them to `http_server_request_duration_seconds_count`, or set the
+    switch. Check rules keyed on `span_kind`, `connection_type`, `server`,
+    `client="user"` or span names.
 
 ### Migration guide 0.2 → 0.3 — .NET (in progress, Phase C)
 
@@ -784,6 +876,15 @@ upgrading.
 | Python resource | — | on sdk ≥ 1.45 the SDK adds `service.instance.id` (one value per process: a new label per restart where resource attributes become labels) | — |
 | **BREAKING** Python Prometheus names of Gauges in unit `1` (A21) | `system_cpu_utilization` (no suffix) | `system_cpu_utilization_ratio`, as Go (OTel Prometheus compatibility spec); OTLP names unchanged | none; update the PromQL |
 | **BREAKING** Python resource `schema_url`, `telemetry.sdk.*`, extra detectors (A16) | no schema URL; `telemetry.sdk.*` overridable through `OTEL_RESOURCE_ATTRIBUTES`; `OTEL_EXPERIMENTAL_RESOURCE_DETECTORS` attributes (`process.*`, `os.*`, `host.*`, …) | `https://opentelemetry.io/schemas/1.43.0`; `telemetry.sdk.*` always the SDK's; detector attributes gone (warned) | add host/process attributes in the Collector (`resourcedetection`) |
+| **BREAKING** gRPC span names (A30) | Python `/pkg.Svc/Method`, Node.js `grpc.pkg.Svc/Method` | `pkg.Svc/Method` in every language (semconv `{rpc.method}`; Go unchanged) | none |
+| **BREAKING** Go Redis span names (A30) | `set`, `redis.pipeline set get`, `redis.dial` | `SET`, `SET GET`, `connect` (as Python and Node.js; `db.operation.name` stays `set`) | none |
+| **BREAKING** AWS attribute values (A30) | Go SNS `messaging.system=aws_sns`, Go SQS `server.address=<queue URL>`, Python SQS `messaging.system=aws.sqs`, Node.js `db.system.name=dynamodb` | `aws.sns`, the request host (+ `server.port`, every Go AWS span), `aws_sqs`, `aws.dynamodb`; DynamoDB `db.system=dynamodb` in every language unless the stable database mode | `OTEL_SEMCONV_STABILITY_OPT_IN=database` drops the legacy `db.system` only |
+| **BREAKING** HTTP opt-in metrics (A30, 2026-11-06) | Go: `http.{server,client}.request.body.size`, `http.server.response.body.size`; Python: also `http.server.active_requests` and the old `*.size` names | only the two durations by default | `OTEL_HELPER_HTTP_OPT_IN_METRICS=true` (code: `WithHTTPOptInMetrics`, `http_opt_in_metrics`, `httpOptInMetrics`) |
+| **BREAKING** Go AWS RPC keys (A30, 2026-11-06) | `rpc.system.name=aws-api`, `rpc.method=<Service>/<Operation>` (0.3.0 release candidates) | legacy `rpc.system`, `rpc.service`, `rpc.method=<Operation>` (as Python and Node.js); SNS `messaging.operation.name` `Publish` (was `publish_input`) | `OTEL_SEMCONV_STABILITY_OPT_IN=rpc` (current keys) or `rpc/dup` (both) |
+| **BREAKING** Python AWS span names and kinds (A30, 2026-11-06/08) | SNS publish `<topic> send`; SQS spans CLIENT; portless `http://` endpoint `server.port=443` | `SNS.Publish`; SQS send PRODUCER, receive CONSUMER; `server.port=80` | none |
+| **BREAKING** Node.js AWS span names (A30, 2026-11-06/08) | `<queue> send` / `<queue> receive` / `<topic> send` / `<function> Invoke` (kinds PRODUCER/CONSUMER unchanged) | `SQS.SendMessage`, `SQS.ReceiveMessage`, `SNS.Publish`, `Lambda.Invoke` | none |
+| **BREAKING** Go AWS span kinds (A30, 2026-11-08) | every call CLIENT | SQS/SNS send and publish PRODUCER, SQS receive CONSUMER, others CLIENT | none |
+| Trace-derived telemetry (A30, all languages) | service-graph edges, spanmetrics `span_name` / `span_kind` series, Collector `filter` / tail-sampling rules and TraceQL keyed on the old names or kinds; Go DynamoDB node `server="aws.dynamodb"`; alerts and KEDA/HPA triggers on Python `http_server_active_requests` and the body-size series | see "Trace-derived telemetry" in each language's migration item 30 and the Node.js note under Internal | update the rules; `absent()`-free alerts go silent on removed series |
 
 Python HTTP metrics switch to the stable semconv too in 0.3.0 (R10/D12 — see
 the Python section below), so both languages emit `http.server.request.duration`
@@ -798,7 +899,51 @@ none of the renamed metric names above appear in them; the "Span Duration P95
 by Operation" panel groups by `span_name` and shows the new Go HTTP span names
 after the upgrade.
 
+A30 renames more spans (see the table above): gRPC `pkg.Svc/Method` in Python
+and Node.js, Go Redis `SET` / `SET GET` / `connect`, Python and Node.js AWS
+`<Service>.<Operation>`. A panel or spanmetrics dimension on `span_name` shows
+the new names after the upgrade, and series on the old names stop; the same
+for `span_kind` on Go SQS/SNS spans and Python SQS spans (a Python SNS publish
+was already PRODUCER). Collector `filter` and
+tail-sampling rules, TraceQL queries and alerts on the old names or kinds stop
+matching without an error. The repo's dashboards are safe: no panel uses a
+renamed span or a dropped metric.
+
 ### Go — detailed changes
+
+- **A30 owner rulings of 2026-11-06 (design D1 "HTTP opt-in metrics", "AWS
+  RPC keys", "AWS service attribute values").** `Options.HTTPOptInMetrics` /
+  `WithHTTPOptInMetrics(bool)` / `OTEL_HELPER_HTTP_OPT_IN_METRICS` (code >
+  env > false; the contract boolean grammar): off, an SDK view
+  (`httpOptInMetricsView`) drops the semconv opt-in HTTP metrics from every
+  scope — otelhttp's body sizes in practice (otelhttp v0.72 has no
+  active-requests instrument). `ext/otelaws` rewrites otelaws's span-start
+  RPC keys by `OTEL_SEMCONV_STABILITY_OPT_IN` (`rpcAttributes`: legacy by
+  default, `rpc` current, `rpc/dup` both with the current `rpc.method`), sets
+  the kind of SQS/SNS send and publish (PRODUCER) and SQS receive (CONSUMER)
+  at `Start`, and writes `messaging.operation.name` = the AWS operation on SQS
+  and SNS spans (`publish_input` → `Publish`). The opt-in view is scoped to
+  the contrib instrumentation scopes, so an application's own instrument of
+  those names is kept. Tests: `a30_test.go`, `ext/otelaws` `TestRPCModes`,
+  `TestSNSOperationName`, `TestMessagingSpanKinds`.
+
+- **A30 instrumentation parity backlog (design D1 rows "Redis span names",
+  "AWS service attribute values", "URL query redaction", "gRPC span names",
+  amended or added 2026-11-05).** `ext/otelredis` renames redisotel's spans in
+  `sanitizingTracer.Start` (`spanName`): the uppercased command, a pipeline's
+  uppercased command names, `connect` for the dial span; `db.operation.name`
+  is taken before the rename. `ext/otelaws` maps `messaging.system` `aws_sns`
+  → `aws.sns`, drops otelaws's SQS queue-URL `server.address`, writes
+  `server.address`/`server.port` of the finalized request on every call
+  (`serverAddressMiddleware`: the URL's port, else 443/80 by scheme) and the
+  legacy `db.system=dynamodb` on DynamoDB spans in the legacy-keys mode
+  (`OTEL_SEMCONV_STABILITY_OPT_IN`, the `ext/otelsql` rule). The URL query
+  redaction list gains `access_token`, `X-Goog-Credential` and
+  `GoogleAccessId` (ten names; `RedactedQueryParams()` returns them). gRPC
+  span names unchanged (already `pkg.Svc/Method`). Tests:
+  `ext/otelredis` `TestSpanName`, `TestSpanNamesAndOperationName`;
+  `ext/otelaws` `TestA30AttributeValues`, `TestMapAttributes`,
+  `TestServerAttributes`; `urlredact_test.go`.
 
 - **A29 fix round (2026-11-05; three reviews, no BLOCKING).** The masked
   forms now include each space-separated part of a configured header value of
@@ -1350,6 +1495,34 @@ Behavior changes, with migration notes:
   (Apache-2.0). `aws-sdk-go-v2` v1.47.1 → v1.47.5.
 
 ### Python — detailed changes
+
+- **A30 owner rulings of 2026-11-06 (design D1 "HTTP opt-in metrics", "AWS
+  RPC keys", "AWS service attribute values").** `TelemetryOptions.http_opt_in_metrics`
+  / `OTEL_HELPER_HTTP_OPT_IN_METRICS` (`resolved.http_opt_in_metrics`): off,
+  SDK views drop `metrics.HTTP_OPT_IN_METRICS` (active requests and body
+  sizes, both HTTP semconv generations) from the contrib instrumentation
+  scopes the helper installs, so an application's own instrument is kept. The botocore wrapper
+  (`_aws_status.aws_call_span`) names every AWS call span
+  `<Service>.<Operation>` (Bedrock GenAI spans excepted), with kind PRODUCER
+  on SQS/SNS send and publish, CONSUMER on SQS receive and CLIENT otherwise,
+  adds `messaging.operation.name` on SQS and SNS spans, and maps the RPC keys by `rpc_mode()`
+  (legacy / `rpc` / `rpc/dup`); contrib's `get_server_attributes` is pointed
+  at `server_attributes` (port 80 for a portless `http://` endpoint). Tests:
+  `tests/test_a30.py`.
+
+- **A30 instrumentation parity backlog (design D1 rows "gRPC span names",
+  "Redis `db.operation.name`", "AWS service attribute values", "URL query
+  redaction", 2026-11-05).** `GrpcSpanNameProcessor` (on the helper's
+  TracerProvider) renames contrib grpc spans named `/<rpc.service>/<rpc.method>`
+  to `<rpc.service>/<rpc.method>` at start; the health sampler still decides
+  on the original name. The Redis tracer wrapper writes `db.operation.name`
+  (the command as contrib names the span; `FT.SEARCH`/`FT.CREATE`) when a
+  command span ends, none on pipeline spans. The botocore wrapper maps
+  `messaging.system` `aws.sqs` → `aws_sqs` and adds
+  `db.system.name=aws.dynamodb` to DynamoDB spans, dropping contrib's legacy
+  `db.system` in the stable database mode (`_semconv.legacy_db_keys_enabled`).
+  `REDACTED_QUERY_PARAMS` gains `access_token`, `X-Goog-Credential` and
+  `GoogleAccessId`. Tests: `tests/test_a30.py`, `tests/test_a28_url_redaction.py`.
 
 - **A29 fix round (2026-11-05).** The exporter-log filter masks each
   space-separated part of 4+ characters of a configured header value (the
@@ -2132,6 +2305,54 @@ Unsupported instrumentation versions, task A10 (P18):
   of `publish-nodejs-ghp` skips the packages it already published.
 
 ### Internal
+
+- **A30 owner rulings of 2026-11-06 and 2026-11-08.** Node.js: `httpOptInMetrics` / `OTEL_HELPER_HTTP_OPT_IN_METRICS`
+  accepted and resolved (`Resolved.httpOptInMetrics`) with no effect —
+  instrumentation-http 0.300 has no opt-in instruments
+  (`skip:no-upstream-node-http-opt-in-metrics`; one INFO line when it is on);
+  `-aws` names every SDK call span `<Service>.<Operation>` (core
+  `dbTracerProvider` option `spanKind`; kinds PRODUCER on SQS/SNS send and
+  publish, CONSUMER on SQS receive, CLIENT otherwise, owner amendment
+  2026-11-08), adds `messaging.operation.name` on SQS and SNS spans, and maps the RPC
+  keys by `OTEL_SEMCONV_STABILITY_OPT_IN` (`rpcMode`); `server.address`/`port`
+  stay absent (a documented gap, owner Q4 (a)); `-sql` writes the legacy
+  `db.statement` in the legacy-keys mode, also when pg sets `db.query.text`
+  after start (coordinator decision Q5). **Node.js upgrade note:** AWS span
+  names `<queue> send` / `<queue> receive` / `<topic> send` / `<function>
+  Invoke` become `<Service>.<Operation>` (kinds unchanged). **Trace-derived
+  telemetry (Node.js):** spanmetrics `span_name` series change with the AWS
+  and gRPC names (`grpc.pkg.Svc/Method` → `pkg.Svc/Method`); Collector `filter`
+  / tail-sampling rules and TraceQL on those names (`grpc.grpc.health…`, `<queue>
+  send`) stop matching; DynamoDB `db.system.name` becomes `aws.dynamodb`, and the
+  service-graph node does not change in the default dup mode: Tempo and the
+  Collector take the first of `db.namespace` (the table name, when the call has
+  one), `db.name`, `db.system`, `db.system.name`. It moves from `dynamodb` to
+  `aws.dynamodb` only in the stable `database` mode for calls without a table;
+  kinds, and so edge types, stay as they were.
+  New snapshot fields `resolve.http_opt_in_metrics` (code key
+  `http_opt_in_metrics`) and `grpc_server.client_span_name`, and new
+  `http.opt_in_metrics_*` and `grpc.*` cases (.NET `xfail:C11`, body size
+  `skip:no-upstream-dotnet-http-body-size`; Go
+  `skip:no-upstream-go-otelhttp-active-requests` for active requests).
+
+- **A30 instrumentation parity backlog (contract task A30, 2026-11-05).** Node.js: instrumentation-grpc is
+  bound to `grpcNamingTracerProvider`, so its spans start as
+  `<service>/<method>` (was `grpc.<service>/<method>`) and the health sampler
+  matches `grpc.health.v1.Health/` as in Go and Python; `-redis` writes the
+  legacy `db.statement` (= `db.query.text`) in the legacy-keys mode (core
+  `dbTracerProvider` option `legacyStatement`); `-aws` maps DynamoDB
+  `db.system.name` `dynamodb` → `aws.dynamodb` (the legacy `db.system` stays
+  `dynamodb`); `REDACTED_QUERY_PARAMS` gains `access_token`,
+  `X-Goog-Credential` and `GoogleAccessId` and is passed to
+  instrumentation-http as `redactedQueryParams` / `redactedQueryParamsServer`.
+  **Node.js upgrade note:** queries on `grpc.pkg.Svc/Method` span names and on
+  `db.system.name="dynamodb"` must use `pkg.Svc/Method` and `aws.dynamodb`.
+  New parity snapshot field `server_span_name` (Go, Python and Node.js
+  drivers) and case `grpc.server_span_name_semconv` (358 in total; .NET
+  `xfail:C11`). The owner questions of this round (HTTP opt-in metrics, AWS
+  RPC keys, AWS messaging span kinds and names, Node AWS
+  `server.address`/`server.port`) were ruled on 2026-11-06 and 2026-11-08 (entry
+  above).
 
 - **A29 final round (2026-11-05, after two confirmation passes).** In Go,
   Python and Node.js the masked header values are the union of the values

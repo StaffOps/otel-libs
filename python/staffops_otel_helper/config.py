@@ -73,6 +73,8 @@ ENV_EXTRA_INSTRUMENTATION = "OTEL_HELPER_EXTRA_INSTRUMENTATION"
 ENV_SAMPLE_RATIO = "OTEL_HELPER_SAMPLE_RATIO"
 ENV_DISABLED_SIGNALS = "OTEL_HELPER_DISABLED_SIGNALS"
 ENV_DISABLED_METRICS = "OTEL_HELPER_DISABLED_METRICS"
+# HTTP opt-in metrics switch (contract D1 "HTTP opt-in metrics", ruled 2026-11-06, A30).
+ENV_HTTP_OPT_IN_METRICS = "OTEL_HELPER_HTTP_OPT_IN_METRICS"
 ENV_METRICS_PORT = "OTEL_HELPER_METRICS_PORT"
 # The OTel spec's Prometheus exporter variables, honored for the standalone /metrics
 # listener (design D1 row "Prometheus exporter variables", A29).
@@ -627,6 +629,9 @@ class ResolvedOptions:
     # Bind address of the standalone /metrics listener from OTEL_EXPORTER_PROMETHEUS_HOST
     # ("" = every interface; no code option — design D1 row "Prometheus exporter variables", A29).
     prometheus_metrics_host: str = ""
+    # HTTP opt-in metrics (active requests, body sizes) recorded: code, else
+    # OTEL_HELPER_HTTP_OPT_IN_METRICS, else False (A30).
+    http_opt_in_metrics: bool = False
 
 
 # Fields whose public value is only ever the code value; resolution stores the
@@ -642,6 +647,7 @@ _CODE_ONLY_DEFAULTS: dict[str, object] = {
     "prometheus_metrics_port": _DEFAULT_METRICS_PORT,
     "export_interval_ms": _DEFAULT_EXPORT_INTERVAL_MS,
     "metric_exporters": None,
+    "http_opt_in_metrics": False,
 }
 
 
@@ -693,6 +699,9 @@ class TelemetryOptions:
     export_interval_ms: int | None = None
     # Standalone /metrics port (0 = no listener). None = OTEL_HELPER_METRICS_PORT, else 9464.
     prometheus_metrics_port: int | None = None
+    # Record the HTTP opt-in metrics (http.server.active_requests and the body sizes; A30).
+    # None = OTEL_HELPER_HTTP_OPT_IN_METRICS, else False (only the two durations).
+    http_opt_in_metrics: bool | None = None
     minimum_log_level: int | None = None
     resource_attributes: dict[str, object] = field(default_factory=dict)
     # Plaintext for a schemeless endpoint set in code. Contradicting a code URL's scheme raises.
@@ -733,6 +742,7 @@ class TelemetryOptions:
         """The effective option values (code > env > default) — see ``ResolvedOptions``."""
         values = {name: self._value(name) for name in _CODE_ONLY_DEFAULTS}
         values["debug_level"] = bool(values["debug_level"])
+        values["http_opt_in_metrics"] = bool(values["http_opt_in_metrics"])
         for name in ("disabled_signals", "disabled_metrics", "metric_exporters"):
             if values[name] is not None:
                 values[name] = list(values[name])
@@ -876,6 +886,8 @@ class TelemetryOptions:
             if not isinstance(self.debug_level, int):
                 fail("debug_level", f"must be a bool, got {type(self.debug_level).__name__}")
             self.debug_level = bool(self.debug_level)
+        if self.http_opt_in_metrics is not None and not isinstance(self.http_opt_in_metrics, bool):
+            fail("http_opt_in_metrics", f"must be a bool, got {type(self.http_opt_in_metrics).__name__}")
         check_str("extra_instrumentation", self.extra_instrumentation)
         ratio = self.sample_ratio
         if ratio is not None and (isinstance(ratio, bool) or not isinstance(ratio, (int, float))
@@ -942,6 +954,8 @@ class TelemetryOptions:
         eff = self._effective
         eff["debug_level"] = self.debug_level if self.debug_level is not None \
             else bool(self._env_bool(ENV_DEBUG_LEVEL))
+        eff["http_opt_in_metrics"] = self.http_opt_in_metrics if self.http_opt_in_metrics is not None \
+            else bool(self._env_bool(ENV_HTTP_OPT_IN_METRICS))
 
         if self.extra_instrumentation is not None:
             eff["extra_instrumentation"] = self.extra_instrumentation

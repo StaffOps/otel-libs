@@ -24,7 +24,8 @@ def test_url_query_redaction_processor():
     from staffops_otel_helper._url_redaction import REDACTED_QUERY_PARAMS, UrlQueryRedactionProcessor, redact_query
 
     assert REDACTED_QUERY_PARAMS == ("sig", "Signature", "AWSAccessKeyId", "X-Goog-Signature",
-                                     "X-Amz-Signature", "X-Amz-Credential", "X-Amz-Security-Token")
+                                     "X-Amz-Signature", "X-Amz-Credential", "X-Amz-Security-Token",
+                                     "access_token", "X-Goog-Credential", "GoogleAccessId")
     for raw, want in [
         ("", ""),
         ("a=1&b=2", "a=1&b=2"),
@@ -35,6 +36,11 @@ def test_url_query_redaction_processor():
         ("AWSAccessKeyId&Signature=", "AWSAccessKeyId&Signature=REDACTED"),  # no "=": no value, kept
         ("x=1;sig=a", "x=1;sig=a"),  # ";" is not a separator (kept by design)
         ("sig=a;Signature=b", "sig=REDACTED"),
+        # A30 (2026-11-05): three more names, matched exactly.
+        ("access_token=tok&a=1", "access_token=REDACTED&a=1"),
+        ("X-Goog-Credential=sa%40p.iam%2F20261105&x=", "X-Goog-Credential=REDACTED&x="),
+        ("GoogleAccessId=sa@p.iam&Signature=s", "GoogleAccessId=REDACTED&Signature=REDACTED"),
+        ("Access_Token=tok", "Access_Token=tok"),
     ]:
         assert redact_query(raw) == want, raw
     ex = InMemorySpanExporter()

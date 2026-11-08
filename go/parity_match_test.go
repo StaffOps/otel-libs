@@ -28,12 +28,12 @@ var (
 )
 
 var snapshotSchema = map[string][]string{
-	"resolve":          {"resource", "metric_exporters", "metric_export_interval_ms", "log_level", "prometheus_metrics_port", "prometheus_metrics_host"},
+	"resolve":          {"resource", "metric_exporters", "metric_export_interval_ms", "log_level", "prometheus_metrics_port", "prometheus_metrics_host", "http_opt_in_metrics"},
 	"export":           {"received"},
 	"sampler":          {"sampled", "attributes"},
 	"propagation":      {"headers"},
 	"http_server":      {"server_spans", "requests_counted", "handler_child_spans", "scrape"},
-	"grpc_server":      {"server_spans", "rpcs_counted", "call_ok", "server_span_status"},
+	"grpc_server":      {"server_spans", "rpcs_counted", "call_ok", "server_span_status", "server_span_name", "client_span_name"},
 	"logging":          {},
 	"metrics_scrape":   {"scrape", "scrape_status"},
 	"metrics_listener": {"listener_statuses"},

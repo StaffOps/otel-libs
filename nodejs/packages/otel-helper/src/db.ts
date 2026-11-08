@@ -28,7 +28,7 @@
  * @internal
  * @packageDocumentation
  */
-import { SpanStatusCode, type Attributes, type Context, type Meter, type MeterProvider, type Span, type SpanOptions, type SpanStatus, type Tracer, type TracerProvider } from '@opentelemetry/api';
+import { SpanStatusCode, type Attributes, type SpanKind, type Context, type Meter, type MeterProvider, type Span, type SpanOptions, type SpanStatus, type Tracer, type TracerProvider } from '@opentelemetry/api';
 
 /** @internal */
 export const ENV_SEMCONV_OPT_IN = 'OTEL_SEMCONV_STABILITY_OPT_IN';
@@ -49,7 +49,12 @@ export const LEGACY_DB_SYSTEM: Readonly<Record<string, string>> = Object.freeze(
   postgresql: 'postgresql',
   mysql: 'mysql',
   redis: 'redis',
+  // A30: semconv v1.43 `db.system.name` aws.dynamodb is the legacy `db.system` dynamodb.
+  'aws.dynamodb': 'dynamodb',
 });
+
+const ATTR_DB_QUERY_TEXT = 'db.query.text';
+const ATTR_DB_STATEMENT = 'db.statement';
 
 // The contract trim set (design D1 "Trimmed character set") and ASCII-only
 // case folding (D1 "ASCII case folding"), as the core resolver.
@@ -101,6 +106,13 @@ export function withLegacyKey(attributes: Attributes | undefined): Attributes | 
   return { ...attributes, [ATTR_DB_SYSTEM]: LEGACY_DB_SYSTEM[name] ?? name };
 }
 
+/** `attributes` plus the legacy `db.statement` (a copy of `db.query.text`) when it has none. */
+function withLegacyStatement(attributes: Attributes): Attributes {
+  const text = attributes[ATTR_DB_QUERY_TEXT];
+  if (text === undefined || attributes[ATTR_DB_STATEMENT] !== undefined) return attributes;
+  return { ...attributes, [ATTR_DB_STATEMENT]: text };
+}
+
 /** Forwards every member of `target` not in `own`; methods are bound to `target`. */
 function forwarding<T extends object>(target: T, own: Partial<T>): T {
   return new Proxy(target, {
@@ -120,6 +132,20 @@ function forwarding<T extends object>(target: T, own: Partial<T>): T {
 export interface DbTracerOptions {
   /** Copy `db.system.name` into the legacy `db.system` at span start. */
   readonly legacyKeys: boolean;
+  /**
+   * With `legacyKeys`, also copy `db.query.text` into the legacy
+   * `db.statement`, at span start and on a later `setAttribute`/`setAttributes`
+   * (instrumentation-pg sets it after start) — `-redis` and `-sql`, contract
+   * D1 "Redis legacy keys in dup mode" (A30) and its 2026-11-06 extension to
+   * SQL: Python contrib writes both in `database/dup`.
+   */
+  readonly legacyStatement?: boolean | undefined;
+  /**
+   * The span kind from the requested one and the span-start attributes
+   * (`-aws`: every AWS SDK call span is CLIENT, contract D1 "AWS service
+   * attribute values", 2026-11-06). Default: unchanged.
+   */
+  readonly spanKind?: ((requested: SpanKind | undefined, attributes: Attributes | undefined) => SpanKind | undefined) | undefined;
   /** The span name from the requested one and the span-start attributes (default: unchanged). */
   readonly spanName?: ((requested: string, attributes: Attributes | undefined) => string) | undefined;
   /**
@@ -164,10 +190,16 @@ function wrapSpan(span: Span, opts: DbTracerOptions): Span {
       return span;
     };
     const sanitize = opts.sanitizeAttributes;
-    if (sanitize !== undefined) {
+    const statement = opts.legacyKeys && opts.legacyStatement === true;
+    if (sanitize !== undefined || statement) {
       const setAttribute = span.setAttribute.bind(span);
       const record = (attributes: Attributes): Span => {
-        for (const [k, v] of Object.entries(sanitize(attributes))) if (v !== undefined) setAttribute(k, v);
+        let batch = attributes;
+        if (statement && batch[ATTR_DB_QUERY_TEXT] !== undefined && (span as { readonly attributes?: Attributes }).attributes?.[ATTR_DB_STATEMENT] === undefined) {
+          batch = withLegacyStatement(batch);
+        }
+        if (sanitize !== undefined) batch = sanitize(batch);
+        for (const [k, v] of Object.entries(batch)) if (v !== undefined) setAttribute(k, v);
         return span;
       };
       span.setAttribute = (key: string, value: Parameters<Span['setAttribute']>[1]): Span => record({ [key]: value });
@@ -183,8 +215,11 @@ function wrapSpan(span: Span, opts: DbTracerOptions): Span {
 function spanOptions(options: SpanOptions | undefined, opts: DbTracerOptions): SpanOptions | undefined {
   if (options?.attributes === undefined) return options;
   let attributes = opts.legacyKeys ? withLegacyKey(options.attributes) : options.attributes;
+  if (opts.legacyKeys && opts.legacyStatement === true) attributes = withLegacyStatement(attributes);
   if (opts.sanitizeAttributes !== undefined) attributes = opts.sanitizeAttributes(attributes);
-  return attributes === options.attributes ? options : { ...options, attributes };
+  const kind = opts.spanKind === undefined ? options.kind : opts.spanKind(options.kind, options.attributes);
+  if (attributes === options.attributes && kind === options.kind) return options;
+  return { ...options, attributes, ...(kind === undefined ? {} : { kind }) };
 }
 
 function dbTracer(tracer: Tracer, opts: DbTracerOptions): Tracer {

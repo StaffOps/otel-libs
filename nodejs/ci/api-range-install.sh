@@ -105,7 +105,7 @@ OTEL_HELPER_METRICS_PORT=0 node -e "
     await new S3Client({ ...config(), forcePathStyle: true }).send(new PutObjectCommand({ Bucket: 'b', Key: 'k', Body: 'x' }));
     server.close();
     const sdk = ended.filter((e) => !e.startsWith('@opentelemetry/instrumentation-http 1 '));
-    const want = ['@opentelemetry/instrumentation-aws-sdk 3 q send', '@opentelemetry/instrumentation-aws-sdk 2 S3.PutObject'];
+    const want = ['@opentelemetry/instrumentation-aws-sdk 3 SQS.SendMessage', '@opentelemetry/instrumentation-aws-sdk 2 S3.PutObject'];
     if (JSON.stringify(sdk) !== JSON.stringify(want)) { console.error('FAIL: -aws spans', JSON.stringify(ended)); process.exit(1); }
     await shutdown();
     console.log('-aws instruments @aws-sdk/client-sqs and client-s3: OK');

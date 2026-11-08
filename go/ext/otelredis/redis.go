@@ -7,6 +7,12 @@
 //	// All subsequent Redis commands produce spans, and the client's
 //	// connection pool reports db.client.connections.* metrics.
 //
+// Spans are named as in Python and Node.js (contract D1 "Redis span
+// names", task A30): the command uppercased ("SET", "CLUSTER INFO"), a
+// pipeline by its command names uppercased ("SET GET"), the dial span
+// "connect". Before 0.3.0 they kept redisotel's names ("set",
+// "redis.pipeline set get", "redis.dial").
+//
 // Spans carry db.system.name=redis (plus the legacy db.system=redis that
 // redisotel sets, unless OTEL_SEMCONV_STABILITY_OPT_IN holds database without
 // database/dup), db.operation.name on command spans (go-redis's lower-case
@@ -179,6 +185,7 @@ func (t sanitizingTracer) Start(ctx context.Context, name string, opts ...trace.
 	if name != "" && !strings.HasPrefix(name, "redis.") {
 		attrs = append(attrs, attribute.String("db.operation.name", name))
 	}
+	name = spanName(name)
 	out := []trace.SpanStartOption{
 		trace.WithAttributes(attrs...),
 		trace.WithSpanKind(cfg.SpanKind()),
@@ -197,6 +204,36 @@ func (t sanitizingTracer) Start(ctx context.Context, name string, opts ...trace.
 	// original SDK span: children started from ctx see the SDK span as their
 	// parent, as without the helper.
 	return ctx, statusSanitizingSpan{span}
+}
+
+// spanName is the helper's name for a redisotel span (contract D1 "Redis
+// span names", ruled 2026-11-05, task A30), the same names as Python and
+// Node.js: a command span is the command uppercased ("set" -> "SET",
+// "cluster info" -> "CLUSTER INFO"), a pipeline span its command names
+// uppercased ("redis.pipeline set get" -> "SET GET"; go-redis lists each
+// name once, at most 10, rediscmd CmdsString) and the dial span "connect"
+// (Node's connection span). db.operation.name keeps the name as go-redis
+// provides it (taken before the rename). ASCII only, as Redis command names.
+func spanName(name string) string {
+	switch {
+	case name == "redis.dial":
+		return "connect"
+	case strings.HasPrefix(name, "redis.pipeline ") && strings.Trim(name[len("redis.pipeline "):], " ") != "":
+		return asciiUpper(name[len("redis.pipeline "):])
+	case name == "" || strings.HasPrefix(name, "redis."):
+		return name
+	}
+	return asciiUpper(name)
+}
+
+func asciiUpper(s string) string {
+	b := []byte(s)
+	for i, c := range b {
+		if 'a' <= c && c <= 'z' {
+			b[i] = c - ('a' - 'A')
+		}
+	}
+	return string(b)
 }
 
 // statusSanitizingSpan keeps an Error code and drops its description (A26);

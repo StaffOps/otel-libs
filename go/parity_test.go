@@ -504,6 +504,12 @@ func codeOptions(code map[string]any, recv *fakeReceiver) ([]Option, []string) {
 			} else {
 				bad()
 			}
+		case "http_opt_in_metrics":
+			if b, ok := v.(bool); ok {
+				opts = append(opts, WithHTTPOptInMetrics(b))
+			} else {
+				bad()
+			}
 		case "debug":
 			if b, ok := v.(bool); !ok {
 				bad()
@@ -636,6 +642,7 @@ func runResolve(opts []Option) map[string]any {
 	snap["log_level"] = DefaultLogLevel(o.Environment, o.DebugLevel).String()
 	snap["prometheus_metrics_port"] = float64(o.PrometheusMetricsPort)
 	snap["prometheus_metrics_host"] = o.prometheusHost // "" = every interface (A29)
+	snap["http_opt_in_metrics"] = o.HTTPOptInMetrics   // A30
 	return snap
 }
 
@@ -835,6 +842,28 @@ func serverSpanStatus(exp *tracetest.InMemoryExporter) string {
 	return "none"
 }
 
+// serverSpanName is the name of the first SERVER span, or "none" without one
+// (fixture field server_span_name; added 2026-11-05, A30).
+func serverSpanName(exp *tracetest.InMemoryExporter) string {
+	for _, s := range exp.GetSpans() {
+		if isServer(s) {
+			return s.Name
+		}
+	}
+	return "none"
+}
+
+// clientSpanName is the name of the first CLIENT span, or "none" without one
+// (fixture field client_span_name; added 2026-11-08, A30).
+func clientSpanName(exp *tracetest.InMemoryExporter) string {
+	for _, s := range exp.GetSpans() {
+		if s.SpanKind == trace.SpanKindClient {
+			return s.Name
+		}
+	}
+	return "none"
+}
+
 func scrapeText() string {
 	rr := httptest.NewRecorder()
 	MetricsHandler().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/metrics", nil))
@@ -917,6 +946,7 @@ func runGRPCServer(t *testing.T, opts []Option, input map[string]any) map[string
 	healthpb.RegisterHealthServer(srv, health.NewServer())
 	go func() { _ = srv.Serve(lis) }()
 	conn, err := grpc.NewClient("passthrough:///parity",
+		GRPCDialOption(), // client span name in the snapshot (A30, 2026-11-08)
 		grpc.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) { return lis.DialContext(ctx) }),
 		grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
@@ -943,6 +973,8 @@ func runGRPCServer(t *testing.T, opts []Option, input map[string]any) map[string
 	srv.GracefulStop() // server spans end when handlers return (after cancel for Watch)
 	snap["server_spans"] = countSpans(exp, isServer)
 	snap["server_span_status"] = serverSpanStatus(exp)
+	snap["server_span_name"] = serverSpanName(exp)
+	snap["client_span_name"] = clientSpanName(exp)
 	snap["rpcs_counted"] = scrapeCount(rpcServerCountRe)
 	return snap
 }

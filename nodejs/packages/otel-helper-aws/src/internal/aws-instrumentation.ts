@@ -13,7 +13,7 @@ import type { Instrumentation } from '@opentelemetry/instrumentation';
 import type * as AwsSdk from '@opentelemetry/instrumentation-aws-sdk';
 import { contribLoadError, contribRegistry } from '@staffops/otel-helper/internal/contrib';
 import { dbTracerProvider, legacyKeysMode } from '@staffops/otel-helper/internal/db';
-import { awsErrorType, errorRequestId, sanitizeAttributes } from './attributes';
+import { awsErrorType, awsSpanKind, awsSpanName, errorRequestId, sanitizeAttributes } from './attributes';
 
 export const NAME = '@staffops/otel-helper-aws';
 /** Version of this package; a test keeps it equal to package.json `version`. */
@@ -98,7 +98,7 @@ export const registry = contribRegistry<Library>({
   // ERROR without description and `error.type` (contract A25 extended to AWS,
   // design D-JS14), the legacy `db.system` on DynamoDB spans (D-JS9), and the
   // attribute rules of `attributes.ts`.
-  tracerProvider: (_library, provider) => dbTracerProvider(provider, { legacyKeys: legacyKeysMode(), sanitizeAttributes }),
+  tracerProvider: (_library, provider) => dbTracerProvider(provider, { legacyKeys: legacyKeysMode(), sanitizeAttributes, spanName: awsSpanName, spanKind: awsSpanKind }),
   // The only contrib metrics are Bedrock's gen_ai ones, re-created on each
   // bind and held only by the contrib (older instruments are dropped): bound as is.
   meterProvider: (_library, provider) => provider,

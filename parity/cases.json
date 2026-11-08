@@ -3521,6 +3521,238 @@
       }
     },
     {
+      "id": "http.opt_in_metrics_default_off",
+      "kind": "resolve",
+      "requirement": "R10",
+      "note": "Contract D1 row 'HTTP opt-in metrics' (owner ruling Q1 (b), 2026-11-06, A30): by default only http.server.request.duration and http.client.request.duration; OTEL_HELPER_HTTP_OPT_IN_METRICS (code http_opt_in_metrics) switches http.server.active_requests and the body sizes on together, where upstream records them.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_METRICS_EXPORTER": "none"
+      },
+      "code": {},
+      "expect": {
+        "http_opt_in_metrics": false
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:C11",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "http.opt_in_metrics_env_true",
+      "kind": "resolve",
+      "requirement": "R10",
+      "note": "Contract D1 row 'HTTP opt-in metrics' (owner ruling Q1 (b), 2026-11-06, A30): by default only http.server.request.duration and http.client.request.duration; OTEL_HELPER_HTTP_OPT_IN_METRICS (code http_opt_in_metrics) switches http.server.active_requests and the body sizes on together, where upstream records them. Boolean grammar of D1 'Boolean env value' (ASCII case-insensitive true).",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_METRICS_EXPORTER": "none",
+        "OTEL_HELPER_HTTP_OPT_IN_METRICS": "TRUE"
+      },
+      "code": {},
+      "expect": {
+        "http_opt_in_metrics": true
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:C11",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "http.opt_in_metrics_env_invalid_false_warned",
+      "kind": "resolve",
+      "requirement": "R8",
+      "note": "Contract D1 row 'HTTP opt-in metrics' (owner ruling Q1 (b), 2026-11-06, A30): by default only http.server.request.duration and http.client.request.duration; OTEL_HELPER_HTTP_OPT_IN_METRICS (code http_opt_in_metrics) switches http.server.active_requests and the body sizes on together, where upstream records them. A value other than true/false reads as false, warned (D1 'Boolean env value').",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_METRICS_EXPORTER": "none",
+        "OTEL_HELPER_HTTP_OPT_IN_METRICS": "yes"
+      },
+      "code": {},
+      "expect": {
+        "http_opt_in_metrics": false,
+        "warning": "OTEL_HELPER_HTTP_OPT_IN_METRICS"
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:C11",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "http.opt_in_metrics_code_wins",
+      "kind": "resolve",
+      "requirement": "R8",
+      "note": "Contract D1 row 'HTTP opt-in metrics' (owner ruling Q1 (b), 2026-11-06, A30): by default only http.server.request.duration and http.client.request.duration; OTEL_HELPER_HTTP_OPT_IN_METRICS (code http_opt_in_metrics) switches http.server.active_requests and the body sizes on together, where upstream records them. Code beats the variable whatever the value (principle 6 order).",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_METRICS_EXPORTER": "none",
+        "OTEL_HELPER_HTTP_OPT_IN_METRICS": "true"
+      },
+      "code": {
+        "http_opt_in_metrics": false
+      },
+      "expect": {
+        "http_opt_in_metrics": false
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:C11",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "http.opt_in_metrics_scrape_durations_only_by_default",
+      "kind": "http_server",
+      "requirement": "R10",
+      "note": "Contract D1 row 'HTTP opt-in metrics' (owner ruling Q1 (b), 2026-11-06, A30): by default only http.server.request.duration and http.client.request.duration; OTEL_HELPER_HTTP_OPT_IN_METRICS (code http_opt_in_metrics) switches http.server.active_requests and the body sizes on together, where upstream records them. Go drops otelhttp's body sizes, Python contrib's active requests and body sizes (SDK views); Node records none upstream.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc"
+      },
+      "code": {},
+      "input": {
+        "requests": [
+          "/orders"
+        ]
+      },
+      "expect": {
+        "scrape": {
+          "all": [
+            {
+              "regex": "# TYPE http_server_request_duration_seconds histogram\n"
+            },
+            {
+              "not_contains": "body_size"
+            },
+            {
+              "not_contains": "http_server_active_requests"
+            }
+          ]
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:C11",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "http.opt_in_metrics_scrape_body_size_on",
+      "kind": "http_server",
+      "requirement": "R10",
+      "note": "Contract D1 row 'HTTP opt-in metrics' (owner ruling Q1 (b), 2026-11-06, A30): by default only http.server.request.duration and http.client.request.duration; OTEL_HELPER_HTTP_OPT_IN_METRICS (code http_opt_in_metrics) switches http.server.active_requests and the body sizes on together, where upstream records them. Node: instrumentation-http 0.300 has no body-size instruments (Node design D-JS14 row 'HTTP opt-in metrics'). .NET: neither Microsoft.AspNetCore.Hosting nor System.Net.Http has a body-size instrument (specs/dotnet-otel-helper/tasks.md A30 note, 2026-11-08).",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_HELPER_HTTP_OPT_IN_METRICS": "true"
+      },
+      "code": {},
+      "input": {
+        "requests": [
+          "/orders"
+        ]
+      },
+      "expect": {
+        "scrape": {
+          "regex": "# TYPE http_server_response_body_size_bytes histogram\n"
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "skip:no-upstream-dotnet-http-body-size",
+        "nodejs": "skip:no-upstream-node-http-opt-in-metrics"
+      }
+    },
+    {
+      "id": "http.opt_in_metrics_scrape_active_requests_on",
+      "kind": "http_server",
+      "requirement": "R10",
+      "note": "Contract D1 row 'HTTP opt-in metrics' (owner ruling Q1 (b), 2026-11-06, A30): by default only http.server.request.duration and http.client.request.duration; OTEL_HELPER_HTTP_OPT_IN_METRICS (code http_opt_in_metrics) switches http.server.active_requests and the body sizes on together, where upstream records them. Go: otelhttp v0.72 has no active-requests instrument; Node: instrumentation-http 0.300 neither (D-JS14).",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_HELPER_HTTP_OPT_IN_METRICS": "true"
+      },
+      "code": {},
+      "input": {
+        "requests": [
+          "/orders"
+        ]
+      },
+      "expect": {
+        "scrape": {
+          "regex": "\nhttp_server_active_requests[{ ]"
+        }
+      },
+      "status": {
+        "go": "skip:no-upstream-go-otelhttp-active-requests",
+        "python": "pass",
+        "dotnet": "xfail:C11",
+        "nodejs": "skip:no-upstream-node-http-opt-in-metrics"
+      }
+    },
+    {
+      "id": "http.opt_in_metrics_scrape_code_on",
+      "kind": "http_server",
+      "requirement": "R10",
+      "note": "Contract D1 row 'HTTP opt-in metrics' (A30). The code option switches the metrics on without the variable. Node: instrumentation-http has no body-size instrument (D-JS14).",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc"
+      },
+      "code": {
+        "http_opt_in_metrics": true
+      },
+      "input": {
+        "requests": [
+          "/orders"
+        ]
+      },
+      "expect": {
+        "scrape": {
+          "regex": "# TYPE http_server_response_body_size_bytes histogram\n"
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "skip:no-upstream-dotnet-http-body-size",
+        "nodejs": "skip:no-upstream-node-http-opt-in-metrics"
+      }
+    },
+    {
+      "id": "http.opt_in_metrics_scrape_disabled_pattern_wins",
+      "kind": "http_server",
+      "requirement": "R10",
+      "note": "Contract D1 row 'HTTP opt-in metrics' (A30). OTEL_HELPER_DISABLED_METRICS still drops a switched-on metric.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_HELPER_HTTP_OPT_IN_METRICS": "true",
+        "OTEL_HELPER_DISABLED_METRICS": "http.server.response.body.size"
+      },
+      "code": {},
+      "input": {
+        "requests": [
+          "/orders"
+        ]
+      },
+      "expect": {
+        "scrape": {
+          "not_contains": "http_server_response_body_size"
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:C11",
+        "nodejs": "pass"
+      }
+    },
+    {
       "id": "http.non_health_traced_and_counted",
       "kind": "http_server",
       "requirement": "R7",
@@ -3750,6 +3982,53 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "xfail:phase-c",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "grpc.server_span_name_semconv",
+      "kind": "grpc_server",
+      "requirement": "R10",
+      "note": "RPC semconv span name (contract D1 row 'gRPC span names', A30, 2026-11-05): a gRPC span is named {rpc.method}, the fully-qualified method without the leading '/' (semconv v1.43 docs/rpc/rpc-spans.md). Go otelgrpc already; Python renames contrib's '/pkg.Svc/Method' (GrpcSpanNameProcessor); Node starts instrumentation-grpc's 'grpc.pkg.Svc/Method' under it.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc"
+      },
+      "code": {},
+      "input": {
+        "method": "/parity.v1.Echo/Ping"
+      },
+      "expect": {
+        "server_spans": 1,
+        "server_span_name": "parity.v1.Echo/Ping",
+        "call_ok": true
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:C11",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "grpc.client_span_name_semconv",
+      "kind": "grpc_server",
+      "requirement": "R10",
+      "note": "RPC semconv span name on the CLIENT side (contract D1 row 'gRPC span names', A30, 2026-11-08).",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc"
+      },
+      "code": {},
+      "input": {
+        "method": "/parity.v1.Echo/Ping"
+      },
+      "expect": {
+        "client_span_name": "parity.v1.Echo/Ping",
+        "call_ok": true
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "xfail:C11",
         "nodejs": "pass"
       }
     },

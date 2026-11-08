@@ -33,6 +33,10 @@ Redis spans (``redis=True``, A26 fix rounds of 2026-11-03) also get:
   sanitized. The server text after ``caused error:`` stays (the A25 residual).
   Any internal failure records a minimal sanitized event; the wrapper never
   raises into the instrumented call.
+- ``db.operation.name`` on command spans (A30, contract D1 "Redis
+  ``db.operation.name``"): the command as contrib names the span (redis-py's
+  first argument, ``SET``; ``FT.SEARCH`` / ``FT.CREATE``), written when the
+  span ends; none on a pipeline span or a span without a command, as Go.
 """
 
 from __future__ import annotations
@@ -279,6 +283,47 @@ def _drop_error_description(span: Span, redis: bool = False) -> Span:
     return span
 
 
+#: contrib redis span names that are not the command (``util.py`` ``_build_span_name``).
+_REDIS_RENAMED = {"redis.search": "FT.SEARCH", "redis.create_index": "FT.CREATE"}
+
+
+def redis_operation_name(span_name: str) -> str | None:
+    """``db.operation.name`` of a contrib redis command span named ``span_name`` (A30), or ``None``.
+
+    contrib names a command span by the first command argument as redis-py
+    sends it (``SET``), except ``FT.SEARCH`` / ``FT.CREATE`` (``redis.search``,
+    ``redis.create_index``), and a span without a command by the database
+    number; pipeline spans are recognized by ``db.redis.pipeline_length`` at
+    end (no operation name, as Go).
+    """
+    if not isinstance(span_name, str) or not span_name or span_name.isdigit() or span_name == "redis":
+        return None
+    return _REDIS_RENAMED.get(span_name, span_name)
+
+
+def _set_operation_name_at_end(span: Span, span_name: str) -> Span:
+    """Write ``db.operation.name`` on a command span when it ends (contract D1 "Redis ``db.operation.name``", A30)."""
+    operation = redis_operation_name(span_name)
+    original_end = getattr(span, "end", None)
+    if operation is None or original_end is None:
+        return span
+
+    def end(end_time: int | None = None) -> None:
+        try:
+            attributes = getattr(span, "attributes", None) or {}
+            if "db.redis.pipeline_length" not in attributes and "db.operation.name" not in attributes:
+                span.set_attribute("db.operation.name", operation)
+        except Exception:  # noqa: BLE001 - never raise into the instrumented call
+            _log.debug("redis db.operation.name not set", exc_info=False)
+        original_end(end_time=end_time)
+
+    try:
+        span.end = end  # type: ignore[method-assign]
+    except AttributeError:  # a span type with __slots__: left as it is
+        pass
+    return span
+
+
 class _ErrorDescriptionDroppingTracer(trace.Tracer):
     """Tracer for a DB instrumentation (SQLAlchemy, Redis): its spans drop the ERROR description."""
 
@@ -287,7 +332,10 @@ class _ErrorDescriptionDroppingTracer(trace.Tracer):
         self._redis = redis
 
     def start_span(self, *args: Any, **kwargs: Any) -> Span:
-        return _drop_error_description(self._tracer.start_span(*args, **kwargs), redis=self._redis)
+        span = _drop_error_description(self._tracer.start_span(*args, **kwargs), redis=self._redis)
+        if self._redis:
+            span = _set_operation_name_at_end(span, kwargs.get("name", args[0] if args else None))
+        return span
 
     @contextmanager
     def start_as_current_span(  # type: ignore[override]

@@ -20,10 +20,14 @@ import (
 // Node.js (instrumentation-http's default), a superset of the semconv
 // default (AWSAccessKeyId, Signature, sig, X-Goog-Signature); names match
 // exactly (case-sensitive) after percent-decoding, so a lower-case name is
-// kept, and ";" is not a separator.
+// kept, and ";" is not a separator. Since A30 (2026-11-05) also the OAuth 2.0
+// bearer token in a query (access_token, RFC 6750 section 2.3) and the
+// Google Cloud Storage signed-URL credential (X-Goog-Credential, V4;
+// GoogleAccessId, V2), in every language.
 var redactedQueryParams = []string{
 	"sig", "Signature", "AWSAccessKeyId", "X-Goog-Signature",
 	"X-Amz-Signature", "X-Amz-Credential", "X-Amz-Security-Token",
+	"access_token", "X-Goog-Credential", "GoogleAccessId",
 }
 
 const urlFullKey attribute.Key = "url.full"

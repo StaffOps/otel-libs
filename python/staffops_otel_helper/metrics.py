@@ -189,6 +189,27 @@ def _view_pattern(pattern: str) -> str | None:
     return pattern.replace("[", "[[]")
 
 
+#: HTTP metrics semconv v1.43 makes opt-in (``docs/http/http-metrics.md``): dropped
+#: unless ``http_opt_in_metrics`` / ``OTEL_HELPER_HTTP_OPT_IN_METRICS`` is on (contract
+#: D1 "HTTP opt-in metrics", ruled 2026-11-06, A30), both HTTP semconv generations
+#: (contrib ASGI/requests/httpx write the ``*.size`` names in the old one). Only the
+#: two durations stay by default, as in Go and Node.js. Scoped to the contrib
+#: instrumentations the helper installs (2026-11-08, a View matches one scope name
+#: exactly): an application's own instrument of the same name is kept.
+HTTP_OPT_IN_METRICS_SCOPES = (
+    "opentelemetry.instrumentation.asgi", "opentelemetry.instrumentation.fastapi",
+    "opentelemetry.instrumentation.requests", "opentelemetry.instrumentation.httpx",
+)
+HTTP_OPT_IN_METRICS = (
+    "http.server.active_requests", "http.client.active_requests",
+    "http.server.request.body.size", "http.server.response.body.size",
+    "http.client.request.body.size", "http.client.response.body.size",
+    "http.server.request.size", "http.server.response.size",
+    "http.client.request.size", "http.client.response.size",
+    "http.client.open_connections", "http.client.connection.duration",
+)
+
+
 def _build_drop_views(patterns: list[str]) -> list[View]:
     """Views that drop the instruments matching the contract globs, from every exporter."""
     views = []
@@ -467,6 +488,9 @@ def build_metrics(resource: Resource, options: TelemetryOptions):
 
         disabled = options.resolved.disabled_metrics
         views = _build_drop_views(disabled) if disabled else []
+        if not options.resolved.http_opt_in_metrics:
+            views += [View(instrument_name=name, meter_name=scope, aggregation=DropAggregation())
+                      for name in HTTP_OPT_IN_METRICS for scope in HTTP_OPT_IN_METRICS_SCOPES]
 
         kwargs = dict(
             resource=resource,

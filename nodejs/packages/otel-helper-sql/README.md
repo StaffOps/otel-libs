@@ -19,8 +19,9 @@ setup({ instrumentations: [sqlInstrumentation()] }); // or sqlInstrumentation({ 
 const pg = require('pg'); // after setup()
 ```
 
-- Spans carry `db.system.name` and, until 1.0, the legacy `db.system`
-  (`OTEL_SEMCONV_STABILITY_OPT_IN=database` drops the legacy key; `db.system.name` is always written), `db.query.text` as
+- Spans carry `db.system.name` and, until 1.0, the legacy `db.system` and
+  `db.statement` (= `db.query.text`)
+  (`OTEL_SEMCONV_STABILITY_OPT_IN=database` drops the legacy keys; `db.system.name` is always written), `db.query.text` as
   written — never the bound values — and `server.address`, `server.port`,
   `db.namespace`. No connection string or credentials.
 - A failed query keeps status ERROR without a description and

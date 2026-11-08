@@ -237,23 +237,52 @@ test('R7 real routes, local parents and other kinds go to the inner sampler', ()
   assert.equal(inner.calls, 7);
 });
 
-test('R7/D-JS7 gRPC health: the instrumentation span name only; SERVER entry spans and CLIENT spans with any parent', () => {
+test('R7/D-JS7 gRPC health: the semconv span name (A30); SERVER entry spans and CLIENT spans with any parent', () => {
   const s = new tracing.HealthCheckSampler(new Recorder());
-  for (const name of ['grpc.grpc.health.v1.Health/Check', 'grpc.grpc.health.v1.Health/Watch', 'grpc.grpc.health.v1.Health/List']) {
+  for (const name of ['grpc.health.v1.Health/Check', 'grpc.health.v1.Health/Watch', 'grpc.health.v1.Health/List']) {
     assert.equal(decide(s, { name }).decision, SamplingDecision.NOT_RECORD, name);
     assert.equal(decide(s, { name, ctx: remote(true) }).decision, SamplingDecision.NOT_RECORD, name);
     assert.equal(decide(s, { name, kind: api.SpanKind.CLIENT, ctx: local(true) }).decision, SamplingDecision.NOT_RECORD, name);
   }
-  assert.equal(decide(s, { name: 'grpc.grpc.health.v1.Health/Check', ctx: local(true) }).decision, SamplingDecision.RECORD_AND_SAMPLED);
-  // A user service in package health.v1 (span grpc.health.v1.Health/<method>) is kept; so are other names and rpc.* attributes.
-  for (const name of ['grpc.health.v1.Health/Watch', 'grpc.health.v1.Health/Check', '/grpc.health.v1.Health/List', 'grpc.notification.Notifier/Send', 'grpc.healthz/Check']) {
+  assert.equal(decide(s, { name: 'grpc.health.v1.Health/Check', ctx: local(true) }).decision, SamplingDecision.RECORD_AND_SAMPLED);
+  // A user service in package health.v1 (span health.v1.Health/<method>) is kept; so are other names and rpc.* attributes.
+  for (const name of ['health.v1.Health/Watch', 'health.v1.Health/Check', '/grpc.health.v1.Health/List', 'notification.Notifier/Send', 'healthz/Check', 'grpc.health.v1.HealthX/Check']) {
     assert.equal(decide(s, { name }).decision, SamplingDecision.RECORD_AND_SAMPLED, name);
     assert.equal(decide(s, { name, kind: api.SpanKind.CLIENT }).decision, SamplingDecision.RECORD_AND_SAMPLED, name);
   }
   const attrs = { 'rpc.method': '/grpc.health.v1.Health/Check', 'rpc.service': 'grpc.health.v1.Health' };
-  assert.equal(decide(s, { name: 'grpc.x/Y', attributes: attrs }).decision, SamplingDecision.RECORD_AND_SAMPLED);
+  assert.equal(decide(s, { name: 'x/Y', attributes: attrs }).decision, SamplingDecision.RECORD_AND_SAMPLED);
+  assert.equal(tracing.isGrpcHealthSpanName('grpc.health.v1.Health/Check'), true);
+  assert.equal(tracing.isGrpcHealthSpanName('health.v1.Health/Check'), false);
+  // An instrumentation-grpc registered outside the helper keeps upstream's name (review L2, 2026-11-08).
   assert.equal(tracing.isGrpcHealthSpanName('grpc.grpc.health.v1.Health/Check'), true);
-  assert.equal(tracing.isGrpcHealthSpanName('grpc.health.v1.Health/Check'), false);
+  assert.equal(decide(s, { name: 'grpc.grpc.health.v1.Health/Check' }).decision, SamplingDecision.NOT_RECORD);
+});
+
+test('A30 gRPC span names: grpc.<service>/<method> becomes <service>/<method>; other names are kept', () => {
+  for (const [name, want] of [
+    ['grpc.parity.v1.Echo/Ping', 'parity.v1.Echo/Ping'],
+    ['grpc.grpc.health.v1.Health/Check', 'grpc.health.v1.Health/Check'],
+    ['grpc.Svc/M', 'Svc/M'],
+    ['grpc.', 'grpc.'],
+    ['grpc./M', 'grpc./M'],
+    ['grpc.Svc/', 'grpc.Svc/'],
+    ['grpc.noslash', 'grpc.noslash'],
+    ['parity.v1.Echo/Ping', 'parity.v1.Echo/Ping'],
+    ['GET /x', 'GET /x'],
+  ]) {
+    assert.equal(tracing.grpcSemconvSpanName(name), want, name);
+  }
+  const exporter = new InMemorySpanExporter();
+  const { TracerProvider } = require('@opentelemetry/sdk-trace');
+  const provider = new TracerProvider({ spanProcessors: [new SimpleSpanProcessor({ exporter })] });
+  const wrapped = tracing.grpcNamingTracerProvider(provider);
+  const tracer = wrapped.getTracer('@opentelemetry/instrumentation-grpc');
+  tracer.startSpan('grpc.parity.v1.Echo/Ping').end();
+  tracer.startActiveSpan('grpc.parity.v1.Echo/Active', (span) => span.end());
+  tracer.startActiveSpan('grpc.parity.v1.Echo/Opts', {}, (span) => span.end());
+  assert.deepEqual(exporter.getFinishedSpans().map((s) => s.name), ['parity.v1.Echo/Ping', 'parity.v1.Echo/Active', 'parity.v1.Echo/Opts']);
+  assert.equal(typeof wrapped.forceFlush, 'function');
 });
 
 test('R7/R9 an invalid parent context counts as no parent (health sampler and debug marker)', () => {
@@ -274,7 +303,7 @@ test('R7 healthPaths replaces the list; [] traces every HTTP path but still drop
   assert.equal(custom.isHealthPath('/health'), false);
   const none = new tracing.HealthCheckSampler(new Recorder(), []);
   assert.equal(decide(none, { attributes: { 'url.path': '/health' } }).decision, SamplingDecision.RECORD_AND_SAMPLED);
-  assert.equal(decide(none, { name: 'grpc.grpc.health.v1.Health/Check' }).decision, SamplingDecision.NOT_RECORD);
+  assert.equal(decide(none, { name: 'grpc.health.v1.Health/Check' }).decision, SamplingDecision.NOT_RECORD);
   assert.equal(none.toString(), 'HealthCheckExcluding{Recorder}');
 });
 

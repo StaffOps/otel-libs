@@ -410,9 +410,9 @@ test('redis and ioredis loaded (and clients built) before redisInstrumentation()
     const out = await runNode([path.join(FIXTURES, 'preload.cjs')], { env: { REDIS_FAKE_URL: fake.url } });
     assert.equal(out.status, 0, out.stderr);
     assert.ok(out.preloaded, 'redis and ioredis were in require.cache first');
-    assert.deepEqual(out.spans.filter((s) => s.name === 'SET').map((s) => [s.scope, s.attributes['db.query.text'], s.attributes['db.system']]).sort(), [
-      ['@opentelemetry/instrumentation-ioredis', 'SET ? ?', 'redis'],
-      ['@opentelemetry/instrumentation-redis', 'SET ? ?', 'redis'],
+    assert.deepEqual(out.spans.filter((s) => s.name === 'SET').map((s) => [s.scope, s.attributes['db.query.text'], s.attributes['db.system'], s.attributes['db.statement']]).sort(), [
+      ['@opentelemetry/instrumentation-ioredis', 'SET ? ?', 'redis', 'SET ? ?'],
+      ['@opentelemetry/instrumentation-redis', 'SET ? ?', 'redis', 'SET ? ?'],
     ]);
   } finally {
     await fake.close();
@@ -429,6 +429,7 @@ test('OTEL_SEMCONV_STABILITY_OPT_IN=database: only db.system.name', async () => 
     for (const s of out.spans) {
       assert.equal(s.attributes['db.system.name'], 'redis', s.name);
       assert.equal(s.attributes['db.system'], undefined, s.name);
+      assert.equal(s.attributes['db.statement'], undefined, `${s.name}: no legacy db.statement in the stable mode (A30)`);
     }
   } finally {
     await fake.close();

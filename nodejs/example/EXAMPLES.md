@@ -171,7 +171,7 @@ POST /notify                              (server span)
 └── request handler - /notify
     └── api.send-notification
         ├── notifications.active_requests +1 / -1
-        ├── gRPC client grpc.notification.NotificationService/SendNotification → node-backend
+        ├── gRPC client notification.NotificationService/SendNotification → node-backend
         └── notifications.sent_total{channel} or notifications.failed_total{channel}
 ```
 
@@ -265,7 +265,7 @@ A 4xx/5xx `detail` is the fixed status text, never the error's own message.
 ## 2. node-backend (gRPC :50051)
 
 Every RPC gets an automatic server span named
-`grpc.notification.NotificationService/<Method>` (attributes `rpc.system`,
+`notification.NotificationService/<Method>` (attributes `rpc.system`,
 `rpc.service`, `rpc.method`, `rpc.grpc.status_code`), child of the caller's
 client span (same name, kind Client, plus `server.address` / `server.port`).
 `grpc.health.v1.Health/*` calls are not traced. A handler that fails answers
@@ -274,7 +274,7 @@ gRPC `UNKNOWN`.
 ### 2.1 SendNotification
 
 ```text
-grpc.notification.NotificationService/SendNotification   (server span)
+notification.NotificationService/SendNotification   (server span)
 └── backend.send-notification
     ├── backend.render-template
     └── backend.deliver
@@ -376,8 +376,8 @@ increase(notifications_cleaned_total{service_name="node-process"}[1h])
         └── [node-api] POST /notify
             └── [node-api] request handler - /notify
                 └── [node-api] api.send-notification
-                    └── [node-api] grpc.notification.NotificationService/SendNotification (client)
-                        └── [node-backend] grpc.notification.NotificationService/SendNotification (server)
+                    └── [node-api] notification.NotificationService/SendNotification (client)
+                        └── [node-backend] notification.NotificationService/SendNotification (server)
                             └── [node-backend] backend.send-notification
                                 ├── backend.render-template
                                 └── backend.deliver
@@ -436,7 +436,7 @@ spans languages has to allow for each row.
 |---|---|---|
 | `http.route` template | `/notify/:notificationId` (express) | `/notify/{notification_id}` (FastAPI); Go `ServeMux` writes `/status/{id}` — a query on the route value is per language |
 | Extra HTTP server spans | `request handler - <route>` (express) | `http receive` / `http send` (ASGI) |
-| gRPC span names | `grpc.<service>/<method>` | `/<service>/<method>` (Go: `<service>/<method>`) |
+| gRPC span names | `<service>/<method>` | the same (and Go), since contract task A30 |
 | Unmatched route / malformed JSON | server span named `GET` / `POST`, no `http.route` | FastAPI returns 422 for malformed JSON (no 400) |
 | 422 body | `{"detail": "<field>: …"}` (one string) | `{"detail": [{loc, msg, type, …}]}` (a list), also for malformed JSON |
 | 404 body | `{"detail": "Not Found"}` | the same |

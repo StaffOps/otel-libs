@@ -72,6 +72,18 @@ def normalize_semconv_opt_in(value: str | None) -> str:
     return f"{folded},database/dup"
 
 
+def legacy_db_keys_enabled(value: str | None = None) -> bool:
+    """Whether the legacy database keys are written next to the new ones (D1 "Database semconv opt-in").
+
+    The rule contrib follows after :func:`normalize_semconv_opt_in`, for the
+    keys the helper itself maps (A30: DynamoDB ``db.system``): yes unless the
+    value (default: the environment) holds ``database`` without ``database/dup``.
+    """
+    raw = os.environ.get(ENV_SEMCONV_OPT_IN) if value is None else value
+    tokens = {t.strip(TRIM_CHARS) for t in normalize_semconv_opt_in(raw).split(",")}
+    return "database/dup" in tokens or "database" not in tokens
+
+
 def ensure_semconv_default() -> None:
     """Normalize ``OTEL_SEMCONV_STABILITY_OPT_IN`` (default ``http,database/dup``); warn once if HTTP stays old.
 

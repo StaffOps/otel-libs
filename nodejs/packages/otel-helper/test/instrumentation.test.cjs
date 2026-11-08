@@ -392,19 +392,20 @@ test('D-JS7: gRPC spans are named grpc.<service>/<method> at start; health CLIEN
       client.close();
       await new Promise((resolve) => server.tryShutdown(() => resolve()));
     }
-    const grpcSeen = seen.filter((s) => s.name.startsWith('grpc.'));
+    // The sampler sees the semconv name (A30): the helper starts instrumentation-grpc's spans under it.
+    const grpcSeen = seen.filter((s) => s.name.endsWith('/Check') || s.name.endsWith('/Ping'));
     assert.deepEqual(grpcSeen, [
-      { name: 'grpc.grpc.health.v1.Health/Check', kind: CLIENT },
-      { name: 'grpc.grpc.health.v1.Health/Check', kind: SERVER },
-      { name: 'grpc.parity.v1.Echo/Ping', kind: CLIENT },
-      { name: 'grpc.parity.v1.Echo/Ping', kind: SERVER },
+      { name: 'grpc.health.v1.Health/Check', kind: CLIENT },
+      { name: 'grpc.health.v1.Health/Check', kind: SERVER },
+      { name: 'parity.v1.Echo/Ping', kind: CLIENT },
+      { name: 'parity.v1.Echo/Ping', kind: SERVER },
     ]);
     const spans = rec.exporter.getFinishedSpans().map((s) => ({ name: s.name, kind: s.kind }));
     assert.deepEqual(
       spans.sort((a, b) => a.kind - b.kind),
       [
-        { name: 'grpc.parity.v1.Echo/Ping', kind: SERVER },
-        { name: 'grpc.parity.v1.Echo/Ping', kind: CLIENT },
+        { name: 'parity.v1.Echo/Ping', kind: SERVER },
+        { name: 'parity.v1.Echo/Ping', kind: CLIENT },
       ],
       'health Check traced on neither side',
     );
@@ -507,6 +508,32 @@ test('A22 redaction: node:http and fetch clients redact userinfo and signature v
   const z = spans.find((s) => s.kind === SERVER && s.attributes['url.path'] === '/z');
   assert.equal(z.attributes['url.query'], 'token=s&sig=REDACTED');
   assert.ok(!records.some((r) => r.level === 'warn' || r.level === 'error'), JSON.stringify(records));
+});
+
+test('A30 redaction: access_token, X-Goog-Credential and GoogleAccessId on node:http, fetch and server url.query', async () => {
+  assert.deepEqual(instr.REDACTED_QUERY_PARAMS.slice(7), ['access_token', 'X-Goog-Credential', 'GoogleAccessId']);
+  const rec = recorder();
+  helper.setup({ spanProcessors: rec.spanProcessors });
+  const { server, port } = await appServer();
+  const q = 'access_token=AT1&X-Goog-Credential=GC1&GoogleAccessId=GA1&Access_Token=keep&a=1';
+  try {
+    await clientGet(`http://127.0.0.1:${port}/x?${q}`);
+    await (await fetch(`http://127.0.0.1:${port}/y?${q}`)).text();
+    await rawGet(port, `/z?${q}`);
+  } finally {
+    await close(server);
+  }
+  const spans = rec.exporter.getFinishedSpans();
+  const texts = [
+    ...spans.filter((s) => s.kind === CLIENT).map((s) => String(s.attributes['url.full'])),
+    ...spans.filter((s) => s.kind === SERVER && s.attributes['url.query'] !== undefined).map((s) => String(s.attributes['url.query'])),
+  ];
+  assert.ok(texts.length >= 4, JSON.stringify(texts));
+  for (const t of texts) {
+    for (const secret of ['AT1', 'GC1', 'GA1']) assert.ok(!t.includes(secret), t);
+    assert.ok(t.includes('access_token=REDACTED') && t.includes('X-Goog-Credential=REDACTED') && t.includes('GoogleAccessId=REDACTED'), t);
+    assert.ok(t.includes('Access_Token=keep'), `case-sensitive names: ${t}`);
+  }
 });
 
 test('lifecycle: shutdown disables the instrumentations; the next setup enables them and binds its own providers', async () => {

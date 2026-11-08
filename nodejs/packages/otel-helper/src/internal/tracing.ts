@@ -13,7 +13,7 @@
  * (R8). Sampler and propagator names are never secrets, so they are echoed
  * (truncated).
  */
-import { SpanKind, SpanStatusCode, isSpanContextValid, trace, type Attributes, type Context, type Link, type TextMapPropagator } from '@opentelemetry/api';
+import { SpanKind, SpanStatusCode, isSpanContextValid, trace, type Attributes, type Context, type Link, type TextMapPropagator, type Tracer, type TracerProvider } from '@opentelemetry/api';
 import { CompositePropagator, W3CBaggagePropagator, W3CTraceContextPropagator } from '@opentelemetry/core';
 import {
   AlwaysOffSampler,
@@ -270,17 +270,75 @@ export function normalizeHealthPath(path: string): string {
 }
 
 const GRPC_HEALTH_SERVICE = 'grpc.health.v1.Health/';
-// instrumentation-grpc names spans `grpc.<service>/<method>` (design D-JS7).
-const GRPC_HEALTH_SPAN = `grpc.${GRPC_HEALTH_SERVICE}`;
+// instrumentation-grpc 0.300 names spans `grpc.<service>/<method>`
+// (`instrumentation.cjs:60, 158, 181`); the helper starts them as
+// `<service>/<method>` (contract D1 "gRPC span names", A30).
+const UPSTREAM_GRPC_PREFIX = 'grpc.';
+// instrumentation-grpc registered outside the helper keeps upstream's name (review L2, 2026-11-08).
+const UPSTREAM_GRPC_HEALTH_SERVICE = `${UPSTREAM_GRPC_PREFIX}${GRPC_HEALTH_SERVICE}`;
 
 /**
- * Whether a span name is the instrumentation's name for a
- * `grpc.health.v1.Health` method (the whole service: Check, Watch, List):
- * `grpc.grpc.health.v1.Health/<method>` only. A user service in package
- * `health.v1` (span `grpc.health.v1.Health/<method>`) is not health.
+ * Whether a span name is the gRPC span name of a `grpc.health.v1.Health`
+ * method (the whole service: Check, Watch, List): `grpc.health.v1.Health/<method>`,
+ * the semconv name the helper gives instrumentation-grpc's spans (contract D1
+ * "gRPC span names", A30; the same prefix as Go and Python). A user service in
+ * package `health.v1` (span `health.v1.Health/<method>`) is not health.
+ * The upstream name `grpc.grpc.health.v1.Health/<method>` still matches: an
+ * instrumentation-grpc registered outside the helper keeps it (2026-11-08).
  */
 export function isGrpcHealthSpanName(name: string): boolean {
-  return name.startsWith(GRPC_HEALTH_SPAN);
+  return name.startsWith(GRPC_HEALTH_SERVICE) || name.startsWith(UPSTREAM_GRPC_HEALTH_SERVICE);
+}
+
+/**
+ * The semconv name of an instrumentation-grpc span (contract D1 "gRPC span
+ * names", A30): semconv v1.43 names an RPC span `{rpc.method}`, the
+ * fully-qualified `<package.Service>/<Method>` (`docs/rpc/rpc-spans.md`), as
+ * Go otelgrpc and Python do. instrumentation-grpc names it `grpc.` + the
+ * path without its leading `/`, so the prefix is removed when the rest is
+ * `<service>/<method>`; any other name is returned unchanged.
+ */
+export function grpcSemconvSpanName(name: string): string {
+  if (!name.startsWith(UPSTREAM_GRPC_PREFIX)) return name;
+  const rest = name.slice(UPSTREAM_GRPC_PREFIX.length);
+  const slash = rest.indexOf('/');
+  return slash > 0 && slash < rest.length - 1 ? rest : name;
+}
+
+/**
+ * A TracerProvider for instrumentation-grpc only: its tracers start every
+ * span under {@link grpcSemconvSpanName}, so the sampler, every processor and
+ * every exporter see the semconv name (instrumentation-grpc sets `rpc.*`
+ * after `startSpan`, so a processor could only rename it in `onEnding`, after
+ * the sampler and the processors' `onStart`). Applied to the helper's
+ * providers and to a foreign global one alike (the wrapper is bound to the
+ * instrumentation). Everything else is forwarded.
+ */
+export function grpcNamingTracerProvider(provider: TracerProvider): TracerProvider {
+  const wrapTracer = (tracer: Tracer): Tracer =>
+    new Proxy(tracer, {
+      get(target, prop) {
+        if (prop === 'startSpan') {
+          return (name: string, ...rest: unknown[]): unknown =>
+            (target.startSpan as (...a: unknown[]) => unknown).call(target, grpcSemconvSpanName(name), ...rest);
+        }
+        if (prop === 'startActiveSpan') {
+          return (name: string, ...rest: unknown[]): unknown =>
+            (target.startActiveSpan as (...a: unknown[]) => unknown).call(target, grpcSemconvSpanName(name), ...rest);
+        }
+        const value: unknown = Reflect.get(target, prop, target);
+        return typeof value === 'function' ? (value as (...a: unknown[]) => unknown).bind(target) : value;
+      },
+    });
+  return new Proxy(provider, {
+    get(target, prop) {
+      if (prop === 'getTracer') {
+        return (...args: Parameters<TracerProvider['getTracer']>): Tracer => wrapTracer(target.getTracer(...args));
+      }
+      const value: unknown = Reflect.get(target, prop, target);
+      return typeof value === 'function' ? (value as (...a: unknown[]) => unknown).bind(target) : value;
+    },
+  });
 }
 
 const ATTR_URL_PATH = 'url.path';
@@ -295,7 +353,8 @@ const ATTR_HTTP_TARGET = 'http.target';
  * sampled `traceparent` is still a probe) whose `url.path` (else
  * `http.target`) is a health path — exact, case-insensitive, trailing slash
  * and query ignored — or whose name is the instrumentation's span name of a
- * `grpc.health.v1.Health` method (`grpc.grpc.health.v1.Health/<method>`;
+ * `grpc.health.v1.Health` method (`grpc.health.v1.Health/<method>`, the
+ * name the helper starts instrumentation-grpc's spans with, A30;
  * instrumentation-grpc sets `rpc.*` only after start, so the name is all the
  * sampler sees); and CLIENT spans of that gRPC service with any parent. A drop keeps the parent's tracestate. Children of a dropped
  * span follow it through ParentBased (the default); a sampler that ignores

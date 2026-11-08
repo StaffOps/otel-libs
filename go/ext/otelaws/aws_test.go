@@ -84,12 +84,13 @@ func TestInstrumentCreatesClientSpan(t *testing.T) {
 		t.Errorf("span kind = %v, want client", s.SpanKind)
 	}
 	set := attribute.NewSet(s.Attributes...)
-	// contrib otelaws v0.72 emits the current RPC conventions
-	// (rpc.system.name, rpc.method = "<Service>/<Operation>").
+	// The legacy RPC keys by default (contract D1 "AWS RPC keys", A30):
+	// otelaws's rpc.system.name / rpc.method=<Service>/<Operation> rewritten.
 	for k, want := range map[attribute.Key]string{
-		"rpc.system.name": "aws-api",
-		"rpc.method":      "SQS/ListQueues",
-		"aws.region":      "us-east-1",
+		"rpc.system":  "aws-api",
+		"rpc.service": "SQS",
+		"rpc.method":  "ListQueues",
+		"aws.region":  "us-east-1",
 	} {
 		if v, _ := set.Value(k); v.AsString() != want {
 			t.Errorf("%s = %q, want %q (attrs %v)", k, v.AsString(), want, s.Attributes)
@@ -292,7 +293,7 @@ func TestErrorCode(t *testing.T) {
 
 func TestSanitizingSpanPassesOtherStatusesAndAttributes(t *testing.T) {
 	exp := installTracer(t)
-	tracer := errorSanitizingProvider{otel.GetTracerProvider()}.Tracer("t")
+	tracer := errorSanitizingProvider{TracerProvider: otel.GetTracerProvider(), legacyKeys: true, rpc: rpcStable}.Tracer("t")
 	_, span := tracer.Start(context.Background(), "ok")
 	span.SetAttributes(attribute.String("kept", "v"), errorTypeKey.String("*smithy.OperationError"), attribute.String("aws.s3.copy_source", "b/k"))
 	span.SetStatus(codes.Ok, "")
@@ -315,5 +316,229 @@ func TestSanitizingSpanPassesOtherStatusesAndAttributes(t *testing.T) {
 	fset := attribute.NewSet(f.Attributes...)
 	if v, _ := fset.Value(errorTypeKey); v.AsString() != "_OTHER" || f.Status.Description != "" {
 		t.Errorf("no AWS error code: error.type %q, description %q; want _OTHER and none", v.AsString(), f.Status.Description)
+	}
+}
+
+// TestA30AttributeValues (contract D1 "AWS service attribute values", A30):
+// server.address/server.port from the request URL on every call (SQS's
+// queue URL is not a server address), DynamoDB db.system.name with the
+// legacy db.system unless the stable database mode is chosen.
+func TestA30AttributeValues(t *testing.T) {
+	for _, tt := range []struct {
+		optIn  string
+		legacy bool
+	}{{"", true}, {"database/dup", true}, {"database", false}} {
+		t.Run("optin="+tt.optIn, func(t *testing.T) {
+			t.Setenv(envSemconvOptIn, tt.optIn)
+			exp := installTracer(t)
+			srv := awsFake(t)
+			cfg := fakeConfig(srv)
+			Instrument(&cfg)
+			ctx := context.Background()
+			item := map[string]ddbtypes.AttributeValue{"pk": &ddbtypes.AttributeValueMemberS{Value: "v"}}
+			_, _ = dynamodb.NewFromConfig(cfg).PutItem(ctx, &dynamodb.PutItemInput{TableName: aws.String("T"), Item: item})
+			_, _ = sqs.NewFromConfig(cfg).SendMessage(ctx, &sqs.SendMessageInput{QueueUrl: aws.String("https://sqs.us-east-1.amazonaws.com/123456789012/q"), MessageBody: aws.String("m")})
+			spans := exp.GetSpans()
+			if len(spans) != 2 {
+				t.Fatalf("got %d spans, want 2", len(spans))
+			}
+			host, port := hostPort(t, srv.URL)
+			for _, s := range spans {
+				set := attribute.NewSet(s.Attributes...)
+				if v, _ := set.Value(serverAddressKey); v.AsString() != host {
+					t.Errorf("%s: server.address %q, want %q", s.Name, v.AsString(), host)
+				}
+				if v, _ := set.Value(serverPortKey); v.AsInt64() != int64(port) {
+					t.Errorf("%s: server.port %d, want %d", s.Name, v.AsInt64(), port)
+				}
+			}
+			ddb := attribute.NewSet(spans[0].Attributes...)
+			if v, _ := ddb.Value(dbSystemNameKey); v.AsString() != "aws.dynamodb" {
+				t.Errorf("db.system.name %q, want aws.dynamodb", v.AsString())
+			}
+			if v, ok := ddb.Value(legacyDBSystemKey); ok != tt.legacy || (ok && v.AsString() != "dynamodb") {
+				t.Errorf("db.system = %q (present %v), want present %v with dynamodb", v.AsString(), ok, tt.legacy)
+			}
+			q := attribute.NewSet(spans[1].Attributes...)
+			if v, _ := q.Value(messagingSystemKey); v.AsString() != "aws_sqs" {
+				t.Errorf("messaging.system %q, want aws_sqs", v.AsString())
+			}
+		})
+	}
+}
+
+func hostPort(t *testing.T, raw string) (string, int) {
+	t.Helper()
+	rest := strings.TrimPrefix(raw, "http://")
+	i := strings.LastIndexByte(rest, ':')
+	var p int
+	if _, err := fmt.Sscanf(rest[i+1:], "%d", &p); err != nil {
+		t.Fatal(err)
+	}
+	return rest[:i], p
+}
+
+// SNS messaging.system is mapped to the semconv value; other values pass.
+func TestMapAttributes(t *testing.T) {
+	in := []attribute.KeyValue{
+		messagingSystemKey.String("aws_sns"),
+		serverAddressKey.String("https://sqs.us-east-1.amazonaws.com/1/q"),
+		dbSystemNameKey.String("aws.dynamodb"),
+		attribute.String("aws.s3.key", "k"),
+		attribute.String("keep", "v"),
+	}
+	got := attribute.NewSet(mapAttributes(in, true, "")...)
+	if v, _ := got.Value(messagingSystemKey); v.AsString() != "aws.sns" {
+		t.Errorf("messaging.system %q, want aws.sns", v.AsString())
+	}
+	if got.HasValue(serverAddressKey) || got.HasValue("aws.s3.key") {
+		t.Errorf("dropped keys recorded: %v", got.ToSlice())
+	}
+	if v, _ := got.Value(legacyDBSystemKey); v.AsString() != "dynamodb" {
+		t.Errorf("db.system %q, want dynamodb", v.AsString())
+	}
+	if !got.HasValue("keep") {
+		t.Error("other attributes must pass")
+	}
+	sqsSet := attribute.NewSet(mapAttributes([]attribute.KeyValue{messagingSystemKey.String("aws_sqs")}, false, "")...)
+	if v, _ := sqsSet.Value(messagingSystemKey); v.AsString() != "aws_sqs" {
+		t.Errorf("aws_sqs changed to %q", v.AsString())
+	}
+	stable := attribute.NewSet(mapAttributes([]attribute.KeyValue{dbSystemNameKey.String("aws.dynamodb")}, false, "")...)
+	if stable.HasValue(legacyDBSystemKey) {
+		t.Error("stable mode: no legacy db.system")
+	}
+}
+
+func TestServerAttributes(t *testing.T) {
+	for _, tt := range []struct {
+		scheme, host, port string
+		want               []attribute.KeyValue
+	}{
+		{"https", "s3.amazonaws.com", "", []attribute.KeyValue{serverAddressKey.String("s3.amazonaws.com"), serverPortKey.Int(443)}},
+		{"HTTP", "localhost", "", []attribute.KeyValue{serverAddressKey.String("localhost"), serverPortKey.Int(80)}},
+		{"http", "127.0.0.1", "4566", []attribute.KeyValue{serverAddressKey.String("127.0.0.1"), serverPortKey.Int(4566)}},
+		{"ftp", "h", "", []attribute.KeyValue{serverAddressKey.String("h")}},
+		{"http", "h", "99999", []attribute.KeyValue{serverAddressKey.String("h")}},
+		{"https", "", "443", nil},
+	} {
+		got := serverAttributes(tt.scheme, tt.host, tt.port)
+		if fmt.Sprint(got) != fmt.Sprint(tt.want) {
+			t.Errorf("serverAttributes(%q, %q, %q) = %v, want %v", tt.scheme, tt.host, tt.port, got, tt.want)
+		}
+	}
+}
+
+// TestRPCModes (contract D1 "AWS RPC keys", A30): legacy by default, the
+// current keys with rpc, both with rpc/dup (rpc.method keeps the current value).
+func TestRPCModes(t *testing.T) {
+	for _, tt := range []struct {
+		optIn  string
+		mode   rpcMode
+		want   map[attribute.Key]string
+		absent []attribute.Key
+	}{
+		{"", rpcLegacy, map[attribute.Key]string{"rpc.system": "aws-api", "rpc.service": "SQS", "rpc.method": "ListQueues"}, []attribute.Key{"rpc.system.name"}},
+		{"http,database", rpcLegacy, map[attribute.Key]string{"rpc.system": "aws-api", "rpc.method": "ListQueues"}, []attribute.Key{"rpc.system.name"}},
+		{" RPC ", rpcStable, map[attribute.Key]string{"rpc.system.name": "aws-api", "rpc.method": "SQS/ListQueues"}, []attribute.Key{"rpc.system", "rpc.service"}},
+		{"rpc,rpc/dup", rpcDup, map[attribute.Key]string{"rpc.system.name": "aws-api", "rpc.system": "aws-api", "rpc.service": "SQS", "rpc.method": "SQS/ListQueues"}, nil},
+		{"rpc/old", rpcLegacy, map[attribute.Key]string{"rpc.method": "ListQueues"}, nil},
+	} {
+		t.Run("optin="+tt.optIn, func(t *testing.T) {
+			t.Setenv(envSemconvOptIn, tt.optIn)
+			if got := rpcModeFromEnv(); got != tt.mode {
+				t.Fatalf("rpcModeFromEnv() = %v, want %v", got, tt.mode)
+			}
+			exp := installTracer(t)
+			cfg := newConfig(&stubTransport{})
+			Instrument(&cfg)
+			if _, err := sqs.NewFromConfig(cfg).ListQueues(context.Background(), &sqs.ListQueuesInput{}); err != nil {
+				t.Fatal(err)
+			}
+			s := exp.GetSpans()[0]
+			if s.Name != "SQS.ListQueues" || s.SpanKind != trace.SpanKindClient {
+				t.Errorf("span %q kind %v, want SQS.ListQueues CLIENT", s.Name, s.SpanKind)
+			}
+			set := attribute.NewSet(s.Attributes...)
+			for k, want := range tt.want {
+				if v, _ := set.Value(k); v.AsString() != want {
+					t.Errorf("%s = %q, want %q", k, v.AsString(), want)
+				}
+			}
+			for _, k := range tt.absent {
+				if set.HasValue(k) {
+					t.Errorf("%s present", k)
+				}
+			}
+		})
+	}
+	// A method value without a service keeps its shape.
+	got := attribute.NewSet(rpcAttributes([]attribute.KeyValue{rpcMethodKey.String("Op")}, rpcLegacy)...)
+	if v, _ := got.Value(rpcMethodKey); v.AsString() != "Op" || got.HasValue(rpcServiceKey) {
+		t.Errorf("rpcAttributes(Op) = %v", got.ToSlice())
+	}
+}
+
+// SNS messaging.operation.name is the AWS operation (A30, 2026-11-06).
+func TestSNSOperationName(t *testing.T) {
+	for in, want := range map[string]string{"publish_input": "Publish", "publish_batch_input": "PublishBatch", "other": "other"} {
+		got := attribute.NewSet(mapAttributes([]attribute.KeyValue{messagingOpKey.String(in)}, false, "")...)
+		if v, _ := got.Value(messagingOpKey); v.AsString() != want {
+			t.Errorf("%s -> %q, want %q", in, v.AsString(), want)
+		}
+	}
+}
+
+// Owner amendment 2026-11-08 (contract D1 "AWS service attribute values"):
+// SQS/SNS send PRODUCER and receive CONSUMER, keeping <Service>.<Operation>;
+// every other call CLIENT. messaging.operation.name is the AWS operation.
+func TestMessagingSpanKinds(t *testing.T) {
+	for name, want := range map[string]trace.SpanKind{
+		"SQS.SendMessage": trace.SpanKindProducer, "SQS.SendMessageBatch": trace.SpanKindProducer, "SQS.ReceiveMessage": trace.SpanKindConsumer,
+		"SNS.Publish": trace.SpanKindProducer, "SNS.PublishBatch": trace.SpanKindProducer,
+	} {
+		if got := messagingSpanKinds[name]; got != want {
+			t.Errorf("%s kind %v, want %v", name, got, want)
+		}
+	}
+	for _, name := range []string{"SQS.ListQueues", "SQS.DeleteMessage", "SNS.CreateTopic", "DynamoDB.PutItem"} {
+		if _, ok := messagingSpanKinds[name]; ok {
+			t.Errorf("%s must stay CLIENT", name)
+		}
+	}
+	exp := installTracer(t)
+	cfg := fakeConfig(awsFake(t))
+	Instrument(&cfg)
+	ctx := context.Background()
+	q := sqs.NewFromConfig(cfg)
+	url := aws.String("https://sqs.us-east-1.amazonaws.com/123456789012/q")
+	_, _ = q.SendMessage(ctx, &sqs.SendMessageInput{QueueUrl: url, MessageBody: aws.String("m")})
+	_, _ = q.ReceiveMessage(ctx, &sqs.ReceiveMessageInput{QueueUrl: url})
+	_, _ = q.DeleteMessage(ctx, &sqs.DeleteMessageInput{QueueUrl: url, ReceiptHandle: aws.String("r")})
+	spans := exp.GetSpans()
+	if len(spans) != 3 {
+		t.Fatalf("got %d spans, want 3", len(spans))
+	}
+	for i, want := range []struct {
+		name string
+		kind trace.SpanKind
+		op   string
+	}{{"SQS.SendMessage", trace.SpanKindProducer, "SendMessage"}, {"SQS.ReceiveMessage", trace.SpanKindConsumer, "ReceiveMessage"}, {"SQS.DeleteMessage", trace.SpanKindClient, "DeleteMessage"}} {
+		s := spans[i]
+		if s.Name != want.name || s.SpanKind != want.kind {
+			t.Errorf("span %d: %s %v, want %s %v", i, s.Name, s.SpanKind, want.name, want.kind)
+		}
+		set := attribute.NewSet(s.Attributes...)
+		if v, _ := set.Value(messagingOpKey); v.AsString() != want.op {
+			t.Errorf("%s: messaging.operation.name %q, want %q", s.Name, v.AsString(), want.op)
+		}
+	}
+	if got := operationOf("noservice"); got != "" {
+		t.Errorf("operationOf = %q", got)
+	}
+	// An otelaws value already mapped is not doubled.
+	got := mapAttributes([]attribute.KeyValue{messagingSystemKey.String("aws_sns"), messagingOpKey.String("publish_input")}, false, "Publish")
+	if len(got) != 2 {
+		t.Errorf("mapAttributes = %v", got)
 	}
 }

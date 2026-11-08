@@ -86,7 +86,7 @@ def _options(code: dict):
               "sample_ratio", "export_interval_ms", "resource_attributes",
               "traces_endpoint", "metrics_endpoint", "logs_endpoint",
               "insecure", "compression", "export_timeout_ms", "health_paths",
-              "disabled_signals", "prometheus_metrics_port"}
+              "disabled_signals", "prometheus_metrics_port", "http_opt_in_metrics"}
     kwargs = {}
     unsupported = []
     for key, value in sorted(code.items()):
@@ -166,6 +166,7 @@ def kind_resolve(case: dict) -> dict:
         snap["log_level"] = "WARN" if level == "WARNING" else level
         snap["prometheus_metrics_port"] = opts.resolved.prometheus_metrics_port
         snap["prometheus_metrics_host"] = opts.resolved.prometheus_metrics_host  # "" = every interface (A29)
+        snap["http_opt_in_metrics"] = opts.resolved.http_opt_in_metrics  # A30
     _flush_and_shutdown()
     return snap
 
@@ -313,6 +314,26 @@ def _server_span_status(exporter) -> str:
     return "none"
 
 
+def _server_span_name(exporter) -> str:
+    """Name of the first SERVER span, or "none" (fixture field server_span_name; A30)."""
+    from opentelemetry.trace import SpanKind
+
+    for s in exporter.get_finished_spans():
+        if s.kind == SpanKind.SERVER:
+            return s.name
+    return "none"
+
+
+def _client_span_name(exporter) -> str:
+    """Name of the first CLIENT span, or "none" (fixture field client_span_name; A30, 2026-11-08)."""
+    from opentelemetry.trace import SpanKind
+
+    for s in exporter.get_finished_spans():
+        if s.kind == SpanKind.CLIENT:
+            return s.name
+    return "none"
+
+
 def _scrape_response():
     from starlette.testclient import TestClient
 
@@ -425,6 +446,8 @@ def kind_grpc_server(case: dict) -> dict:
         _captured.append(f"grpc call failed: {exc!r}")
     snap["server_spans"] = _server_spans(exporter)
     snap["server_span_status"] = _server_span_status(exporter)
+    snap["server_span_name"] = _server_span_name(exporter)
+    snap["client_span_name"] = _client_span_name(exporter)
     snap["rpcs_counted"] = _scrape_count(r"^rpc_server(_call)?_duration[a-z_]*_count[{ ]")
     _flush_and_shutdown()
     return snap

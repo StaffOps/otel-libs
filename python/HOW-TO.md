@@ -170,6 +170,9 @@ server = grpc.aio.server()
 add_MyServiceServicer_to_server(MyServicer(), server)
 ```
 
+- Spans are named `<package.Service>/<Method>` (semconv, as Go and Node.js;
+  contrib's leading `/` is removed since contract task A30); the attributes
+  stay contrib's legacy `rpc.system`, `rpc.service`, `rpc.method`.
 - The whole `grpc.health.v1.Health` service (Check, Watch, List) is not traced,
   on servers and clients. Spans your health servicer starts become roots.
 - `OTEL_PYTHON_GRPC_EXCLUDED_SERVICES` works as upstream documents; the helper
@@ -487,6 +490,26 @@ setup_telemetry()
   with the `[<extra>]` extra;
   if the extra is already installed, the missing package is the library itself
   (`sqlalchemy`, `redis`, `botocore`).
+- **Redis and AWS values (A30):** Redis command spans carry
+  `db.operation.name` (the command, `SET`; none on pipeline spans), as Go and
+  Node.js. botocore SQS spans carry `messaging.system="aws_sqs"` (contrib
+  writes `aws.sqs`) and DynamoDB spans `db.system.name="aws.dynamodb"` next to
+  the legacy `db.system="dynamodb"` (dropped when the value holds `database`
+  without `database/dup`). Every botocore call span is named
+  `<Service>.<Operation>` (contrib named an SNS publish `<topic> send`); SQS
+  and SNS send/publish are PRODUCER, SQS receive CONSUMER (contrib's SQS spans
+  were CLIENT), anything else CLIENT; SQS and SNS spans carry
+  `messaging.operation.name` = the AWS operation. The RPC keys stay contrib's
+  legacy `rpc.system`/`rpc.service`/`rpc.method` unless the variable holds
+  `rpc` (`rpc.system.name`, `rpc.method="<Service>/<Operation>"`) or
+  `rpc/dup` (both) — set `http,rpc` / `http,rpc/dup`, keeping `http`, or
+  contrib falls back to the old HTTP conventions. A portless
+  `http://` endpoint (LocalStack) records `server.port=80`, not 443.
+- **HTTP opt-in metrics (A30):** `http.server.active_requests` and the HTTP
+  body-size histograms are dropped unless `OTEL_HELPER_HTTP_OPT_IN_METRICS=true`
+  or `TelemetryOptions(http_opt_in_metrics=True)`; the two durations are always
+  recorded. The drop covers the contrib instrumentations the helper installs,
+  so your own instrument of one of those names is kept.
 - **Database attributes:** with the helper's default
   `OTEL_SEMCONV_STABILITY_OPT_IN=http,database/dup`, SQL spans carry
   `db.system.name` and the legacy `db.system`, like Go's `ext/otelsql`. Your

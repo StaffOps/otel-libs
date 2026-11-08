@@ -18,9 +18,13 @@ from opentelemetry.trace import Span, SpanKind, Status
 #: (``X-Goog-Signature``), Azure SAS (``sig``): a superset of the semconv /
 #: contrib util-http default (``AWSAccessKeyId``, ``Signature``, ``sig``,
 #: ``X-Goog-Signature``). The same list in Go and Node.js; names match exactly
-#: (case-sensitive), after percent-decoding.
+#: (case-sensitive), after percent-decoding. Since A30 (2026-11-05) also the
+#: OAuth 2.0 bearer token in a query (``access_token``, RFC 6750 section 2.3)
+#: and the Google Cloud Storage signed-URL credential (``X-Goog-Credential``,
+#: V4; ``GoogleAccessId``, V2).
 REDACTED_QUERY_PARAMS = ("sig", "Signature", "AWSAccessKeyId", "X-Goog-Signature",
-                         "X-Amz-Signature", "X-Amz-Credential", "X-Amz-Security-Token")
+                         "X-Amz-Signature", "X-Amz-Credential", "X-Amz-Security-Token",
+                         "access_token", "X-Goog-Credential", "GoogleAccessId")
 _REDACTED_SET = frozenset(REDACTED_QUERY_PARAMS)
 #: ``url.full`` keeps a ``#fragment``; ASGI writes ``http.url``/``http.target``
 #: with the whole query unquoted, so everything after the first ``?`` is query.

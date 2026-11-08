@@ -39,6 +39,8 @@ const (
 	EnvSampleRatio          = "OTEL_HELPER_SAMPLE_RATIO"
 	EnvDisabledSignals      = "OTEL_HELPER_DISABLED_SIGNALS"
 	EnvDisabledMetrics      = "OTEL_HELPER_DISABLED_METRICS"
+	// EnvHTTPOptInMetrics turns on the HTTP opt-in metrics (A30).
+	EnvHTTPOptInMetrics     = "OTEL_HELPER_HTTP_OPT_IN_METRICS"
 	EnvMetricsPort          = "OTEL_HELPER_METRICS_PORT"
 	EnvMetricsExporter      = "OTEL_METRICS_EXPORTER"
 	EnvTracesExporter       = "OTEL_TRACES_EXPORTER"
@@ -197,6 +199,9 @@ func (o *Options) resolveFromEnv() {
 
 	if !o.DebugLevel {
 		o.DebugLevel, _ = envBool(EnvDebugLevel)
+	}
+	if !o.httpOptInSet && !o.HTTPOptInMetrics {
+		o.HTTPOptInMetrics, _ = envBool(EnvHTTPOptInMetrics)
 	}
 
 	o.warnDeprecatedEnv()

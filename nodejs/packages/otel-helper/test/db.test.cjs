@@ -27,7 +27,7 @@ test('internal/db exports exactly what the opt-in DB packages use', () => {
     'legacyKeysMode',
     'withLegacyKey',
   ]);
-  assert.deepEqual({ ...db.LEGACY_DB_SYSTEM }, { postgresql: 'postgresql', mysql: 'mysql', redis: 'redis' });
+  assert.deepEqual({ ...db.LEGACY_DB_SYSTEM }, { postgresql: 'postgresql', mysql: 'mysql', redis: 'redis', 'aws.dynamodb': 'dynamodb' });
   assert.ok(Object.isFrozen(db.LEGACY_DB_SYSTEM));
 });
 
@@ -103,6 +103,51 @@ test('the DB tracer adds db.system at span start (startSpan and every startActiv
   const stable = tracerOf({ legacyKeys: false });
   stable.wrapped.getTracer('t').startSpan('s', { attributes: attrs }).end();
   assert.equal(stable.exporter.getFinishedSpans()[0].attributes['db.system'], undefined);
+});
+
+test('A30: legacyStatement copies db.query.text into db.statement at start, only with legacyKeys and never over one', () => {
+  const attrs = { 'db.system.name': 'redis', 'db.query.text': 'SET ? ?' };
+  const dup = tracerOf({ legacyKeys: true, legacyStatement: true });
+  const t = dup.wrapped.getTracer('t');
+  t.startSpan('a', { attributes: attrs }).end();
+  t.startSpan('b', { attributes: { ...attrs, 'db.statement': 'own' } }).end();
+  t.startSpan('c', { attributes: { 'db.system.name': 'redis' } }).end();
+  const byName = Object.fromEntries(dup.exporter.getFinishedSpans().map((s) => [s.name, s.attributes]));
+  assert.equal(byName.a['db.statement'], 'SET ? ?');
+  assert.equal(byName.b['db.statement'], 'own');
+  assert.equal(byName.c['db.statement'], undefined);
+  assert.equal(attrs['db.statement'], undefined, 'the caller attributes are not mutated');
+  for (const opts of [{ legacyKeys: false, legacyStatement: true }, { legacyKeys: true }]) {
+    const other = tracerOf(opts);
+    other.wrapped.getTracer('t').startSpan('s', { attributes: attrs }).end();
+    assert.equal(other.exporter.getFinishedSpans()[0].attributes['db.statement'], undefined, JSON.stringify(opts));
+  }
+  assert.equal(db.withLegacyKey({ 'db.system.name': 'aws.dynamodb' })['db.system'], 'dynamodb');
+});
+
+test('A30: legacyStatement also copies db.query.text written after start (setAttribute, setAttributes), never over an existing db.statement', () => {
+  const dup = tracerOf({ legacyKeys: true, legacyStatement: true });
+  const t = dup.wrapped.getTracer('t');
+  const a = t.startSpan('a');
+  a.setAttribute('db.query.text', 'SELECT 1');
+  a.end();
+  const b = t.startSpan('b');
+  b.setAttributes({ 'db.query.text': 'SELECT 2', other: 'x' });
+  b.end();
+  const c = t.startSpan('c');
+  c.setAttribute('db.statement', 'own');
+  c.setAttribute('db.query.text', 'SELECT 3');
+  c.end();
+  const byName = Object.fromEntries(dup.exporter.getFinishedSpans().map((s) => [s.name, s.attributes]));
+  assert.equal(byName.a['db.statement'], 'SELECT 1');
+  assert.equal(byName.b['db.statement'], 'SELECT 2');
+  assert.equal(byName.b.other, 'x');
+  assert.equal(byName.c['db.statement'], 'own');
+  const stable = tracerOf({ legacyKeys: false, legacyStatement: true });
+  const d = stable.wrapped.getTracer('t').startSpan('d');
+  d.setAttribute('db.query.text', 'SELECT 4');
+  d.end();
+  assert.equal(stable.exporter.getFinishedSpans()[0].attributes['db.statement'], undefined);
 });
 
 test('the optional span-name rule gets the requested name and the start attributes', () => {

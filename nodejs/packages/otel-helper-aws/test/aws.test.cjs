@@ -233,7 +233,7 @@ test('the tracer binding: ERROR without description, error.type, the legacy db.s
   span.end();
   const [done] = exporter.getFinishedSpans();
   assert.deepEqual(done.status, { code: 2 });
-  assert.deepEqual(done.attributes, { 'db.system.name': 'dynamodb', 'db.system': 'dynamodb', 'aws.request.id': 'r-1', 'aws.request_id': 'r-1', 'error.type': 'ValidationException' });
+  assert.deepEqual(done.attributes, { 'db.system.name': 'aws.dynamodb', 'db.system': 'dynamodb', 'aws.request.id': 'r-1', 'aws.request_id': 'r-1', 'error.type': 'ValidationException' });
 });
 
 test('the same TracerProvider again is not re-bound; the MeterProvider is bound as is (Bedrock metrics only)', () => {
@@ -334,4 +334,41 @@ test('JS8 D14: a contrib that does not load throws: "not installed" when the mod
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test('A30 RPC mode, span name and kind rules (contract D1 "AWS RPC keys", "AWS service attribute values")', () => {
+  assert.equal(attributes.rpcModeFrom(undefined), 'legacy');
+  assert.equal(attributes.rpcModeFrom('http,database'), 'legacy');
+  assert.equal(attributes.rpcModeFrom(' RPC\t'), 'rpc');
+  assert.equal(attributes.rpcModeFrom('rpc/dup,rpc'), 'rpc/dup');
+  assert.equal(attributes.rpcModeFrom('rpc/old'), 'legacy');
+  const call = { 'rpc.system': 'aws-api', 'rpc.service': 'SQS', 'rpc.method': 'SendMessage' };
+  assert.equal(attributes.awsSpanName('orders send', call), 'SQS.SendMessage');
+  assert.equal(attributes.awsSpanName('chat model', { ...call, 'gen_ai.operation.name': 'chat' }), 'chat model', 'GenAI spans keep their name');
+  assert.equal(attributes.awsSpanName('other', { 'rpc.system': 'grpc' }), 'other');
+  assert.equal(attributes.awsSpanName('x', undefined), 'x');
+  assert.equal(attributes.awsSpanKind(1 /* SERVER */, { ...call, 'rpc.method': 'ListQueues' }), 2 /* CLIENT */);
+  assert.equal(attributes.awsSpanKind(4, {}), 4);
+  assert.equal(attributes.awsSpanKind(4, undefined), 4);
+  for (const bad of [{ 'rpc.service': 1 }, { 'rpc.method': 1 }, { 'rpc.method': 'SQS/SendMessage' }]) {
+    assert.equal(attributes.awsSpanName('kept', { ...call, ...bad }), 'kept', JSON.stringify(bad));
+  }
+  // SNS Publish: messaging.operation.name; legacy mode leaves the RPC keys.
+  attributes.resetRpcModeForTests();
+  const sns = attributes.sanitizeAttributes({ 'rpc.system': 'aws-api', 'rpc.service': 'SNS', 'rpc.method': 'Publish', 'messaging.system': 'aws.sns', 'messaging.destination.name': 'arn:aws:sns:r:1:t' });
+  assert.equal(sns['messaging.operation.name'], 'Publish');
+  assert.equal(sns['rpc.method'], 'Publish');
+  assert.deepEqual(attributes.sanitizeAttributes(sns), sns, 'idempotent');
+  // SQS too, and every kind by operation (owner amendment 2026-11-08).
+  const sqs = attributes.sanitizeAttributes({ ...call, 'messaging.system': 'aws_sqs' });
+  assert.equal(sqs['messaging.operation.name'], 'SendMessage');
+  const kind = (service, method) => attributes.awsSpanKind(undefined, { 'rpc.system': 'aws-api', 'rpc.service': service, 'rpc.method': method });
+  assert.equal(kind('SQS', 'SendMessage'), 3 /* PRODUCER */);
+  assert.equal(kind('SQS', 'SendMessageBatch'), 3);
+  assert.equal(kind('SQS', 'ReceiveMessage'), 4 /* CONSUMER */);
+  assert.equal(kind('SNS', 'Publish'), 3);
+  assert.equal(kind('SNS', 'PublishBatch'), 3);
+  assert.equal(kind('SQS', 'ListQueues'), 2 /* CLIENT */);
+  assert.equal(kind('SNS', 'CreateTopic'), 2);
+  assert.equal(kind('Lambda', 'Invoke'), 2);
 });

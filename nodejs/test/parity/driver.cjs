@@ -102,6 +102,7 @@ const CODE_KEYS = {
   health_paths: 'healthPaths',
   disabled_signals: 'disabledSignals',
   prometheus_metrics_port: 'prometheusMetricsPort', // A29 fix round (obs L7)
+  http_opt_in_metrics: 'httpOptInMetrics', // A30
 };
 
 /** Maps a case's `code` object to setup() options; an unmapped key is an adapter error. */
@@ -192,6 +193,7 @@ async function kindResolve(c) {
     }
     if ('prometheus_metrics_port' in expect) snap.prometheus_metrics_port = resolvedField(resolved, 'prometheusMetricsPort', 'B7');
     if ('prometheus_metrics_host' in expect) snap.prometheus_metrics_host = resolvedField(resolved, 'prometheusMetricsHost', 'A29');
+    if ('http_opt_in_metrics' in expect) snap.http_opt_in_metrics = resolvedField(resolved, 'httpOptInMetrics', 'A30');
   }
   await shutdown();
   return snap;
@@ -348,12 +350,25 @@ function spanRecorder() {
 }
 
 const SPAN_KIND_SERVER = 1;
+const SPAN_KIND_CLIENT = 2;
 const serverSpans = (exporter) => exporter.getFinishedSpans().filter((s) => s.kind === SPAN_KIND_SERVER).length;
 const STATUS_NAMES = ['UNSET', 'OK', 'ERROR'];
 /** Status code of the first SERVER span ("UNSET", "ERROR", "OK"), or "none" (fixture field server_span_status). */
 function serverSpanStatus(exporter) {
   const span = exporter.getFinishedSpans().find((s) => s.kind === SPAN_KIND_SERVER);
   return span === undefined ? 'none' : (STATUS_NAMES[span.status.code] ?? String(span.status.code));
+}
+
+/** Name of the first SERVER span, or "none" (fixture field server_span_name; added 2026-11-05, A30). */
+function serverSpanName(exporter) {
+  const span = exporter.getFinishedSpans().find((s) => s.kind === SPAN_KIND_SERVER);
+  return span === undefined ? 'none' : span.name;
+}
+
+/** Name of the first CLIENT span, or "none" (fixture field client_span_name; added 2026-11-08, A30). */
+function clientSpanName(exporter) {
+  const span = exporter.getFinishedSpans().find((s) => s.kind === SPAN_KIND_CLIENT);
+  return span === undefined ? 'none' : span.name;
 }
 
 // Calls the helper's mounted handler with in-memory req/res objects: no server
@@ -563,6 +578,8 @@ async function kindGrpcServer(c) {
   }
   snap.server_spans = serverSpans(exporter);
   snap.server_span_status = serverSpanStatus(exporter);
+  snap.server_span_name = serverSpanName(exporter);
+  snap.client_span_name = clientSpanName(exporter);
   snap.rpcs_counted = await scrapeCount(/^rpc_server(_call)?_duration[a-z_]*_count[{ ]/);
   await shutdown();
   return snap;

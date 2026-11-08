@@ -112,7 +112,7 @@ back to the generic one, then to the default.
 | `OTEL_PROPAGATORS` | `tracecontext,baggage` | `tracecontext`, `baggage`, `none`. `b3`, `b3multi`, `jaeger`, `xray`, `ottrace` are warned and skipped |
 | `OTEL_SDK_DISABLED` | `false` | `true` installs no-op providers (no exporters, no `/metrics` listener) and logs one INFO line; propagation still works |
 | `OTEL_CONFIG_FILE` / `OTEL_EXPERIMENTAL_CONFIG_FILE` | _(unset)_ | Declarative configuration is **not supported**: ignored with one warning per process naming the variable (never the path) |
-| `OTEL_SEMCONV_STABILITY_OPT_IN` | _(unset)_ | Read by contrib instrumentations: `rpc/dup` or `rpc/old` (otelgrpc metrics), `database` / `database/dup` (`ext/otelsql`) |
+| `OTEL_SEMCONV_STABILITY_OPT_IN` | _(unset)_ | Read by contrib instrumentations: `rpc/dup` or `rpc/old` (otelgrpc), `database` / `database/dup` (`ext/otelsql`, `ext/otelredis`, `ext/otelaws`), and by `ext/otelaws` `rpc` / `rpc/dup` (AWS RPC keys: legacy by default; A30). `rpc/dup` also switches otelgrpc to dup: old and new RPC metrics, double the series. `rpc` is harmless for otelgrpc (its default is already the new mode) |
 
 ### Helper variables
 
@@ -123,6 +123,7 @@ back to the generic one, then to the default.
 | `OTEL_EXPORTER_PROMETHEUS_HOST` | every interface | Listener bind address: an IPv4/IPv6 literal (brackets allowed, no zone id) or `localhost` (= `127.0.0.1`); `::` = every interface. Unset binds every interface — **not** the spec default `localhost`, so other pods can scrape. Other values (host names, `*`) are warned and every interface is used; no code option (A29) |
 | `OTEL_HELPER_METRICS_PORT` | `9464` | Port of the standalone Prometheus `/metrics` listener (dual-stack, `GET`/`HEAD /metrics` only: other paths 404, other methods 405); ASCII digits with an optional `+`, in [0, 65535], anything else warns and uses 9464; `0` = no listener (mount `MetricsHandler()` yourself). Used when `OTEL_EXPORTER_PROMETHEUS_PORT` is unset or invalid. |
 | `OTEL_HELPER_DISABLED_METRICS` | _(unset)_ | Comma list of patterns (`http.server.*`), each a case-sensitive glob on the instrument name (`*` any run of characters, `.` and `/` included; `?` one character; everything else literal, no `[...]` classes); items trimmed, blank items ignored; matching instruments are dropped from every exporter |
+| `OTEL_HELPER_HTTP_OPT_IN_METRICS` | `false` | `true` keeps otelhttp's body-size histograms (`http.server.request.body.size`, `http.server.response.body.size`, `http.client.request.body.size`), dropped by default (semconv opt-in metrics; A30). `WithHTTPOptInMetrics(bool)` wins. otelhttp has no `http.server.active_requests`. The drop applies to the contrib instrumentation scopes: an application's own instrument of those names is kept |
 | `OTEL_HELPER_SAMPLE_RATIO` | _(unset)_ | **Deprecated** (warns once): ratio in [0, 1] → `ParentBased(TraceIDRatioBased(x))`, only while `OTEL_TRACES_SAMPLER` is unset. Use `OTEL_TRACES_SAMPLER=parentbased_traceidratio` + `_ARG` |
 | `OTEL_HELPER_DISABLED_SIGNALS` | _(unset)_ | **Deprecated** (warns once): `traces`, `metrics`, `logs`. Use `OTEL_<SIGNAL>_EXPORTER=none`. Ignored for a signal whose `OTEL_<SIGNAL>_EXPORTER` holds a valid entry, and for metrics when `WithMetricExporters` is used; unknown entries warn once |
 | `OTEL_HELPER_EXTRA_INSTRUMENTATION` | _(unset)_ | **Removed** in Go 0.3.0: no effect, warns once when set. Import an [`ext/*` module](#opt-in-extensions-ext) instead |
@@ -155,6 +156,7 @@ Options passed to `Setup` win over every environment variable.
 | `WithPrometheusMetricsPort(port)` | Standalone `/metrics` port in [0, 65535] |
 | `WithoutMetricsListener()` | No standalone listener; mount `MetricsHandler()` on your mux |
 | `WithDisabledMetrics(patterns)` | Drop instruments matching the patterns (same glob as `OTEL_HELPER_DISABLED_METRICS`; items trimmed, blanks ignored); `nil` = use env, `[]string{}` = none (beats env) |
+| `WithHTTPOptInMetrics(on)` | Keep (`true`) or drop (`false`, the default) the semconv opt-in HTTP metrics (body sizes); wins over `OTEL_HELPER_HTTP_OPT_IN_METRICS` (A30) |
 | `WithDisabledSignals(signals)` | `traces`, `metrics`, `logs` (other names fail `Setup`); `nil` = use env, `[]string{}` = none |
 | `WithSampleRatio(ratio)` | Root-span ratio in [0, 1] → `ParentBased(TraceIDRatioBased)`, any value (1.0 included) beats `OTEL_TRACES_SAMPLER`; NaN / out of range fails `Setup` |
 | `WithHealthPaths(paths...)` | Replace the [health path list](#health-checks-spans-dropped-metrics-kept); `WithHealthPaths()` = none. Paths must be ASCII, start with `/`, no `?` `#` `,` |
@@ -361,8 +363,8 @@ defer closeDB() // instead of db.Close(): unregisters the pool-metrics callback,
 
 | Module | What it instruments |
 |--------|---------------------|
-| `ext/otelaws` | AWS SDK v2 calls (S3, SQS, DynamoDB, …) |
-| `ext/otelredis` | go-redis commands: spans with `db.system.name=redis`, no command values (`db.statement`) and no connection string; `db.client.connections.*` pool metrics (Prometheus `db_client_connections_usage`, `_max`, `_idle_max`, `_idle_min`, `_waits_total`, `_timeouts_total`, `_hits_total`, `_misses_total`, …) |
+| `ext/otelaws` | AWS SDK v2 calls (S3, SQS, DynamoDB, …): spans `<Service>.<Operation>`, CLIENT except SQS/SNS send and publish (PRODUCER) and SQS receive (CONSUMER), with the legacy `rpc.system=aws-api`, `rpc.service`, `rpc.method=<Operation>` (`OTEL_SEMCONV_STABILITY_OPT_IN=rpc`: `rpc.system.name`, `rpc.method=<Service>/<Operation>`; `rpc/dup`: both), `server.address`/`server.port` of the request, `messaging.system` `aws.sns` / `aws_sqs`, `messaging.operation.name` = the AWS operation (`Publish`, `SendMessage`), DynamoDB `db.system.name=aws.dynamodb` plus the legacy `db.system=dynamodb` (same opt-in rule as `ext/otelsql`) |
+| `ext/otelredis` | go-redis commands: spans named by the uppercased command (`SET`, `CLUSTER INFO`; a pipeline `SET GET`; the dial span `connect`) with `db.system.name=redis`, `db.operation.name` as go-redis provides it (`set`), no command values (`db.statement`) and no connection string; `db.client.connections.*` pool metrics (Prometheus `db_client_connections_usage`, `_max`, `_idle_max`, `_idle_min`, `_waits_total`, `_timeouts_total`, `_hits_total`, `_misses_total`, …) |
 | `ext/otelsql` | `database/sql` queries and `db.sql.*` pool metrics. `db.system.name` from the driver: `pgx`, `pgx/v5`, `postgres` → `postgresql`; `sqlite`, `sqlite3` → `sqlite`; `mysql`; `sqlserver`, `mssql` → `microsoft.sql_server`; else `other_sql`. The legacy `db.system` key is emitted too until 1.0, unless `OTEL_SEMCONV_STABILITY_OPT_IN` contains `database` without `database/dup`. A pool-metrics registration failure is returned by `Open` (the DB is closed) |
 
 ([design D14](https://github.com/StaffOps/otel-libs/blob/main/specs/config-contract-v0.3/design.md#d14--go-ext-modules-api-a10-validation))
