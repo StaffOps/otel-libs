@@ -58,6 +58,19 @@ namespace StaffOps.OtelHelper
             }
 
             CheckMetricExporters(failures, options);
+            CheckResourceAttributes(failures, options);
+
+            // A blank identity option is an invalid code value (Go WithServiceName/WithEnvironment,
+            // Python service_name/environment): null is "not set", "" or whitespace fails.
+            if (options.ServiceName is { } serviceName && ContractText.Trim(serviceName).Length == 0)
+            {
+                failures.Add($"{Owner}{nameof(TelemetryOptions.ServiceName)} must not be empty (null means not set).");
+            }
+
+            if (options.Environment is { } environment && ContractText.Trim(environment).Length == 0)
+            {
+                failures.Add($"{Owner}{nameof(TelemetryOptions.Environment)} must not be empty (null means not set).");
+            }
 
             return failures.Count == 0 ? ValidateOptionsResult.Success : ValidateOptionsResult.Fail(failures);
         }
@@ -90,6 +103,44 @@ namespace StaffOps.OtelHelper
                 && DiagnosticText.RenderUrl(value) != DiagnosticText.UnparseableUrl
                 && !DiagnosticText.RenderUrl(value).EndsWith(':');
         }
+
+        /// <summary>
+        /// Code resource attributes (contract row "Invalid code resource_attributes", A16): an empty
+        /// or contract-trim-set-only key fails; a value the SDK's <c>Resource</c> cannot hold (null,
+        /// or not a string, bool, number or array of them) fails naming the key, here at start
+        /// instead of as an <c>ArgumentException</c> while a provider is built; the identity keys
+        /// take strings only (as Python's).
+        /// </summary>
+        private static void CheckResourceAttributes(List<string> failures, TelemetryOptions options)
+        {
+            const string option = Owner + nameof(TelemetryOptions.ResourceAttributes);
+            if (options.ResourceAttributes is null)
+            {
+                failures.Add($"{option} must not be null.");
+                return;
+            }
+
+            foreach (var (key, value) in options.ResourceAttributes)
+            {
+                if (ContractText.Trim(key).Length == 0)
+                {
+                    failures.Add($"{option} has an empty key.");
+                    continue;
+                }
+
+                var identity = key is TelemetryResolver.ServiceNameKey or TelemetryResolver.EnvironmentKey or TelemetryResolver.ServiceInstanceIdKey;
+                if (identity ? value is not string : !IsResourceValue(value))
+                {
+                    failures.Add($"{option}[{DiagnosticText.Echo(key)}] must be " +
+                        (identity ? "a string" : "a string, bool, number or an array of them") +
+                        $", got {(value is null ? "null" : value.GetType().Name)}.");
+                }
+            }
+        }
+
+        /// <summary>The value types <c>OpenTelemetry.Resources.Resource</c> accepts (<c>Resource.SanitizeValue</c>, SDK 1.20).</summary>
+        private static bool IsResourceValue(object? value) => value is string or bool or double or long or int or short or float
+            or string[] or bool[] or double[] or long[] or int[] or short[] or float[];
 
         private static void CheckMetricExporters(List<string> failures, TelemetryOptions options)
         {

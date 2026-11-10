@@ -282,7 +282,7 @@ namespace StaffOps.OtelHelper.Metrics
                 return;
             }
 
-            builder.ConfigureResource(r => ResourceSetup.Apply(r, resolved));
+            builder.ConfigureResource(r => ResourceSetup.Apply(r, resolved, sp, "metrics"));
 
             // "Off" (signal disabled, or no metric exporter at all): instrumentation and the
             // non-listening reader registered, no meter, no OTLP reader, and a view that drops the

@@ -7,7 +7,8 @@ namespace StaffOps.OtelHelper
     /// Code options of StaffOps.OtelHelper. Every option that has an environment
     /// counterpart is nullable: <c>null</c> means "not set in code", and a value set
     /// in code wins over the environment whatever it is (also when it equals the
-    /// helper default). A blank string counts as not set. The values the helper
+    /// helper default). A blank string counts as not set, except for <see cref="ServiceName"/>
+    /// and <see cref="Environment"/>, where it fails host start (as in Go and Python). The values the helper
     /// actually uses are resolved internally from these options and the process
     /// environment; this type holds only what the application set.
     /// A section bound from <c>IConfiguration</c> into these options counts as code.
@@ -16,11 +17,11 @@ namespace StaffOps.OtelHelper
     {
         /// <summary>Environment variable name: OTLP collector endpoint for every signal. Unset: metrics fall back to the Prometheus <c>/metrics</c> endpoint and logs to stdout.</summary>
         public const string CollectorEndpointEnvVar = "OTEL_EXPORTER_OTLP_ENDPOINT";
-        /// <summary>Environment variable name: Legacy service name variable, read before <see cref="OtelServiceNameEnvVar"/>.</summary>
+        /// <summary>Environment variable name: Deprecated service name variable, read after <see cref="OtelServiceNameEnvVar"/> and <c>service.name</c> in <c>OTEL_RESOURCE_ATTRIBUTES</c>.</summary>
         public const string ServiceNameEnvVar = "SERVICE_NAME";
-        /// <summary>Environment variable name: Standard OpenTelemetry service name variable, read when <see cref="ServiceNameEnvVar"/> is unset.</summary>
+        /// <summary>Environment variable name: Standard OpenTelemetry service name variable; wins over <c>OTEL_RESOURCE_ATTRIBUTES</c> and <see cref="ServiceNameEnvVar"/>.</summary>
         public const string OtelServiceNameEnvVar = "OTEL_SERVICE_NAME";
-        /// <summary>Environment variable name: Deployment environment; see <see cref="DeploymentEnvironments"/>.</summary>
+        /// <summary>Environment variable name: Deprecated alias of <c>deployment.environment.name</c> in <c>OTEL_RESOURCE_ATTRIBUTES</c>, which wins; see <see cref="DeploymentEnvironments"/>.</summary>
         public const string EnvironmentEnvVar = "ENVIRONMENT";
         /// <summary>Environment variable name: Debug mode switch (<c>true</c>/<c>false</c>); see <see cref="DebugLevel"/>.</summary>
         public const string DebugLevelEnvVar = "OTEL_HELPER_DEBUG_LEVEL";
@@ -67,14 +68,23 @@ namespace StaffOps.OtelHelper
         internal static readonly string[] ValidCompressions = { CompressionGzip, CompressionNone };
 
         /// <summary>
-        /// Service name, emitted as <c>service.name</c>. Not set: <c>SERVICE_NAME</c>, then
-        /// <c>OTEL_SERVICE_NAME</c>, then <c>my-service</c>.
+        /// Service name, emitted as <c>service.name</c>; wins over <c>service.name</c> in
+        /// <see cref="ResourceAttributes"/>. Not set: <c>service.name</c> in
+        /// <see cref="ResourceAttributes"/>, then <c>OTEL_SERVICE_NAME</c>, then <c>service.name</c> in
+        /// <c>OTEL_RESOURCE_ATTRIBUTES</c>, then the deprecated <c>SERVICE_NAME</c>, then the SDK
+        /// default <c>unknown_service:&lt;process name&gt;</c> with a warning. An empty or
+        /// whitespace-only value fails host start; leave it <c>null</c> for "not set".
         /// </summary>
         public string? ServiceName { get; set; }
 
         /// <summary>
-        /// Deployment environment, emitted as <c>deployment.environment.name</c> as written.
-        /// Not set: the <c>ENVIRONMENT</c> variable. See <see cref="DeploymentEnvironments"/>.
+        /// Deployment environment, emitted as <c>deployment.environment.name</c> as written (trimmed);
+        /// wins over the same key in <see cref="ResourceAttributes"/>. Not set: that key in
+        /// <see cref="ResourceAttributes"/>, then in <c>OTEL_RESOURCE_ATTRIBUTES</c>, then the deprecated
+        /// <c>ENVIRONMENT</c> variable (a known name in its canonical spelling, any other value as
+        /// written); none of them: the attribute is absent, with a warning, and the log level is
+        /// Information. An empty or whitespace-only value fails host start; leave it
+        /// <c>null</c> for "not set". See <see cref="DeploymentEnvironments"/>.
         /// </summary>
         public string? Environment { get; set; }
 
@@ -129,7 +139,12 @@ namespace StaffOps.OtelHelper
         public LogLevel? MinimumLogLevel { get; set; }
 
         /// <summary>
-        /// Additional resource attributes added to all signals (traces, metrics, logs).
+        /// Additional resource attributes added to all signals (traces, metrics, logs); a key here
+        /// wins over the same key in <c>OTEL_RESOURCE_ATTRIBUTES</c>. A key must not be empty or
+        /// whitespace, and a value must be a string, bool, number or array of them
+        /// (<c>service.name</c>, <c>deployment.environment.name</c> and <c>service.instance.id</c>:
+        /// strings only, a blank one counts as not set); otherwise host start fails.
+        /// <c>telemetry.sdk.*</c> keys are ignored with a warning (the SDK sets them).
         /// Note: k8s.*, cloud.* are enriched by the Collector — avoid duplicating.
         /// </summary>
         public Dictionary<string, object> ResourceAttributes { get; set; } = new();
@@ -206,15 +221,16 @@ namespace StaffOps.OtelHelper
         public bool ForwardSdkDiagnostics { get; set; } = true;
 
         /// <summary>
-        /// Default minimum log level for an environment name: <c>LOCAL</c> → Debug,
-        /// <c>DEV</c> and <c>HML</c> → Information, <c>PRD</c> → Warning, any other value →
-        /// Information. Debug mode → Debug.
+        /// Default minimum log level for an environment name, matched ASCII case-insensitively
+        /// after trimming (contract R4, as Go and Python): <c>LOCAL</c> → Debug, <c>DEV</c> and
+        /// <c>HML</c> → Information, <c>PRD</c> → Warning, unset or any other value → Information.
+        /// Debug mode → Debug.
         /// </summary>
         public static LogLevel GetDefaultLogLevel(string? environment, bool debug = false)
         {
             if (debug) return LogLevel.Debug;
 
-            return environment switch
+            return TelemetryResolver.KnownEnvironment(environment) switch
             {
                 DeploymentEnvironments.LOCAL => LogLevel.Debug,
                 DeploymentEnvironments.DEV => LogLevel.Information,

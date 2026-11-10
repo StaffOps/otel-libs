@@ -10,10 +10,11 @@ public class OptionsTests
         => TestDiagnostics.ResolveQuiet(configure);
 
     [Fact]
-    public void Default_ServiceName_Is_MyService()
+    public void Default_ServiceName_Is_The_Sdk_Unknown_Service()
     {
         var opts = CreateResolved();
-        Assert.Equal("my-service", opts.ServiceName);
+        Assert.Matches("^unknown_service(:.+)?$", opts.ServiceName);
+        Assert.False(opts.ServiceNameConfigured);
     }
 
     [Fact]
@@ -81,15 +82,17 @@ public class OptionsTests
     }
 
     [Theory]
-    [InlineData("invalid")]
-    [InlineData("staging")]
-    [InlineData("")]
-    public void ResolveEnvironment_Invalid_Falls_Back_To_LOCAL(string envValue)
+    [InlineData("invalid", "invalid")]
+    [InlineData("staging", "staging")]
+    [InlineData(" qa-1 ", "qa-1")]
+    [InlineData("", null)]
+    [InlineData(" \t", null)]
+    public void ResolveEnvironment_Unknown_Is_Verbatim_And_Blank_Is_Absent(string envValue, string? expected)
     {
         System.Environment.SetEnvironmentVariable("ENVIRONMENT", envValue);
         try
         {
-            Assert.Equal(DeploymentEnvironments.LOCAL, CreateResolved().Environment);
+            Assert.Equal(expected, CreateResolved().Environment);
         }
         finally
         {
@@ -111,6 +114,11 @@ public class OptionsTests
     [InlineData("staging", false, Microsoft.Extensions.Logging.LogLevel.Information)]
     [InlineData(null, false, Microsoft.Extensions.Logging.LogLevel.Information)]
     [InlineData(DeploymentEnvironments.PRD, true, Microsoft.Extensions.Logging.LogLevel.Debug)]
+    [InlineData("prd", false, Microsoft.Extensions.Logging.LogLevel.Warning)]
+    [InlineData(" Local\t", false, Microsoft.Extensions.Logging.LogLevel.Debug)]
+    [InlineData("hMl", false, Microsoft.Extensions.Logging.LogLevel.Information)]
+    [InlineData("\u0130LOCAL", false, Microsoft.Extensions.Logging.LogLevel.Information)]
+    [InlineData("PRD\u00a0", false, Microsoft.Extensions.Logging.LogLevel.Information)]
     public void GetDefaultLogLevel_By_Environment_Name(string? environment, bool debug, Microsoft.Extensions.Logging.LogLevel expected)
     {
         Assert.Equal(expected, TelemetryOptions.GetDefaultLogLevel(environment, debug));

@@ -53,6 +53,36 @@ builder.Services.AddOtelHelper(opts =>
 
 > No need to configure endpoints, sampling, or exporters. The lib resolves everything via environment variables injected by infrastructure (`SERVICE_NAME`, `ENVIRONMENT`, `OTEL_EXPORTER_OTLP_ENDPOINT`).
 
+### Your own resource configuration
+
+Register your own `ConfigureResource` **before** `AddOtelHelper()`:
+
+```csharp
+// Before: the helper keeps these attributes (they beat OTEL_RESOURCE_ATTRIBUTES,
+// lose to TelemetryOptions.ResourceAttributes); service.name stays the resolved one.
+builder.Services.AddOpenTelemetry().ConfigureResource(r => r.AddAttributes(new[]
+{
+    new KeyValuePair<string, object>("app.team", "checkout"),
+}));
+builder.Services.AddOtelHelper();
+```
+
+The SDK runs resource callbacks in registration order and has no hook after them, so a
+`ConfigureResource` registered **after** `AddOtelHelper()` overrides the helper's resource on
+every signal (an `AddService` there replaces `service.name` and the instance id, and its schema
+URL conflicts with the helper's, leaving none; a `SetResourceBuilder(...)` there replaces that
+signal's whole resource). At host start the helper compares each built provider's resource with
+what it set and warns once on standard error naming the signals and what changed; without a host
+(a bare `ServiceProvider`) there is no such check.
+
+The helper rebuilds the resource from what earlier callbacks added and drops a value that equals
+what the SDK's own `OTEL_RESOURCE_ATTRIBUTES` parse produces for the same key. When the SDK and the
+helper decode a value differently (the SDK reads `+` as a space, the helper keeps it), an app value
+equal to the SDK's spelling is dropped and the helper's parse is emitted instead.
+
+A blank `ServiceName` or `Environment` (`""` or whitespace) fails at start; leave it `null`. Identity
+warnings are written once per service provider, not once per process.
+
 ---
 
 ## 3. What Works Automatically
@@ -134,6 +164,12 @@ The lib sets the minimum level based on environment:
 | `DEV` | Information | Information, Warning, Error, Critical |
 | `HML` | Information | Information, Warning, Error, Critical |
 | `PRD` | Warning | Warning, Error, Critical |
+| unset, or any other value | Information | Information, Warning, Error, Critical |
+
+The environment name is matched ignoring ASCII case (`prd` picks Warning) and is emitted
+as written. An unset environment is no longer `LOCAL`: the
+`deployment.environment.name` attribute is absent, the level is Information and the
+helper warns once on standard error.
 
 ### Structured Logs
 
@@ -387,8 +423,10 @@ When you use placeholders in logs, values are extracted as **separate attributes
 
 | Variable | Effect | Default | Who injects |
 |---|---|---|---|
-| `SERVICE_NAME` | Service name (resource attribute) | `my-service` | CI/CD |
-| `ENVIRONMENT` | Environment (controls log level) | `LOCAL` | Helm Chart |
+| `OTEL_SERVICE_NAME` | Service name (`service.name`); wins over `OTEL_RESOURCE_ATTRIBUTES` and `SERVICE_NAME` | `unknown_service:<process name>` + warning | CI/CD |
+| `SERVICE_NAME` | Deprecated alias of `OTEL_SERVICE_NAME`, read last | — | CI/CD |
+| `OTEL_RESOURCE_ATTRIBUTES` | `key=value,…` resource attributes (helper-parsed: percent-decoded, ASCII-trimmed, bad items skipped and warned by position); `deployment.environment.name` here wins over `ENVIRONMENT` | — | Helm Chart |
+| `ENVIRONMENT` | Deprecated alias of `deployment.environment.name` (controls log level; known names canonicalized, others as written) | none: attribute absent + warning | Helm Chart |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | Collector endpoint; unset → no OTLP export, Prometheus `/metrics` fallback | _(unset)_ | Helm Chart |
 | `OTEL_HELPER_DEBUG_LEVEL` | Debug mode: Debug log level + `debug=true` attribute on entry spans (no in-process parent, which includes spans continuing a remote trace) and `debug=true` prepended to the propagated tracestate (the Collector's debug policy keeps those traces) | `false` | Manual |
 | `OTEL_HELPER_EXTRA_INSTRUMENTATION` | No effect in core (use the subpackages, §14) | `SQL` | — |

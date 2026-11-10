@@ -713,6 +713,52 @@ emitted telemetry.
    `OTEL_TRACES_SAMPLER` (0.2.x let the variable win while the code sampler
    stayed `AlwaysOnSampler`); a second `AddOtelHelper()` call still changes
    nothing and now warns once.
+8. **Code `ResourceAttributes` are validated, and the identity options follow
+   the contract** (task C6, contract A16). An empty or whitespace-only key, a
+   `null` value or a value the SDK `Resource` cannot hold (anything but a
+   string, bool, number or an array of them) fails host start naming
+   `TelemetryOptions.ResourceAttributes` (0.2.x: an empty key was passed to the SDK, an
+   unsupported value threw `ArgumentException` while a provider was built);
+   `service.name`, `deployment.environment.name` and `service.instance.id`
+   there take strings only. A dedicated option beats the same key in
+   `ResourceAttributes` in the emitted resource too (`ServiceName = "a"` with
+   `ResourceAttributes["service.name"] = "b"` exports `a`). `telemetry.sdk.*`
+   keys in `ResourceAttributes` are ignored with one warning per key.
+   `TelemetryOptions.GetDefaultLogLevel` matches the environment name ignoring
+   ASCII case after trimming (`"prd"` → Warning; 0.2.x matched the exact
+   spelling only, so `"prd"` gave Information). A `ConfigureResource` the app
+   registered before `AddOtelHelper()` keeps its attributes, except
+   `service.name`, which the resolved name replaces with one warning; its
+   `deployment.environment.name` and an explicit `service.instance.id`
+   (`AddService(serviceInstanceId: "x")`) are kept when the helper resolves
+   none of its own — used only then, below every helper source (the environment
+   then also picks the default log level; one set only by a callback registered
+   after `AddOtelHelper()` does not),
+   else the resolved value wins with one warning per key; an
+   `AddDetector(sp => …)` factory detector registered there is kept, and the
+   helper then adds its attributes without rebuilding the resource (one
+   warning, naming `deployment.environment.name` when the helper resolved
+   none).
+9. Supersedes the last sentence of item 4: **a blank code `ServiceName` or
+   `Environment` fails at start** (task C6 fix round 1, as Go and Python): `""` or whitespace is an invalid code value
+   (`OptionsValidationException` naming `TelemetryOptions.ServiceName` /
+   `TelemetryOptions.Environment`); `null` is "not set". 0.2.x and C5 read a
+   blank value as not set. An `appsettings.json` placeholder such as
+   `"ServiceName": ""` bound into `TelemetryOptions` now fails at start:
+   remove the key, or give it a value.
+10. **Register `ConfigureResource` before `AddOtelHelper()`** (task C6 fix
+   round 1): the SDK runs resource callbacks in registration order and has no
+   hook after them, so a `ConfigureResource` (or `AddOpenTelemetry().ConfigureResource`)
+   registered **after** `AddOtelHelper()` overrides the helper's resource on
+   every signal — an `AddService("x")` there replaces `service.name` and the
+   instance id, and its schema URL (1.44.0) conflicts with the helper's
+   (1.43.0), so the resource has none; a `SetResourceBuilder(...)` registered
+   after it replaces the helper's whole resource for that signal. At host start,
+   after the providers are built, the helper compares each provider's resource
+   with what it set and warns once naming the signals and the changed keys
+   (`signals=traces changed=service.name,…`); a schema-URL merge conflict is one
+   helper warning with both URLs (instead of the SDK's "conflicting Schema URLs"
+   notice). An app without a host (a bare `ServiceProvider`) gets no such check.
 
 **Telemetry part.** Each row: before (0.2.x) → after, and what to check in
 dashboards and alerts.
@@ -950,6 +996,63 @@ dashboards and alerts.
    select server spans by `otel_scope_name` / `InstrumentationScope.Name` equal
    to the service name — also Collector `filter` / tail-sampling rules on the
    scope and TraceQL `instrumentation.name` queries.
+11. **Service name precedence and default** (task C6, contract R5, ADR-003):
+   0.2.x read `SERVICE_NAME` before `OTEL_SERVICE_NAME` and fell back to
+   `my-service`. Now: `ServiceName` > `ResourceAttributes["service.name"]` >
+   `OTEL_SERVICE_NAME` > `service.name` in `OTEL_RESOURCE_ATTRIBUTES` >
+   `SERVICE_NAME` (deprecated) > `unknown_service:<process name>` with one
+   warning naming `OTEL_SERVICE_NAME`; a blank value is not set at any level.
+   A pod with both variables now reports `OTEL_SERVICE_NAME`; a service with
+   none reports `unknown_service:<process>` instead of `my-service` — check
+   dashboards, alerts and Collector routing on `service.name="my-service"`.
+   The helper's `ActivitySource` and `Meter` keep the resolved name, so a
+   service with no name configured now has a source and a meter named
+   `unknown_service:<process>`. A `service.name` in `OTEL_RESOURCE_ATTRIBUTES`
+   was overwritten by the helper's `AddService` in 0.2.x; it is now honored and
+   beats `SERVICE_NAME`.
+12. **Environment: no `LOCAL` default, unknown values kept** (task C6, R4,
+   ADR-003): 0.2.x emitted `deployment.environment.name=LOCAL` when
+   `ENVIRONMENT` was unset or unknown (`staging` → `LOCAL`) and ignored
+   `deployment.environment.name` in `OTEL_RESOURCE_ATTRIBUTES` (overwritten by
+   `ENVIRONMENT`). Now: `Environment` > `ResourceAttributes` >
+   `OTEL_RESOURCE_ATTRIBUTES` > `ENVIRONMENT` (deprecated; a known name in any
+   case is canonicalized, `prd` → `PRD`, any other value is emitted as
+   written) > absent, with one warning; the default log level is Information
+   when the environment is unset or unknown (0.2.x: Debug, through `LOCAL`).
+   Check queries on `deployment_environment_name="LOCAL"` and services that
+   relied on the Debug level without setting `ENVIRONMENT=LOCAL`.
+13. **`OTEL_RESOURCE_ATTRIBUTES` parsed by the helper, the SDK detectors
+   cleared** (task C6, A16, design D-NET7): 0.2.x left the SDK's
+   `OtelEnvResourceDetector`, which trims Unicode whitespace, decodes `+` as a
+   space, keeps an empty key and reads `IConfiguration`. Now the helper parses
+   the process environment with the contract rules (blank items ignored, an
+   item without `=` or with an empty key skipped, strict `%XX` decoding then an
+   ASCII trim, an invalid escape kept literally, problems warned once by item
+   position, values never echoed) and clears the SDK's detectors.
+   Consequences: `a+b` stays `a+b`; a key with a leading U+00A0 keeps it;
+   `OTEL_SERVICE_NAME` or `OTEL_RESOURCE_ATTRIBUTES` set only in
+   `appsettings.json` / `IConfiguration` no longer reach the resource (set
+   them in the process environment, or in `TelemetryOptions`); values for
+   `telemetry.sdk.*` there are ignored silently. Code `ResourceAttributes` beat
+   `OTEL_RESOURCE_ATTRIBUTES` per key, as before.
+14. **Resource: `service.instance.id` and the schema URL** (task C6, D4, A16):
+   `service.instance.id` is `ResourceAttributes` > `OTEL_RESOURCE_ATTRIBUTES` >
+   one id per process (the one the SDK's `AddService` generates; 0.2.x always
+   exported that generated id, so an id set in `OTEL_RESOURCE_ATTRIBUTES` was
+   overwritten). The resource declares the contract schema URL
+   `https://opentelemetry.io/schemas/1.43.0`, as Go, Python and Node.js
+   (0.2.x on OpenTelemetry 1.15: none; since task C3 on this branch: 1.44.0).
+   `telemetry.sdk.*` always come from the SDK. With an earlier factory
+   detector (API item 8) the resource keeps the SDK's 1.44.0.
+15. **Identity warnings are once per container** (task C6): the "no service
+   name" and "environment not set" warnings, and the parse warnings of
+   `OTEL_RESOURCE_ATTRIBUTES`, are written once per `IServiceProvider`
+   (diagnostics sink), not once per process as in Go and Python. In a host the
+   environment warning is written at start, after the three providers are
+   built: "not set" only when no resource carries `deployment.environment.name`,
+   and one "differs between signals" line naming the signals that lack it when
+   an earlier `ConfigureResource` set it for some only; without a host it is
+   written when a provider builds its resource.
 
 ### Collector / platform prerequisites (before rolling 0.3.0 out)
 
@@ -1085,6 +1188,35 @@ Phase C work on this branch (no .NET release yet; the first will be
   the code-error regexes accept the .NET option names (`OtelCollectorEndpoint`,
   `TracesEndpoint`, `SampleRatio`, `Insecure`, qualified `TelemetryOptions.`); suite 782/782, line coverage
   98.72% (cobertura line rate 0.9872; SDK 10 roll-forward 98.8%; the figure varies by about ±0.1 point between runs), on SDK 8 and SDK 10 (roll-forward).
+- **.NET: identity and resource (task C6, contract R4, R5, D4, A16, A24;
+  design D-NET7). BREAKING (telemetry).** Service name and environment follow
+  the 0.3 precedence (standard variables first, `SERVICE_NAME` and
+  `ENVIRONMENT` deprecated aliases read last; no `my-service` or `LOCAL`
+  default: `unknown_service:<process>` and an absent environment, each warned
+  once); the R4 log levels (unset or unknown → Information, names matched
+  ignoring ASCII case); the helper parses `OTEL_RESOURCE_ATTRIBUTES` with the
+  contract rules and rebuilds each provider's resource (`Build()` of what
+  earlier `ConfigureResource` callbacks added, then `Clear()`: env < earlier
+  app attributes < code attributes < identity < `telemetry.sdk.*`, schema URL
+  `https://opentelemetry.io/schemas/1.43.0`); `service.instance.id` from code,
+  env, or one id per process; invalid code `ResourceAttributes` fail at start.
+  Migration: the .NET guide above, API item 8 and telemetry rows 11–14.
+  Parity: the 29 `xfail:C6` cases pass (the C6 group's 14 others already
+  passed: 43 of the 46 now pass; `fork.*` and the detector case stay skipped). Fixture: 162 `pass` (was 133), 194 `xfail:C<n>`, 12 known-difference skips.
+  Fix round 1: a blank code `ServiceName`/`Environment` fails at start (API
+  item 9; two new cases `config.code_blank_service_name_fails` and
+  `config.code_blank_environment_fails`, passing in every language); a
+  `ConfigureResource` registered after `AddOtelHelper()` is detected and
+  warned (API item 10); earlier app identity keys handled per key, an app
+  environment picks the log level (API item 8). Fixture: 370 cases; .NET 164
+  `pass`, 194 `xfail:C<n>`, 12 known-difference skips.
+  Fix round 2: the later-change check runs at host start on the built
+  providers (each detector runs once per provider; a later
+  `SetResourceBuilder` is detected too, naming the signal); the schema-URL
+  conflict warning carries both URLs. Suite 854/854 on SDK 8 (three runs) and SDK 10 (roll-forward), line coverage 98.64%.
+  Fix round 3: in a host the environment warning moves to the start-time
+  check over the three built resources (telemetry row 15); the check skips an
+  empty resource and `OTEL_SDK_DISABLED`. Suite 858/858 on SDK 8 and SDK 10 (roll-forward), line coverage 98.67%.
 
 ### Breaking — telemetry output changes (dashboards/alerts)
 

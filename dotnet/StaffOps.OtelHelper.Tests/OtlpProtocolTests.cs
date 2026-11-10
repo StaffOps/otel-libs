@@ -131,7 +131,11 @@ public class OtlpProtocolTests : IDisposable
         // D-NET6: an env value warns naming the variable and the value, and the default applies.
         Environment.SetEnvironmentVariable(TelemetryOptions.OtlpProtocolEnvVar, "http/json");
         var diagnostics = new TestDiagnostics();
-        var opts = diagnostics.Resolve(o => o.OtelCollectorEndpoint = "http://collector:4317");
+        var opts = diagnostics.Resolve(o =>
+        {
+            TestDiagnostics.Identified(o);
+            o.OtelCollectorEndpoint = "http://collector:4317";
+        });
         Assert.Equal(TelemetryOptions.ProtocolGrpc, opts.ResolvedOtlpProtocol());
         var line = Assert.Single(diagnostics.Lines);
         Assert.StartsWith("otelhelper: WARN invalid OTEL_EXPORTER_OTLP_PROTOCOL", line);

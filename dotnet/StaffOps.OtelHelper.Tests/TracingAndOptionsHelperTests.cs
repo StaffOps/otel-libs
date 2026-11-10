@@ -188,12 +188,23 @@ public class TracingAndOptionsHelperTests
         Assert.Null(Fail(_ => { }));
         Assert.Null(Fail(o =>
         {
-            o.ServiceName = "";
             o.OtelCollectorEndpoint = "";
             o.OtlpProtocol = " ";
             o.Compression = "";
             o.MetricExporters = "";
         }));
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData(" \t\n")]
+    public void Validator_Blank_Identity_Options_Fail_Naming_The_Option(string blank)
+    {
+        // C6 fix round 1: as Go (WithServiceName/WithEnvironment) and Python; null stays "not set".
+        Assert.Contains("TelemetryOptions.ServiceName must not be empty", Fail(o => o.ServiceName = blank));
+        Assert.Contains("TelemetryOptions.Environment must not be empty", Fail(o => o.Environment = blank));
+        Assert.Null(Fail(o => o.ServiceName = "\u00a0"));
+        Assert.Null(Fail(o => { o.ServiceName = null; o.Environment = null; }));
     }
 
     [Theory]

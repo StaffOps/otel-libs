@@ -242,8 +242,8 @@ public class ResolverCoreTests : IDisposable
     {
         Environment.SetEnvironmentVariable(variable, "/etc/parity-config-path/otel.yaml");
         var diagnostics = new TestDiagnostics();
-        diagnostics.Resolve();
-        diagnostics.Resolve();
+        diagnostics.Resolve(TestDiagnostics.Identified);
+        diagnostics.Resolve(TestDiagnostics.Identified);
         var line = Assert.Single(diagnostics.Lines);
         Assert.StartsWith($"otelhelper: WARN {variable} is not supported by the .NET helper and is ignored", line);
         Assert.DoesNotContain("parity-config-path", diagnostics.Text);
@@ -353,7 +353,7 @@ public class ResolverCoreTests : IDisposable
             Environment.SetEnvironmentVariable("OTEL_EXPORTER_OTLP_CLIENT_KEY", keyPath);
 
             var good = new TestDiagnostics();
-            using (OtlpExporters.OptionsFor("traces", good.Resolve(), good.Sink)!.HttpClientFactory!())
+            using (OtlpExporters.OptionsFor("traces", good.Resolve(TestDiagnostics.Identified), good.Sink)!.HttpClientFactory!())
             {
             }
 
@@ -362,7 +362,7 @@ public class ResolverCoreTests : IDisposable
             Environment.SetEnvironmentVariable("OTEL_EXPORTER_OTLP_CERTIFICATE", Path.Combine(dir.FullName, "missing.pem"));
             Environment.SetEnvironmentVariable("OTEL_EXPORTER_OTLP_CLIENT_KEY", Path.Combine(dir.FullName, "missing.key"));
             var bad = new TestDiagnostics();
-            using (OtlpExporters.OptionsFor("traces", bad.Resolve(), bad.Sink)!.HttpClientFactory!())
+            using (OtlpExporters.OptionsFor("traces", bad.Resolve(TestDiagnostics.Identified), bad.Sink)!.HttpClientFactory!())
             {
             }
 

@@ -323,13 +323,25 @@ public class ResolverCoreFixRoundTests : IDisposable
 
     // ── MEDIUM 12: TLS custom root with an intermediate ──────────────
 
-    private static X509Certificate2 Issue(string name, X509Certificate2? issuer, bool ca, ECDsa key)
+    // One whole-second instant per test (xUnit creates the class per test), and each level valid
+    // strictly inside its issuer: two UtcNow reads a second apart made a leaf outlive its root
+    // under load ("notAfter value ... is later than issuerCertificate.NotAfter", C6 fix round 1).
+    private readonly DateTimeOffset _now = DateTimeOffset.FromUnixTimeSeconds(DateTimeOffset.UtcNow.ToUnixTimeSeconds());
+
+    private (DateTimeOffset NotBefore, DateTimeOffset NotAfter) Validity(int level) => level switch
+    {
+        0 => (_now.AddMinutes(-10), _now.AddHours(3)),
+        1 => (_now.AddMinutes(-5), _now.AddHours(2)),
+        _ => (_now.AddMinutes(-5), _now.AddHours(1)),
+    };
+
+    /// <summary>A certificate at <paramref name="level"/>: 0 root, 1 intermediate, 2 leaf.</summary>
+    private X509Certificate2 Issue(string name, X509Certificate2? issuer, bool ca, ECDsa key, int level)
     {
         var request = new CertificateRequest($"CN={name}", key, HashAlgorithmName.SHA256);
         request.CertificateExtensions.Add(new X509BasicConstraintsExtension(ca, false, 0, true));
         request.CertificateExtensions.Add(new X509SubjectKeyIdentifierExtension(request.PublicKey, false));
-        var notBefore = DateTimeOffset.UtcNow.AddMinutes(-5);
-        var notAfter = DateTimeOffset.UtcNow.AddHours(1);
+        var (notBefore, notAfter) = Validity(level);
         if (issuer is null)
         {
             return request.CreateSelfSigned(notBefore, notAfter);
@@ -347,9 +359,9 @@ public class ResolverCoreFixRoundTests : IDisposable
         using var rootKey = ECDsa.Create(ECCurve.NamedCurves.nistP256);
         using var midKey = ECDsa.Create(ECCurve.NamedCurves.nistP256);
         using var leafKey = ECDsa.Create(ECCurve.NamedCurves.nistP256);
-        using var root = Issue("parity-root", null, true, rootKey);
-        using var intermediate = Issue("parity-intermediate", root, true, midKey);
-        using var leaf = Issue("parity-leaf", intermediate, false, leafKey);
+        using var root = Issue("parity-root", null, true, rootKey, 0);
+        using var intermediate = Issue("parity-intermediate", root, true, midKey, 1);
+        using var leaf = Issue("parity-leaf", intermediate, false, leafKey, 2);
         var roots = new X509Certificate2Collection { root };
 
         Assert.False(HelperHttpClientFactory.ValidateWithCustomRoot(leaf, SslPolicyErrors.RemoteCertificateChainErrors, roots));
@@ -849,12 +861,13 @@ public class ResolverCoreFixRoundTests : IDisposable
     {
         using var rootKey = ECDsa.Create(ECCurve.NamedCurves.nistP256);
         using var leafKey = ECDsa.Create(ECCurve.NamedCurves.nistP256);
-        using var root = Issue("parity-eku-root", null, true, rootKey);
+        using var root = Issue("parity-eku-root", null, true, rootKey, 0);
         var request = new CertificateRequest("CN=parity-client-only", leafKey, HashAlgorithmName.SHA256);
         request.CertificateExtensions.Add(new X509EnhancedKeyUsageExtension(new OidCollection { new Oid("1.3.6.1.5.5.7.3.2") }, false));
         var serial = new byte[8];
         RandomNumberGenerator.Fill(serial);
-        using var signed = request.Create(root, DateTimeOffset.UtcNow.AddMinutes(-5), DateTimeOffset.UtcNow.AddHours(1), serial);
+        var (notBefore, notAfter) = Validity(2);
+        using var signed = request.Create(root, notBefore, notAfter, serial);
         Assert.False(HelperHttpClientFactory.ValidateWithCustomRoot(signed, SslPolicyErrors.RemoteCertificateChainErrors, new X509Certificate2Collection { root }));
     }
 
@@ -893,12 +906,13 @@ public class ResolverCoreFixRoundTests : IDisposable
     {
         using var rootKey = ECDsa.Create(ECCurve.NamedCurves.nistP256);
         using var leafKey = ECDsa.Create(ECCurve.NamedCurves.nistP256);
-        using var root = Issue("parity-eku-root-ok", null, true, rootKey);
+        using var root = Issue("parity-eku-root-ok", null, true, rootKey, 0);
         var request = new CertificateRequest("CN=parity-server", leafKey, HashAlgorithmName.SHA256);
         request.CertificateExtensions.Add(new X509EnhancedKeyUsageExtension(new OidCollection { new Oid("1.3.6.1.5.5.7.3.1") }, false));
         var serial = new byte[8];
         RandomNumberGenerator.Fill(serial);
-        using var signed = request.Create(root, DateTimeOffset.UtcNow.AddMinutes(-5), DateTimeOffset.UtcNow.AddHours(1), serial);
+        var (notBefore, notAfter) = Validity(2);
+        using var signed = request.Create(root, notBefore, notAfter, serial);
         Assert.True(HelperHttpClientFactory.ValidateWithCustomRoot(signed, SslPolicyErrors.RemoteCertificateChainErrors, new X509Certificate2Collection { root }));
     }
 

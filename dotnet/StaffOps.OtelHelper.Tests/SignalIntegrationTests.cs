@@ -119,10 +119,10 @@ public class SignalIntegrationTests : IDisposable
         Assert.Equal("test.value", exportedActivities[0].GetTagItem("test.key")?.ToString());
     }
 
-    // --- A blank code ServiceName is not set ---
+    // --- A blank code ServiceName fails (C6 fix round 1; 0.2.x and C5: not set) ---
 
     [Fact]
-    public void Blank_Code_ServiceName_Is_Not_Set()
+    public void Blank_Code_ServiceName_Fails_Naming_The_Option()
     {
         var services = new ServiceCollection();
         services.AddOtelHelper(opts =>
@@ -132,7 +132,8 @@ public class SignalIntegrationTests : IDisposable
         });
 
         using var provider = services.BuildServiceProvider();
-        Assert.Equal(TelemetryResolver.DefaultServiceName, provider.GetRequiredService<ResolvedTelemetry>().ServiceName);
+        var ex = Assert.Throws<OptionsValidationException>(() => provider.GetRequiredService<ResolvedTelemetry>());
+        Assert.Contains("TelemetryOptions.ServiceName must not be empty", ex.Message);
     }
 
     // --- An invalid code endpoint fails when the options are first read, naming the option ---

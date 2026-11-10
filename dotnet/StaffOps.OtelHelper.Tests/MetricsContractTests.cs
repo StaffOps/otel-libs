@@ -133,7 +133,7 @@ public class MetricsContractTests : IDisposable
     {
         Environment.SetEnvironmentVariable(TelemetryOptions.MetricsExporterEnvVar, "statsd");
         var diagnostics = new TestDiagnostics();
-        Assert.Equal(new[] { "prometheus" }, diagnostics.Resolve().ResolvedMetricExporters());
+        Assert.Equal(new[] { "prometheus" }, diagnostics.Resolve(TestDiagnostics.Identified).ResolvedMetricExporters());
         Assert.Single(diagnostics.Lines);
     }
 

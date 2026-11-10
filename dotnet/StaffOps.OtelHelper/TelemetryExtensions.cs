@@ -68,6 +68,10 @@ namespace StaffOps.OtelHelper
                 return SdkDiagnosticsForwarder.Acquire(sp.GetRequiredService<IOtelHelperDiagnostics>(), codeSecrets);
             });
 
+            // What the providers' resources learn about the application's own resource (C6).
+            services.TryAddSingleton<AppResourceState>();
+            services.AddSingleton<IOptionsChangeTokenSource<Microsoft.Extensions.Logging.LoggerFilterOptions>>(sp => sp.GetRequiredService<AppResourceState>());
+
             // The helper's exporter clients, disposed with the container after the providers.
             services.TryAddSingleton<StaffOps.OtelHelper.Exporters.ExporterClients>();
 
@@ -155,6 +159,19 @@ namespace StaffOps.OtelHelper
             public System.Threading.Tasks.Task StartAsync(System.Threading.CancellationToken cancellationToken)
             {
                 _services.GetRequiredService<ResolvedTelemetry>();
+
+                // Build the providers now, as the SDK's own hosted service does right after this
+                // one: the resource-time identity diagnostics (C6) are then written at start, and
+                // each built resource is compared with what the helper set (a ConfigureResource or
+                // SetResourceBuilder registered after AddOtelHelper runs after it). Hostless use
+                // (a bare ServiceProvider) gets no such check.
+                var built = new System.Collections.Generic.Dictionary<string, OpenTelemetry.Resources.Resource?>(StringComparer.Ordinal)
+                {
+                    ["traces"] = _services.GetService<OpenTelemetry.Trace.TracerProvider>()?.GetResource(),
+                    ["metrics"] = _services.GetService<OpenTelemetry.Metrics.MeterProvider>()?.GetResource(),
+                    ["logs"] = _services.GetService<OpenTelemetry.Logs.LoggerProvider>()?.GetResource(),
+                };
+                _services.GetService<AppResourceState>()?.CheckBuiltResources(built, _services.GetRequiredService<ResolvedTelemetry>(), _services.GetRequiredService<IOtelHelperDiagnostics>());
 
                 // The Prometheus listener's cancel is shutdown noise only once the host stops
                 // (attached here, not in the lease factory: the lifetime needs a logger, which may

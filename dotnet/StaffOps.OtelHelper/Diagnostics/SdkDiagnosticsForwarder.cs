@@ -20,6 +20,9 @@ namespace StaffOps.OtelHelper.Diagnostics
     /// </summary>
     internal sealed class SdkDiagnosticsForwarder : EventListener
     {
+        /// <summary>The SDK event for two different resource schema URLs (<c>OpenTelemetrySdkEventSource.ResourceSchemaUrlMergeConflict</c>).</summary>
+        internal const string SchemaUrlConflictEvent = "ResourceSchemaUrlMergeConflict";
+
         internal const string OtlpExporterSource = "OpenTelemetry-Exporter-OpenTelemetryProtocol";
         internal const string ResponseBodyOmitted = "<response body omitted>";
         private const string SourcePrefix = "OpenTelemetry";
@@ -211,6 +214,18 @@ namespace StaffOps.OtelHelper.Diagnostics
             {
                 var source = eventData.EventSource.Name;
                 var payload = eventData.Payload?.ToArray() ?? Array.Empty<object?>();
+                if (eventData.EventName == SchemaUrlConflictEvent)
+                {
+                    // C6: with the helper's resource on 1.43.0, this conflict usually means a resource
+                    // added after AddOtelHelper() (an app AddService declares the SDK's 1.44.0): say
+                    // so as the helper, once, with both URLs, instead of the SDK's text per merge.
+                    sink.ReportOnce("resource:schema-url-conflict", DiagnosticLevel.Warn,
+                        "resources with different schema URLs were merged, so the resource has none (for example, a resource added after AddOtelHelper(), such as AddService in a later ConfigureResource); register it before AddOtelHelper()",
+                        ("old", payload.Length > 0 ? payload[0]?.ToString() ?? "" : ""),
+                        ("updating", payload.Length > 1 ? payload[1]?.ToString() ?? "" : ""));
+                    return;
+                }
+
                 if (!SdkTextSanitizer.IsQuietMeterNotice(eventData.EventName, payload, quiet)
                     && Format(source, eventData.EventName, eventData.Message, payload, secrets, stopping) is { } text)
                 {

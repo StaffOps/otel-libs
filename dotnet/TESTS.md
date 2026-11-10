@@ -1,6 +1,6 @@
 # Tests — StaffOps.OtelHelper (.NET)
 
-782 tests (xUnit) with the parity runner, 0 failed, 0 warnings (compose `dotnet-tests` on `sdk:8.0`, and on `sdk:10.0` with `DOTNET_ROLL_FORWARD=Major`, 2026-11-10); coverlet total on `sdk:8.0` `| Total | 98.72% | 97.27% | 99.02% |` (line, branch, method), cobertura `line-rate` 0.9872; on `sdk:10.0` `| Total | 98.8% | 97.15% | 99.02% |`, 0.988. The total varies by about ±0.1 point between runs; the cause was not investigated.
+858 tests (xUnit) with the parity runner, 0 failed, 0 warnings (compose `dotnet-tests` on `sdk:8.0`, and on `sdk:10.0` with `DOTNET_ROLL_FORWARD=Major`, 2026-11-10, task C6 fix round 3); coverlet total `| Total | 98.67% | 96.05% | 99.21% |` (line, branch, method) on both. The total varies by about ±0.1 point between runs; the cause was not investigated.
 
 From `dotnet/`; the repository root is mounted because the parity runner reads
 `parity/cases.json` (and `specs/dotnet-otel-helper/tasks.md`) from it:
@@ -62,11 +62,11 @@ Validate defaults and env var resolution.
 
 | Test | Description |
 |-------|-----------|
-| `Default_ServiceName_Is_MyService` | Default ServiceName is "my-service" |
+| `Default_ServiceName_Is_The_Sdk_Unknown_Service` | No service name anywhere → `unknown_service:<process>`, not configured (task C6) |
 | `Default_CollectorEndpoint_Is_Empty_When_No_EnvVar` | Default endpoint stays empty (Prometheus fallback) |
 | `Default_DebugLevel_Is_False` | Debug disabled by default |
 | `ResolveEnvironment_Parses_Correctly` × 6 | LOCAL, DEV, HML, PRD, prd, dev |
-| `ResolveEnvironment_Invalid_Falls_Back_To_LOCAL` × 3 | Invalid values → LOCAL |
+| `ResolveEnvironment_Unknown_Is_Verbatim_And_Blank_Is_Absent` × 5 | Unknown `ENVIRONMENT` values kept as written (trimmed), blank → absent (task C6; 0.2.x: `LOCAL`) |
 
 ## RegistrationTests
 
@@ -400,3 +400,21 @@ control-character items skipped, warned by name), TLS files and a custom root
 with an intermediate, client disposal, the SDK `User-Agent`, the drop-all view
 when no metric exporter is active, and an invalid code value reported once
 when a provider is built before start.
+
+## Identity and resource (task C6)
+
+`IdentityResourceTests` (contract R4, R5, D4, A16, A24; design D-NET7):
+
+| Area | Tests |
+|---|---|
+| `OTEL_RESOURCE_ATTRIBUTES` parser | `Parser_Blank_Items_Are_Ignored_Without_A_Position`, `Parser_Skips_Items_Without_Equals_Or_With_An_Empty_Key_By_Position`, `Parser_Decodes_Strictly_Then_Trims_With_The_Contract_Set` × 8 (`+` stays `+`, `=` in a value, UTF-8 escapes, a leading U+00A0 kept), `Parser_Keeps_An_Undecodable_Value_Literal_By_Position` × 6, `Parser_Unpaired_Surrogates_Make_A_Key_Malformed_And_A_Value_Replaced`, `Parser_Keeps_A_Unicode_Space_In_The_Key_And_A_Later_Duplicate_Wins` |
+| Diagnostics of the parse | `Env_Resource_Attribute_Problems_Warn_Once_By_Position_Never_The_Value`, `Blank_Env_Resource_Attributes_Warn_Nothing` |
+| `service.name` | `ServiceName_Otel_Variable_Beats_The_Deprecated_One`, `ServiceName_Resource_Attributes_Beat_The_Deprecated_Variable_And_Lose_To_The_Otel_One`, `ServiceName_Code_Option_Beats_Code_Attribute_Which_Beats_Env`, `ServiceName_Blank_Resource_Attribute_Falls_Back_To_The_Deprecated_Variable`, `ServiceName_Unset_Is_The_Sdk_Default_With_One_Warning`, `ServiceName_From_A_Code_Attribute_Only_Warns_Nothing` |
+| Environment and log level | `Environment_Unset_Is_Absent_Info_And_Warned_Once`, `Environment_Alias_Canonicalizes_Known_Names_And_Keeps_Others` × 3, `Environment_Resource_Attributes_Beat_The_Alias_And_Are_Verbatim`, `Environment_Code_Option_Beats_Code_Attribute_Which_Beats_Env`, `Environment_Blank_In_Resource_Attributes_Is_Absent_And_Warned`, `LogLevel_Code_Environment_Matches_Case_Insensitively`; `OptionsTests.GetDefaultLogLevel_By_Environment_Name` (ASCII case, trim, U+0130 and U+00A0 not folded) |
+| `service.instance.id` | `InstanceId_Code_Beats_Env_Which_Beats_The_Process_Id`, `InstanceId_Is_The_One_The_Sdk_AddService_Generates_In_This_Process` |
+| Rebuilt resource | `Resource_Carries_The_Resolved_Identity_On_Every_Provider_With_The_Contract_Schema_Url`, `Resource_Code_Attributes_Beat_Env_Per_Key`, `Resource_Drops_The_Sdk_Env_Detector_Parse`, `Resource_Ignores_Otel_Service_Name_Set_Only_In_IConfiguration` (a guard), `Resource_Ignores_Otel_Resource_Attributes_Set_Only_In_IConfiguration`, `Resource_Blank_Env_Service_Name_Is_The_Explicit_Sdk_Default`, `Resource_Telemetry_Sdk_Comes_From_The_Sdk_Env_Silently_Code_Warned_Once_Per_Key`, `Resource_Keeps_Earlier_App_Attributes_Between_Env_And_Code`, `Resource_App_AddService_Name_Is_Replaced_With_One_Warning_Its_Instance_Id_Agrees`, `Resource_App_Environment_Stays_When_None_Is_Resolved`, `Resource_An_Earlier_Factory_Detector_Is_Kept_Without_Clearing_And_Warned_Once`, `Resource_App_Attributes_Equal_To_The_Sdk_Defaults_Are_Not_Kept` |
+| Application resource configuration (fix round 1) | `Later_ConfigureResource_Is_Reported_At_Start_For_Every_Signal_With_The_Schema_Conflict_As_Helper_Text` (tracer, meter, logger resources), `Later_SetResourceBuilder_On_Tracing_Only_Is_Reported_Naming_Traces`, `Earlier_ConfigureResource_Is_Not_Reported_As_A_Later_Change`, `Each_Earlier_Detector_Runs_Exactly_Once_Per_Provider`, `Each_Later_Detector_Runs_Exactly_Once_Per_Provider`, `Sdk_Disabled_Skips_The_Later_Change_Check`, `Host_App_Environment_On_Tracing_Only_Names_The_Lacking_Signals_Without_Not_Set`, `Host_Without_Any_Environment_Warns_Not_Set_Exactly_Once`, `App_Environment_Is_Used_When_None_Is_Resolved_And_Picks_The_Log_Level`, `App_Identity_Values_Replaced_By_Resolved_Ones_Are_Warned_Once_Per_Key`, `App_Explicit_Instance_Id_Is_Kept_When_The_Helper_Has_Only_The_Process_Id`, `Factory_Detector_Path_Names_An_Unresolved_Environment_Whose_Blank_Sdk_Value_Stays` |
+| Code validation | `TracingAndOptionsHelperTests.Validator_Blank_Identity_Options_Fail_Naming_The_Option` × 2, `SignalIntegrationTests.Blank_Code_ServiceName_Fails_Naming_The_Option`, `Validator_Empty_Code_Key_Fails_At_Start` × 2, `Validator_Unicode_Space_Key_Is_Valid`, `Validator_Unsupported_Values_Fail_Naming_The_Key`, `Validator_Null_Resource_Attributes_Fail` |
+
+Tests about another row set a service name and an environment in code
+(`TestDiagnostics.Identified`), so they see only their own diagnostics.

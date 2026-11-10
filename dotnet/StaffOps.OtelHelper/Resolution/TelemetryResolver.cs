@@ -15,8 +15,6 @@ namespace StaffOps.OtelHelper
     /// </summary>
     internal static class TelemetryResolver
     {
-        internal const string DefaultServiceName = "my-service";
-
         /// <summary>Health paths whose spans are not recorded when <see cref="TelemetryOptions.HealthPaths"/> is not set.</summary>
         internal static readonly string[] DefaultHealthPaths = { "/ping", "/health", "/healthz", "/ready" };
 
@@ -31,7 +29,8 @@ namespace StaffOps.OtelHelper
             AddIfSet(signalEndpoints, "metrics", code.MetricsEndpoint);
             AddIfSet(signalEndpoints, "logs", code.LogsEndpoint);
 
-            var environment = NonBlank(code.Environment) ?? ParseEnvironment(Env(TelemetryOptions.EnvironmentEnvVar));
+            var identity = ResolveIdentity(code, diagnostics);
+            var environment = identity.Environment;
             var debug = code.DebugLevel ?? EnvTrue(TelemetryOptions.DebugLevelEnvVar);
             var sdkDisabled = ReadSdkDisabled(configuration);
             if (sdkDisabled)
@@ -43,11 +42,13 @@ namespace StaffOps.OtelHelper
             var hasMetricsEndpoint = endpoint.Length > 0 || signalEndpoints.ContainsKey("metrics");
             return new ResolvedTelemetry
             {
-                ServiceName = NonBlank(code.ServiceName)
-                    ?? NonBlank(Env(TelemetryOptions.ServiceNameEnvVar))
-                    ?? NonBlank(Env(TelemetryOptions.OtelServiceNameEnvVar))
-                    ?? DefaultServiceName,
+                ServiceName = identity.ServiceName,
+                ServiceNameConfigured = identity.ServiceNameConfigured,
                 Environment = environment,
+                ServiceInstanceId = identity.ServiceInstanceId,
+                ServiceInstanceIdConfigured = identity.ServiceInstanceIdConfigured,
+                CodeMinimumLogLevel = code.MinimumLogLevel,
+                EnvResourceAttributes = identity.EnvResourceAttributes,
                 OtelCollectorEndpoint = endpoint,
                 SignalEndpoints = signalEndpoints,
                 OtlpProtocol = ResolveProtocol(code, diagnostics),
@@ -60,7 +61,7 @@ namespace StaffOps.OtelHelper
                 ClientKeyPath = NonBlank(Env("OTEL_EXPORTER_OTLP_CLIENT_KEY")),
                 Sampler = ResolveSampler(code),
                 MinimumLogLevel = code.MinimumLogLevel ?? TelemetryOptions.GetDefaultLogLevel(environment, debug),
-                ResourceAttributes = new Dictionary<string, object>(code.ResourceAttributes),
+                ResourceAttributes = new Dictionary<string, object>(code.ResourceAttributes ?? new Dictionary<string, object>()),
                 AdditionalActivitySources = code.AdditionalActivitySources.ToArray(),
                 AdditionalMeters = code.AdditionalMeters.ToArray(),
                 DisabledSignals = NonBlank(code.DisabledSignals) ?? NonBlank(Env(TelemetryOptions.DisabledSignalsEnvVar)) ?? "",
@@ -78,12 +79,137 @@ namespace StaffOps.OtelHelper
 
         // ── identity ───────────────────────────────────────────────────────
 
-        /// <summary><c>ENVIRONMENT</c>: a known name (case-insensitive, <c>-</c> read as <c>_</c>) in its canonical spelling, else <c>LOCAL</c>.</summary>
-        private static string ParseEnvironment(string? raw)
+        internal const string ServiceNameKey = "service.name";
+        internal const string EnvironmentKey = "deployment.environment.name";
+        internal const string ServiceInstanceIdKey = "service.instance.id";
+        internal const string ResourceAttributesEnvVar = "OTEL_RESOURCE_ATTRIBUTES";
+
+        /// <summary><c>telemetry.sdk.*</c> keys: they always come from the SDK (contract row "telemetry.sdk.* and the resource schema URL", A16).</summary>
+        internal static readonly string[] TelemetrySdkKeys = { "telemetry.sdk.name", "telemetry.sdk.language", "telemetry.sdk.version" };
+
+        internal readonly record struct Identity(
+            string ServiceName,
+            bool ServiceNameConfigured,
+            string? Environment,
+            string ServiceInstanceId,
+            bool ServiceInstanceIdConfigured,
+            IReadOnlyDictionary<string, string> EnvResourceAttributes);
+
+        /// <summary>
+        /// <c>service.name</c>, <c>deployment.environment.name</c> and <c>service.instance.id</c>
+        /// (contract design D1 identity rows, D4, ADR-003). A blank value (empty or contract trim set
+        /// only) is not provided at any level, so the next level applies; the dedicated code option
+        /// beats the same key in code <see cref="TelemetryOptions.ResourceAttributes"/>.
+        /// </summary>
+        private static Identity ResolveIdentity(TelemetryOptions code, IOtelHelperDiagnostics diagnostics)
         {
-            var value = NonBlank(raw)?.Replace("-", "_");
-            return DeploymentEnvironments.Known.FirstOrDefault(k => k.Equals(value, StringComparison.OrdinalIgnoreCase))
-                ?? DeploymentEnvironments.LOCAL;
+            var envResource = ParseEnvResourceAttributes(diagnostics);
+            var codeAttributes = code.ResourceAttributes ?? new Dictionary<string, object>();
+
+            // service.name: code option > code attribute > OTEL_SERVICE_NAME > OTEL_RESOURCE_ATTRIBUTES
+            // > SERVICE_NAME (deprecated) > the SDK default unknown_service:<process> + warning.
+            var serviceName = ContractText.NonBlank(code.ServiceName)
+                ?? CodeString(codeAttributes, ServiceNameKey)
+                ?? ContractText.NonBlank(Env(TelemetryOptions.OtelServiceNameEnvVar))
+                ?? ContractText.NonBlank(envResource.GetValueOrDefault(ServiceNameKey))
+                ?? ContractText.NonBlank(Env(TelemetryOptions.ServiceNameEnvVar));
+            var serviceNameConfigured = serviceName is not null;
+            if (serviceName is null)
+            {
+                serviceName = UnknownServiceName();
+                diagnostics.ReportOnce("identity:" + ServiceNameKey, DiagnosticLevel.Warn,
+                    "no service name configured; set " + TelemetryOptions.OtelServiceNameEnvVar,
+                    ("using", serviceName));
+            }
+
+            // deployment.environment.name: code option > code attribute > OTEL_RESOURCE_ATTRIBUTES >
+            // ENVIRONMENT (deprecated alias, a known name canonicalized) > absent + warning. Emitted verbatim.
+            var environment = ContractText.NonBlank(code.Environment)
+                ?? CodeString(codeAttributes, EnvironmentKey)
+                ?? ContractText.NonBlank(envResource.GetValueOrDefault(EnvironmentKey));
+            if (environment is null && ContractText.NonBlank(Env(TelemetryOptions.EnvironmentEnvVar)) is { } alias)
+            {
+                environment = KnownEnvironment(alias) ?? alias;
+            }
+
+            // Unset: the warning is written when the resource is built (ResourceSetup), because an
+            // earlier application ConfigureResource may still provide the value (code level).
+
+            // service.instance.id: code > OTEL_RESOURCE_ATTRIBUTES > one id per process (D4).
+            var configuredId = CodeString(codeAttributes, ServiceInstanceIdKey)
+                ?? ContractText.NonBlank(envResource.GetValueOrDefault(ServiceInstanceIdKey));
+            var instanceId = configuredId ?? ResourceSetup.ProcessInstanceId;
+
+            // telemetry.sdk.* set in code are ignored (the SDK sets them): warned once per key,
+            // naming the key only. Env values for them are ignored silently.
+            foreach (var key in TelemetrySdkKeys.Where(codeAttributes.ContainsKey))
+            {
+                diagnostics.ReportOnce("code-telemetry-sdk:" + key, DiagnosticLevel.Warn,
+                    $"TelemetryOptions.ResourceAttributes[\"{key}\"] is ignored; the OpenTelemetry SDK sets {key}",
+                    ("key", key));
+            }
+
+            return new Identity(serviceName, serviceNameConfigured, environment, instanceId, configuredId is not null, envResource);
+        }
+
+        /// <summary><c>OTEL_RESOURCE_ATTRIBUTES</c> as the helper parses it (A16); problems warned once, by item position only.</summary>
+        private static IReadOnlyDictionary<string, string> ParseEnvResourceAttributes(IOtelHelperDiagnostics diagnostics)
+        {
+            var raw = Env(ResourceAttributesEnvVar);
+            if (raw is null || ContractText.Trim(raw).Length == 0)
+            {
+                return ParsedResourceAttributes.Empty.Attributes;
+            }
+
+            var parsed = ResourceAttributesParser.Parse(raw);
+            if (parsed.Malformed.Count > 0)
+            {
+                diagnostics.ReportOnce("resource-attributes:malformed", DiagnosticLevel.Warn,
+                    "resource attribute items are not key=value and were skipped",
+                    ("variable", ResourceAttributesEnvVar), ("items", string.Join(",", parsed.Malformed)));
+            }
+
+            if (parsed.Undecodable.Count > 0)
+            {
+                diagnostics.ReportOnce("resource-attributes:undecodable", DiagnosticLevel.Warn,
+                    "resource attribute values have an invalid percent-encoding and are kept literally",
+                    ("variable", ResourceAttributesEnvVar), ("items", string.Join(",", parsed.Undecodable)));
+            }
+
+            return parsed.Attributes;
+        }
+
+        /// <summary>A code attribute for an identity key: its string value trimmed, null when blank (the validator rejects non-strings).</summary>
+        private static string? CodeString(IDictionary<string, object> attributes, string key)
+            => attributes.TryGetValue(key, out var value) ? ContractText.NonBlank(value as string) : null;
+
+        /// <summary>A known environment name (contract trim set, ASCII case-insensitive) in its canonical spelling, else null.</summary>
+        internal static string? KnownEnvironment(string? value)
+        {
+            if (ContractText.NonBlank(value) is not { } trimmed)
+            {
+                return null;
+            }
+
+            var upper = ContractText.AsciiUpper(trimmed);
+            return DeploymentEnvironments.Known.FirstOrDefault(k => string.Equals(k, upper, StringComparison.Ordinal));
+        }
+
+        /// <summary>The SDK's default service name, <c>unknown_service:&lt;process name&gt;</c> (<c>ResourceBuilder.PrepareDefaultResource</c>).</summary>
+        internal static string UnknownServiceName()
+        {
+            string? processName = null;
+            try
+            {
+                using var process = System.Diagnostics.Process.GetCurrentProcess();
+                processName = process.ProcessName;
+            }
+            catch (Exception ex) when (ex is PlatformNotSupportedException or InvalidOperationException or NotSupportedException)
+            {
+                // As the SDK: no process name, no suffix.
+            }
+
+            return processName is { Length: > 0 } ? "unknown_service:" + processName : "unknown_service";
         }
 
         // ── endpoints and exporter settings ────────────────────────────────

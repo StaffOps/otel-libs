@@ -2,7 +2,9 @@
 
 Observability library for .NET 8+ applications. Abstracts OpenTelemetry SDK configuration to provide standardized instrumentation.
 
-> **Version note.** This page documents the shipped **0.2.x** .NET behavior.
+> **Version note.** This page documents the shipped **0.2.x** .NET behavior,
+> except where a row says "0.3 (this branch)": the identity and resource rules
+> (task C6) already follow the 0.3 contract here.
 > The `0.3.0` config contract (standard `OTEL_*` variables winning, no
 > `LOCAL`/`my-service` defaults, ParentBased sampler, per-signal OTLP
 > variables, the shared health-path list) ships in **Go and Python first**;
@@ -52,8 +54,10 @@ After registration, available via DI:
 
 | Variable | Source | Description | Default |
 |---|---|---|---|
-| `SERVICE_NAME` | CI/CD Pipeline | Service name. Wins over `OTEL_SERVICE_NAME` in 0.2.x | `my-service` |
-| `ENVIRONMENT` | Helm Chart (`values.yaml`) | Environment: `LOCAL`, `DEV`, `HML`, `PRD`. Unrecognized value → `LOCAL`. Emitted as `deployment.environment.name` | `LOCAL` |
+| `OTEL_SERVICE_NAME` | CI/CD Pipeline | Service name, emitted as `service.name`. 0.3 (this branch): wins over `service.name` in `OTEL_RESOURCE_ATTRIBUTES` and over `SERVICE_NAME` | none: `unknown_service:<process name>` + one warning |
+| `SERVICE_NAME` | CI/CD Pipeline | Deprecated alias. 0.3 (this branch): read after `OTEL_SERVICE_NAME` and `service.name` in `OTEL_RESOURCE_ATTRIBUTES` (0.2.x: read first) | — |
+| `OTEL_RESOURCE_ATTRIBUTES` | Helm Chart | `key=value,…` resource attributes, parsed by the helper (0.3, this branch): blank items ignored, an item without `=` or with an empty key skipped, values percent-decoded (`%XX` only; `+` stays `+`) then trimmed of ASCII whitespace, an invalid escape kept literally; problems warned once by item position, never the value. `deployment.environment.name` here wins over `ENVIRONMENT`. `telemetry.sdk.*` keys are ignored | — |
+| `ENVIRONMENT` | Helm Chart (`values.yaml`) | Deprecated alias of `deployment.environment.name`. 0.3 (this branch): a known name (`LOCAL`, `DEV`, `HML`, `PRD`, any case) in its canonical spelling, any other value emitted as written; unset everywhere → the attribute is absent, one warning, log level Information (0.2.x: `LOCAL`) | none |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | Helm Chart | Collector endpoint. Unset → no OTLP export, Prometheus `/metrics` fallback | _(unset)_ |
 
 > These variables are injected automatically. Application teams **do not need to configure them manually**.
@@ -208,8 +212,8 @@ Exemplars enabled (`ExemplarFilterType.TraceBased`) — metric → trace correla
 
 | Property | Type | Env Var | Default |
 |---|---|---|---|
-| `ServiceName` | string? | `SERVICE_NAME` / `OTEL_SERVICE_NAME` | `my-service` |
-| `Environment` | string? (`DeploymentEnvironments.*`) | `ENVIRONMENT` | `LOCAL` |
+| `ServiceName` | string? | `OTEL_SERVICE_NAME` / `OTEL_RESOURCE_ATTRIBUTES` / `SERVICE_NAME` | `unknown_service:<process name>` + warning |
+| `Environment` | string? (`DeploymentEnvironments.*` or any value) | `OTEL_RESOURCE_ATTRIBUTES` / `ENVIRONMENT` | none (attribute absent + warning) |
 | `OtelCollectorEndpoint` | string? | `OTEL_EXPORTER_OTLP_ENDPOINT` | none (no OTLP export) |
 | `DebugLevel` | bool? | `OTEL_HELPER_DEBUG_LEVEL` | `false` |
 | `ExportTimeoutMs` | int? | — | `10000` (10s) |
@@ -226,8 +230,14 @@ Exemplars enabled (`ExemplarFilterType.TraceBased`) — metric → trace correla
 | `AdditionalMeters` | List\<string\> | — | empty |
 | `ForwardSdkDiagnostics` | bool | — | `true` (SDK warnings on stderr, redacted) |
 
-> `ServiceName` resolves: `SERVICE_NAME` > `OTEL_SERVICE_NAME` > `"my-service"`.
-> `MinimumLogLevel` when null: LOCAL=Debug, DEV/HML=Information, PRD=Warning. Use `GetDefaultLogLevel()` to query.
+> `ServiceName` resolves (0.3, this branch): `ServiceName` > `ResourceAttributes["service.name"]` > `OTEL_SERVICE_NAME` > `service.name` in `OTEL_RESOURCE_ATTRIBUTES` > `SERVICE_NAME` > `unknown_service:<process name>` with one warning. A blank value counts as not set at every level.
+> `Environment` resolves: `Environment` > `ResourceAttributes["deployment.environment.name"]` > `OTEL_RESOURCE_ATTRIBUTES` > `ENVIRONMENT` > absent with one warning; the value is emitted as written.
+> `service.instance.id`: `ResourceAttributes` > `OTEL_RESOURCE_ATTRIBUTES` > one id per process (the one the SDK's `AddService` generates).
+> `ResourceAttributes` beat `OTEL_RESOURCE_ATTRIBUTES` per key; an empty key or a value the SDK cannot hold fails host start; `telemetry.sdk.*` always come from the SDK (a code value is ignored with a warning). The resource declares the schema URL `https://opentelemetry.io/schemas/1.43.0`. Attributes added by an earlier `ConfigureResource` are kept (they beat `OTEL_RESOURCE_ATTRIBUTES`, lose to `ResourceAttributes`); their `service.name` is replaced by the resolved one, with a warning; their `deployment.environment.name` and an explicit `service.instance.id` are kept when the helper resolves none of its own (the environment then also picks the log level), else replaced with one warning per key.
+> **Register `ConfigureResource` before `AddOtelHelper()`.** The SDK applies resource callbacks in registration order with no later hook, so one registered after `AddOtelHelper()` overrides the helper's resource (an `AddService` there replaces `service.name` and drops the schema URL; a `SetResourceBuilder(...)` there replaces the whole resource of that signal). At host start, after the providers are built, the helper compares each provider's resource with what it set and warns once naming the signals and the changed keys; an app without a host (a bare `ServiceProvider`) gets no such check. An environment set by an earlier `ConfigureResource` applies to the signals whose resource carries it, and picks the log level; one set only by a later callback does not. In a host the "environment not set" warning is written at start, only when no signal's resource carries it (one "differs between signals" line names the signals that lack it otherwise); without a host it is written when a provider builds its resource.
+> A blank code `ServiceName` or `Environment` (`""`, whitespace) fails host start; leave it `null` for "not set".
+> Identity and `OTEL_RESOURCE_ATTRIBUTES` warnings are written once per service provider (one diagnostics sink per container), not once per process as in Go and Python.
+> `MinimumLogLevel` when null: LOCAL=Debug, DEV/HML=Information, PRD=Warning, unset or any other value=Information; the name is matched ignoring ASCII case (`prd` = `PRD`). Use `GetDefaultLogLevel()` to query.
 > `Sampler` default is AlwaysOnSampler — override only if you have a specific reason.
 > Options hold only what code sets (`null` = not set); a value set in code (also one bound from `IConfiguration`) wins over the env var. The full 0.3 option list and the breaking changes: `CHANGELOG.md`, .NET migration guide.
 

@@ -36,7 +36,12 @@ namespace StaffOps.OtelHelper.Logging
                     return;
                 }
 
-                var level = resolved.MinimumLogLevel;
+                // An environment only the application's resource set (AppResourceState) also picks
+                // the level, re-applied through the change token once a provider built the resource.
+                var level = resolved.CodeMinimumLogLevel
+                    ?? (resolved.Environment is null && sp.GetService<AppResourceState>()?.AppEnvironment is { } appEnvironment
+                        ? TelemetryOptions.GetDefaultLogLevel(appEnvironment, resolved.DebugLevel)
+                        : resolved.MinimumLogLevel);
                 filters.MinLevel = level;
                 if (level > LogLevel.Debug)
                 {
@@ -55,7 +60,7 @@ namespace StaffOps.OtelHelper.Logging
                 return;
             }
 
-            builder.ConfigureResource(r => ResourceSetup.Apply(r, resolved));
+            builder.ConfigureResource(r => ResourceSetup.Apply(r, resolved, sp, "logs"));
             if (!resolved.IsSignalEnabled("logs"))
             {
                 return;

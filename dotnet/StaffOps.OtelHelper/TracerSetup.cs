@@ -61,7 +61,7 @@ namespace StaffOps.OtelHelper.Tracing
                 return;
             }
 
-            builder.ConfigureResource(r => ResourceSetup.Apply(r, resolved));
+            builder.ConfigureResource(r => ResourceSetup.Apply(r, resolved, sp, "traces"));
 
             // "Off" (disabled signal): instrumentation registered, no source and no exporter (D-NET3).
             if (!resolved.IsSignalEnabled("traces"))

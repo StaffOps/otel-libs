@@ -15,9 +15,26 @@ namespace StaffOps.OtelHelper
     {
         internal static readonly string[] Signals = { "traces", "metrics", "logs" };
 
+        /// <summary>The resolved <c>service.name</c>, or <c>unknown_service:&lt;process&gt;</c> when none is configured.</summary>
         public required string ServiceName { get; init; }
 
-        public required string Environment { get; init; }
+        /// <summary>False when no level provided a service name (the SDK default is used, warned).</summary>
+        public bool ServiceNameConfigured { get; init; } = true;
+
+        /// <summary>The resolved <c>deployment.environment.name</c> as emitted; null = absent (ADR-003).</summary>
+        public required string? Environment { get; init; }
+
+        /// <summary>The <c>service.instance.id</c>: code, else <c>OTEL_RESOURCE_ATTRIBUTES</c>, else one id per process (D4).</summary>
+        public string ServiceInstanceId { get; init; } = ResourceSetup.ProcessInstanceId;
+
+        /// <summary>True when the instance id came from code or <c>OTEL_RESOURCE_ATTRIBUTES</c>, false when it is the per-process id.</summary>
+        public bool ServiceInstanceIdConfigured { get; init; }
+
+        /// <summary><see cref="TelemetryOptions.MinimumLogLevel"/> as set in code; null = derived from the environment.</summary>
+        public LogLevel? CodeMinimumLogLevel { get; init; }
+
+        /// <summary><c>OTEL_RESOURCE_ATTRIBUTES</c> as the helper parsed it (A16).</summary>
+        public IReadOnlyDictionary<string, string> EnvResourceAttributes { get; init; } = ParsedResourceAttributes.Empty.Attributes;
 
         /// <summary>Generic endpoint after resolution; empty when none is configured.</summary>
         public required string OtelCollectorEndpoint { get; init; }

@@ -39,7 +39,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C6",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -102,7 +102,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C6",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -144,7 +144,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C6",
+        "dotnet": "pass",
         "nodejs": "pass"
       },
       "note": "The :<exe> suffix is SDK-version dependent (R5): Python 1.42 has none."
@@ -166,7 +166,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C6",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -233,7 +233,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C6",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -324,7 +324,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C6",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -345,7 +345,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C6",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -367,7 +367,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C6",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -410,7 +410,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C6",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -447,7 +447,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C6",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -466,7 +466,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C6",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -5211,7 +5211,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C6",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -5237,7 +5237,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C6",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -5264,7 +5264,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C6",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -5310,7 +5310,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C6",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -5336,7 +5336,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C6",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -5362,7 +5362,7 @@
       "status": {
         "go": "skip:no-upstream-go-resource-env-merge",
         "python": "pass",
-        "dotnet": "xfail:C6",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -5388,7 +5388,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C6",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -5440,7 +5440,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C6",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -5495,7 +5495,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C6",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -5544,7 +5544,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C6",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -5567,7 +5567,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C6",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -5592,7 +5592,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C6",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -5615,7 +5615,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C6",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -5644,7 +5644,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C6",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -5675,7 +5675,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C6",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -5713,7 +5713,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C6",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -5738,7 +5738,7 @@
       "status": {
         "go": "skip:no-upstream-go-resource-env-merge",
         "python": "pass",
-        "dotnet": "xfail:C6",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -5762,7 +5762,55 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C6",
+        "dotnet": "pass",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "config.code_blank_service_name_fails",
+      "kind": "resolve",
+      "requirement": "R8/R5/D1 edge-case rulings (2026-11-10)",
+      "note": "A blank (empty or contract-trim-set-only) code service name is an invalid code value: setup fails naming the option (Go WithServiceName, Python service_name, Node serviceName, .NET TelemetryOptions.ServiceName). Not set is null/None/undefined/no option (C6 fix round 1, 2026-11-10).",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_RESOURCE_ATTRIBUTES": "deployment.environment.name=DEV"
+      },
+      "code": {
+        "service_name": " \t "
+      },
+      "expect": {
+        "error": {
+          "regex": "(service_name|serviceName|TelemetryOptions\\.ServiceName|WithServiceName).*must not be empty"
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "pass",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "config.code_blank_environment_fails",
+      "kind": "resolve",
+      "requirement": "R8/R4/D1 edge-case rulings (2026-11-10)",
+      "note": "A blank (empty or contract-trim-set-only) code environment is an invalid code value: setup fails naming the option (Go WithEnvironment, Python environment, Node environment, .NET TelemetryOptions.Environment). Not set is null/None/undefined/no option (C6 fix round 1, 2026-11-10).",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_RESOURCE_ATTRIBUTES": "deployment.environment.name=DEV"
+      },
+      "code": {
+        "environment": ""
+      },
+      "expect": {
+        "error": {
+          "regex": "(TelemetryOptions\\.Environment must not be empty|WithEnvironment: environment must not be empty|\\[OtelHelper\\] environment (must not be empty|must be a DeploymentEnvironment or a non-empty string)|environment must not be empty)"
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },

@@ -32,6 +32,16 @@ internal sealed class TestDiagnostics
         return TelemetryResolver.Resolve(options, Sink, configuration);
     }
 
+    /// <summary>
+    /// Sets a service name and an environment in code, so a test about another row sees only its
+    /// own diagnostics (an unset identity warns, task C6).
+    /// </summary>
+    public static void Identified(TelemetryOptions options)
+    {
+        options.ServiceName ??= "test-service";
+        options.Environment ??= DeploymentEnvironments.DEV;
+    }
+
     /// <summary>Resolves with a throwaway sink.</summary>
     public static ResolvedTelemetry ResolveQuiet(Action<TelemetryOptions>? configure = null)
         => new TestDiagnostics().Resolve(configure);

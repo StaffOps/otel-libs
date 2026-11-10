@@ -144,7 +144,7 @@ the C4 runner records.
 | gRPC server: span per call, `grpc.health.v1.Health/*` no span, status per A22 | no gRPC server tracing configured: AspNetCore gRPC support is behind `OTEL_DOTNET_EXPERIMENTAL_ASPNETCORE_ENABLE_GRPC_INSTRUMENTATION`, read from the app `IConfiguration` (measured: in-memory key → enabled); the options constructor and the property setter are non-public, so no `IServiceCollection` extension can switch it on (C1 dev H3) — owner decision O7 (b), 2026-11-04: the app sets the key (D-NET8). With it on, AspNetCore emits RPC semconv 1.42 (span name `pkg.Svc/Method`, `rpc.system.name`, `rpc.method`, `rpc.response.status_code`, `error.type`) and ERROR only for the six A22 codes (`HttpInListener.cs:490-538`, `Shared/GrpcTagHelper.cs:143-160`) | `grpc.*` (7) |
 | RPC server metrics count health calls | no RPC metric in the AspNetCore, GrpcNetClient and Http 1.20.x assemblies (string check: only `rpc.*` attribute keys, C1 dev); gRPC calls are counted in `http.server.request.duration` with status 200 even when the RPC fails | `grpc.health_counted_in_metrics`, `grpc.health_watch_counted_in_metrics` → `skip:no-upstream-rpc-metrics` |
 | One CLIENT span per gRPC call | `AddHttpClientInstrumentation` and `AddGrpcClientInstrumentation` without `SuppressDownstreamInstrumentation` (`TracerSetup.cs:26-32`) → two CLIENT spans; since GrpcNetClient 1.20.0 the HttpClient span is parented to the gRPC span (CHANGELOG line 16) — a leaf CLIENT edge in the service graph and duplicate `http.client.*` series | no case; C11 test |
-| Server spans under the instrumentation scope `Microsoft.AspNetCore` | the helper registers `new ActivitySource(ServiceName)` as an unkeyed DI singleton (`TelemetryExtensions.cs:47-48`); ASP.NET Core registers its source with `TryAddSingleton` (`GenericWebHostBuilder.cs:76`) and resolves the last registration — reproduced (C1 dev P5: `svc-a|Microsoft.AspNetCore.Hosting.HttpRequestIn|Server`) | no case; C11 test |
+| Server spans under the instrumentation scope `Microsoft.AspNetCore` | the helper registers `new ActivitySource(ServiceName)` as an unkeyed DI singleton (`TelemetryExtensions.cs:47-48`); ASP.NET Core registers its source with `TryAddSingleton` (`GenericWebHostBuilder.cs:76`) and resolves the last registration — reproduced (C1 dev P5: `svc-a\|Microsoft.AspNetCore.Hosting.HttpRequestIn\|Server`) | no case; C11 test |
 | Stable HTTP semconv metric and attributes | AspNetCore and Http instrumentations emit stable conventions only (`OTEL_SEMCONV_STABILITY_OPT_IN` support removed upstream) | `metrics.http_server_duration_histogram_name`, `http.non_health_traced_and_counted` |
 
 ### Prometheus fallback — ADR-007, A21, N7, N8 (22 cases → C12)
@@ -579,6 +579,113 @@ detector order the helper cannot reconstruct. **Reversal action**: a
 `TelemetryOptions.ResourceDetectors` hook run after the helper's attributes.
 **Alternatives**: plain `Clear()` (rejected); keep the SDK env detector
 (rejected: its parse and ordering are not the contract's).
+
+*Note 2026-11-10 (C6, implementation; corrections to the choice above, read against SDK
+`core-1.20.1` `src/OpenTelemetry/Resources/`):*
+(a) **Layering follows the contract row**, not step 2's order: `telemetry.sdk.*` are added
+**last** (contract design D1 "telemetry.sdk.* and the resource schema URL": env parse < code
+attributes < resolved identity < `telemetry.sdk.*`), so an app or code value for them never
+wins. Final order, lowest to highest: helper-parsed `OTEL_RESOURCE_ATTRIBUTES` < kept earlier
+app attributes < code `ResourceAttributes` < `service.name`, `service.instance.id`,
+`deployment.environment.name` (when resolved) < `telemetry.sdk.*`, added as **one**
+`AddAttributes(attributes, schemaUrl)` after `Clear()` (`dotnet/StaffOps.OtelHelper/ResourceSetup.cs`).
+(b) **Schema URL**: the contract literal `https://opentelemetry.io/schemas/1.43.0`, not what
+the default builder gives (SDK 1.20 `SchemaUrls.Get(SemanticConventionsVersion.Current)` is
+1.44.0, C3 diff). Kept app resources lose their own schema URL when their attributes are
+re-added (a second, different URL would be a merge conflict: `Resource.MergeSchemaUrl` logs and
+yields none).
+(c) **"Equal to what the SDK produces"** is computed with the SDK itself, not with the helper's
+A16 parser: `ResourceBuilder.CreateDefault().Build()` in the same callback, where both builders
+have no service provider yet (`TracerProviderSdk.cs:68-69` sets it after the callbacks), so the
+SDK env detectors read the process environment for both. Recomputing with the A16 parser would
+keep the SDK detector's artifacts as "app" values (`" team.name=x"` → SDK key `team.name`,
+helper key with U+00A0; `+` → space), which the parity case
+`resource_attributes.unicode_space_key_verbatim` forbids.
+(d) **`service.instance.id`**: the per-process id is the one the SDK's `AddService` generates
+(`ResourceBuilderExtensions.InstanceId`, read once through a probe builder), so an app
+`AddService` and the helper report the same id.
+(e) **Environment unresolved**: a blank env or code value is removed; a value an earlier app
+`ConfigureResource` set stays (it is code).
+(f) **Factory path**: the helper's attributes are added without a schema URL (the kept SDK
+resources declare 1.44.0; a different URL would conflict), and `telemetry.sdk.*` still last.
+(g) **Not verified**: `[TO VERIFY C6: which common detector packages register factory
+detectors]` stays open — no detector package is referenced by this repo; the path is covered by
+a unit test with an `AddDetector(sp => …)` registered before `AddOtelHelper()`.
+(h) **R4 log levels**: the environment name is matched after the contract trim, ASCII
+case-insensitively (`TelemetryOptions.GetDefaultLogLevel`, the resolver's `KnownEnvironment`), as
+Go `knownEnvironment` (`go/config.go:155`) and Python `_parse_environment`; U+0130 and U+00A0 do
+not fold. The C5 rule "a blank code `Environment`/`ServiceName` is not set" is kept (Go and Python
+reject a blank code value): a .NET difference left to the owner, not changed by C6.
+(i) **ADR-013 consequence**: with the SDK detectors cleared, `OTEL_SERVICE_NAME` and
+`OTEL_RESOURCE_ATTRIBUTES` set only in `IConfiguration` no longer reach the resource (0.2.x: the
+SDK detectors read `IConfiguration` first); migration row 13.
+
+*Note 2026-11-10 (C6 fix round 1, after the dev, observability and code-review rounds):*
+(j) **A `ConfigureResource` registered after `AddOtelHelper()` wins, and is only detected.** The
+helper's rebuild runs inside its deferred `ConfigureOpenTelemetry*Provider` callback; SDK 1.20.1
+runs every `IConfigure*ProviderBuilder` in registration order and builds the resource right
+after the loop (`TracerProviderSdk.cs:60-70`), its builder `ConfigureResource` and
+`ConfigureBuilder` run their action immediately (`TracerProviderBuilderSdk.cs:81-88, 152-157`),
+`ConfigureServices` throws after the container is built, and `Resource.Merge` lets the later
+resource win (`Resource.cs`). No public hook runs after the application's callbacks, so the
+helper cannot move last. Instead the helper adds, after its own resource, a detector that runs
+at the provider's `Build()` (after every callback), builds the whole resource once more with its
+own entry answering empty, and warns once naming what changed (`service.name`,
+`service.instance.id`, `deployment.environment.name`, `telemetry.sdk.*`, the schema URL); the
+SDK's `ResourceSchemaUrlMergeConflict` event (1.43.0 vs an `AddService`'s 1.44.0) becomes one
+helper WARN instead of the forwarded SDK text. The nested `Build()` calls the builder's detector
+factories once more. **Reversal**: an SDK hook that runs after the configure callbacks, or a
+`TelemetryOptions` callback the helper applies itself.
+(k) **Earlier app identity keys, per key**: `service.name` is always the resolved one (the
+helper's `ActivitySource` and `Meter` carry it); `deployment.environment.name` and
+`service.instance.id` an earlier app `ConfigureResource` set are kept when the helper has no
+value of its own (environment unresolved; instance id only the per-process one — an explicit
+`AddService(serviceInstanceId: "x")` is kept), otherwise the resolved value wins with one warning
+per key, naming the key only. An app environment kept that way is used only when the helper resolves none (below every helper source): no
+"not set" warning, and the default log level follows it — re-applied through an
+`IOptionsChangeTokenSource<LoggerFilterOptions>` (`AppResourceState`), because the host's first
+logger exists before any provider builds the resource. The "not set" warning is therefore
+written when a provider builds its resource; the helper's hosted service now resolves the three
+providers at start, as the SDK's own hosted service does right after it.
+(l) **Factory path**: the warning names `deployment.environment.name` when the helper resolved
+none (a blank value from the SDK's own parse stays), and the resource keeps the SDK's schema URL
+1.44.0.
+(m) **Raw invalid UTF-8**: .NET reads the environment already decoded, as Node: an invalid byte
+arrives as U+FFFD, so a non-UTF-8 key cannot be detected (contract row "OTEL_RESOURCE_ATTRIBUTES
+parsing", note of the same date).
+(n) **"Once" is once per container** (per diagnostics sink, D-NET5), not once per process as in
+Go and Python: two hosts in one process each warn once.
+(o) **Blank code identity options fail** (coordinator decision, owner parity mandate): a non-null
+`ServiceName` or `Environment` that is blank under the contract trim set fails host start naming
+the option; supersedes item (h)'s "kept" sentence. Contract row "Blank code identity option".
+
+*Note 2026-11-10 (C6 fix round 2; corrects (j)):* the detector that rebuilt the resource inside
+`Build()` is replaced by a **check after the providers are built**: it ran every remaining
+detector twice per provider (an IMDS-backed detector doubles its startup latency; SDK warnings
+printed twice) and could not see an application `SetResourceBuilder(...)` registered after
+`AddOtelHelper()` (`TracerProviderBuilderSdk.cs:90-94`: the helper's builder is discarded for
+that signal, so its identity is lost and the signals disagree). Now each signal's `Apply` records
+what it set (`AppResourceState.Expect`), and the helper's hosted service, after resolving the three
+providers at start, compares each provider's `GetResource()` (`ProviderExtensions.cs:22`) with it
+— identity keys, `telemetry.sdk.*`, a different non-empty schema URL — and warns once with
+`signals=` and `changed=`. A missing schema URL is not listed there: the SDK's merge-conflict event
+59 becomes one helper warning with the old and updating URLs. Each earlier detector now runs once
+per provider (in the helper's snapshot; the builder is then cleared); on the factory path the
+detectors before the factory one run twice (snapshot, then the kept builder). **Limitation**: an
+app without a host (a bare `ServiceProvider`) gets no check. An environment set only by a callback
+registered after `AddOtelHelper()` does not feed the log level, and when an earlier callback sets it
+for some signals only, the others report it absent, and the "not set" warning is written only by a provider built before one that carries it.
+
+*Note 2026-11-10 (C6 fix round 3; corrects the last sentence above):* in a host the logger provider
+is built at `host.Build()`, before the tracer that may carry an app environment, so the build-time
+"not set" warning contradicted the level applied later. In a host (`IHostApplicationLifetime`
+registered, asked through `IServiceProviderIsService` — resolving the lifetime from
+`AppResourceState` deadlocks startup, as the lifetime's logger reads that state) the warning moves
+to the start-time check: "not set" only when no built resource carries the key, one
+`differs between signals` line (`missing=<signals>`) when some do. Hostless, it stays at build time.
+The check skips an empty resource and returns early under `OTEL_SDK_DISABLED` (both defensive on SDK
+1.20.1: measured, removing both still writes no later-change line under `OTEL_SDK_DISABLED=true`; why — no
+expectation recorded or empty resources — was not traced).
 
 ### D-NET8 — Health: instrumentation `Filter`; one gRPC client span
 **Choice**: HTTP and gRPC server health requests are dropped by the ASP.NET
