@@ -41,7 +41,7 @@ _REQUIRED_KEYS = {"id", "kind", "env", "code", "expect", "status"}  # same set a
 _OVERRIDE_RE = re.compile(r"^python@sdk>=[\d.]+$")
 _SCHEMA = {
     "resolve": {"resource", "metric_exporters", "metric_export_interval_ms", "log_level", "prometheus_metrics_port",
-                "prometheus_metrics_host", "http_opt_in_metrics"},
+                "prometheus_metrics_host", "http_opt_in_metrics", "exemplar_filter"},
     "export": {"received"},
     "sampler": {"sampled", "attributes"},
     "propagation": {"headers"},

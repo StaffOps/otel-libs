@@ -180,6 +180,16 @@ Rows that stay with the SDK, and where it reads them:
 > adds `grpc-timeout` on gRPC (the .NET exporter sends none) and reports a `3xx` as an ERROR
 > per signal and status. Compression defaults to `GZip`, as decided above.
 
+> **Added 2026-11-10 (task C9).** Item (3) of the C5 fix-round-2 note is decided:
+> `OTEL_METRIC_EXPORT_INTERVAL` stays a process-environment row, parsed by the
+> contract grammar, and since C8 the export timeout is the helper's as well, so
+> neither reads `IConfiguration` (an `appsettings.json`-only value has no effect;
+> test `Interval_Only_In_IConfiguration_Is_Not_Read`). `OTEL_TRACES_EXPORTER`,
+> `OTEL_LOGS_EXPORTER` and `OTEL_METRICS_EXEMPLAR_FILTER` are process-environment
+> rows too. `OTEL_SDK_DISABLED` keeps the `IConfiguration` source of the table
+> above and gains the warning for a value other than `true`/`false`. The
+> exemplar unit test named below exists and runs on the built provider.
+
 **Exception to ADR-001's fixture rule — the exemplar filter.** The helper
 parses `OTEL_METRICS_EXEMPLAR_FILTER` (`always_on`, `always_off`,
 `trace_based`; default `trace_based`) and always calls `SetExemplarFilter`,

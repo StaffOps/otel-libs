@@ -152,6 +152,21 @@ def _resource_snapshot() -> dict:
     return {k: str(v) for k, v in resource.attributes.items()}
 
 
+def _installed_exemplar_filter() -> str | None:
+    """The exemplar filter of the installed SDK MeterProvider (its SDK configuration), or None."""
+    from opentelemetry import metrics
+
+    config = getattr(metrics.get_meter_provider(), "_sdk_config", None)
+    exemplar_filter = getattr(config, "exemplar_filter", None)
+    if exemplar_filter is None:
+        return None
+    return {
+        "AlwaysOnExemplarFilter": "always_on",
+        "AlwaysOffExemplarFilter": "always_off",
+        "TraceBasedExemplarFilter": "trace_based",
+    }.get(type(exemplar_filter).__name__, "unknown")
+
+
 def kind_resolve(case: dict) -> dict:
     from staffops_otel_helper import get_default_log_level
 
@@ -167,6 +182,9 @@ def kind_resolve(case: dict) -> dict:
         snap["prometheus_metrics_port"] = opts.resolved.prometheus_metrics_port
         snap["prometheus_metrics_host"] = opts.resolved.prometheus_metrics_host  # "" = every interface (A29)
         snap["http_opt_in_metrics"] = opts.resolved.http_opt_in_metrics  # A30
+        exemplar_filter = _installed_exemplar_filter()
+        if exemplar_filter is not None:
+            snap["exemplar_filter"] = exemplar_filter  # .NET C9 fix round / A33
     _flush_and_shutdown()
     return snap
 

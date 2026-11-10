@@ -34,7 +34,7 @@ suite runs every case. **`cases.json` is hand-maintained**: edit it directly
 
 | Kind | `input` | Does | Snapshot fields (`expect` keys) |
 |---|---|---|---|
-| `resolve` | — | Setup, read what it installed | `resource` (all attributes of the installed resource), `metric_exporters` (the **effective** list: `[]` when metrics are disabled — `OTEL_HELPER_DISABLED_SIGNALS`, code disabled signals — or the SDK is, `OTEL_SDK_DISABLED=true`; defined 2026-10-29, A19 fix round), `metric_export_interval_ms`, `log_level`, `prometheus_metrics_port` (the resolved `/metrics` listener port; added 2026-11-02, A21), `prometheus_metrics_host` (the resolved bind address from `OTEL_EXPORTER_PROMETHEUS_HOST`: `""` = every interface, else the IP literal without brackets, `localhost` → `127.0.0.1`, an IPv4-mapped address (`::ffff:a.b.c.d`, any spelling) → its IPv4 literal; added 2026-11-05, A29), `http_opt_in_metrics` (the resolved HTTP opt-in metrics switch, a boolean; added 2026-11-07, A30) |
+| `resolve` | — | Setup, read what it installed | `resource` (all attributes of the installed resource), `metric_exporters` (the **effective** list: `[]` when metrics are disabled — `OTEL_HELPER_DISABLED_SIGNALS`, code disabled signals — or the SDK is, `OTEL_SDK_DISABLED=true`; defined 2026-10-29, A19 fix round), `metric_export_interval_ms`, `log_level`, `prometheus_metrics_port` (the resolved `/metrics` listener port; added 2026-11-02, A21), `prometheus_metrics_host` (the resolved bind address from `OTEL_EXPORTER_PROMETHEUS_HOST`: `""` = every interface, else the IP literal without brackets, `localhost` → `127.0.0.1`, an IPv4-mapped address (`::ffff:a.b.c.d`, any spelling) → its IPv4 literal; added 2026-11-05, A29), `http_opt_in_metrics` (the resolved HTTP opt-in metrics switch, a boolean; added 2026-11-07, A30), `exemplar_filter` (`always_on`, `always_off` or `trace_based`: the filter of the **installed** SDK MeterProvider, absent when none is installed — Go reads the SDK's unexported pipeline field by reflection, Python the provider's `_sdk_config`, .NET the `MeterProviderSdk` member by reflection, Node.js has none (`skip:no-upstream-node-exemplar-filter`); added 2026-11-10, .NET C9 fix round 1, task A33) |
 | `export` | — | Setup, emit one span + counter + log, shut down, read the receiver | `received{traces,metrics,logs}` → records `{proto, tls, port, path, raw_path, encoding, headers, timeout_ms}` (`path` decoded, `raw_path` as sent with escapes kept; `timeout_ms` from the gRPC `grpc-timeout` header) |
 | `sampler` | `scenario`: `root`, `remote_sampled`, `remote_unsampled`, `remote_sampled_debug_tracestate`, `remote_sampled_debug_baggage`, `local_child_of_root`, `local_child_of_remote_unsampled` | Start one span | `sampled`, `attributes` |
 | `propagation` | — | Inject inside a span with baggage `parity=1` | `headers` (sorted names) |
@@ -338,6 +338,18 @@ docker compose -f testing/docker-compose.yml run --rm -e PARITY_ONLY=export.grpc
   which some fixture regexes (`sample_ratio|sampleRatio`, `otel_endpoint|otelEndpoint`,
   the substring `insecure`) do not match yet: those cases stay `xfail:C<n>`.
 - **`fork`.** Never spawned (`skip:no-prefork-model`).
+- **Signals and exporters (task C9, 2026-11-10).** `metric_exporters` is
+  `ResolvedMetricExporters()` and `metric_export_interval_ms` the resolved
+  interval the helper hands the OTLP and console readers. `console` in an
+  `export` case is the SDK console exporter's output: the driver points
+  `Console.Out` at stderr, so it reaches `console` with the helper's
+  diagnostics. `config.disabled_signals_standard_var_wins` is `xfail:C16`, not
+  `xfail:C9`: the precedence passes (traces are received), the warning it
+  asserts is the `OTEL_HELPER_DISABLED_SIGNALS` deprecation, which task C16
+  owns. *Fix round 1 (2026-11-10):* the case is split — it now asserts only the
+  precedence (.NET `pass`), and
+  `deprecation.disabled_signals_standard_var_set_still_warns` asserts the
+  deprecation (.NET `xfail:C16`).
 
 ### Rules the fixture cannot express (A30, 2026-11-08)
 
@@ -403,6 +415,15 @@ fail a case.
   `tests/test_a10_db_semconv.py` (contrib stability mode always; real
   SQLAlchemy + sqlite spans when SQLAlchemy is installed), Go `ext/otelsql`
   tests. Adding a `sql` kind would need a driver step in both runners.
+
+- **Exemplars on the wire** (`OTEL_METRICS_EXEMPLAR_FILTER`, ADR-013, task C9,
+  2026-11-10): no fixture kind reads exemplars themselves. The .NET helper
+  parses the variable and always sets the filter (default `trace_based`; the
+  .NET SDK default is `AlwaysOff`), covered by the unit test
+  `ExemplarFilter_DefaultsToTraceBased_AndHonorsEnv`. *Fix round 1
+  (2026-11-10):* the resolved filter itself is a `resolve` field
+  (`exemplar_filter`, cases `metrics.exemplar_filter_*`); Python ignores the
+  variable until task A33.
 
 ## Adding or flipping a case
 

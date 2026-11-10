@@ -56,6 +56,7 @@ namespace StaffOps.OtelHelper
             }
 
             CheckMetricExporters(failures, options);
+            CheckDisabledSignals(failures, options);
             CheckResourceAttributes(failures, options);
 
             // A blank identity option is an invalid code value (Go WithServiceName/WithEnvironment,
@@ -110,6 +111,29 @@ namespace StaffOps.OtelHelper
         /// <summary>The value types <c>OpenTelemetry.Resources.Resource</c> accepts (<c>Resource.SanitizeValue</c>, SDK 1.20).</summary>
         private static bool IsResourceValue(object? value) => value is string or bool or double or long or int or short or float
             or string[] or bool[] or double[] or long[] or int[] or short[] or float[];
+
+        /// <summary>
+        /// Code disabled signals (contract row "Deprecated <c>OTEL_HELPER_DISABLED_SIGNALS</c>", A19):
+        /// trimmed and lowercased like the resolver does; an entry that is not a signal fails, as in
+        /// Go (<c>WithDisabledSignals</c>) and Python (<c>disabled_signals</c>).
+        /// </summary>
+        private static void CheckDisabledSignals(List<string> failures, TelemetryOptions options)
+        {
+            if (string.IsNullOrWhiteSpace(options.DisabledSignals))
+            {
+                return;
+            }
+
+            var unknown = TelemetryResolver.SplitList(options.DisabledSignals)
+                .Where(s => !ResolvedTelemetry.Signals.Contains(s))
+                .Distinct()
+                .ToArray();
+            if (unknown.Length > 0)
+            {
+                failures.Add($"Unknown signal(s) {string.Join(", ", unknown.Select(DiagnosticText.Echo))} in {Owner}{nameof(TelemetryOptions.DisabledSignals)}. " +
+                    $"Valid values: {string.Join(", ", ResolvedTelemetry.Signals)}.");
+            }
+        }
 
         private static void CheckMetricExporters(List<string> failures, TelemetryOptions options)
         {

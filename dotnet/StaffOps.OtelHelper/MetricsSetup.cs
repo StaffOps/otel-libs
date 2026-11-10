@@ -27,7 +27,6 @@ namespace StaffOps.OtelHelper.Metrics
                 .AddRuntimeInstrumentation()
                 .AddAspNetCoreInstrumentation()
                 .AddHttpClientInstrumentation()
-                .SetExemplarFilter(ExemplarFilterType.TraceBased)
                 .AddPrometheusHttpListener();
 
         /// <summary>
@@ -303,6 +302,11 @@ namespace StaffOps.OtelHelper.Metrics
 
             builder.ConfigureResource(r => ResourceSetup.Apply(r, resolved, sp, "metrics"));
 
+            // Always set (ADR-013 exception): the .NET SDK default is AlwaysOff, the spec's trace_based.
+            // A deferred builder runs ConfigureBuilder at once, so an application's later
+            // SetExemplarFilter still wins.
+            builder.SetExemplarFilter(resolved.ExemplarFilter);
+
             // "Off" (signal disabled, or no metric exporter at all): instrumentation and the
             // non-listening reader registered, no meter, no OTLP reader, and a view that drops the
             // helper's own instrumentation meters, so the idle reader aggregates nothing of the
@@ -320,6 +324,14 @@ namespace StaffOps.OtelHelper.Metrics
             foreach (var meter in resolved.AdditionalMeters)
             {
                 builder.AddMeter(meter);
+            }
+
+            // OTEL_METRICS_EXPORTER=console (or the alias logging): the SDK console exporter on a
+            // periodic reader with the resolved interval, built directly (AddConsoleExporter
+            // registers services, which this deferred step cannot).
+            if (resolved.ResolvedMetricExporters().Contains("console"))
+            {
+                builder.AddReader(CreateConsoleReader(sp, resolved));
             }
 
             if (!string.IsNullOrEmpty(resolved.DisabledMetrics))
@@ -364,6 +376,21 @@ namespace StaffOps.OtelHelper.Metrics
                 new OtlpMetricExporter(otlp),
                 interval,
                 OtlpExporters.TimeoutFor("metrics", resolved))
+            {
+                TemporalityPreference = readerOptions.TemporalityPreference,
+            };
+        }
+
+        /// <summary>
+        /// The console metric reader: the resolved interval and the default <c>MetricReaderOptions</c>
+        /// temporality, as upstream's <c>AddConsoleExporter</c> reads them.
+        /// </summary>
+        internal static PeriodicExportingMetricReader CreateConsoleReader(IServiceProvider sp, ResolvedTelemetry resolved)
+        {
+            var readerOptions = sp.GetRequiredService<IOptionsMonitor<MetricReaderOptions>>().Get(Options.DefaultName);
+            return new PeriodicExportingMetricReader(
+                new ConsoleMetricExporter(new ConsoleExporterOptions()),
+                (int)Math.Min(resolved.ExportIntervalMs, int.MaxValue))
             {
                 TemporalityPreference = readerOptions.TemporalityPreference,
             };

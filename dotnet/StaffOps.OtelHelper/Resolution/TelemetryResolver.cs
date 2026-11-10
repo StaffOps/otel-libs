@@ -1,5 +1,6 @@
 using System.Globalization;
 using Microsoft.Extensions.Configuration;
+using OpenTelemetry.Metrics;
 using OpenTelemetry.Trace;
 using StaffOps.OtelHelper.Diagnostics;
 
@@ -49,7 +50,7 @@ namespace StaffOps.OtelHelper
             var identity = ResolveIdentity(code, diagnostics);
             var environment = identity.Environment;
             var debug = code.DebugLevel ?? EnvTrue(TelemetryOptions.DebugLevelEnvVar);
-            var sdkDisabled = ReadSdkDisabled(configuration);
+            var sdkDisabled = ReadSdkDisabled(configuration, diagnostics);
             if (sdkDisabled)
             {
                 diagnostics.ReportOnce("info:" + TelemetryOptions.SdkDisabledEnvVar, DiagnosticLevel.Info,
@@ -57,6 +58,15 @@ namespace StaffOps.OtelHelper
             }
 
             var hasMetricsEndpoint = targets.ContainsKey("metrics");
+            var tracesExporters = ParseExporterEnv(TracesExporterEnvVar, TraceLogExporterNames, diagnostics);
+            var logsExporters = ParseExporterEnv(LogsExporterEnvVar, TraceLogExporterNames, diagnostics);
+            var metricExporters = ResolveMetricExporters(code, hasMetricsEndpoint, diagnostics, out var metricsChosen);
+            var chosen = new Dictionary<string, bool>(StringComparer.Ordinal)
+            {
+                ["traces"] = tracesExporters is not null,
+                ["metrics"] = metricsChosen,
+                ["logs"] = logsExporters is not null,
+            };
             return new ResolvedTelemetry
             {
                 ServiceName = identity.ServiceName,
@@ -80,10 +90,13 @@ namespace StaffOps.OtelHelper
                 ResourceAttributes = new Dictionary<string, object>(code.ResourceAttributes ?? new Dictionary<string, object>()),
                 AdditionalActivitySources = code.AdditionalActivitySources.ToArray(),
                 AdditionalMeters = code.AdditionalMeters.ToArray(),
-                DisabledSignals = NonBlank(code.DisabledSignals) ?? NonBlank(Env(TelemetryOptions.DisabledSignalsEnvVar)) ?? "",
+                DisabledSignals = ResolveDisabledSignals(code, chosen, diagnostics),
                 DisabledMetrics = NonBlank(code.DisabledMetrics) ?? NonBlank(Env(TelemetryOptions.DisabledMetricsEnvVar)) ?? "",
-                MetricExporters = ResolveMetricExporters(code, hasMetricsEndpoint, diagnostics),
-                ExportIntervalMs = code.ExportIntervalMs ?? ResolveEnvInterval(),
+                MetricExporters = metricExporters,
+                TracesExporters = tracesExporters ?? DefaultTraceLogExporters,
+                LogsExporters = logsExporters ?? DefaultTraceLogExporters,
+                ExportIntervalMs = code.ExportIntervalMs ?? ResolveEnvInterval(diagnostics, configuration),
+                ExemplarFilter = ResolveExemplarFilter(diagnostics),
                 PrometheusMetricsPort = code.PrometheusMetricsPort ?? ResolveEnvPort(diagnostics),
                 HealthPaths = code.HealthPaths?.ToArray() ?? DefaultHealthPaths,
                 SdkDisabled = sdkDisabled,
@@ -563,62 +576,252 @@ namespace StaffOps.OtelHelper
 
         // ── metrics ────────────────────────────────────────────────────────
 
-        private static IReadOnlyList<string> ResolveMetricExporters(TelemetryOptions code, bool hasEndpoint, IOtelHelperDiagnostics diagnostics)
+        internal const string TracesExporterEnvVar = "OTEL_TRACES_EXPORTER";
+        internal const string LogsExporterEnvVar = "OTEL_LOGS_EXPORTER";
+        internal const string ExemplarFilterEnvVar = "OTEL_METRICS_EXEMPLAR_FILTER";
+
+        /// <summary>Exporter names of <c>OTEL_TRACES_EXPORTER</c> and <c>OTEL_LOGS_EXPORTER</c> besides <c>none</c>.</summary>
+        internal static readonly string[] TraceLogExporterNames = { "otlp", "console" };
+
+        /// <summary>Exporter names of <c>OTEL_METRICS_EXPORTER</c> besides <c>none</c>.</summary>
+        internal static readonly string[] MetricExporterNames = { "otlp", "prometheus", "console" };
+
+        /// <summary>The traces and logs exporters when their variable is unset: <c>otlp</c> (active only with an endpoint).</summary>
+        private static readonly string[] DefaultTraceLogExporters = { "otlp" };
+
+        /// <summary>
+        /// A comma-separated list as the contract reads one: entries trimmed with the contract
+        /// trim set, ASCII-lowercased, empty entries dropped (duplicates kept).
+        /// </summary>
+        internal static string[] SplitList(string value)
+            => value.Split(',')
+                .Select(e => ContractText.AsciiLower(ContractText.Trim(e)))
+                .Where(e => e.Length > 0)
+                .ToArray();
+
+        /// <summary>
+        /// <c>OTEL_{TRACES,METRICS,LOGS}_EXPORTER</c> (contract R8, rows "Exporter alias logging" and
+        /// "Signal on/off", A19). Null: unset, blank, only separators or only unknown entries (the
+        /// default applies, and the variable does not count as set for the deprecated
+        /// <c>OTEL_HELPER_DISABLED_SIGNALS</c>). Empty: <c>none</c> — combined with other entries it
+        /// warns and still wins. <c>logging</c> is a deprecated alias of <c>console</c> and warns; an
+        /// unknown entry warns and is dropped; entries are de-duplicated in order.
+        /// </summary>
+        internal static IReadOnlyList<string>? ParseExporterEnv(string variable, IReadOnlyCollection<string> names, IOtelHelperDiagnostics diagnostics)
         {
-            if (NonBlank(code.MetricExporters) is { } fromCode)
+            if (ContractText.NonBlank(Env(variable)) is not { } raw)
             {
-                // Validated at start: known names only, "none" alone, "otlp" with an endpoint.
-                var list = SplitLower(fromCode);
-                return list.Contains("none") ? Array.Empty<string>() : list.Distinct().ToArray();
+                return null;
             }
 
-            var fromEnv = NonBlank(Env(TelemetryOptions.MetricsExporterEnvVar));
-            if (fromEnv is null)
+            var list = new List<string>();
+            var none = false;
+            var unknown = false;
+            foreach (var entry in SplitList(raw))
             {
-                return hasEndpoint ? new[] { "otlp" } : new[] { "prometheus" };
-            }
-
-            var entries = SplitLower(fromEnv);
-            var known = entries.Where(e => TelemetryOptions.ValidMetricExporters.Contains(e)).Distinct().ToList();
-            if (known.Count < entries.Length)
-            {
-                WarnInvalidEnv(diagnostics, TelemetryOptions.MetricsExporterEnvVar, fromEnv,
-                    "unknown metric exporter ignored; valid values: otlp, prometheus, none");
-            }
-
-            if (known.Contains("none"))
-            {
-                if (known.Count > 1)
+                var name = entry;
+                if (name == "none")
                 {
-                    WarnInvalidEnv(diagnostics, TelemetryOptions.MetricsExporterEnvVar, fromEnv,
-                        "'none' combined with other exporters: metrics are not exported");
+                    none = true;
+                    continue;
+                }
+
+                if (name == "logging")
+                {
+                    diagnostics.ReportOnce($"alias:{variable}", DiagnosticLevel.Warn,
+                        $"deprecated exporter value 'logging' in {variable}; use 'console'",
+                        ("variable", variable), ("value", "logging"), ("using", "console"));
+                    name = "console";
+                }
+                else if (!names.Contains(name))
+                {
+                    unknown = true;
+                    continue;
+                }
+
+                if (!list.Contains(name))
+                {
+                    list.Add(name);
+                }
+            }
+
+            if (unknown)
+            {
+                WarnInvalidEnv(diagnostics, variable, raw, $"unknown exporter ignored; valid values: {string.Join(", ", names)}, none");
+            }
+
+            if (none)
+            {
+                if (list.Count > 0)
+                {
+                    // Its own once-key: the unknown-entry warning above may echo the same value.
+                    diagnostics.ReportOnce($"none-combined:{variable}:{raw}", DiagnosticLevel.Warn,
+                        $"invalid {variable}: 'none' combined with other exporters: the signal is not exported",
+                        ("variable", variable), ("value", raw));
                 }
 
                 return Array.Empty<string>();
             }
 
-            if (known.Count == 0)
-            {
-                return hasEndpoint ? new[] { "otlp" } : new[] { "prometheus" };
-            }
-
-            if (known.Contains("otlp") && !hasEndpoint)
-            {
-                diagnostics.ReportOnce("otlp-without-endpoint:" + TelemetryOptions.MetricsExporterEnvVar, DiagnosticLevel.Warn,
-                    "metric exporter 'otlp' has no endpoint and is ignored; set OTEL_EXPORTER_OTLP_ENDPOINT",
-                    ("variable", TelemetryOptions.MetricsExporterEnvVar));
-                known.Remove("otlp");
-            }
-
-            return known;
+            return list.Count == 0 ? null : list;
         }
 
-        private static long ResolveEnvInterval()
+        /// <summary>
+        /// The metric exporters: code (validated at start: known names, <c>none</c> alone, <c>otlp</c>
+        /// with an endpoint) &gt; <c>OTEL_METRICS_EXPORTER</c> &gt; <c>otlp</c> with a metrics endpoint,
+        /// else <c>prometheus</c>. An environment <c>otlp</c> without a metrics endpoint warns and is
+        /// dropped; when nothing is left the default applies (R2). <paramref name="chosen"/>: whether
+        /// code or a variable with a valid entry chose them (it then wins over
+        /// <c>OTEL_HELPER_DISABLED_SIGNALS</c>), also when <c>otlp</c> was dropped.
+        /// </summary>
+        private static IReadOnlyList<string> ResolveMetricExporters(TelemetryOptions code, bool hasEndpoint, IOtelHelperDiagnostics diagnostics, out bool chosen)
         {
-            var text = Env(TelemetryOptions.MetricExportIntervalEnvVar);
-            return !string.IsNullOrWhiteSpace(text) && int.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out var interval) && interval > 0
-                ? interval
-                : TelemetryOptions.DefaultExportIntervalMs;
+            var inferred = hasEndpoint ? new[] { "otlp" } : new[] { "prometheus" };
+            // Set in code wins whatever its value (contract: Go and Node check "set", Python
+            // "is not None"): an empty or blank list means no exporter.
+            if (code.MetricExporters is { } fromCode)
+            {
+                chosen = true;
+                var list = SplitList(fromCode);
+                if (list.Length == 0)
+                {
+                    // Contract behavior (Go, Python, Node: silent); said once here because a blank
+                    // bound placeholder ("MetricExporters": "") counted as unset before 0.3.
+                    diagnostics.ReportOnce("info:empty-metric-exporters", DiagnosticLevel.Info,
+                        "TelemetryOptions.MetricExporters is empty: no metric exporter");
+                }
+
+                return list.Contains("none") ? Array.Empty<string>() : list.Distinct().ToArray();
+            }
+
+            var fromEnv = ParseExporterEnv(TelemetryOptions.MetricsExporterEnvVar, MetricExporterNames, diagnostics);
+            chosen = fromEnv is not null;
+            if (fromEnv is null)
+            {
+                return inferred;
+            }
+
+            if (fromEnv.Contains("otlp") && !hasEndpoint)
+            {
+                diagnostics.ReportOnce("otlp-without-endpoint:" + TelemetryOptions.MetricsExporterEnvVar, DiagnosticLevel.Warn,
+                    "metric exporter 'otlp' has no endpoint and is ignored; set OTEL_EXPORTER_OTLP_ENDPOINT or OTEL_EXPORTER_OTLP_METRICS_ENDPOINT",
+                    ("variable", TelemetryOptions.MetricsExporterEnvVar));
+                var kept = fromEnv.Where(e => e != "otlp").ToArray();
+                return kept.Length == 0 ? inferred : kept;
+            }
+
+            return fromEnv;
+        }
+
+        /// <summary>
+        /// The disabled signals, as a comma-separated list (contract row "Deprecated
+        /// <c>OTEL_HELPER_DISABLED_SIGNALS</c>", A19): code (trimmed, lowercased, de-duplicated;
+        /// unknown entries fail at start) wins; else each entry of the deprecated variable, unless
+        /// that signal's exporters were chosen (<paramref name="chosen"/>: its
+        /// <c>OTEL_&lt;SIGNAL&gt;_EXPORTER</c> holds a valid entry, or for metrics the code option).
+        /// An unknown entry warns once, echoing the entry.
+        /// </summary>
+        private static string ResolveDisabledSignals(TelemetryOptions code, IReadOnlyDictionary<string, bool> chosen, IOtelHelperDiagnostics diagnostics)
+        {
+            // Set in code wins whatever its value: an empty or blank string disables nothing and
+            // still beats the deprecated variable (Go disabledSignalsSet, Python "is not None").
+            if (code.DisabledSignals is { } fromCode)
+            {
+                return string.Join(",", SplitList(fromCode).Distinct());
+            }
+
+            if (ContractText.NonBlank(Env(TelemetryOptions.DisabledSignalsEnvVar)) is not { } raw)
+            {
+                return "";
+            }
+
+            var disabled = new List<string>();
+            foreach (var entry in SplitList(raw).Distinct())
+            {
+                if (!ResolvedTelemetry.Signals.Contains(entry))
+                {
+                    diagnostics.ReportOnce($"invalid:{TelemetryOptions.DisabledSignalsEnvVar}:{entry}", DiagnosticLevel.Warn,
+                        $"invalid {TelemetryOptions.DisabledSignalsEnvVar}: unknown signal ignored; valid values: {string.Join(", ", ResolvedTelemetry.Signals)}",
+                        ("variable", TelemetryOptions.DisabledSignalsEnvVar), ("value", entry));
+                }
+                else if (!chosen[entry])
+                {
+                    disabled.Add(entry);
+                }
+            }
+
+            return string.Join(",", disabled);
+        }
+
+        internal const long MaxExportIntervalMs = int.MaxValue;
+
+        /// <summary>
+        /// <c>OTEL_METRIC_EXPORT_INTERVAL</c> from the process environment (contract row "Metric
+        /// export interval", A19): trimmed with the contract set, then <c>^\+?[0-9]+$</c> (ASCII
+        /// digits only) of any length and above 0, else a warning and 30 000; above
+        /// 2 147 483 647 clamped with a warning.
+        /// </summary>
+        internal static long ResolveEnvInterval(IOtelHelperDiagnostics diagnostics, IConfiguration? configuration = null)
+        {
+            const string variable = TelemetryOptions.MetricExportIntervalEnvVar;
+            if (ContractText.NonBlank(Env(variable)) is not { } text)
+            {
+                // Principle 8: a value only in IConfiguration (appsettings) is not read (ADR-013),
+                // and the SDK's own parse line for it is dropped as helper-owned, so say so once.
+                if (configuration is not null && ContractText.NonBlank(configuration[variable]) is not null)
+                {
+                    diagnostics.ReportOnce("iconfiguration-only:" + variable, DiagnosticLevel.Warn,
+                        $"{variable} is set only in IConfiguration and is not read; set it in the process environment or TelemetryOptions.ExportIntervalMs, using 30000",
+                        ("variable", variable));
+                }
+
+                return TelemetryOptions.DefaultExportIntervalMs;
+            }
+
+            var digits = text.StartsWith('+') ? text[1..] : text;
+            var significant = digits.TrimStart('0');
+            if (digits.Length == 0 || !digits.All(c => c is >= '0' and <= '9') || significant.Length == 0)
+            {
+                WarnInvalidEnv(diagnostics, variable, text, "not a positive integer number of milliseconds, using 30000");
+                return TelemetryOptions.DefaultExportIntervalMs;
+            }
+
+            // More than 10 significant digits is above 2 147 483 647 (10 digits); 10 fit in a long.
+            if (significant.Length > 10 || long.Parse(significant, NumberStyles.None, CultureInfo.InvariantCulture) > MaxExportIntervalMs)
+            {
+                WarnInvalidEnv(diagnostics, variable, text, "above 2147483647 ms, clamped to 2147483647");
+                return MaxExportIntervalMs;
+            }
+
+            return long.Parse(significant, NumberStyles.None, CultureInfo.InvariantCulture);
+        }
+
+        /// <summary>
+        /// <c>OTEL_METRICS_EXEMPLAR_FILTER</c> from the process environment (ADR-013 exception to
+        /// ADR-001): <c>always_on</c>, <c>always_off</c> or <c>trace_based</c> (contract trim set,
+        /// ASCII case-insensitive); unset is <c>trace_based</c>, the spec default; anything else warns
+        /// and is <c>trace_based</c>. The helper always sets the filter, because the .NET SDK's own
+        /// default is <c>AlwaysOff</c>.
+        /// </summary>
+        internal static ExemplarFilterType ResolveExemplarFilter(IOtelHelperDiagnostics diagnostics)
+        {
+            if (ContractText.NonBlank(Env(ExemplarFilterEnvVar)) is not { } raw)
+            {
+                return ExemplarFilterType.TraceBased;
+            }
+
+            switch (ContractText.AsciiLower(raw))
+            {
+                case "always_on":
+                    return ExemplarFilterType.AlwaysOn;
+                case "always_off":
+                    return ExemplarFilterType.AlwaysOff;
+                case "trace_based":
+                    return ExemplarFilterType.TraceBased;
+                default:
+                    WarnInvalidEnv(diagnostics, ExemplarFilterEnvVar, raw, "unsupported exemplar filter, using trace_based; valid values: always_on, always_off, trace_based");
+                    return ExemplarFilterType.TraceBased;
+            }
         }
 
         private static int ResolveEnvPort(IOtelHelperDiagnostics diagnostics)
@@ -675,13 +878,27 @@ namespace StaffOps.OtelHelper
 
         /// <summary>
         /// <c>OTEL_SDK_DISABLED</c> from the same source the SDK reads (the application's
-        /// <c>IConfiguration</c>, else the environment), so the INFO line and the resolution
-        /// agree with what the SDK does (ADR-013).
+        /// <c>IConfiguration</c>, else the environment), parsed as the SDK parses it
+        /// (<c>bool.TryParse</c>: <c>true</c>/<c>false</c>, case-insensitive, whitespace trimmed),
+        /// so the INFO line and the resolution agree with what the SDK does (ADR-013). Any other
+        /// non-blank value warns naming the variable and means <c>false</c> (contract row "Boolean
+        /// env value", R8); the SDK, too, leaves telemetry on.
         /// </summary>
-        private static bool ReadSdkDisabled(IConfiguration? configuration)
+        private static bool ReadSdkDisabled(IConfiguration? configuration, IOtelHelperDiagnostics diagnostics)
         {
             var raw = configuration is not null ? configuration[TelemetryOptions.SdkDisabledEnvVar] : Env(TelemetryOptions.SdkDisabledEnvVar);
-            return bool.TryParse(raw?.Trim(), out var disabled) && disabled;
+            if (string.IsNullOrWhiteSpace(raw))
+            {
+                return false;
+            }
+
+            if (!bool.TryParse(raw, out var disabled))
+            {
+                WarnInvalidEnv(diagnostics, TelemetryOptions.SdkDisabledEnvVar, raw, "not a boolean (true or false), using false");
+                return false;
+            }
+
+            return disabled;
         }
 
         private static void WarnUnsupported(TelemetryOptions code, IOtelHelperDiagnostics diagnostics)
@@ -717,10 +934,5 @@ namespace StaffOps.OtelHelper
         private static bool EnvTrue(string name) => string.Equals(Env(name)?.Trim(), "true", StringComparison.OrdinalIgnoreCase);
 
         private static string? NonBlank(string? value) => string.IsNullOrWhiteSpace(value) ? null : value;
-
-        private static string[] SplitLower(string value)
-            => value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-                .Select(e => e.ToLowerInvariant())
-                .ToArray();
     }
 }

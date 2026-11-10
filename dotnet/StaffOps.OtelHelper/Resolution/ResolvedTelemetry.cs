@@ -80,12 +80,27 @@ namespace StaffOps.OtelHelper
 
         public required IReadOnlyList<string> AdditionalMeters { get; init; }
 
+        /// <summary>
+        /// The disabled signals after precedence (comma-separated, lowercase): code
+        /// <see cref="TelemetryOptions.DisabledSignals"/>, else the entries of
+        /// <c>OTEL_HELPER_DISABLED_SIGNALS</c> whose exporters no standard variable (or, for
+        /// metrics, no code option) chose.
+        /// </summary>
         public required string DisabledSignals { get; init; }
 
         public required string DisabledMetrics { get; init; }
 
-        /// <summary>Active metric exporters (<c>otlp</c>, <c>prometheus</c>); empty = no exporter.</summary>
+        /// <summary>Active metric exporters (<c>otlp</c>, <c>prometheus</c>, <c>console</c>); empty = no exporter.</summary>
         public required IReadOnlyList<string> MetricExporters { get; init; }
+
+        /// <summary>The traces exporters (<c>otlp</c>, <c>console</c>) from <c>OTEL_TRACES_EXPORTER</c>, default <c>otlp</c>; empty = <c>none</c>.</summary>
+        public IReadOnlyList<string> TracesExporters { get; init; } = new[] { "otlp" };
+
+        /// <summary>The logs exporters (<c>otlp</c>, <c>console</c>) from <c>OTEL_LOGS_EXPORTER</c>, default <c>otlp</c>; empty = <c>none</c>.</summary>
+        public IReadOnlyList<string> LogsExporters { get; init; } = new[] { "otlp" };
+
+        /// <summary>The exemplar filter the helper always sets (<c>OTEL_METRICS_EXEMPLAR_FILTER</c>, default <c>trace_based</c>).</summary>
+        public OpenTelemetry.Metrics.ExemplarFilterType ExemplarFilter { get; init; } = OpenTelemetry.Metrics.ExemplarFilterType.TraceBased;
 
         public required long ExportIntervalMs { get; init; }
 
@@ -108,6 +123,15 @@ namespace StaffOps.OtelHelper
         public bool IsSignalEnabled(string signal)
             => !DisabledSignals.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
                 .Any(s => s.Equals(signal, StringComparison.OrdinalIgnoreCase));
+
+        /// <summary>
+        /// The exporters in effect for traces or logs: none when the signal is disabled or the SDK
+        /// is; <c>otlp</c> still needs an OTLP target (<see cref="OtlpTarget"/>).
+        /// </summary>
+        public IReadOnlyList<string> ResolvedSignalExporters(string signal)
+            => IsSignalEnabled(signal) && !SdkDisabled
+                ? signal == "logs" ? LogsExporters : TracesExporters
+                : Array.Empty<string>();
 
         /// <summary>Metric exporters in effect: none when metrics are disabled or the SDK is.</summary>
         public IReadOnlyList<string> ResolvedMetricExporters()

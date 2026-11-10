@@ -178,6 +178,17 @@ which the upstream exporter reads since 1.16, have no effect: use
 
 How the 0.2.x helper treats the standard variables. Some are read by the .NET SDK, some by the helper, and some are **not honored** in 0.2.x (they are in Go/Python 0.3).
 
+#### Signals and exporters (0.3, this branch, task C9)
+
+| Variable | Description | Default |
+|---|---|---|
+| `OTEL_TRACES_EXPORTER`, `OTEL_LOGS_EXPORTER` | Comma-separated: `otlp` (needs an endpoint), `console` (the OpenTelemetry console exporter, on standard output), `none` (the signal is off). `logging` is a deprecated alias of `console` and warns; an unknown entry warns and is dropped; `none` with other entries warns and wins; only unknown entries count as unset. 0.2.x: not read. | `otlp` |
+| `OTEL_METRICS_EXPORTER` | As above plus `prometheus`. `otlp` without a metrics endpoint warns and is dropped; when nothing is left, the default applies (0.2.x failed start). `TelemetryOptions.MetricExporters` wins; there `logging` or an unknown entry fails start. | `otlp` with an endpoint, else `prometheus` |
+| `OTEL_HELPER_DISABLED_SIGNALS` | Deprecated. Disables each listed signal unless that signal's `OTEL_<SIGNAL>_EXPORTER` holds a valid entry (`none` included) or, for metrics, `TelemetryOptions.MetricExporters` is set; an unknown entry warns once, echoing it. `TelemetryOptions.DisabledSignals` wins over every variable. The deprecation warning itself comes with task C16. | _(unset)_ |
+| `OTEL_METRIC_EXPORT_INTERVAL` | Interval of the OTLP and console metric readers, milliseconds: digits with an optional `+`, any length (`5_000`, `-1`, `0` and non-ASCII digits warn, 30 000 is used); above 2 147 483 647 clamped with a warning. Read from the process environment only: an `IConfiguration`-only value (`appsettings.json`) has no effect and warns once naming the variable. `TelemetryOptions.ExportIntervalMs` wins and fails start outside [1, 2 147 483 647]. 0.2.x: read as an `int`, invalid values ignored silently. | `30000` |
+| `OTEL_METRICS_EXEMPLAR_FILTER` | `always_on`, `always_off`, `trace_based`; anything else warns. Read by the helper, which always sets the filter. | `trace_based` |
+| `OTEL_SDK_DISABLED` | `true` (any case): no-op providers, no exporters, no Prometheus listener, propagators kept, one INFO line. Read from `IConfiguration` (which includes the environment in a host), as the SDK reads it; a value other than `true`/`false` warns and means `false`. 0.2.x: handled by the SDK alone, no line. | `false` |
+
 #### Sampling
 
 | Variable | Description | Default |
@@ -251,7 +262,7 @@ Sampler: `AlwaysOnSampler` in all environments (configurable via `opts.Sampler`)
 
 Metrics are exported every **30 seconds** (overrides SDK default of 60s).
 
-Exemplars enabled (`ExemplarFilterType.TraceBased`) — metric → trace correlation in Grafana.
+Exemplars enabled (`ExemplarFilterType.TraceBased`) — metric → trace correlation in Grafana. 0.3 (this branch, task C9): the helper reads `OTEL_METRICS_EXEMPLAR_FILTER` (`always_on`, `always_off`, `trace_based`; anything else warns) and always sets the filter, default `trace_based` — the .NET SDK's own default is `AlwaysOff`. An application `SetExemplarFilter` registered after `AddOtelHelper()` wins; one registered before it is overridden by the helper's, without a warning. `OTEL_DOTNET_EXPERIMENTAL_METRICS_EXEMPLAR_FILTER_HISTOGRAMS` has no effect, because the helper always sets a filter (it had none in 0.2.x either).
 
 ### Logs
 
@@ -262,7 +273,8 @@ Exemplars enabled (`ExemplarFilterType.TraceBased`) — metric → trace correla
 | Formatted Message | Formatted message included |
 | Scopes | ILogger scopes included |
 
-> The lib **only adds** the OTLP exporter to the logging pipeline. Console logging and filters are the application's responsibility.
+> The lib adds to the logging pipeline the exporters `OTEL_LOGS_EXPORTER` selects: OTLP (the default, with an endpoint) and, with `console`, the OpenTelemetry console exporter (0.3, this branch, task C9). The application's own console provider and its filters stay the application's responsibility.
+> Console output is each SDK's native format, not a shared one: multi-line text in .NET, JSON in Go (one object per line) and Python (indented), `console.dir` objects in Node.js. Use it for local debugging, not as a log pipeline.
 
 ---
 
@@ -287,6 +299,9 @@ Exemplars enabled (`ExemplarFilterType.TraceBased`) — metric → trace correla
 | `HealthPaths` | List\<string\>? | — | `/ping`, `/health`, `/healthz`, `/ready` |
 | `AdditionalMeters` | List\<string\> | — | empty |
 | `ForwardSdkDiagnostics` | bool | — | `true` (SDK warnings on stderr, redacted) |
+| `MetricExporters` | string? (`otlp`, `prometheus`, `console`, `none`) | `OTEL_METRICS_EXPORTER` | `otlp` with an endpoint, else `prometheus` |
+| `ExportIntervalMs` | long? (in [1, 2 147 483 647]) | `OTEL_METRIC_EXPORT_INTERVAL` | `30000` |
+| `DisabledSignals` | string? (`traces`, `metrics`, `logs`) | `OTEL_HELPER_DISABLED_SIGNALS` (deprecated) | none |
 
 > `ServiceName` resolves (0.3, this branch): `ServiceName` > `ResourceAttributes["service.name"]` > `OTEL_SERVICE_NAME` > `service.name` in `OTEL_RESOURCE_ATTRIBUTES` > `SERVICE_NAME` > `unknown_service:<process name>` with one warning. A blank value counts as not set at every level.
 > `Environment` resolves: `Environment` > `ResourceAttributes["deployment.environment.name"]` > `OTEL_RESOURCE_ATTRIBUTES` > `ENVIRONMENT` > absent with one warning; the value is emitted as written.
@@ -393,7 +408,9 @@ helper depends on the newest prerelease of the matching minor: the contrib
 instrumentations `OpenTelemetry.Instrumentation.GrpcNetClient` and
 `OpenTelemetry.Instrumentation.StackExchangeRedis` (`StaffOps.OtelHelper.Redis`),
 and the Prometheus listener `OpenTelemetry.Exporter.Prometheus.HttpListener`,
-all `1.20.1-beta.1`.
+all `1.20.1-beta.1`. The core package also depends on the stable
+`OpenTelemetry.Exporter.Console` 1.20.1 (0.3, this branch, task C9), used only
+when an `OTEL_<SIGNAL>_EXPORTER` (or `MetricExporters`) lists `console`.
 
 ### .NET 10 Note
 

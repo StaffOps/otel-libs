@@ -8,7 +8,8 @@ namespace StaffOps.OtelHelper
     /// counterpart is nullable: <c>null</c> means "not set in code", and a value set
     /// in code wins over the environment whatever it is (also when it equals the
     /// helper default). A blank string counts as not set, except for <see cref="ServiceName"/>
-    /// and <see cref="Environment"/>, where it fails host start (as in Go and Python). The values the helper
+    /// and <see cref="Environment"/>, where it fails host start (as in Go and Python), and for
+    /// <see cref="DisabledSignals"/> and <see cref="MetricExporters"/>, where it is a set empty list. The values the helper
     /// actually uses are resolved internally from these options and the process
     /// environment; this type holds only what the application set.
     /// A section bound from <c>IConfiguration</c> into these options counts as code.
@@ -37,7 +38,7 @@ namespace StaffOps.OtelHelper
         public const string InsecureEnvVar = "OTEL_EXPORTER_OTLP_INSECURE";
         /// <summary>Environment variable name: Port of the standalone Prometheus <c>/metrics</c> listener; see <see cref="PrometheusMetricsPort"/>.</summary>
         public const string MetricsPortEnvVar = "OTEL_HELPER_METRICS_PORT";
-        /// <summary>Environment variable name: Standard OpenTelemetry metric exporter list (<c>otlp</c>, <c>prometheus</c>, <c>none</c>); see <see cref="MetricExporters"/>.</summary>
+        /// <summary>Environment variable name: Standard OpenTelemetry metric exporter list (<c>otlp</c>, <c>prometheus</c>, <c>console</c>, <c>none</c>; <c>logging</c> is a warned alias of <c>console</c>); see <see cref="MetricExporters"/>.</summary>
         public const string MetricsExporterEnvVar = "OTEL_METRICS_EXPORTER";
         /// <summary>Environment variable name: Standard OpenTelemetry metric export interval in milliseconds; see <see cref="ExportIntervalMs"/>.</summary>
         public const string MetricExportIntervalEnvVar = "OTEL_METRIC_EXPORT_INTERVAL";
@@ -47,7 +48,7 @@ namespace StaffOps.OtelHelper
         public const string OtlpProtocolEnvVar = "OTEL_EXPORTER_OTLP_PROTOCOL";
         /// <summary>Environment variable name: Standard OpenTelemetry OTLP compression (<c>gzip</c> or <c>none</c>); see <see cref="Compression"/>.</summary>
         public const string CompressionEnvVar = "OTEL_EXPORTER_OTLP_COMPRESSION";
-        /// <summary>Environment variable name: Standard OpenTelemetry switch that disables the SDK, read from <c>IConfiguration</c> as the SDK reads it.</summary>
+        /// <summary>Environment variable name: Standard OpenTelemetry switch that disables the SDK, read from <c>IConfiguration</c> as the SDK reads it; a value other than <c>true</c>/<c>false</c> warns and means <c>false</c>.</summary>
         public const string SdkDisabledEnvVar = "OTEL_SDK_DISABLED";
         /// <summary>Environment variable name: Declarative configuration file; not supported by the helper (warned, ignored).</summary>
         public const string ConfigFileEnvVar = "OTEL_CONFIG_FILE";
@@ -63,7 +64,7 @@ namespace StaffOps.OtelHelper
         internal const string ProtocolHttpProtobuf = "http/protobuf";
         internal const string CompressionGzip = "gzip";
         internal const string CompressionNone = "none";
-        internal static readonly string[] ValidMetricExporters = { "otlp", "prometheus", "none" };
+        internal static readonly string[] ValidMetricExporters = { "otlp", "prometheus", "console", "none" };
         internal static readonly string[] ValidOtlpProtocols = { ProtocolGrpc, ProtocolHttpProtobuf };
         internal static readonly string[] ValidCompressions = { CompressionGzip, CompressionNone };
 
@@ -168,7 +169,11 @@ namespace StaffOps.OtelHelper
 
         /// <summary>
         /// Comma-separated signals to disable: <c>traces</c>, <c>metrics</c>, <c>logs</c>
-        /// (case-insensitive). Not set: <c>OTEL_HELPER_DISABLED_SIGNALS</c>.
+        /// (case-insensitive, trimmed, de-duplicated); any other entry fails host start. Set (not
+        /// null), it wins over the environment whatever its value: an empty string disables nothing. Not set: the deprecated <c>OTEL_HELPER_DISABLED_SIGNALS</c>, which does
+        /// not disable a signal whose <c>OTEL_&lt;SIGNAL&gt;_EXPORTER</c> holds a valid entry
+        /// (<c>none</c> included) nor metrics when <see cref="MetricExporters"/> is set; its unknown
+        /// entries warn once each.
         /// </summary>
         public string? DisabledSignals { get; set; }
 
@@ -179,16 +184,21 @@ namespace StaffOps.OtelHelper
         public string? DisabledMetrics { get; set; }
 
         /// <summary>
-        /// Comma-separated metric exporters: <c>otlp</c>, <c>prometheus</c>, <c>none</c>.
-        /// Not set: <c>OTEL_METRICS_EXPORTER</c>, else <c>otlp</c> with an endpoint and
-        /// <c>prometheus</c> without one.
+        /// Comma-separated metric exporters: <c>otlp</c>, <c>prometheus</c>, <c>console</c> (the
+        /// OpenTelemetry console exporter, on standard output) or <c>none</c> alone; any other
+        /// entry, <c>logging</c> included, fails host start. Set (not null), it wins whatever its
+        /// value: an empty string means no metric exporter. Not set: <c>OTEL_METRICS_EXPORTER</c>
+        /// (there <c>logging</c> is a warned alias of <c>console</c>, an unknown entry warns, and
+        /// <c>otlp</c> without an endpoint warns and is dropped), else <c>otlp</c> with an endpoint
+        /// and <c>prometheus</c> without one.
         /// </summary>
         public string? MetricExporters { get; set; }
 
         /// <summary>
-        /// Metric export interval (ms) of the OTLP reader, in [1, 2 147 483 647].
-        /// Not set: <c>OTEL_METRIC_EXPORT_INTERVAL</c> (read as an <c>int</c>, a larger or
-        /// non-numeric value is ignored until task C9), else 30 000.
+        /// Metric export interval (ms) of the OTLP and console readers, in [1, 2 147 483 647];
+        /// outside it host start fails. Not set: <c>OTEL_METRIC_EXPORT_INTERVAL</c> from the
+        /// process environment (digits with an optional <c>+</c>, any length; zero or anything
+        /// else warns and uses 30 000; above 2 147 483 647 it is clamped with a warning), else 30 000.
         /// </summary>
         public long? ExportIntervalMs { get; set; }
 

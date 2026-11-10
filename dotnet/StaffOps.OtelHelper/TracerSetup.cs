@@ -63,8 +63,10 @@ namespace StaffOps.OtelHelper.Tracing
 
             builder.ConfigureResource(r => ResourceSetup.Apply(r, resolved, sp, "traces"));
 
-            // "Off" (disabled signal): instrumentation registered, no source and no exporter (D-NET3).
-            if (!resolved.IsSignalEnabled("traces"))
+            // "Off" (disabled signal, OTEL_TRACES_EXPORTER=none, or OTEL_SDK_DISABLED): instrumentation
+            // registered, no source and no exporter (D-NET3, contract row "Signal on/off").
+            var exporters = resolved.ResolvedSignalExporters("traces");
+            if (exporters.Count == 0)
             {
                 return;
             }
@@ -86,9 +88,17 @@ namespace StaffOps.OtelHelper.Tracing
             }
 
             var diagnostics = sp.GetRequiredService<IOtelHelperDiagnostics>();
-            if (OtlpExporters.OptionsFor("traces", resolved, diagnostics, sp.GetRequiredService<ExporterClients>()) is { } otlp)
+            if (exporters.Contains("otlp")
+                && OtlpExporters.OptionsFor("traces", resolved, diagnostics, sp.GetRequiredService<ExporterClients>()) is { } otlp)
             {
                 builder.AddProcessor(CreateOtlpProcessor(sp, resolved, otlp, diagnostics));
+            }
+
+            // OTEL_TRACES_EXPORTER=console (or the alias logging): the SDK console exporter, built
+            // directly because AddConsoleExporter registers services, which this deferred step cannot.
+            if (exporters.Contains("console"))
+            {
+                builder.AddProcessor(new SimpleActivityExportProcessor(new ConsoleActivityExporter(new ConsoleExporterOptions())));
             }
         }
 

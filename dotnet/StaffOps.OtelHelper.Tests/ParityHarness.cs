@@ -46,7 +46,7 @@ internal static class ParityHarness
 
     private static readonly Dictionary<string, string[]> Schema = new(StringComparer.Ordinal)
     {
-        ["resolve"] = new[] { "resource", "metric_exporters", "metric_export_interval_ms", "log_level", "prometheus_metrics_port", "prometheus_metrics_host", "http_opt_in_metrics" },
+        ["resolve"] = new[] { "resource", "metric_exporters", "metric_export_interval_ms", "log_level", "prometheus_metrics_port", "prometheus_metrics_host", "exemplar_filter", "http_opt_in_metrics" },
         ["export"] = new[] { "received" },
         ["sampler"] = new[] { "sampled", "attributes" },
         ["propagation"] = new[] { "headers" },

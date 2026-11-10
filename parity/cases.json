@@ -541,7 +541,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C9",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -610,7 +610,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C9",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -659,7 +659,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C9",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -738,7 +738,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C9",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -761,7 +761,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C9",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -1183,7 +1183,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C9",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -2624,7 +2624,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C9",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -2649,7 +2649,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C9",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -2701,7 +2701,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C9",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -2729,7 +2729,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C9",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -2754,7 +2754,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C9",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -2781,7 +2781,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C9",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -2809,7 +2809,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C9",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -2834,7 +2834,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C9",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -9480,7 +9480,7 @@
       "id": "config.disabled_signals_standard_var_wins",
       "kind": "export",
       "requirement": "D1",
-      "note": "A19 (D1 row 'Signal on/off'): the deprecated OTEL_HELPER_DISABLED_SIGNALS does not disable a signal whose OTEL_<SIGNAL>_EXPORTER is set; the deprecation is still warned.",
+      "note": "A19 (D1 row 'Signal on/off'): the deprecated OTEL_HELPER_DISABLED_SIGNALS does not disable a signal whose OTEL_<SIGNAL>_EXPORTER is set. Split 2026-11-10 (.NET C9 fix round 1): the deprecation warning of this setup is asserted by deprecation.disabled_signals_standard_var_set_still_warns.",
       "env": {
         "OTEL_SERVICE_NAME": "parity-svc",
         "OTEL_EXPORTER_OTLP_ENDPOINT": "http://{receiver}:4317",
@@ -9491,13 +9491,36 @@
       "expect": {
         "received": {
           "traces": {}
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "pass",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "deprecation.disabled_signals_standard_var_set_still_warns",
+      "kind": "resolve",
+      "requirement": "R8/D8",
+      "note": "Added 2026-11-10 (.NET C9 fix round 1, split from config.disabled_signals_standard_var_wins): the deprecation of OTEL_HELPER_DISABLED_SIGNALS is warned even when the standard OTEL_TRACES_EXPORTER wins for that signal (contract row 'Deprecated OTEL_HELPER_DISABLED_SIGNALS': the deprecation itself is warned once per process).",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_HELPER_DISABLED_SIGNALS": "traces",
+        "OTEL_TRACES_EXPORTER": "otlp"
+      },
+      "code": {},
+      "expect": {
+        "error": {
+          "absent": true
         },
         "warning": "OTEL_HELPER_DISABLED_SIGNALS"
       },
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C9",
+        "dotnet": "xfail:C16",
         "nodejs": "pass"
       }
     },
@@ -9523,7 +9546,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C9",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -9570,7 +9593,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C9",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -9594,7 +9617,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C9",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -9668,8 +9691,53 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C9",
+        "dotnet": "pass",
         "nodejs": "pass"
+      }
+    },
+    {
+      "id": "metrics.exemplar_filter_default_trace_based",
+      "kind": "resolve",
+      "requirement": "R8",
+      "note": "Added 2026-11-10 (.NET C9 fix round 1; D1 row 'Metrics exporters / interval / exemplars'): with OTEL_METRICS_EXEMPLAR_FILTER unset the installed MeterProvider uses the spec default trace_based (.NET: the helper sets it; the .NET SDK default is AlwaysOff). exemplar_filter is read from the installed provider. Node: sdk-metrics has no exemplar filter (recorded gap).",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc"
+      },
+      "code": {},
+      "expect": {
+        "error": {
+          "absent": true
+        },
+        "exemplar_filter": "trace_based"
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "pass",
+        "nodejs": "skip:no-upstream-node-exemplar-filter"
+      }
+    },
+    {
+      "id": "metrics.exemplar_filter_env_always_off",
+      "kind": "resolve",
+      "requirement": "R8",
+      "note": "Added 2026-11-10 (.NET C9 fix round 1; D1 row 'Metrics exporters / interval / exemplars'): OTEL_METRICS_EXEMPLAR_FILTER is honored. Python hard-codes TraceBasedExemplarFilter (task A33). Node: sdk-metrics has no exemplar filter (recorded gap).",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_METRICS_EXEMPLAR_FILTER": "always_off"
+      },
+      "code": {},
+      "expect": {
+        "error": {
+          "absent": true
+        },
+        "exemplar_filter": "always_off"
+      },
+      "status": {
+        "go": "pass",
+        "python": "xfail:A33",
+        "dotnet": "pass",
+        "nodejs": "skip:no-upstream-node-exemplar-filter"
       }
     },
     {
@@ -9722,7 +9790,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C9",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -9776,6 +9844,31 @@
             "absent": true
           },
           "metrics": {}
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "pass",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "config.code_disabled_signals_empty_wins",
+      "kind": "export",
+      "requirement": "D1",
+      "note": "Added 2026-11-10 (.NET C9 fix round 1; D1 row 'Deprecated OTEL_HELPER_DISABLED_SIGNALS'): code disabled signals set to an empty list win over the deprecated variable, so nothing is disabled (Go disabledSignalsSet, Python 'is not None', Node '!== undefined', .NET non-null).",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "http://{receiver}:4317",
+        "OTEL_HELPER_DISABLED_SIGNALS": "traces"
+      },
+      "code": {
+        "disabled_signals": []
+      },
+      "expect": {
+        "received": {
+          "traces": {}
         }
       },
       "status": {

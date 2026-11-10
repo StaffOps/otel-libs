@@ -1137,7 +1137,7 @@ worker that exits before reporting fails it too (B9b fix round, 2026-11-02).*
 | Console metric reader timeout = min(30 000, interval) (B4c, 2026-10-29) | recorded; Go and Python leave the console reader at their SDK default timeout. Unit-tested in `test/signals.test.cjs` |
 | The DiagLogger is still installed under `OTEL_SDK_DISABLED=true` (B4c, 2026-10-29) | recorded; Go and Python have no equivalent (their SDK diagnostics go to their own loggers) |
 | `withMaskedEnv` hides the helper-owned OTLP variables from `process.env` for the synchronous construction; a `worker_threads` worker started with `env: SHARE_ENV` shares `process.env` and would see them missing during that window (B4b review, 2026-10-29) | recorded; setup runs before workers in practice. No fixture case |
-| `OTEL_METRICS_EXEMPLAR_FILTER` not honored | recorded gap |
+| `OTEL_METRICS_EXEMPLAR_FILTER` not honored | recorded gap. *Since 2026-11-10 (.NET C9 fix round 1): the cases `metrics.exemplar_filter_default_trace_based` and `metrics.exemplar_filter_env_always_off` take the permanent skip `skip:no-upstream-node-exemplar-filter` (sdk-metrics has no exemplar filter, so the driver has none to report)* |
 | `http/dup` / old HTTP semconv not available | recorded gap. *Since 2026-11-02 (B10a): a value without `http` or with `http/dup` is warned once, naming only the variable (D-JS9)* |
 | ~~DB metric attributes without `db.system` (if B10 confirms)~~ | *Corrected 2026-11-02 (B10a): no gap for pg — the `-sql` meter wrapper (D-JS9) adds `db.system` to `db.client.operation.duration`, asserted in `test/db.test.cjs`. instrumentation-mysql2 0.70 records no metric at all (next rows)* |
 | Fastify not instrumented | recorded until `@fastify/otel` supports SDK 3 |

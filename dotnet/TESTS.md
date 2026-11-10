@@ -1,6 +1,6 @@
 # Tests — StaffOps.OtelHelper (.NET)
 
-1155 tests (xUnit) with the parity runner, 0 failed, 0 warnings (compose `dotnet-tests` on `sdk:8.0`, and on `sdk:10.0` (10.0.403) with `DOTNET_ROLL_FORWARD=Major`, 2026-11-10, task C8 fix round 1); coverlet total `| Total | 98.58% | 96.67% | 99.4% |` (line, branch, method) on `sdk:8.0`, `| Total | 98.53% | 96.6% | 99.4% |` on SDK 10. The total varies by about ±0.1 point between runs; the cause was not investigated.
+1255 tests (xUnit) with the parity runner, 0 failed, 0 warnings (compose `dotnet-tests` on `sdk:8.0`, and on `sdk:10.0` (10.0.403) with `DOTNET_ROLL_FORWARD=Major`, 2026-11-10, task C9 fix round 2); coverlet total `| Total | 98.61% | 96.82% | 99.42% |` (line, branch, method) on `sdk:8.0` and on SDK 10. The total varies by about ±0.1 point between runs; the cause was not investigated.
 
 From `dotnet/`; the repository root is mounted because the parity runner reads
 `parity/cases.json` (and `specs/dotnet-otel-helper/tasks.md`) from it:
@@ -481,3 +481,30 @@ the receiver's TLS port 14317 — `export.grpc_certificate_*`,
 no `skip:no-upstream-dotnet-grpc-tls-files` is needed). The processor and
 reader timeouts are read from SDK internals by reflection (test only).
 
+## Signals and exporters (task C9)
+
+`SignalsExportersTests` (`[Collection("EnvVarTests")]`; contract A19, R2, R8;
+ADR-013) — each rule was checked to fail its test when the rule is removed
+(13 mutants, 2026-11-10; fix round 1: 6 more, every one caught by a unit test
+— the `otlp`-guard and logs-`none` mutants, parity-only in the first round, now
+fail `Otlp_Is_Exported_Only_When_Listed` too, without the fake receiver):
+
+| Area | Tests |
+|---|---|
+| Traces and logs exporter lists | `Trace_And_Log_Exporters_Default_To_Otlp` × 2, `Traces_Exporter_List_Is_Parsed` × 5 (case, trim, de-duplication, `none`), `Logging_Is_A_Warned_Alias_Of_Console` × 3 (traces, logs, metrics), `Logging_And_Console_Together_Are_One_Console_Exporter`, `Unknown_Trace_Exporter_Warns_And_Only_Unknown_Uses_The_Default`, `Prometheus_Is_Not_A_Logs_Exporter`, `None_Combined_Warns_And_Wins` × 2, `Blank_Or_Separator_Only_Exporter_Variable_Is_Unset`, `Sdk_Disabled_Leaves_No_Signal_Exporter` |
+| Metric exporters | `Console_Metric_Exporter_Is_Accepted_From_Env_And_Code`, `Code_Logging_Metric_Exporter_Fails_Naming_It`, `Env_Otlp_Alone_Without_Endpoint_Warns_And_Falls_Back_To_Prometheus`, `Env_Otlp_And_Console_Without_Endpoint_Keeps_Console`, `Env_Otlp_With_A_Metrics_Endpoint_Is_Kept` |
+| Deprecated disabled signals | `A_Set_Standard_Exporter_Variable_Wins_Over_Disabled_Signals` × 4, `Standard_None_Counts_As_Set_And_Turns_The_Signal_Off`, `Standard_Variable_With_Only_Unknown_Entries_Counts_As_Unset`, `Env_Otlp_Dropped_For_No_Endpoint_Still_Counts_As_Set`, `Code_Metric_Exporters_Win_Over_Disabled_Signals_For_Metrics_Only`, `Code_Disabled_Signals_Win_Over_A_Set_Standard_Variable`, `Unknown_Disabled_Signal_Entry_Warns_Once_Echoing_It`, `Unknown_Code_Disabled_Signal_Fails_Naming_The_Option` |
+| Export interval | `Interval_Valid_Values_Are_Used_Without_A_Warning` × 6, `Interval_Invalid_Values_Warn_And_Use_30000` × 12 (`0`, `+0`, `5_000`, `-5000`, `++5000`, `5e3`, non-ASCII digits, …), `Interval_Above_The_Maximum_Is_Clamped_With_A_Warning` × 4, `Interval_Of_Thousands_Of_Digits_Is_Clamped_And_Echoed_Truncated`, `Interval_Code_Value_Beats_An_Invalid_Env_Value_Silently`, `Interval_Only_In_IConfiguration_Is_Not_Read_And_Warns_Once` × 2 (round 2), `Interval_In_The_Environment_Seen_Through_IConfiguration_Gives_No_Not_Read_Line`, `Interval_In_Code_Gives_No_Not_Read_Line` |
+| `OTEL_SDK_DISABLED` | `Sdk_Disabled_Unparseable_Warns_Naming_The_Variable_And_Means_False` × 4, `Sdk_Disabled_Booleans_Do_Not_Warn` × 3, `Sdk_Disabled_Unparseable_In_IConfiguration_Warns_Too` |
+| Exemplar filter | `Exemplar_Filter_Is_Parsed` × 4, `Exemplar_Filter_Unknown_Warns_And_Is_Trace_Based`, `ExemplarFilter_DefaultsToTraceBased_AndHonorsEnv` × 4 (the test ADR-013 names: exemplars counted by a reader on the built provider, under and without a sampled span), `An_Application_SetExemplarFilter_Registered_Later_Wins` |
+| Built pipeline | `Traces_None_Leaves_The_Service_Source_Without_A_Listener`, `Console_Exporters_Write_Spans_Logs_And_Metrics_To_Standard_Output` (redirects `Console.Out` for the test; the parity export cases check the same output per process), `Otlp_Is_Exported_Only_When_Listed` × 4 (a local `TcpListener` as the OTLP endpoint: `console` traces and `none` logs open no connection, `otlp` does) |
+| Fix round 1 | `Code_Empty_Disabled_Signals_Are_Set_And_Win_Over_The_Env` × 2, `Code_Empty_Metric_Exporters_Are_Set_Mean_None_And_Win` × 2, `Code_Empty_Metric_Exporters_Say_So_Once_At_Info` (round 2), `Unknown_Entry_And_None_Combined_Each_Get_Their_Own_Line`, `Plus_Prefixed_Interval_Gives_No_Sdk_Line`, `Unparseable_Sdk_Disabled_Is_Warned_Once_By_The_Helper_Only`, `Sdk_Parse_Warnings_Of_Helper_Owned_Rows_Are_Noise` × 3; `DiagnosticsTests.Known_Noise_Is_Not_Forwarded` now treats the SDK's `OTEL_SDK_DISABLED` parse line as noise |
+
+The wire side is the parity fixture: `export.{traces,logs}_exporter_{none,console,logging_alias,none_list}`,
+`metrics.exporter_*`, `metrics.interval_*`, `config.disabled_signals_*` and
+`config.sdk_disabled_*`, `config.code_disabled_signals_empty_wins` and
+`metrics.exemplar_filter_*` pass; since fix round 1
+`config.disabled_signals_standard_var_wins` asserts only the precedence
+(`pass`) and `deprecation.disabled_signals_standard_var_set_still_warns` the
+deprecation (`xfail:C16`). The driver reads `exemplar_filter` from the built
+`MeterProviderSdk` by reflection (driver only).

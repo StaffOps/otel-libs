@@ -61,15 +61,22 @@ namespace StaffOps.OtelHelper.Logging
             }
 
             builder.ConfigureResource(r => ResourceSetup.Apply(r, resolved, sp, "logs"));
-            if (!resolved.IsSignalEnabled("logs"))
-            {
-                return;
-            }
 
+            // Disabled, OTEL_LOGS_EXPORTER=none or OTEL_SDK_DISABLED: no exporter (the stdout
+            // fallback of design D-NET10 is task C13).
+            var exporters = resolved.ResolvedSignalExporters("logs");
             var diagnostics = sp.GetRequiredService<IOtelHelperDiagnostics>();
-            if (OtlpExporters.OptionsFor("logs", resolved, diagnostics, sp.GetRequiredService<ExporterClients>()) is { } otlp)
+            if (exporters.Contains("otlp")
+                && OtlpExporters.OptionsFor("logs", resolved, diagnostics, sp.GetRequiredService<ExporterClients>()) is { } otlp)
             {
                 builder.AddProcessor(CreateOtlpProcessor(sp, resolved, otlp, diagnostics));
+            }
+
+            // OTEL_LOGS_EXPORTER=console (or the alias logging): the SDK console exporter, built
+            // directly because AddConsoleExporter registers services, which this deferred step cannot.
+            if (exporters.Contains("console"))
+            {
+                builder.AddProcessor(new SimpleLogRecordExportProcessor(new ConsoleLogRecordExporter(new ConsoleExporterOptions())));
             }
         }
 

@@ -227,12 +227,66 @@ internal static class CaseKinds
             // The level the helper installed: LoggingSetup calls SetMinimumLevel, which sets this.
             snap["log_level"] = LogLevelName(run.Host.Services.GetRequiredService<IOptions<LoggerFilterOptions>>().Value.MinLevel);
             snap["prometheus_metrics_port"] = r.PrometheusMetricsPort;
+            // The filter the built MeterProvider applies (SDK-internal member, read by reflection),
+            // not the resolved value: the helper sets it in a deferred step (task C9).
+            if (InstalledExemplarFilter(run.Host.Services.GetRequiredService<OpenTelemetry.Metrics.MeterProvider>()) is { } exemplarFilter)
+            {
+                snap["exemplar_filter"] = exemplarFilter;
+            }
             // prometheus_metrics_host and http_opt_in_metrics are omitted: the helper has no such
             // setting yet (it binds IPv4 "+" whatever the environment says); tasks C12 and C11.
         }
 
         await ShutdownAsync(run);
         return snap;
+    }
+
+    /// <summary>
+    /// The exemplar filter of the built provider, from the SDK's internal member of type
+    /// <c>ExemplarFilterType?</c> (<c>MeterProviderSdk</c>, 1.20.x); null under a no-op provider.
+    /// A missing member is an adapter error (an SDK bump renamed it).
+    /// </summary>
+    private static string? InstalledExemplarFilter(OpenTelemetry.Metrics.MeterProvider provider)
+    {
+        const System.Reflection.BindingFlags flags = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic;
+        var type = provider.GetType();
+        if (type.Name != "MeterProviderSdk")
+        {
+            return null;
+        }
+
+        // The general filter only: the SDK also keeps a histogram-specific one (null unless set).
+        // Exactly one member must match, else the driver cannot tell which one applies.
+        static bool IsGeneral(string name) => name is "ExemplarFilter" or "<ExemplarFilter>k__BackingField";
+        var matches = type.GetFields(flags)
+            .Where(f => f.FieldType == typeof(OpenTelemetry.Metrics.ExemplarFilterType?) && IsGeneral(f.Name))
+            .Select(f => (Name: f.Name, Read: (Func<object?>)(() => f.GetValue(provider))))
+            .Concat(type.GetProperties(flags)
+                .Where(p => p.PropertyType == typeof(OpenTelemetry.Metrics.ExemplarFilterType?) && p.GetIndexParameters().Length == 0 && IsGeneral(p.Name))
+                .Select(p => (Name: p.Name, Read: (Func<object?>)(() => p.GetValue(provider)))))
+            .ToList();
+        // An auto-property shows as the property and its backing field: one member.
+        if (matches.Count == 2 && matches.Any(m => m.Name == "ExemplarFilter") && matches.Any(m => m.Name == "<ExemplarFilter>k__BackingField"))
+        {
+            matches.RemoveAll(m => m.Name != "ExemplarFilter");
+        }
+
+        if (matches.Count != 1)
+        {
+            var members = string.Join(", ", type.GetMembers(flags).Where(m => m.Name.Contains("Exemplar", StringComparison.Ordinal)).Select(m => m.Name));
+            throw new AdapterException($"MeterProviderSdk has {matches.Count} ExemplarFilterType? members named ExemplarFilter, expected 1 (SDK bump?); exemplar members: {members}");
+        }
+
+        var value = matches[0].Read();
+
+        return value switch
+        {
+            OpenTelemetry.Metrics.ExemplarFilterType.AlwaysOn => "always_on",
+            OpenTelemetry.Metrics.ExemplarFilterType.AlwaysOff => "always_off",
+            OpenTelemetry.Metrics.ExemplarFilterType.TraceBased => "trace_based",
+            null => "unset",
+            _ => "unknown",
+        };
     }
 
     private static string LogLevelName(LogLevel level) => level switch

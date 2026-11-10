@@ -255,7 +255,8 @@ public class DiagnosticsTests
     [InlineData("OpenTelemetry-Exporter-OpenTelemetryProtocol", "Configuration key 'OTEL_EXPORTER_OTLP_TIMEOUT' has an invalid value: '+1'", true)] // helper-owned since C8
     [InlineData("OpenTelemetry-Exporter-OpenTelemetryProtocol", "Configuration key 'OTEL_EXPORTER_OTLP_HEADERS' has an invalid value: 'x'", false)]
     [InlineData("OpenTelemetry-Exporter-OpenTelemetryProtocol", "Configuration key 'OTEL_EXPORTER_OTLP_PROTOCOL' has an invalid value: 'x'", true)]
-    [InlineData("OpenTelemetry-Sdk", "Configuration key 'OTEL_SDK_DISABLED' has an invalid value: 'maybe'", false)]
+    // Since C9 fix round 1 the helper warns about an unparseable OTEL_SDK_DISABLED itself.
+    [InlineData("OpenTelemetry-Sdk", "Configuration key 'OTEL_SDK_DISABLED' has an invalid value: 'maybe'", true)]
     [InlineData("OpenTelemetry-Exporter-OpenTelemetryProtocol", "HTTP request to http://c failed", false)]
     public void Known_Noise_Is_Not_Forwarded(string source, string text, bool noise)
     {

@@ -155,6 +155,23 @@ the C4 runner records.
 | `OTEL_CONFIG_FILE`, `OTEL_EXPERIMENTAL_CONFIG_FILE` warned once | strings present in `OpenTelemetry.dll` 1.20.1; a YAML resource file had no effect (measured) — re-check on every bump | `config.*config_file_warns` (2) |
 | Exemplars: `OTEL_METRICS_EXEMPLAR_FILTER`, spec default `trace_based` | `SetExemplarFilter(ExemplarFilterType.TraceBased)` in code (`MetricsSetup.cs:21`) masks the variable; the .NET SDK default is `AlwaysOff` (SDK `docs/metrics/customizing-the-sdk/README.md:505-511`), so dropping the call would turn exemplars off | no case; unit test in C9 |
 
+> **Added 2026-11-10 (task C9, implemented, awaiting review).** The rows above
+> are the helper's now. Exporter lists: `TelemetryResolver.ParseExporterEnv`
+> (one parser for the three variables; null = unset or only unknown entries,
+> empty = `none`); the console exporters are the SDK's, constructed in the
+> deferred step (`AddConsoleExporter` registers services, D-NET3), so the
+> package `OpenTelemetry.Exporter.Console` 1.20.1 is a core dependency.
+> `none`, a disabled signal and `OTEL_SDK_DISABLED` all leave a signal with no
+> exporter (`ResolvedTelemetry.ResolvedSignalExporters`); for traces the helper
+> then adds no source, as for a disabled signal. The interval is read from
+> the process environment only (ADR-013 note of 2026-11-10, task C9). The
+> exemplar filter is set in the deferred step (`MeterProviderBuilderSdk` runs
+> `ConfigureBuilder` at once), so an application `SetExemplarFilter`
+> registered after `AddOtelHelper` still wins (tested). A code
+> `DisabledSignals` entry that is not a signal fails start, as in Go and
+> Python. `config.disabled_signals_standard_var_wins` is `xfail:C16`: its
+> warning is the deprecation of task C16.
+
 ### Sampler, propagators, debug — R6, R9, A20, ADR-006 (32 cases → C10)
 
 | Contract | .NET today | Cases |

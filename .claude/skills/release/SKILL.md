@@ -365,6 +365,18 @@ task C3, 1.15.x → 1.20.x):
   `IntMember` (any int field or property whose name contains `timeout` /
   `batch`, task C8). If they fail after a bump, the SDK renamed or added such
   members: update `IntMember`, not the assertion.
+- **`OpenTelemetry.Exporter.Console`** (core dependency since task C9; moves with
+  the core packages, same version). The helper constructs `ConsoleActivityExporter`,
+  `ConsoleLogRecordExporter` and `ConsoleMetricExporter` directly (not
+  `AddConsoleExporter`, which registers services): check that those constructors
+  and `ConsoleExporterOptions` still exist and still write to `Console.Out`
+  (`SignalsExportersTests.Console_Exporters_Write_Spans_Logs_And_Metrics_To_Standard_Output`,
+  the parity cases `export.*_exporter_console`).
+- **Exemplar filter member read by reflection (parity driver).** The .NET driver
+  reads the `ExemplarFilterType?` member of `MeterProviderSdk` whose name ends in
+  `ExemplarFilter` (snapshot field `exemplar_filter`, C9 fix round 1); after a
+  rename the two `metrics.exemplar_filter_*` cases report an adapter error that
+  lists the provider's exemplar members.
 - **Breaking entries.** Re-read each package's CHANGELOG at its tag (core
   `core-<v>`, Prometheus `coreunstable-<v>`, contrib `Instrumentation.<X>-<v>`)
   and walk every **Breaking** line with a before/after measurement.

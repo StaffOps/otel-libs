@@ -336,6 +336,15 @@ Interlocked.Decrement(ref queueItems);
 
 Exemplars are automatic. When a metric is recorded during an active trace, the SDK links the metric to the trace. In Grafana, clicking a metric point lets you jump directly to the corresponding trace.
 
+The helper sets the exemplar filter itself, because the .NET SDK default is `AlwaysOff` while the OpenTelemetry specification's is `trace_based`. 0.3 (this branch, task C9): `OTEL_METRICS_EXEMPLAR_FILTER` chooses it — `trace_based` (default: only measurements taken under a sampled span), `always_on`, `always_off`; any other value warns and `trace_based` is used. To set it in code, register your own call after `AddOtelHelper()`, which wins (a call registered before `AddOtelHelper()` is overridden by the helper's, without a warning):
+
+```csharp
+builder.Services.AddOtelHelper();
+builder.Services.ConfigureOpenTelemetryMeterProvider(b => b.SetExemplarFilter(ExemplarFilterType.AlwaysOff));
+```
+
+`OTEL_DOTNET_EXPERIMENTAL_METRICS_EXEMPLAR_FILTER_HISTOGRAMS` (the .NET SDK's histogram-only filter) has no effect: the SDK reads it only when no filter was set in code, and the helper always sets one (0.2.x also set one, so it had no effect there either).
+
 ---
 
 ## 8. Complete Example
@@ -432,8 +441,12 @@ When you use placeholders in logs, values are extracted as **separate attributes
 | `OTEL_HELPER_EXTRA_INSTRUMENTATION` | No effect in core (use the subpackages, §14) | `SQL` | — |
 | `OTEL_HELPER_SAMPLE_RATIO` | Head sampling ratio (clamped 0.0–1.0; bare `TraceIdRatioBased`). 1.0 = AlwaysOn | `1.0` | Helm Chart |
 | `OTEL_HELPER_METRICS_PORT` | Standalone Prometheus `/metrics` listener port (`0` disables it) | `9464` | Helm Chart |
-| `OTEL_METRICS_EXPORTER` | Metric exporter(s): `otlp`, `prometheus`, `otlp,prometheus`, `none` | legacy inference | Manual |
-| `OTEL_METRIC_EXPORT_INTERVAL` | OTLP metric export interval (ms) | `30000` | Manual |
+| `OTEL_METRICS_EXPORTER` | Metric exporter(s): `otlp`, `prometheus`, `console`, a list such as `otlp,prometheus`, or `none` (`logging` = warned alias of `console`) | legacy inference | Manual |
+| `OTEL_TRACES_EXPORTER`, `OTEL_LOGS_EXPORTER` | `otlp`, `console`, `none` (§15 "Choosing exporters per signal") | `otlp` | Manual |
+| `OTEL_METRIC_EXPORT_INTERVAL` | OTLP and console metric export interval (ms; digits with an optional `+`, clamped at 2 147 483 647) | `30000` | Manual |
+| `OTEL_METRICS_EXEMPLAR_FILTER` | `always_on`, `always_off`, `trace_based` (§7) | `trace_based` | Manual |
+| `OTEL_SDK_DISABLED` | `true` turns telemetry off (propagators kept, one INFO line); not `true`/`false` → warning, `false` | `false` | Manual |
+| `OTEL_HELPER_DISABLED_SIGNALS` | Deprecated: signals to disable; a set `OTEL_<SIGNAL>_EXPORTER` wins | _(unset)_ | Manual |
 | `OTEL_TRACES_SAMPLER` | Standard OTel sampler config — takes priority over `OTEL_HELPER_SAMPLE_RATIO` when set | _(unset)_ | Manual |
 | `OTEL_EXPORTER_OTLP_PROTOCOL` | OTLP wire protocol: `grpc` or `http/protobuf` | port-based inference | Manual |
 | `OTEL_EXPORTER_OTLP_HEADERS` | Headers on every export, `key=value,…` (auth); `OTEL_EXPORTER_OTLP_<SIGNAL>_HEADERS` replaces them for one signal (§19) | empty | Helm Chart (secret) |
@@ -590,10 +603,11 @@ effect; set the port with `OTEL_HELPER_METRICS_PORT`.
 | `OTEL_METRICS_EXPORTER` | Behavior |
 |---|---|
 | _(unset)_ | Legacy: OTLP if `OTEL_EXPORTER_OTLP_ENDPOINT` is set, else Prometheus fallback |
-| `otlp` | OTLP only. Fails validation at startup if no endpoint is configured |
+| `otlp` | OTLP only. Without an endpoint (0.3, this branch): one warning, `otlp` is dropped and the default applies (`prometheus`); in code (`MetricExporters = "otlp"`) host start fails |
 | `prometheus` | `/metrics` only, even when an OTLP endpoint IS set |
+| `console` | The OpenTelemetry console exporter on standard output, at the export interval (0.3, this branch; `logging` is a warned alias in the variable, an unknown exporter in code) |
 | `otlp,prometheus` | **Both** — one `MeterProvider`, two readers. Same instrument, same values, in both outputs |
-| `none` | Metrics disabled entirely (equivalent to `OTEL_HELPER_DISABLED_SIGNALS=metrics`) |
+| `none` | Metrics disabled entirely (equivalent to `OTEL_HELPER_DISABLED_SIGNALS=metrics`; a set `OTEL_METRICS_EXPORTER` wins over that deprecated variable) |
 
 The equivalent programmatic option — `TelemetryOptions.MetricExporters` (comma-separated string) — wins over the env var:
 
@@ -605,6 +619,25 @@ builder.Services.AddOtelHelper(opts =>
 ```
 
 `OTEL_METRIC_EXPORT_INTERVAL` (milliseconds) controls the OTLP push interval; the library default is 30000ms, overriding the SDK's own 60s default. `TelemetryOptions.ExportIntervalMs` wins over the env var.
+
+0.3 (this branch, task C9): the variable must be digits with an optional `+` (any length, leading zeros allowed) and above 0; `5_000`, `-1`, `0`, `5e3` or non-ASCII digits warn and 30 000 is used, and a value above 2 147 483 647 is clamped with a warning. It is read from the process environment only, like every row the helper resolves (ADR-013): a value set only in `appsettings.json` has no effect, and the helper warns once naming the variable. The console reader uses the same interval.
+
+### Choosing exporters per signal
+
+0.3 (this branch, task C9). `OTEL_TRACES_EXPORTER` and `OTEL_LOGS_EXPORTER` take `otlp` (the default; exports only when an endpoint is configured), `console` or `none`, comma-separated:
+
+```bash
+# Spans on standard output instead of OTLP, logs not exported, metrics over OTLP:
+OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
+OTEL_TRACES_EXPORTER=console
+OTEL_LOGS_EXPORTER=none
+```
+
+- `console` is the OpenTelemetry console exporter (package `OpenTelemetry.Exporter.Console`): a multi-line, human-readable dump per span, log record or metric on `Console.Out`, meant for local debugging, not for a log pipeline. Each language prints its SDK's native format (JSON in Go, one object per line, and indented JSON in Python; `console.dir` objects in Node.js), so console output is not comparable across languages.
+- `none` turns the signal off: no exporter, and for traces no `ActivitySource` of the helper is listened to. With `none` and other entries (`none,otlp`) the helper warns and `none` wins.
+- `logging` is a deprecated alias of `console` in the variables (one warning); unknown entries (`zipkin`, `jaeger`) warn and are dropped; a variable with only unknown entries is treated as unset.
+- The deprecated `OTEL_HELPER_DISABLED_SIGNALS` disables a signal only when that signal's `OTEL_<SIGNAL>_EXPORTER` is unset (or holds only unknown entries); for metrics a code `MetricExporters` wins too. `TelemetryOptions.DisabledSignals` (code) wins over all of them, and an unknown signal there fails start. Set in code means not null: `DisabledSignals = ""` disables nothing and still beats the variable, and `MetricExporters = ""` means no metric exporter (as Go, Python and Node.js treat an empty list; .NET also writes one INFO line, `TelemetryOptions.MetricExporters is empty: no metric exporter`, because a blank `appsettings.json` placeholder counted as unset before 0.3).
+- `OTEL_SDK_DISABLED=true` overrides everything: no exporter at all.
 
 ### ASP.NET Core: mounting `/metrics` on your own pipeline
 
@@ -661,6 +694,8 @@ fail the `MeterProvider` build (the helper writes one ERROR line first).
 ## 16. Metrics Export Interval
 
 Metrics are exported every **30 seconds** (not the SDK default of 60s). This applies to both OTLP export and the Prometheus `/metrics` fallback.
+
+0.3 (this branch, task C9): `OTEL_METRIC_EXPORT_INTERVAL` or `TelemetryOptions.ExportIntervalMs` changes it for the OTLP and console readers; the Prometheus endpoint is pull-based and collects on each scrape. Grammar and clamping: §15 ("Running OTLP push AND `/metrics` at the same time").
 
 ---
 

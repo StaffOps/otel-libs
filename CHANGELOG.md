@@ -746,6 +746,13 @@ emitted telemetry.
    blank value as not set. An `appsettings.json` placeholder such as
    `"ServiceName": ""` bound into `TelemetryOptions` now fails at start:
    remove the key, or give it a value.
+   *Same kind of placeholder (task C9 fix round 2, 2026-11-10):* a bound
+   `"MetricExporters": ""` is now a set empty list and turns metrics off (C5
+   read it as not set); the helper says so once at INFO
+   (`TelemetryOptions.MetricExporters is empty: no metric exporter`; Go,
+   Python and Node.js are silent). A bound `"DisabledSignals": ""` disables
+   nothing and beats `OTEL_HELPER_DISABLED_SIGNALS`. Remove the keys to get
+   the environment's values.
 10. **Register `ConfigureResource` before `AddOtelHelper()`** (task C6 fix
    round 1): the SDK runs resource callbacks in registration order and has no
    hook after them, so a `ConfigureResource` (or `AddOpenTelemetry().ConfigureResource`)
@@ -794,6 +801,27 @@ emitted telemetry.
    cannot change it. On Windows the client certificate's key is imported into the
    user key store for the life of the certificate (SChannel cannot use an
    ephemeral key); on Linux it stays ephemeral.
+13. **Signal and exporter options** (task C9, contract A19, R8).
+   `TelemetryOptions.MetricExporters` accepts `console`; `logging` there is an
+   unknown exporter and fails start (it is a warned alias of `console` only in
+   the variables). `TelemetryOptions.DisabledSignals` is trimmed, lowercased
+   and de-duplicated, and an entry that is not `traces`, `metrics` or `logs`
+   now fails start naming the option (0.2.x ignored it), as in Go and Python.
+   `TelemetryOptions.ExportIntervalMs` keeps its [1, 2 147 483 647] bound; this
+   supersedes the interval sentence of item 7: `OTEL_METRIC_EXPORT_INTERVAL` now
+   follows the contract grammar (telemetry row 18). An exemplar filter set in
+   code must be registered after `AddOtelHelper()`
+   (`ConfigureOpenTelemetryMeterProvider(b => b.SetExemplarFilter(…))`), which
+   then wins over the helper's.
+   *Fix round 1 (2026-11-10):* "set in code" means not null for
+   `DisabledSignals` and `MetricExporters`: `DisabledSignals = ""` disables
+   nothing and still beats `OTEL_HELPER_DISABLED_SIGNALS`, `MetricExporters = ""`
+   means no metric exporter (0.2.x and the first C9 round read a blank string
+   as "not set"), as Go, Python and Node.js treat an empty list. A
+   `SetExemplarFilter` registered before `AddOtelHelper()` is overridden by the
+   helper's without a warning, and
+   `OTEL_DOTNET_EXPERIMENTAL_METRICS_EXEMPLAR_FILTER_HISTOGRAMS` has no effect
+   (the helper always sets a filter; 0.2.x did too).
 
 **Telemetry part.** Each row: before (0.2.x) → after, and what to check in
 dashboards and alerts.
@@ -1160,6 +1188,26 @@ dashboards and alerts.
    language (task A31); until A31, Go and Python follow 307/308 and Node.js
    fails the export without a helper line.
 
+18. **Signals and exporters follow the 0.3 contract** (task C9, contract A19,
+   R2, R8, ADR-013). Before (0.2.x) → after:
+
+   | Input | 0.2.x | 0.3 (this branch) |
+   |---|---|---|
+   | `OTEL_TRACES_EXPORTER`, `OTEL_LOGS_EXPORTER` | not read (only `OTEL_METRICS_EXPORTER` was) | `otlp` (default), `console` (OpenTelemetry console exporter on standard output), `none` (signal off); `logging` = warned alias of `console`; unknown entries warned and dropped; `none` with others warned, `none` wins |
+   | `OTEL_METRICS_EXPORTER=console` or `logging` | start failed (`Unknown metric exporter(s) 'console'`) | console exporter at the export interval (`logging` warned) |
+   | `OTEL_METRICS_EXPORTER=otlp` without an endpoint | start failed | one warning, `otlp` dropped, the default applies (`prometheus`) |
+   | `OTEL_HELPER_DISABLED_SIGNALS` next to a set `OTEL_<SIGNAL>_EXPORTER` | the deprecated variable disabled the signal | the standard variable wins for that signal (a code `MetricExporters` too, for metrics); unknown entries warn once each |
+   | `OTEL_METRIC_EXPORT_INTERVAL` | `int.TryParse`: `" 9464"` and `"+9464"` accepted, a value above 2 147 483 647 or garbage ignored silently | `^\+?[0-9]+$` after the contract trim, any length, > 0; anything else warns and uses 30 000; above 2 147 483 647 clamped with a warning; process environment only |
+   | Exemplar filter | `SetExemplarFilter(TraceBased)` in code, so `OTEL_METRICS_EXEMPLAR_FILTER` had no effect | the helper parses `OTEL_METRICS_EXEMPLAR_FILTER` (`always_on`, `always_off`, `trace_based`; others warn) and always sets the filter, default `trace_based` — the .NET SDK default would be `AlwaysOff` |
+   | `OTEL_SDK_DISABLED` | handled by the SDK alone: no line; `maybe` silently meant enabled | still read from `IConfiguration` as the SDK reads it, plus one INFO line on `true` (task C5) and a warning naming the variable for a value other than `true`/`false` (means `false`) |
+
+   Check: a deployment with `OTEL_METRICS_EXPORTER=otlp` and no endpoint now
+   starts and serves `/metrics` instead of failing; dashboards that relied on
+   exemplars keep them (same default); a pod with `OTEL_TRACES_EXPORTER=none`
+   or `console` stops sending spans over OTLP. The console exporter is a
+   debugging aid: its multi-line output is not the contract's JSON log line
+   (the stdout log fallback is task C13).
+
 ### Collector / platform prerequisites (before rolling 0.3.0 out)
 
 Owned outside this repo (design D11); each item blocks the rollout, not the rc:
@@ -1459,6 +1507,61 @@ Phase C work on this branch (no .NET release yet; the first will be
   reader options is warned when the deadline replaces it. Measured for task
   C12: `MeterProvider.Shutdown()` also returns `false` with the always-registered
   Prometheus reader.
+- **.NET: signals and exporters (task C9, contract A19, R2, R8, ADR-013).**
+  `OTEL_TRACES_EXPORTER` and `OTEL_LOGS_EXPORTER` are read (`otlp`, `console`,
+  `none`) and `OTEL_METRICS_EXPORTER` gains `console`; `logging` is a warned
+  alias of `console` in the variables and fails in code; the console exporters
+  are the SDK's (new dependency `OpenTelemetry.Exporter.Console` 1.20.1,
+  Apache-2.0, the same OpenTelemetry .NET release as the core packages),
+  constructed by the helper at provider build. An environment `otlp` without
+  a metrics endpoint warns and falls back to the default. The deprecated
+  `OTEL_HELPER_DISABLED_SIGNALS` no longer disables a signal whose standard
+  exporter variable holds a valid entry (for metrics also a code
+  `MetricExporters`); its unknown entries warn once each; a code
+  `DisabledSignals` with an unknown signal fails start. `OTEL_METRIC_EXPORT_INTERVAL`
+  follows the contract grammar (any length, clamped at 2 147 483 647, garbage
+  warned). The helper parses `OTEL_METRICS_EXEMPLAR_FILTER` and always sets the
+  filter (default `trace_based`; the .NET SDK default is `AlwaysOff`), checked
+  by `ExemplarFilter_DefaultsToTraceBased_AndHonorsEnv` on the built provider.
+  An unparseable `OTEL_SDK_DISABLED` warns naming the variable. Parity: 19 of
+  the 20 `xfail:C9` cases pass; `config.disabled_signals_standard_var_wins`
+  moves to `xfail:C16` (its precedence passes; the warning it asserts is the
+  deprecation task C16 adds). The C9 group (36 cases) is 35 `pass` and 1
+  `xfail:C16`. Fixture: 373 cases; .NET 298 `pass`, 61 `xfail:C<n>`, 14
+  known-difference skips. Suite 1233/1233 on `sdk:8.0` (line coverage 98.6%)
+  and SDK 10.0.403 roll-forward (98.65%); 13 mutants of the new rules each
+  fail a test.
+- **.NET: C9 fix round 1 (2026-11-10).** A code `DisabledSignals` or
+  `MetricExporters` that is set but empty wins over the environment (new case
+  `config.code_disabled_signals_empty_wins`, passing in Go, Python, .NET and
+  Node.js). The SDK's own parse lines for `OTEL_METRIC_EXPORT_INTERVAL` and
+  `OTEL_SDK_DISABLED` are no longer forwarded (the helper resolves and warns
+  about both; `+1000` was accepted by the helper while the SDK's "invalid
+  value" line still printed). The unknown-entry and "`none` combined" warnings
+  of one exporter variable no longer share a once-key, so `bogus,none,otlp`
+  prints both. New `resolve` snapshot field `exemplar_filter`, read from the
+  installed provider in every driver (Go and .NET by reflection, Python from
+  the provider's SDK configuration; Node.js has no exemplar filter and takes
+  the permanent skip `skip:no-upstream-node-exemplar-filter`), and two cases:
+  `metrics.exemplar_filter_default_trace_based` (Go, Python, .NET pass) and
+  `metrics.exemplar_filter_env_always_off` (Go and .NET pass; Python
+  `xfail:A33` — it passes `TraceBasedExemplarFilter()` and ignores the
+  variable; new contract task A33, before the next Python release
+  candidate). `config.disabled_signals_standard_var_wins` now asserts only
+  the precedence (.NET `pass`); the deprecation warning moved to the new case
+  `deprecation.disabled_signals_standard_var_set_still_warns` (.NET
+  `xfail:C16`). Fixture: 377 cases; .NET 302 `pass`, 61 `xfail:C<n>`, 14
+  known-difference skips. Suite 1251/1251 on `sdk:8.0` and SDK 10.0.403
+  roll-forward (line coverage 98.6% on both).
+- **.NET: C9 fix round 2 (2026-11-10).** An `OTEL_METRIC_EXPORT_INTERVAL`
+  set only in `IConfiguration` (`appsettings.json`) is not read (ADR-013) and
+  the SDK's parse line for it is dropped, so the helper now warns once
+  naming the variable (`… is set only in IConfiguration and is not read`),
+  for a valid and an invalid value alike (principle 8). An empty code
+  `MetricExporters` writes one INFO line. The parity driver requires exactly
+  one `ExemplarFilter` member on `MeterProviderSdk` (an auto-property and its
+  backing field count as one). Suite 1255/1255 on `sdk:8.0` and SDK 10.0.403
+  roll-forward (line 98.61%).
 
 ### Breaking — telemetry output changes (dashboards/alerts)
 

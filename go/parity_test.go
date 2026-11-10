@@ -36,6 +36,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"runtime"
 	"sort"
@@ -54,6 +55,8 @@ import (
 	logglobal "go.opentelemetry.io/otel/log/global"
 	"go.opentelemetry.io/otel/metric"
 	"go.opentelemetry.io/otel/propagation"
+	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
+	"go.opentelemetry.io/otel/sdk/metric/exemplar"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 	"go.opentelemetry.io/otel/trace"
@@ -643,7 +646,40 @@ func runResolve(opts []Option) map[string]any {
 	snap["prometheus_metrics_port"] = float64(o.PrometheusMetricsPort)
 	snap["prometheus_metrics_host"] = o.prometheusHost // "" = every interface (A29)
 	snap["http_opt_in_metrics"] = o.HTTPOptInMetrics   // A30
+	if f := installedExemplarFilter(); f != "" {
+		snap["exemplar_filter"] = f // .NET C9 fix round / A33
+	}
 	return snap
+}
+
+// installedExemplarFilter names the exemplar filter of the installed SDK
+// MeterProvider ("" when none is installed). The helper leaves
+// OTEL_METRICS_EXEMPLAR_FILTER to the SDK (G7), which keeps the filter in an
+// unexported pipeline field: read by reflection, compared by code pointer.
+func installedExemplarFilter() string {
+	mp, ok := otel.GetMeterProvider().(*sdkmetric.MeterProvider)
+	if !ok {
+		return ""
+	}
+	pipes := reflect.ValueOf(mp).Elem().FieldByName("pipes")
+	if !pipes.IsValid() || pipes.Len() == 0 {
+		return ""
+	}
+	f := pipes.Index(0).Elem().FieldByName("exemplarFilter")
+	if !f.IsValid() || f.IsNil() {
+		return ""
+	}
+	known := map[string]exemplar.Filter{
+		"always_on":   exemplar.AlwaysOnFilter,
+		"always_off":  exemplar.AlwaysOffFilter,
+		"trace_based": exemplar.TraceBasedFilter,
+	}
+	for name, filter := range known {
+		if f.Pointer() == reflect.ValueOf(filter).Pointer() {
+			return name
+		}
+	}
+	return "unknown"
 }
 
 type wireRecord struct {
