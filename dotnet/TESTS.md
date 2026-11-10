@@ -1,6 +1,6 @@
 # Tests — StaffOps.OtelHelper (.NET)
 
-858 tests (xUnit) with the parity runner, 0 failed, 0 warnings (compose `dotnet-tests` on `sdk:8.0`, and on `sdk:10.0` with `DOTNET_ROLL_FORWARD=Major`, 2026-11-10, task C6 fix round 3); coverlet total `| Total | 98.67% | 96.05% | 99.21% |` (line, branch, method) on both. The total varies by about ±0.1 point between runs; the cause was not investigated.
+1038 tests (xUnit) with the parity runner, 0 failed, 0 warnings (compose `dotnet-tests` on `sdk:8.0`, and on `sdk:10.0` with `DOTNET_ROLL_FORWARD=Major`, 2026-11-10, task C7a fix round 1); coverlet total `| Total | 98.5% | 96.34% | 99.33% |` (line, branch, method) on both. The total varies by about ±0.1 point between runs; the cause was not investigated.
 
 From `dotnet/`; the repository root is mounted because the parity runner reads
 `parity/cases.json` (and `specs/dotnet-otel-helper/tasks.md`) from it:
@@ -259,10 +259,9 @@ Opt-in subpackage extensions (AWS, SQL, Redis) — each verifies the fluent `ISe
 | `Schemeless_With_Custom_Port_And_Insecure` | `gw:4318` + INSECURE=true → `http://gw:4318` |
 | `ConsumerSet_Endpoint_Not_Overridden` | Endpoint set in code is not overwritten by the environment |
 | `Insecure_EnvVar_Ignored_When_Scheme_Explicit_Https` | Explicit `https://` scheme wins over INSECURE=true |
-| `HttpsScheme_DefaultPort_Gets_4317` | `https://gw` (no port) normalizes to :4317 |
-| `ResolveEndpoint_Unit_Schemeless_Host_Port` | `ResolveEndpoint` static helper: schemeless host:port |
-| `ResolveEndpoint_Unit_Schemeless_Host_Only` | `ResolveEndpoint` static helper: schemeless host only |
-| `ResolveEndpoint_Unit_Http_Explicit` | `ResolveEndpoint` static helper: explicit http:// |
+| `HttpsScheme_DefaultPort_Gets_4317` | `https://gw` (no port, gRPC) dials :4317 (portless gRPC rule, warned since task C7a) |
+| `EndpointResolver_Unit_Grpc` × 4 | `EndpointResolver.Resolve` (task C7a, replaces the 0.2 `ResolveEndpoint` helper): schemeless `host:port` and `host`, schemeless + insecure, explicit `http://` |
+| `Http_Code_Endpoint_Keeps_Its_Path_For_Http_Protobuf` | Task C7a: an HTTP URL keeps its path (`/v1/<signal>` appended for the generic value); gRPC dials `host:4317` |
 
 ## ProfilingTests
 
@@ -418,3 +417,40 @@ when a provider is built before start.
 
 Tests about another row set a service name and an environment in code
 (`TestDiagnostics.Identified`), so they see only their own diagnostics.
+
+## Endpoint parsing (task C7a)
+
+`EndpointGrammarTests` (the grammar and one value, no environment) and
+`EndpointResolutionTests` (`[Collection("EnvVarTests")]`: environment, code,
+the validator) cover contract R1, R2, D1.a–c and the D1 edge-case rulings of
+A17:
+
+| Area | Tests |
+|---|---|
+| RFC 3986 split and ports | `Split_Follows_Rfc3986` × 9, `Split_Rejects_A_Malformed_Authority` × 8, `Ports_Compare_Numerically` × 11, `A_Port_Of_Thousands_Of_Digits_Never_Throws`, `Endpoint_Port_Is_Read_As_The_Resolver_Reads_It` × 7 |
+| Host rules and IDN | `Valid_Hosts_Normalize` × 11 (lowercase, IPv6, trailing dot, punycode, deviation character, ideographic full stop), `Invalid_Hosts_Are_Rejected` × 25 (space, `%`, reg-name, one host rule, IPv6 literal, U+FFFD, ZWJ, fullwidth digits, empty label; hosts `System.Uri` refuses: `a!b`, `a$b`, `a~b`, `a=b`, `a..b`, `1.2.3.4..`), `An_Unescaped_Zone_Id_Is_Reported_As_Such`, `A_Non_Ascii_Host_Longer_Than_253_After_Punycode_Is_Invalid`, `Without_Uts46_A_Non_Ascii_Host_Is_Invalid_And_Says_Why` (globalization-invariant mode fails closed), `Invalid_Escapes_Are_Found` × 5 |
+| Rendering | `Render_Matches_The_Resolver` × 11; `DiagnosticsTests.Endpoints_Render_Without_Credentials` (unchanged, now through the grammar) |
+| One value | `Unparseable_Env_Values_Warn_The_Constant_And_Fall_Back` × 18, `Unparseable_Code_Values_Fail_Naming_The_Option` × 5, `Unsupported_Schemes_Leave_The_Signal_Unconfigured_Rendered_Redacted` × 3, `An_Invalid_Http_Path_Escape_Is_Invalid_For_Http_Only`, `Schemeless_Values_Are_Rewritten` × 7, `A_Schemeless_Value_With_An_At_In_The_Path_Renders_The_Constant`, `Portless_Grpc_Urls_Get_4317_With_A_Warning` × 3, `Http_Urls_Keep_Their_Path_And_Default_Port` × 4, `Grpc_Urls_Drop_The_Path`, `Userinfo_Query_And_Fragment_Are_Removed_With_A_Warning` × 5, `An_At_In_The_Path_Warns_Naming_The_Variable_Only`, `Env_Failures_Use_Gos_Wording_And_Warn_Once_Per_Raw_Value`, `The_Userinfo_Using_Is_The_Url_The_Signal_Uses`, `An_Env_Insecure_Contradicting_The_Scheme_Warns_And_The_Scheme_Wins` × 2, `A_Code_Insecure_Contradicting_A_Code_Url_Fails_Only_When_Both_Are_Code` |
+| Resolution order and fallback | `An_Unparseable_Per_Signal_Value_Falls_Back_To_The_Generic_One`, `An_Unsupported_Per_Signal_Scheme_Leaves_Only_That_Signal_Unconfigured`, `A_Per_Signal_Env_Value_Is_Used_As_Written_And_Drives_The_Inference`, `Code_Code_Per_Signal_Env_Generic_Env_Is_The_Order`, `Generic_Endpoint_Reports_Empty_When_The_Env_Value_Is_Unusable`, `An_Idn_Host_Reaches_The_Exporter_Punycoded` |
+| INSECURE | `An_Unparseable_Insecure_Warns_Without_An_Endpoint` × 2, `A_Shadowed_Insecure_Stays_Silent`, `The_Per_Signal_Insecure_Beats_The_Generic_One_For_Schemeless_Values`, `An_Unparseable_Insecure_Means_False` |
+| Protocol | `Per_Signal_Protocol_Beats_The_Generic_One_And_Bad_Values_Fall_Through`, `A_Bad_Generic_Protocol_Is_Warned_Once_And_Grpc_Is_Used` × 2, `A_Code_Protocol_Beats_Every_Variable_And_The_Inference`, `The_4318_Inference_Is_Logged_Once_For_Three_Signals` |
+| Warning cadence | `The_Userinfo_Warning_Is_Written_Once_Per_Variable_And_Value`, `A_Generic_Http_Query_Is_Stripped_Before_The_Signal_Path` (also on `OtlpExporters.OptionsFor`), `Code_Warnings_Reach_The_Sink_At_Start` |
+| Code validation | `Invalid_Code_Endpoints_Fail_At_Start` × 5, `A_Code_Http_Path_Escape_Fails_Only_For_Http_Protobuf`, `A_Code_Insecure_Contradicting_A_Code_Url_Fails`, `The_Same_Error_Is_Listed_Once_And_A_Shadowed_Generic_Value_Is_Not_Checked`, `Schemeless_And_Credential_Bearing_Code_Values_Are_Accepted` × 3; `TracingAndOptionsHelperTests.Validator_Fails_On_Unsupported_Endpoint_Redacted` and `Validator_Per_Signal_Endpoints_Need_An_Http_Url` (schemeless per-signal code values are accepted since C7a, as in Go and Python) |
+
+The IDN tests need ICU (the SDK images have it). Under
+`DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=1` the tests that expect a punycode
+conversion fail by design (the helper rejects non-ASCII hosts there) and the
+invalid-host tests still pass; measured 2026-11-10: 10 of 283 endpoint and
+diagnostics tests fail in that mode, all of them IDN conversions or their
+reason text.
+
+`DiagnosticsTests.Sdk_Text_Is_Redacted` also covers the exception-message
+exemption (fix round 2): a pair is kept only when the name is a type name
+(`^[A-Z][A-Za-z0-9]*(Exception|Error)$`), the separator is `:` plus whitespace
+and the value starts like prose (`AuthenticationException: Cannot …`);
+`TokenError: eyJ…`, `AuthError=x`, `X-Auth-Error: x` and `session_token_error: x`
+are masked.
+
+Endpoint warnings use Go's wording (`<why>; ignored`, the variable as an
+attribute); the other environment warnings keep the .NET form
+`invalid <VAR>: …` (task C5).

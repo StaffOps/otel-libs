@@ -89,21 +89,24 @@ namespace StaffOps.OtelHelper
         public string? Environment { get; set; }
 
         /// <summary>
-        /// OTLP collector endpoint for every signal. Not set: <c>OTEL_EXPORTER_OTLP_ENDPOINT</c>;
-        /// when neither is set, metrics fall back to the Prometheus <c>/metrics</c> endpoint and
-        /// logs to stdout. An <c>http</c>/<c>https</c> URL is used as written (HTTP/protobuf
-        /// appends <c>/v1/&lt;signal&gt;</c>); a schemeless <c>host:port</c> gets <c>https://</c>
-        /// (<c>http://</c> with <see cref="Insecure"/>). Any other scheme fails at start.
+        /// OTLP collector endpoint for every signal. Not set: <c>OTEL_EXPORTER_OTLP_&lt;SIGNAL&gt;_ENDPOINT</c>,
+        /// else <c>OTEL_EXPORTER_OTLP_ENDPOINT</c>; when none is set, metrics fall back to the
+        /// Prometheus <c>/metrics</c> endpoint and logs to stdout. Parsed by RFC 3986 (contract D1):
+        /// an <c>http</c>/<c>https</c> URL keeps its path for HTTP/protobuf (which appends
+        /// <c>/v1/&lt;signal&gt;</c>) and gRPC dials <c>host:port</c> (4317, warned, when the URL
+        /// has none); a schemeless <c>host[:port]</c> gets <c>https://</c> (<c>http://</c> with
+        /// <see cref="Insecure"/>) and the protocol's port. Userinfo, query and fragment are
+        /// removed with a warning; any other scheme or an unparseable value fails at start.
         /// </summary>
         public string? OtelCollectorEndpoint { get; set; }
 
-        /// <summary>OTLP endpoint for traces only, used as written (no signal path appended). Wins over <see cref="OtelCollectorEndpoint"/>.</summary>
+        /// <summary>OTLP endpoint for traces only, used as written (no signal path appended; schemeless allowed). Wins over <see cref="OtelCollectorEndpoint"/> and <c>OTEL_EXPORTER_OTLP_TRACES_ENDPOINT</c>.</summary>
         public string? TracesEndpoint { get; set; }
 
-        /// <summary>OTLP endpoint for metrics only, used as written (no signal path appended). Wins over <see cref="OtelCollectorEndpoint"/>.</summary>
+        /// <summary>OTLP endpoint for metrics only, used as written (no signal path appended; schemeless allowed). Wins over <see cref="OtelCollectorEndpoint"/> and <c>OTEL_EXPORTER_OTLP_METRICS_ENDPOINT</c>.</summary>
         public string? MetricsEndpoint { get; set; }
 
-        /// <summary>OTLP endpoint for logs only, used as written (no signal path appended). Wins over <see cref="OtelCollectorEndpoint"/>.</summary>
+        /// <summary>OTLP endpoint for logs only, used as written (no signal path appended; schemeless allowed). Wins over <see cref="OtelCollectorEndpoint"/> and <c>OTEL_EXPORTER_OTLP_LOGS_ENDPOINT</c>.</summary>
         public string? LogsEndpoint { get; set; }
 
         /// <summary>
@@ -192,14 +195,16 @@ namespace StaffOps.OtelHelper
         public int? PrometheusMetricsPort { get; set; }
 
         /// <summary>
-        /// OTLP wire protocol: <c>grpc</c> or <c>http/protobuf</c>. Not set:
-        /// <c>OTEL_EXPORTER_OTLP_PROTOCOL</c>, else port 4318 means <c>http/protobuf</c>, else <c>grpc</c>.
+        /// OTLP wire protocol for every signal: <c>grpc</c> or <c>http/protobuf</c>. Not set:
+        /// <c>OTEL_EXPORTER_OTLP_&lt;SIGNAL&gt;_PROTOCOL</c>, else <c>OTEL_EXPORTER_OTLP_PROTOCOL</c>,
+        /// else port 4318 on the endpoint the signal uses means <c>http/protobuf</c>, else <c>grpc</c>.
         /// </summary>
         public string? OtlpProtocol { get; set; }
 
         /// <summary>
         /// Plaintext for a schemeless endpoint (<c>http://</c> instead of <c>https://</c>).
-        /// Not set: <c>OTEL_EXPORTER_OTLP_INSECURE</c>.
+        /// Not set: <c>OTEL_EXPORTER_OTLP_&lt;SIGNAL&gt;_INSECURE</c>, else <c>OTEL_EXPORTER_OTLP_INSECURE</c>.
+        /// An explicit scheme wins; set here, a contradiction with a code URL fails at start.
         /// </summary>
         public bool? Insecure { get; set; }
 

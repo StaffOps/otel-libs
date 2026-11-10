@@ -169,6 +169,18 @@ public class DiagnosticsTests
     [InlineData("api_key=parity-secret&x=1", "api_key=<redacted>&x=1")]
     [InlineData("{\"x-api-token\":\"parity-secret\"}", "{\"x-api-token\":<redacted>}")]
     [InlineData("basic auth failed", "basic auth failed")]
+    [InlineData("System.Security.Authentication.AuthenticationException: Cannot determine the frame size", "System.Security.Authentication.AuthenticationException: Cannot determine the frame size")]
+    [InlineData("TokenError: expired", "TokenError: <redacted>")]
+    [InlineData("TokenError: eyJhbGciOiJIUzI1NiJ9", "TokenError: <redacted>")]
+    [InlineData("AuthError=x", "AuthError=<redacted>")]
+    [InlineData("AuthError= Cannot", "AuthError= <redacted>")]
+    [InlineData("X-Auth-Error: x", "X-Auth-Error: <redacted>")]
+    [InlineData("X-Auth-Error: Cannot", "X-Auth-Error: <redacted>")]
+    [InlineData("session_token_error: x", "session_token_error: <redacted>")]
+    [InlineData("AuthenticationException:Cannot", "AuthenticationException:<redacted>")]
+    [InlineData("Authorization: Bearer x", "Authorization: <redacted> <redacted>")]
+    [InlineData("Authorization: Bearer parity-tok-123", "Authorization: <redacted> <redacted>")]
+    [InlineData("session_token: x", "session_token: <redacted>")]
     public void Sdk_Text_Is_Redacted(string text, string expected)
     {
         Assert.Equal(expected, DiagnosticText.RedactText(text));

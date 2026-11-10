@@ -36,13 +36,19 @@ namespace StaffOps.OtelHelper
         /// <summary><c>OTEL_RESOURCE_ATTRIBUTES</c> as the helper parsed it (A16).</summary>
         public IReadOnlyDictionary<string, string> EnvResourceAttributes { get; init; } = ParsedResourceAttributes.Empty.Attributes;
 
-        /// <summary>Generic endpoint after resolution; empty when none is configured.</summary>
+        /// <summary>
+        /// The generic endpoint (code, else <c>OTEL_EXPORTER_OTLP_ENDPOINT</c>) after resolution, before
+        /// any <c>/v1/&lt;signal&gt;</c>; empty when none is usable. Reporting only: exporters use <see cref="SignalTargets"/>.
+        /// </summary>
         public required string OtelCollectorEndpoint { get; init; }
 
-        /// <summary>Code per-signal endpoints (used as written), by signal name.</summary>
-        public required IReadOnlyDictionary<string, string> SignalEndpoints { get; init; }
+        /// <summary>The protocol of <see cref="OtelCollectorEndpoint"/> (explicit, else port-4318 inference, else grpc).</summary>
+        public string GenericOtlpProtocol { get; init; } = TelemetryOptions.ProtocolGrpc;
 
-        /// <summary>Protocol set in code or a valid <c>OTEL_EXPORTER_OTLP_PROTOCOL</c>; null = inferred per endpoint.</summary>
+        /// <summary>The OTLP target of each configured signal (contract D1); a missing signal has no OTLP exporter.</summary>
+        public required IReadOnlyDictionary<string, OtlpSignalTarget> SignalTargets { get; init; }
+
+        /// <summary>Protocol set in code or a valid <c>OTEL_EXPORTER_OTLP_PROTOCOL</c>; null = per signal.</summary>
         public string? OtlpProtocol { get; init; }
 
         public required bool DebugLevel { get; init; }
@@ -110,44 +116,20 @@ namespace StaffOps.OtelHelper
             => PrometheusMetricsPort > 0 && ResolvedMetricExporters().Contains("prometheus");
 
         /// <summary>Protocol of the generic endpoint: explicit, else port 4318 → http/protobuf, else grpc.</summary>
-        public string ResolvedOtlpProtocol() => ProtocolFor(OtelCollectorEndpoint);
+        public string ResolvedOtlpProtocol() => GenericOtlpProtocol;
 
-        /// <summary>Protocol for an endpoint: explicit, else port 4318 → http/protobuf, else grpc.</summary>
-        internal string ProtocolFor(string endpoint)
-        {
-            if (OtlpProtocol is not null)
-            {
-                return OtlpProtocol;
-            }
-
-            return endpoint.Length > 0
-                && Uri.TryCreate(endpoint, UriKind.Absolute, out var uri)
-                && uri.Port == TelemetryOptions.DefaultOtlpHttpPort
-                ? TelemetryOptions.ProtocolHttpProtobuf
-                : TelemetryOptions.ProtocolGrpc;
-        }
-
-        /// <summary>
-        /// The OTLP target of one signal: a code per-signal endpoint as written, else the generic
-        /// endpoint (HTTP/protobuf appends <c>/v1/&lt;signal&gt;</c>); null when none is configured.
-        /// </summary>
+        /// <summary>The OTLP target of one signal (URL and protocol); null when the signal has none.</summary>
         internal (string Endpoint, string Protocol)? OtlpTarget(string signal)
-        {
-            if (SignalEndpoints.TryGetValue(signal, out var perSignal))
-            {
-                return (perSignal, ProtocolFor(perSignal));
-            }
-
-            if (OtelCollectorEndpoint.Length == 0)
-            {
-                return null;
-            }
-
-            var protocol = ResolvedOtlpProtocol();
-            var endpoint = protocol == TelemetryOptions.ProtocolHttpProtobuf
-                ? OtelCollectorEndpoint.TrimEnd('/') + "/v1/" + signal
-                : OtelCollectorEndpoint;
-            return (endpoint, protocol);
-        }
+            => SignalTargets.TryGetValue(signal, out var target) ? (target.Endpoint, target.Protocol) : null;
     }
+}
+
+namespace StaffOps.OtelHelper
+{
+    /// <summary>The resolved OTLP target of one signal.</summary>
+    /// <param name="Endpoint">The URL passed to the exporter: <c>scheme://host:port</c> for gRPC; for HTTP/protobuf the full URL (a generic value gets <c>/v1/&lt;signal&gt;</c>).</param>
+    /// <param name="Protocol"><c>grpc</c> or <c>http/protobuf</c>.</param>
+    /// <param name="Variable">The option or environment variable the endpoint came from.</param>
+    /// <param name="PerSignal">Whether it came from a per-signal option or variable.</param>
+    internal sealed record OtlpSignalTarget(string Endpoint, string Protocol, string Variable, bool PerSignal);
 }

@@ -223,7 +223,7 @@ public class TracingAndOptionsHelperTests
     [InlineData("ftp://collector:21", "ftp://collector:21")]
     [InlineData("http://u:parity-secret@/x", "<unparseable URL>")]
     [InlineData("//collector:4317", "<unparseable URL>")]
-    [InlineData("user:parity-secret@collector:4317", "user:")]
+    [InlineData("collector:/parity-secret", "collector:")]
     public void Validator_Fails_On_Unsupported_Endpoint_Redacted(string endpoint, string rendered)
     {
         var message = Fail(o => o.OtelCollectorEndpoint = endpoint);
@@ -234,8 +234,8 @@ public class TracingAndOptionsHelperTests
     }
 
     [Theory]
-    [InlineData("collector:4318")]
     [InlineData("unix:/x")]
+    [InlineData("ftp://collector:21")]
     public void Validator_Per_Signal_Endpoints_Need_An_Http_Url(string endpoint)
     {
         Assert.Contains("TelemetryOptions.TracesEndpoint", Fail(o => o.TracesEndpoint = endpoint));

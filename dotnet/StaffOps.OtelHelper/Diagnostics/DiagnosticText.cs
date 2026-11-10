@@ -154,69 +154,14 @@ namespace StaffOps.OtelHelper.Diagnostics
 
         // ── URL rendering ──────────────────────────────────────────────────
 
-        // "unix:/path", "collector:/x": a scheme followed by something that is not a port.
-        private static readonly Regex OpaqueScheme = new("^([A-Za-z][A-Za-z0-9+.-]*):(?![0-9]+(?:[/?#]|$))", RegexOptions.CultureInvariant, RegexTimeout);
-
         /// <summary>
-        /// Endpoint text safe for diagnostics: scheme, host, port and path only (no userinfo,
-        /// query or fragment); an opaque value renders as <c>&lt;scheme&gt;:</c>; only
-        /// <c>&lt;scheme&gt;://</c> (or <see cref="SchemelessAtRendering"/>) when the path or
-        /// query holds an <c>@</c> or <c>%40</c>; <see cref="UnparseableUrl"/> otherwise.
+        /// Endpoint text safe for diagnostics (<see cref="EndpointGrammar.Render"/> without a
+        /// protocol): scheme, host, port and path only (no userinfo, query or fragment); an opaque
+        /// value renders as <c>&lt;scheme&gt;:</c>; only <c>&lt;scheme&gt;://</c> (or
+        /// <see cref="SchemelessAtRendering"/>) when the path or query holds an <c>@</c> or
+        /// <c>%40</c>; <see cref="UnparseableUrl"/> for anything the resolver cannot parse.
         /// </summary>
-        internal static string RenderUrl(string raw)
-        {
-            var s = raw.Trim();
-            if (s.Length == 0 || s.Contains('\\') || s.Any(IsLineBreaking))
-            {
-                return UnparseableUrl;
-            }
-
-            var schemeless = !s.Contains("://", StringComparison.Ordinal);
-            if (schemeless)
-            {
-                var opaque = OpaqueScheme.Match(s);
-                if (opaque.Success)
-                {
-                    return opaque.Groups[1].Value.ToLowerInvariant() + ":";
-                }
-
-                if (s.StartsWith('/'))
-                {
-                    return UnparseableUrl;
-                }
-            }
-
-            // Split the text itself (Uri would treat '?' as path data for non-http schemes).
-            var text = schemeless ? "https://" + s : s;
-            var separator = text.IndexOf("://", StringComparison.Ordinal);
-            var scheme = text[..separator].ToLowerInvariant();
-            var rest = text[(separator + 3)..];
-            var end = rest.IndexOfAny(new[] { '/', '?', '#' });
-            var authority = end < 0 ? rest : rest[..end];
-            var tail = end < 0 ? "" : rest[end..];
-            var fragment = tail.IndexOf('#');
-            var beforeFragment = fragment < 0 ? tail : tail[..fragment];
-            var query = beforeFragment.IndexOf('?');
-            var path = query < 0 ? beforeFragment : beforeFragment[..query];
-            if (beforeFragment.Contains('@') || beforeFragment.Contains("%40", StringComparison.OrdinalIgnoreCase))
-            {
-                return schemeless ? SchemelessAtRendering : scheme + "://";
-            }
-
-            var hostPort = authority.Contains('@') ? authority[(authority.LastIndexOf('@') + 1)..] : authority;
-            if (hostPort.Length == 0 || scheme.Length == 0)
-            {
-                return UnparseableUrl;
-            }
-
-            if ((scheme == Uri.UriSchemeHttp || scheme == Uri.UriSchemeHttps)
-                && (!Uri.TryCreate(scheme + "://" + hostPort + path, UriKind.Absolute, out var uri) || uri.Host.Length == 0))
-            {
-                return UnparseableUrl;
-            }
-
-            return schemeless ? hostPort + path : scheme + "://" + hostPort + path;
-        }
+        internal static string RenderUrl(string raw) => EndpointGrammar.Render(raw);
 
         // ── free-text redaction (SDK messages) ─────────────────────────────
 
@@ -236,6 +181,26 @@ namespace StaffOps.OtelHelper.Diagnostics
             RegexOptions.IgnoreCase | RegexOptions.CultureInvariant,
             RegexTimeout);
 
+        // A .NET exception or error type name: capital first letter, letters and digits only.
+        private static readonly Regex TypeName = new("^[A-Z][A-Za-z0-9]*(Exception|Error)$", RegexOptions.CultureInvariant, RegexTimeout);
+
+        // ": " — a colon and whitespace, never '='.
+        private static readonly Regex ProseSeparator = new(@"^:\s+$", RegexOptions.CultureInvariant, RegexTimeout);
+
+        // A message that starts like prose ("Cannot …", "The …").
+        private static readonly Regex ProseStart = new(@"^[A-Z][a-z]+\b", RegexOptions.CultureInvariant, RegexTimeout);
+
+        /// <summary>
+        /// An exception message such as "AuthenticationException: Cannot determine the frame size"
+        /// is not a credential pair. Spared only when all three hold: the name is a type name
+        /// (<see cref="TypeName"/>: no <c>-</c> or <c>_</c>), the separator is <c>:</c> plus
+        /// whitespace, and the value starts like prose. Anything else is masked, so
+        /// <c>TokenError: eyJ…</c>, <c>AuthError=x</c> and <c>X-Auth-Error: x</c> stay redacted.
+        /// Go and Python mask only the configured header values, not names.
+        /// </summary>
+        private static bool IsExceptionMessage(Match m)
+            => TypeName.IsMatch(m.Groups[2].Value) && ProseSeparator.IsMatch(m.Groups[3].Value) && ProseStart.IsMatch(m.Groups[4].Value);
+
         /// <summary>
         /// <paramref name="text"/> with credentials removed: URL userinfo, query and fragment
         /// (and a path holding <c>@</c>), schemeless <c>user:pw@</c>, bearer/basic tokens and
@@ -251,7 +216,9 @@ namespace StaffOps.OtelHelper.Diagnostics
                 var users = SchemelessUserinfo.Replace(urls, "");
                 var tokens = Bearer.Replace(users, m => m.Groups[1].Value + (m.Groups[2].Value.Length == 0 ? " " : m.Groups[2].Value) + "<redacted>");
                 tokens = Basic.Replace(tokens, m => m.Groups[1].Value + m.Groups[2].Value + "<redacted>");
-                return SecretPair.Replace(tokens, m => m.Groups[1].Value + m.Groups[2].Value + m.Groups[1].Value + m.Groups[3].Value + "<redacted>");
+                return SecretPair.Replace(tokens, m => IsExceptionMessage(m)
+                    ? m.Value
+                    : m.Groups[1].Value + m.Groups[2].Value + m.Groups[1].Value + m.Groups[3].Value + "<redacted>");
             }
             catch (RegexMatchTimeoutException)
             {

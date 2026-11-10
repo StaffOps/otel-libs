@@ -22,12 +22,17 @@ namespace StaffOps.OtelHelper
         {
             WarnUnsupported(code, diagnostics);
 
-            var insecure = code.Insecure ?? EnvTrue(TelemetryOptions.InsecureEnvVar);
-            var endpoint = ResolveGenericEndpoint(code, insecure, diagnostics);
-            var signalEndpoints = new Dictionary<string, string>(StringComparer.Ordinal);
-            AddIfSet(signalEndpoints, "traces", code.TracesEndpoint);
-            AddIfSet(signalEndpoints, "metrics", code.MetricsEndpoint);
-            AddIfSet(signalEndpoints, "logs", code.LogsEndpoint);
+            var protocol = ResolveProtocol(code, diagnostics);
+            var targets = new Dictionary<string, OtlpSignalTarget>(StringComparer.Ordinal);
+            foreach (var signal in ResolvedTelemetry.Signals)
+            {
+                if (ResolveSignal(signal, code, diagnostics) is { } target)
+                {
+                    targets[signal] = target;
+                }
+            }
+
+            var generic = ResolveGenericEndpoint(code, protocol);
 
             var identity = ResolveIdentity(code, diagnostics);
             var environment = identity.Environment;
@@ -39,7 +44,7 @@ namespace StaffOps.OtelHelper
                     "OTEL_SDK_DISABLED=true: telemetry disabled, only propagators installed");
             }
 
-            var hasMetricsEndpoint = endpoint.Length > 0 || signalEndpoints.ContainsKey("metrics");
+            var hasMetricsEndpoint = targets.ContainsKey("metrics");
             return new ResolvedTelemetry
             {
                 ServiceName = identity.ServiceName,
@@ -49,9 +54,10 @@ namespace StaffOps.OtelHelper
                 ServiceInstanceIdConfigured = identity.ServiceInstanceIdConfigured,
                 CodeMinimumLogLevel = code.MinimumLogLevel,
                 EnvResourceAttributes = identity.EnvResourceAttributes,
-                OtelCollectorEndpoint = endpoint,
-                SignalEndpoints = signalEndpoints,
-                OtlpProtocol = ResolveProtocol(code, diagnostics),
+                OtelCollectorEndpoint = generic.Endpoint,
+                GenericOtlpProtocol = generic.Protocol,
+                SignalTargets = targets,
+                OtlpProtocol = protocol,
                 DebugLevel = debug,
                 ExportTimeoutMs = code.ExportTimeoutMs ?? TelemetryOptions.DefaultExportTimeoutMs,
                 Compression = ResolveCompression(code, diagnostics),
@@ -214,91 +220,290 @@ namespace StaffOps.OtelHelper
 
         // ── endpoints and exporter settings ────────────────────────────────
 
-        private static string ResolveGenericEndpoint(TelemetryOptions code, bool insecure, IOtelHelperDiagnostics diagnostics)
+        /// <summary>The per-signal OTLP environment variable, e.g. <c>OTEL_EXPORTER_OTLP_TRACES_ENDPOINT</c>.</summary>
+        internal static string SignalVariable(string signal, string suffix)
+            => "OTEL_EXPORTER_OTLP_" + ContractText.AsciiUpper(signal) + "_" + suffix;
+
+        /// <summary>The code option of a signal's endpoint, as named in diagnostics.</summary>
+        private static string CodeSignalOption(string signal) => signal switch
         {
-            if (NonBlank(code.OtelCollectorEndpoint) is { } fromCode)
-            {
-                // An http(s) URL set in code is used as written; a schemeless host:port is
-                // resolved like the environment value (N10: it is not a URL with scheme "collector").
-                var trimmed = fromCode.Trim();
-                return IsHttpUrl(trimmed) ? trimmed : ResolveEndpoint(trimmed.TrimEnd('/'), insecure);
-            }
+            "traces" => "TelemetryOptions." + nameof(TelemetryOptions.TracesEndpoint),
+            "metrics" => "TelemetryOptions." + nameof(TelemetryOptions.MetricsEndpoint),
+            _ => "TelemetryOptions." + nameof(TelemetryOptions.LogsEndpoint),
+        };
 
-            var fromEnv = Env(TelemetryOptions.CollectorEndpointEnvVar);
-            if (string.IsNullOrWhiteSpace(fromEnv))
-            {
-                return "";
-            }
+        private static string? CodeSignalEndpoint(TelemetryOptions code, string signal) => signal switch
+        {
+            "traces" => code.TracesEndpoint,
+            "metrics" => code.MetricsEndpoint,
+            _ => code.LogsEndpoint,
+        };
 
-            if (fromEnv.Contains("://", StringComparison.Ordinal) && !IsHttpUrl(fromEnv.Trim().TrimEnd('/')))
-            {
-                // A URL the helper cannot use (unsupported scheme, port out of range, no host):
-                // before, it was rewritten as a schemeless value ("https://http://…"). The full
-                // parsing rules are task C7a; the value is rendered without credentials.
-                diagnostics.ReportOnce("invalid:" + TelemetryOptions.CollectorEndpointEnvVar, DiagnosticLevel.Warn,
-                    $"invalid {TelemetryOptions.CollectorEndpointEnvVar}: not a usable http:// or https:// URL; no OTLP endpoint is configured",
-                    ("variable", TelemetryOptions.CollectorEndpointEnvVar), ("value", DiagnosticText.RenderUrl(fromEnv)));
-                return "";
-            }
-
-            return ResolveEndpoint(fromEnv.TrimEnd('/'), insecure);
-        }
-
-        /// <summary>An absolute <c>http</c>/<c>https</c> URL with a host.</summary>
-        internal static bool IsHttpUrl(string value)
-            => Uri.TryCreate(value.Trim(), UriKind.Absolute, out var uri)
-                && (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps)
-                && uri.Host.Length > 0;
+        private const string CodeGenericOption = "TelemetryOptions." + nameof(TelemetryOptions.OtelCollectorEndpoint);
+        private const string CodeInsecureOption = "TelemetryOptions." + nameof(TelemetryOptions.Insecure);
 
         /// <summary>
-        /// Resolves an endpoint string to <c>scheme://host:port</c> (the 0.2 rule, kept until task C7a):
-        /// an http(s) URL keeps its scheme and gets port 4317 when it has none; a schemeless
-        /// value gets <c>http://</c> when <paramref name="insecure"/>, else <c>https://</c>, and
-        /// port 4317 when it has none.
+        /// The OTLP target of one signal (contract D1 rows "Endpoint", "Fallback order for every
+        /// per-signal value", design D1.b–c): candidates in order code per-signal, code generic,
+        /// <c>OTEL_EXPORTER_OTLP_&lt;SIGNAL&gt;_ENDPOINT</c>, <c>OTEL_EXPORTER_OTLP_ENDPOINT</c>;
+        /// an unparseable environment value warns and falls back to the next one, an unsupported
+        /// scheme warns and leaves the signal unconfigured. Null when no candidate is usable.
         /// </summary>
-        internal static string ResolveEndpoint(string rawEndpoint, bool? insecure = null)
+        private static OtlpSignalTarget? ResolveSignal(string signal, TelemetryOptions code, IOtelHelperDiagnostics diagnostics)
         {
-            if (Uri.TryCreate(rawEndpoint, UriKind.Absolute, out var uri)
-                && (uri.Scheme == "http" || uri.Scheme == "https"))
+            // INSECURE first: an unparseable value warns even when no endpoint is configured (D1 ruling, principle 8).
+            var insecure = ResolveInsecure(signal, code, diagnostics);
+            var candidates = new (string? Raw, string Variable, bool FromCode, bool PerSignal)[]
             {
-                var port = uri.IsDefaultPort ? 4317 : uri.Port;
-                return $"{uri.Scheme}://{uri.Host}:{port}";
+                (CodeSignalEndpoint(code, signal), CodeSignalOption(signal), true, true),
+                (code.OtelCollectorEndpoint, CodeGenericOption, true, false),
+                (Env(SignalVariable(signal, "ENDPOINT")), SignalVariable(signal, "ENDPOINT"), false, true),
+                (Env(TelemetryOptions.CollectorEndpointEnvVar), TelemetryOptions.CollectorEndpointEnvVar, false, false),
+            };
+
+            foreach (var (value, variable, fromCode, perSignal) in candidates)
+            {
+                if (ContractText.NonBlank(value) is not { } raw)
+                {
+                    continue;
+                }
+
+                var input = new EndpointInput
+                {
+                    Raw = raw,
+                    Variable = variable,
+                    Signal = signal,
+                    Protocol = SignalProtocol(signal, code, raw, null),
+                    FromCode = fromCode,
+                    PerSignal = perSignal,
+                    Insecure = insecure.Value,
+                    InsecureFromCode = insecure.FromCode,
+                    InsecureVariable = insecure.Variable,
+                };
+                var outcome = EndpointResolver.Resolve(input);
+                foreach (var warning in outcome.Warnings)
+                {
+                    diagnostics.ReportOnce(warning.OnceKey, DiagnosticLevel.Warn, warning.Message, warning.Attributes);
+                }
+
+                switch (outcome.Failure)
+                {
+                    case EndpointFailure.Unsupported:
+                        return null;
+                    case EndpointFailure.Invalid:
+                        // An invalid code value fails at start (validator); an environment value falls back.
+                        if (fromCode)
+                        {
+                            return null;
+                        }
+
+                        continue;
+                }
+
+                // Now with diagnostics: the per-signal protocol warnings and the 4318 INFO, for the chosen value only.
+                return new OtlpSignalTarget(outcome.Url!, SignalProtocol(signal, code, raw, diagnostics), variable, perSignal);
             }
 
-            var scheme = (insecure ?? EnvTrue(TelemetryOptions.InsecureEnvVar)) ? "http" : "https";
-            var hostPort = rawEndpoint;
-            var resolvedPort = 4317;
-            var lastColon = hostPort.LastIndexOf(':');
-            if (lastColon > 0 && int.TryParse(hostPort.AsSpan(lastColon + 1), NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsedPort))
-            {
-                resolvedPort = parsedPort;
-                hostPort = hostPort[..lastColon];
-            }
-
-            return $"{scheme}://{hostPort}:{resolvedPort}";
+            return null;
         }
 
+        /// <summary>
+        /// The effective INSECURE setting of a signal: code &gt; <c>OTEL_EXPORTER_OTLP_&lt;SIGNAL&gt;_INSECURE</c>
+        /// &gt; <c>OTEL_EXPORTER_OTLP_INSECURE</c>. A set variable is a boolean: <c>true</c>
+        /// (ASCII case-insensitive, contract trim set) is true, anything else false, and a value that
+        /// is neither <c>true</c> nor <c>false</c> warns (only the variable that is consulted:
+        /// a variable shadowed by code or by the per-signal one stays silent).
+        /// </summary>
+        internal static (bool? Value, bool FromCode, string Variable) ResolveInsecure(string signal, TelemetryOptions code, IOtelHelperDiagnostics? diagnostics)
+        {
+            if (code.Insecure is { } fromCode)
+            {
+                return (fromCode, true, CodeInsecureOption);
+            }
+
+            var variables = signal.Length == 0
+                ? new[] { TelemetryOptions.InsecureEnvVar }
+                : new[] { SignalVariable(signal, "INSECURE"), TelemetryOptions.InsecureEnvVar };
+            foreach (var variable in variables)
+            {
+                if (ContractText.NonBlank(Env(variable)) is not { } raw)
+                {
+                    continue;
+                }
+
+                var lower = ContractText.AsciiLower(raw);
+                if (lower is not ("true" or "false") && diagnostics is not null)
+                {
+                    WarnInvalidEnv(diagnostics, variable, raw, "not a boolean (true or false), using false");
+                }
+
+                return (lower == "true", false, variable);
+            }
+
+            return (null, false, "");
+        }
+
+        /// <summary>
+        /// The OTLP protocol of a signal for one endpoint value (contract D1 row "Protocol", D1.a):
+        /// code &gt; <c>OTEL_EXPORTER_OTLP_&lt;SIGNAL&gt;_PROTOCOL</c> &gt; <c>OTEL_EXPORTER_OTLP_PROTOCOL</c>
+        /// &gt; port 4318 (compared numerically) → <c>http/protobuf</c>, logged once at INFO &gt;
+        /// <c>grpc</c>. An unknown or <c>http/json</c> environment value warns and the next level
+        /// applies. With <paramref name="diagnostics"/> null nothing is reported.
+        /// </summary>
+        internal static string SignalProtocol(string signal, TelemetryOptions code, string endpoint, IOtelHelperDiagnostics? diagnostics)
+        {
+            if (ContractText.NonBlank(code.OtlpProtocol) is { } fromCode)
+            {
+                return ContractText.AsciiLower(fromCode) == TelemetryOptions.ProtocolHttpProtobuf
+                    ? TelemetryOptions.ProtocolHttpProtobuf
+                    : TelemetryOptions.ProtocolGrpc;
+            }
+
+            var variables = signal.Length == 0
+                ? new[] { TelemetryOptions.OtlpProtocolEnvVar }
+                : new[] { SignalVariable(signal, "PROTOCOL"), TelemetryOptions.OtlpProtocolEnvVar };
+            foreach (var variable in variables)
+            {
+                if (ContractText.NonBlank(Env(variable)) is not { } raw)
+                {
+                    continue;
+                }
+
+                var value = ContractText.AsciiLower(raw);
+                if (TelemetryOptions.ValidOtlpProtocols.Contains(value))
+                {
+                    return value;
+                }
+
+                if (diagnostics is not null)
+                {
+                    WarnInvalidEnv(diagnostics, variable, raw, value == "http/json"
+                        ? "http/json is not supported by the .NET OTLP exporter; ignored (port inference, else grpc)"
+                        : "unsupported OTLP protocol, ignored (port inference, else grpc); valid values: grpc, http/protobuf");
+                }
+            }
+
+            if (EndpointGrammar.EndpointPort(endpoint) == EndpointResolver.DefaultHttpPort)
+            {
+                diagnostics?.ReportOnce("info:infer4318", DiagnosticLevel.Info,
+                    "endpoint port 4318 and no protocol set; using http/protobuf", ("set", TelemetryOptions.OtlpProtocolEnvVar));
+                return TelemetryOptions.ProtocolHttpProtobuf;
+            }
+
+            return TelemetryOptions.ProtocolGrpc;
+        }
+
+        /// <summary>
+        /// The generic endpoint after resolution, for reporting (<see cref="ResolvedTelemetry.OtelCollectorEndpoint"/>):
+        /// code, else <c>OTEL_EXPORTER_OTLP_ENDPOINT</c>, resolved as <c>scheme://host:port</c>
+        /// (gRPC) or <c>scheme://host[:port][path]</c> (HTTP, before <c>/v1/&lt;signal&gt;</c>);
+        /// empty when neither is usable. Warnings come from the per-signal resolution.
+        /// </summary>
+        private static (string Endpoint, string Protocol) ResolveGenericEndpoint(TelemetryOptions code, string? protocol)
+        {
+            var insecure = ResolveInsecure("", code, null);
+            foreach (var (value, variable, fromCode) in new[]
+            {
+                (code.OtelCollectorEndpoint, CodeGenericOption, true),
+                (Env(TelemetryOptions.CollectorEndpointEnvVar), TelemetryOptions.CollectorEndpointEnvVar, false),
+            })
+            {
+                if (ContractText.NonBlank(value) is not { } raw)
+                {
+                    continue;
+                }
+
+                var resolvedProtocol = protocol ?? SignalProtocol("", code, raw, null);
+                var outcome = EndpointResolver.Resolve(new EndpointInput
+                {
+                    Raw = raw,
+                    Variable = variable,
+                    Signal = "",
+                    Protocol = resolvedProtocol,
+                    FromCode = fromCode,
+                    PerSignal = true,
+                    Insecure = insecure.Value,
+                    InsecureFromCode = insecure.FromCode,
+                    InsecureVariable = insecure.Variable,
+                });
+                if (outcome.Url is { } url)
+                {
+                    return (url, resolvedProtocol);
+                }
+
+                if (outcome.Failure == EndpointFailure.Unsupported || fromCode)
+                {
+                    break;
+                }
+            }
+
+            return ("", protocol ?? TelemetryOptions.ProtocolGrpc);
+        }
+
+        /// <summary>
+        /// The fail-fast errors of the code endpoints (validator, design D-NET6): each signal's
+        /// code value (its own option, else <see cref="TelemetryOptions.OtelCollectorEndpoint"/>)
+        /// resolved with that signal's protocol and INSECURE setting. Each message names the option
+        /// and renders the value only through <see cref="EndpointGrammar.Render"/>.
+        /// </summary>
+        internal static IReadOnlyList<string> CodeEndpointErrors(TelemetryOptions code)
+        {
+            var errors = new List<string>();
+            foreach (var signal in ResolvedTelemetry.Signals)
+            {
+                var (value, variable, perSignal) = ContractText.NonBlank(CodeSignalEndpoint(code, signal)) is { } own
+                    ? (own, CodeSignalOption(signal), true)
+                    : (ContractText.NonBlank(code.OtelCollectorEndpoint), CodeGenericOption, false);
+                if (value is null)
+                {
+                    continue;
+                }
+
+                var insecure = ResolveInsecure(signal, code, null);
+                var outcome = EndpointResolver.Resolve(new EndpointInput
+                {
+                    Raw = value,
+                    Variable = variable,
+                    Signal = signal,
+                    Protocol = SignalProtocol(signal, code, value, null),
+                    FromCode = true,
+                    PerSignal = perSignal,
+                    Insecure = insecure.Value,
+                    InsecureFromCode = insecure.FromCode,
+                    InsecureVariable = insecure.Variable,
+                });
+                if (outcome.Error is { } error && !errors.Contains(error))
+                {
+                    errors.Add(error);
+                }
+            }
+
+            return errors;
+        }
+
+        /// <summary>The protocol set in code, else a valid <c>OTEL_EXPORTER_OTLP_PROTOCOL</c> (an invalid one warns); null = per signal.</summary>
         private static string? ResolveProtocol(TelemetryOptions code, IOtelHelperDiagnostics diagnostics)
         {
             if (NonBlank(code.OtlpProtocol) is { } fromCode)
             {
-                return fromCode.Trim().ToLowerInvariant();
+                return ContractText.AsciiLower(ContractText.Trim(fromCode));
             }
 
-            var fromEnv = NonBlank(Env(TelemetryOptions.OtlpProtocolEnvVar));
+            var fromEnv = ContractText.NonBlank(Env(TelemetryOptions.OtlpProtocolEnvVar));
             if (fromEnv is null)
             {
                 return null;
             }
 
-            var normalized = fromEnv.Trim().ToLowerInvariant();
+            var normalized = ContractText.AsciiLower(fromEnv);
             if (TelemetryOptions.ValidOtlpProtocols.Contains(normalized))
             {
                 return normalized;
             }
 
-            WarnInvalidEnv(diagnostics, TelemetryOptions.OtlpProtocolEnvVar, fromEnv,
-                "unsupported OTLP protocol, using grpc (http/protobuf on port 4318); valid values: grpc, http/protobuf");
+            WarnInvalidEnv(diagnostics, TelemetryOptions.OtlpProtocolEnvVar, fromEnv, normalized == "http/json"
+                ? "http/json is not supported by the .NET OTLP exporter; ignored (port inference, else grpc)"
+                : "unsupported OTLP protocol, ignored (port inference, else grpc); valid values: grpc, http/protobuf");
             return null;
         }
 
@@ -525,13 +730,5 @@ namespace StaffOps.OtelHelper
             => value.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
                 .Select(e => e.ToLowerInvariant())
                 .ToArray();
-
-        private static void AddIfSet(Dictionary<string, string> endpoints, string signal, string? value)
-        {
-            if (NonBlank(value) is { } set)
-            {
-                endpoints[signal] = set.Trim();
-            }
-        }
     }
 }

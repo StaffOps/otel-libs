@@ -58,7 +58,7 @@ After registration, available via DI:
 | `SERVICE_NAME` | CI/CD Pipeline | Deprecated alias. 0.3 (this branch): read after `OTEL_SERVICE_NAME` and `service.name` in `OTEL_RESOURCE_ATTRIBUTES` (0.2.x: read first) | — |
 | `OTEL_RESOURCE_ATTRIBUTES` | Helm Chart | `key=value,…` resource attributes, parsed by the helper (0.3, this branch): blank items ignored, an item without `=` or with an empty key skipped, values percent-decoded (`%XX` only; `+` stays `+`) then trimmed of ASCII whitespace, an invalid escape kept literally; problems warned once by item position, never the value. `deployment.environment.name` here wins over `ENVIRONMENT`. `telemetry.sdk.*` keys are ignored | — |
 | `ENVIRONMENT` | Helm Chart (`values.yaml`) | Deprecated alias of `deployment.environment.name`. 0.3 (this branch): a known name (`LOCAL`, `DEV`, `HML`, `PRD`, any case) in its canonical spelling, any other value emitted as written; unset everywhere → the attribute is absent, one warning, log level Information (0.2.x: `LOCAL`) | none |
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | Helm Chart | Collector endpoint. Unset → no OTLP export, Prometheus `/metrics` fallback | _(unset)_ |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | Helm Chart | Collector endpoint. Unset → no OTLP export, Prometheus `/metrics` fallback. 0.3 (this branch): parsed by the contract rules below ([Endpoint parsing](#endpoint-parsing-03-this-branch)); `OTEL_EXPORTER_OTLP_<SIGNAL>_ENDPOINT` beats it for one signal | _(unset)_ |
 
 > These variables are injected automatically. Application teams **do not need to configure them manually**.
 
@@ -82,9 +82,52 @@ After registration, available via DI:
 
 ### Derived Ports
 
-| Signal | Port | Resulting Endpoint |
+0.2.x rebuilt every endpoint as `scheme://host:port` (path dropped, `:4317`
+when no port, also for `http/protobuf`). 0.3 (this branch, task C7a) follows
+the contract:
+
+| Endpoint | Protocol | Resulting target |
 |---|---|---|
-| OTLP (traces/metrics/logs) | `:4317` when the endpoint has no port (also for `https://host`) | `http://collector` → `http://collector:4317` |
+| `http://collector` (URL, no port) | `grpc` | `http://collector:4317`, with a warning to set an explicit port |
+| `http://collector` (URL, no port) | `http/protobuf` | `http://collector/v1/traces` (scheme default port, 80 or 443) |
+| `https://gw.example.com/otlp` | `http/protobuf` | `https://gw.example.com/otlp/v1/traces` (path kept; a per-signal value is used as written) |
+| `https://gw.example.com/otlp` | `grpc` | `https://gw.example.com:4317` (gRPC dials `host:port`) |
+| `collector` (schemeless) | `grpc` / `http/protobuf` | `https://collector:4317` / `https://collector:4318/v1/traces` (deprecated for `http/protobuf`, warned) |
+
+### Endpoint parsing (0.3, this branch)
+
+Every endpoint, from code or the environment, is parsed by RFC 3986, as in Go,
+Python and Node.js (contract design D1, A17):
+
+- **Removed with one warning:** URL userinfo, query and fragment (an empty `?`
+  or `#` too). Put credentials in `OTEL_EXPORTER_OTLP_HEADERS`. An `@` in the
+  path is used as parsed and warned ("misplaced credentials?"), naming the
+  variable only.
+- **Invalid:** a control character or a backslash anywhere, a scheme without
+  `//` and a host (`http:///x`), a schemeless value starting with `/`, a port
+  outside 1–65535 (port 0 included; `04318` is 4318), a space, `%` or IPv6
+  zone id in the host, a host that is neither an IPv6 literal nor an RFC 3986
+  name, a host that ends in a number but is not a canonical dotted quad
+  (`127.1`, `1.2.3.256`), a host that fails IDNA, and for `http/protobuf` an
+  invalid `%` escape in the path. Also invalid in .NET only: a host `System.Uri`
+  refuses (sub-delims other than `-` and `_`, such as `a!b` or `a~b`, and empty
+  labels such as `a..b`). From the environment: one warning that shows
+  `<unparseable URL>`, and the next value is used
+  (`OTEL_EXPORTER_OTLP_<SIGNAL>_ENDPOINT` → `OTEL_EXPORTER_OTLP_ENDPOINT` →
+  none). From code: the host fails to start, naming the option.
+- **Unsupported scheme** (`ftp://`, `unix:/path`): warned, and the signal has
+  no OTLP exporter (an explicit per-signal choice is not overridden).
+- **IDN hosts** are converted to punycode (UTS #46 non-transitional, the
+  runtime's ICU: `bücher.de` → `xn--bcher-kva.de`); hosts are lowercased.
+  Without ICU (globalization-invariant mode, e.g. chiseled or alpine images
+  with `DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=1`) a non-ASCII host is invalid
+  (the warning says it needs ICU): write it in punycode. With ICU, a non-ASCII
+  host with a label over 63 characters or starting or ending with `-` is
+  invalid, as in Python (Go and Node.js accept it).
+- **Paths are normalized by `System.Uri`** before they are sent (Go sends them
+  as written): `/a/../v1` → `/v1`, `%7E` → `~`; `%2F` stays. See HOW-TO §17.
+- Diagnostics show `scheme://host:port/path` at most, only `scheme://` when
+  the path or query holds an `@`, and `<scheme>:` for `unix:/…`.
 
 ### TLS / Transport Security
 
@@ -97,6 +140,14 @@ Transport is determined by the endpoint scheme:
 | `host:4317` (no scheme) | TLS (secure by default) |
 
 `OTEL_EXPORTER_OTLP_INSECURE` applies **only to schemeless endpoints**: `true` → `http://`, anything else → `https://`. An explicit `http://` or `https://` scheme always wins (env or code). The variable is read by this helper, not by the .NET SDK.
+
+0.3 (this branch, task C7a): `OTEL_EXPORTER_OTLP_<SIGNAL>_INSECURE` beats it
+for one signal and `TelemetryOptions.Insecure` beats both. The value is
+`true` or `false`, ASCII case-insensitive; anything else is false and warned,
+also when no endpoint is configured. A setting that contradicts an explicit
+scheme (`https://` with `true`, `http://` with `false`) is warned and the
+scheme wins; `TelemetryOptions.Insecure` contradicting a code URL fails at
+start. 0.2.x treated any value but `true` as false, silently.
 
 For a local plaintext collector, use `http://` in the endpoint or set `OTEL_EXPORTER_OTLP_INSECURE=true`.
 
@@ -144,11 +195,11 @@ How the 0.2.x helper treats the standard variables. Some are read by the .NET SD
 
 | Variable | Description | Default |
 |---|---|---|
-| `OTEL_EXPORTER_OTLP_PROTOCOL` | Read by the helper: `grpc` or `http/protobuf`. Unset → `http/protobuf` when the endpoint port is `4318`, else `grpc`. | port inference |
+| `OTEL_EXPORTER_OTLP_PROTOCOL` | Read by the helper: `grpc` or `http/protobuf` (ASCII case-insensitive). Unset → `http/protobuf` when the port of the endpoint a signal uses is `4318` (compared numerically; logged once at INFO), else `grpc`. `http/json` and unknown values are warned and ignored (0.2.x: `http/json` failed validation). | port inference |
 | `OTEL_EXPORTER_OTLP_INSECURE` | Read by the helper, schemeless endpoints only (see TLS above). | _(unset)_ |
 | `OTEL_EXPORTER_OTLP_HEADERS` | Additional headers (e.g., auth); read by the SDK. | empty |
 | `OTEL_EXPORTER_OTLP_TIMEOUT` | **Not honored** in 0.2.x: the helper always passes `TelemetryOptions.ExportTimeoutMs` (default 10000 ms), which overrides it. | `10000` |
-| `OTEL_EXPORTER_OTLP_<SIGNAL>_*` | Per-signal variables are not used by the helper's exporter wiring in 0.2.x. | — |
+| `OTEL_EXPORTER_OTLP_<SIGNAL>_*` | Not used in 0.2.x. 0.3 (this branch, task C7a): `_ENDPOINT` (used as written, no `/v1/<signal>`), `_PROTOCOL` and `_INSECURE` are read by the helper and beat the generic variable for that signal; `_HEADERS`, `_TIMEOUT`, `_COMPRESSION` and the per-signal TLS files are not read yet (task C8). | — |
 
 ---
 
@@ -222,8 +273,8 @@ Exemplars enabled (`ExemplarFilterType.TraceBased`) — metric → trace correla
 | `MinimumLogLevel` | LogLevel? | — | `null` (auto per environment) |
 | `ResourceAttributes` | Dictionary<string, object> | — | empty |
 | `AdditionalActivitySources` | List\<string\> | — | empty |
-| `TracesEndpoint`, `MetricsEndpoint`, `LogsEndpoint` | string? | — | none (per-signal endpoint, used as written) |
-| `Insecure` | bool? | `OTEL_EXPORTER_OTLP_INSECURE` | `false` (schemeless endpoint → `https://`) |
+| `TracesEndpoint`, `MetricsEndpoint`, `LogsEndpoint` | string? | `OTEL_EXPORTER_OTLP_<SIGNAL>_ENDPOINT` | none (per-signal endpoint, used as written; schemeless allowed) |
+| `Insecure` | bool? | `OTEL_EXPORTER_OTLP_<SIGNAL>_INSECURE` / `OTEL_EXPORTER_OTLP_INSECURE` | `false` (schemeless endpoint → `https://`) |
 | `Compression` | string? (`gzip`/`none`) | `OTEL_EXPORTER_OTLP_COMPRESSION` | `none` |
 | `SampleRatio` | double? | — | none (`ParentBased(TraceIdRatioBased(ratio))` when set) |
 | `HealthPaths` | List\<string\>? | — | `/ping`, `/health`, `/healthz`, `/ready` |

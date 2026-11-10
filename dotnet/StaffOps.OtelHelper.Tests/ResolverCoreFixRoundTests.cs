@@ -500,7 +500,7 @@ public class ResolverCoreFixRoundTests : IDisposable
         var diagnostics = new TestDiagnostics();
         var resolved = diagnostics.Resolve();
         Assert.Equal("", resolved.OtelCollectorEndpoint);
-        var line = Assert.Single(diagnostics.Lines, l => l.Contains("invalid OTEL_EXPORTER_OTLP_ENDPOINT"));
+        var line = Assert.Single(diagnostics.Lines, l => l.Contains("; ignored variable=OTEL_EXPORTER_OTLP_ENDPOINT"));
         Assert.DoesNotContain("pw-secret", line);
     }
 

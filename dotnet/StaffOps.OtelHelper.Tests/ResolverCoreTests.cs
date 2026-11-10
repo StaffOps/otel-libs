@@ -177,7 +177,8 @@ public class ResolverCoreTests : IDisposable
         var diagnostics = new TestDiagnostics();
         var resolved = diagnostics.Resolve();
         Assert.Null(OtlpExporters.OptionsFor("logs", resolved, diagnostics.Sink));
-        Assert.Contains(diagnostics.Lines, l => l.Contains("the OTLP endpoint for logs cannot be used"));
+        // C7a: rejected by the endpoint grammar (a space in the host), warned once with the constant.
+        Assert.Single(diagnostics.Lines, l => l.Contains("invalid endpoint; ignored variable=OTEL_EXPORTER_OTLP_ENDPOINT") && l.Contains("<unparseable URL>"));
     }
 
     // ── bound options count as code (DN4) ──────────────────────────────

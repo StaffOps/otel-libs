@@ -18,10 +18,8 @@ namespace StaffOps.OtelHelper
         {
             var failures = new List<string>();
 
-            CheckEndpoint(failures, nameof(TelemetryOptions.OtelCollectorEndpoint), options.OtelCollectorEndpoint, allowSchemeless: true);
-            CheckEndpoint(failures, nameof(TelemetryOptions.TracesEndpoint), options.TracesEndpoint, allowSchemeless: false);
-            CheckEndpoint(failures, nameof(TelemetryOptions.MetricsEndpoint), options.MetricsEndpoint, allowSchemeless: false);
-            CheckEndpoint(failures, nameof(TelemetryOptions.LogsEndpoint), options.LogsEndpoint, allowSchemeless: false);
+            // The resolver's own endpoint rules (contract D1, A17), so a code value that passes here is one it uses.
+            failures.AddRange(TelemetryResolver.CodeEndpointErrors(options));
 
             if (options.ExportTimeoutMs is { } timeout && (timeout < 1 || timeout > TelemetryOptions.MaxExportTimeoutMs))
             {
@@ -73,35 +71,6 @@ namespace StaffOps.OtelHelper
             }
 
             return failures.Count == 0 ? ValidateOptionsResult.Success : ValidateOptionsResult.Fail(failures);
-        }
-
-        private static void CheckEndpoint(List<string> failures, string option, string? value, bool allowSchemeless)
-        {
-            if (string.IsNullOrWhiteSpace(value) || TelemetryResolver.IsHttpUrl(value))
-            {
-                return;
-            }
-
-            if (allowSchemeless && IsSchemeless(value.Trim()))
-            {
-                return;
-            }
-
-            failures.Add($"{Owner}{option} {DiagnosticText.RenderUrl(value)} is not a valid OTLP endpoint: use an http:// or https:// URL" +
-                (allowSchemeless ? " or host:port." : "."));
-        }
-
-        /// <summary><c>host</c>, <c>host:port</c> or <c>[ipv6]:port</c>, optionally with a path; no scheme, no userinfo.</summary>
-        private static bool IsSchemeless(string value)
-        {
-            if (value.Contains("://", StringComparison.Ordinal) || value.Contains('@') || value.StartsWith('/'))
-            {
-                return false;
-            }
-
-            return Uri.TryCreate("https://" + value, UriKind.Absolute, out var uri) && uri.Host.Length > 0
-                && DiagnosticText.RenderUrl(value) != DiagnosticText.UnparseableUrl
-                && !DiagnosticText.RenderUrl(value).EndsWith(':');
         }
 
         /// <summary>
@@ -171,7 +140,8 @@ namespace StaffOps.OtelHelper
 
             var hasEndpoint = !string.IsNullOrWhiteSpace(options.OtelCollectorEndpoint)
                 || !string.IsNullOrWhiteSpace(options.MetricsEndpoint)
-                || !string.IsNullOrWhiteSpace(System.Environment.GetEnvironmentVariable(TelemetryOptions.CollectorEndpointEnvVar));
+                || !string.IsNullOrWhiteSpace(System.Environment.GetEnvironmentVariable(TelemetryOptions.CollectorEndpointEnvVar))
+                || !string.IsNullOrWhiteSpace(System.Environment.GetEnvironmentVariable(TelemetryResolver.SignalVariable("metrics", "ENDPOINT")));
             if (exporters.Contains("otlp") && !hasEndpoint)
             {
                 failures.Add($"Metric exporter 'otlp' in {option} requires an endpoint. Set {Owner}{nameof(TelemetryOptions.OtelCollectorEndpoint)}, " +

@@ -25,6 +25,17 @@ namespace StaffOps.OtelHelper
             return trimmed.Length == 0 ? null : trimmed;
         }
 
+        /// <summary>Lower-cases A-Z only (no culture, no non-ASCII folding).</summary>
+        internal static string AsciiLower(string value)
+            => string.Create(value.Length, value, static (span, source) =>
+            {
+                for (var i = 0; i < source.Length; i++)
+                {
+                    var c = source[i];
+                    span[i] = c is >= 'A' and <= 'Z' ? (char)(c + ('a' - 'A')) : c;
+                }
+            });
+
         /// <summary>Upper-cases A-Z only (no culture, no non-ASCII folding).</summary>
         internal static string AsciiUpper(string value)
             => string.Create(value.Length, value, static (span, source) =>

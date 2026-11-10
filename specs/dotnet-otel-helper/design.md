@@ -103,6 +103,36 @@ the C4 runner records.
 | Protocol: code > per-signal > generic env > port-4318 inference (INFO) > grpc; `http/json` env → warned, ignored | generic env and code only (`:116-121`); `http/json` or any unknown env value throws `OptionsValidationException` **inside `AddOtelHelper()`** (bootstrap provider, `TelemetryExtensions.cs:70-73`; validator `:56-63`; measured, C1 dev P1) | `protocol.*` (2), `export.http_port_4318_inferred`, `export.per_signal_endpoint_drives_4318_inference` |
 | Endpoint path escapes kept verbatim | `%2F` kept on the wire with 1.20.1 (`RawUrl=/a%2Fb/v1/traces`, measured, C1 dev) | `export.http_path_escape_verbatim` — no skip needed |
 
+> **Note 2026-11-10 (C7a).** The rows above describe 0.2.x. Since C7a the helper
+> resolves each signal's target itself (`TelemetryResolver.ResolveSignal`, the
+> pure `EndpointResolver` and `EndpointGrammar`), with the contract's order and
+> rules, and passes the exporters a finished URL (`ResolvedTelemetry.SignalTargets`);
+> code values are checked by the same functions in the validator, so a code
+> value that passes is one the resolver uses. IDN conversion uses
+> `System.Globalization.IdnMapping`, which is UTS #46 non-transitional with
+> CONTEXTJ and Bidi only when the runtime has ICU (Linux) or the Windows IDN API;
+> measured on .NET 8 with ICU 72 against the contract cases. Two measured
+> differences: (a) in globalization-invariant mode (`DOTNET_SYSTEM_GLOBALIZATION_INVARIANT`,
+> chiseled or alpine images without ICU) `IdnMapping` only punycode-encodes, so
+> the grammar probes UTS #46 once (`Ü` → `xn--tda`) and without it treats a
+> non-ASCII host as invalid, with the reason "needs ICU" — it fails closed
+> instead of dialing a host Go, Python and Node.js would convert differently;
+> (b) with ICU a non-ASCII host with a label over 63 characters or a label that
+> starts or ends with `-` is invalid, as in Python's `idna` and unlike Go and
+> Node.js (contract D1 row "IDN hosts: Python residual divergence"); no parity
+> case, as for Python. Wire behavior of the targets is C7b's (26 of its cases
+> already pass).
+>
+> **Note 2026-11-10 (C7a fix round 1).** Recorded in the contract too (D1 row
+> "IDN hosts: Python residual divergence"). Measured `System.Uri` on .NET 8:
+> (c) it refuses hosts with sub-delims other than `-` and `_` and hosts with an
+> empty label, so `EndpointGrammar.CheckHost` rejects them with the grammar's
+> warning (RFC 3986 and Go accept `a!b` and `1.2.3.4..`); (d) it normalizes an
+> http(s) path before the exporter sends it — dot segments resolved
+> (`/a/../v1` → `/v1`), escapes of unreserved characters decoded (`%7E` → `~`,
+> `%41` → `A`), while `%2F`, `%20` and `//` stay — where Go sends the path as
+> written. Not fixed (the SDK takes a `Uri`); documented in README and HOW-TO.
+
 ### Exporter settings — R2, R8, G10, A18 (52 cases → C8)
 
 | Contract | .NET today | Cases |

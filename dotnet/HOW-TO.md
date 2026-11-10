@@ -680,6 +680,47 @@ OTEL_EXPORTER_OTLP_INSECURE=true                                # → http://ote
 
 `OTEL_EXPORTER_OTLP_INSECURE` is consulted **only for schemeless endpoints** (`host:4317`): `true` → `http://`, otherwise `https://`. An explicit scheme — in env or in `TelemetryOptions.OtelCollectorEndpoint` — always wins, so `https://…` plus `INSECURE=true` still uses TLS.
 
+0.3 (this branch, task C7a): the order is `TelemetryOptions.Insecure` >
+`OTEL_EXPORTER_OTLP_<SIGNAL>_INSECURE` > `OTEL_EXPORTER_OTLP_INSECURE`. The
+value is `true` or `false` (any ASCII case); anything else counts as `false`
+and is warned once, even with no endpoint configured. A contradiction with an
+explicit scheme is warned and the scheme wins:
+
+```text
+otelhelper: WARN INSECURE setting contradicts the endpoint scheme; the scheme wins variable=OTEL_EXPORTER_OTLP_INSECURE value=true using=https://
+```
+
+The same contradiction between `TelemetryOptions.Insecure` and a code URL
+fails host start (`TelemetryOptions.Insecure = true contradicts the https://
+scheme of TelemetryOptions.OtelCollectorEndpoint; …`).
+
+### Endpoint values the helper rejects or rewrites (0.3, this branch)
+
+| Value | What happens |
+|---|---|
+| `http://user:pw@collector:4317/?token=x` | userinfo, query and fragment removed, one warning (`endpoint userinfo/query is not supported and was removed; put credentials in OTEL_EXPORTER_OTLP_HEADERS`) |
+| `http://collector` with gRPC | dials `http://collector:4317`, warning `gRPC endpoint has no port; using 4317 - set an explicit port` |
+| `collector:4318` with `http/protobuf` | `https://collector:4318/v1/<signal>` and a deprecation warning: use a URL |
+| `http://bücher.de:4317` | dials `http://xn--bcher-kva.de:4317` (punycode) |
+| `http://collector:04318` | port 4318, so `http/protobuf` is inferred (INFO) |
+| `http://user:4318/secret@collector` | used as parsed; `endpoint path contains '@' - misplaced credentials?` naming the variable only |
+| `http://coll ector:4317`, `http://[fe80::1%eth0]:4317`, `http://127.1:4317`, `http://h:0`, `https://h/x\y`, `http://h:4318/%zz` (`http/protobuf`) | invalid. Environment: `otelhelper: WARN invalid endpoint; ignored variable=OTEL_EXPORTER_OTLP_TRACES_ENDPOINT value="<unparseable URL>" using="next configured endpoint, else none"`, then the generic endpoint is used. Code: host start fails naming the option |
+| `unix:/var/run/otel.sock`, `ftp://collector` | unsupported scheme: warned (`value=unix:`), no OTLP exporter for that signal |
+
+**Globalization-invariant images.** IDN hosts need ICU. In an image without it
+(`DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=1`, common in chiseled and alpine
+images) a non-ASCII host is invalid: an environment value warns
+`an internationalized host needs ICU …` and the next endpoint is used, a code
+value fails host start. Install ICU (`libicu`, or `icu-libs` on alpine, and
+`DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=0`), use an image with ICU, or write
+the host in punycode (`xn--bcher-kva.de`), which needs no conversion.
+
+**Paths are normalized by `System.Uri`.** The exporter takes a `Uri`, which
+rewrites an http(s) path: dot segments are resolved (`/a/../v1` → `/v1`,
+`/a/./b` → `/a/b`) and escapes of unreserved characters are decoded (`%7E` →
+`~`, `%41` → `A`); `%2F` and `%20` stay. Go sends the path as written. Write
+the path in its normal form.
+
 ---
 
 ## 18. OTLP Protocol (gRPC vs HTTP/protobuf)
@@ -703,8 +744,15 @@ If left unset, the protocol is inferred from the endpoint port: `4318` resolves 
 
 Priority: code config (`TelemetryOptions.OtlpProtocol`) > `OTEL_EXPORTER_OTLP_PROTOCOL` env var > port-based inference (`4318` → `http/protobuf`) > `grpc` default.
 
+0.3 (this branch, task C7a): `OTEL_EXPORTER_OTLP_<SIGNAL>_PROTOCOL` sits
+between the code option and `OTEL_EXPORTER_OTLP_PROTOCOL`, and the inference
+uses the endpoint each signal resolves to (a per-signal endpoint on port 4318
+makes only that signal `http/protobuf`). The port is compared as a number
+(`04318` is 4318) and the inference is logged once:
+`otelhelper: INFO endpoint port 4318 and no protocol set; using http/protobuf set=OTEL_EXPORTER_OTLP_PROTOCOL`.
+
 `http/json` is a valid value per the OTel spec but has no exporter implementation for traces/metrics/logs in this library: in `OTEL_EXPORTER_OTLP_PROTOCOL` it is warned on standard error (`otelhelper: WARN invalid OTEL_EXPORTER_OTLP_PROTOCOL …`) and the default applies; set in `TelemetryOptions.OtlpProtocol` it fails host start, naming the option.
 
-`/v1/traces`, `/v1/metrics`, `/v1/logs` are appended to the endpoint automatically when `http/protobuf` is selected — do not include them in `OTEL_EXPORTER_OTLP_ENDPOINT`.
+`/v1/traces`, `/v1/metrics`, `/v1/logs` are appended to the endpoint automatically when `http/protobuf` is selected — do not include them in `OTEL_EXPORTER_OTLP_ENDPOINT`. A per-signal endpoint (`OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`, `TelemetryOptions.TracesEndpoint`, …) is used as written. 0.3 (this branch) keeps the path of the generic endpoint (`https://gw.example.com/otlp` → `https://gw.example.com/otlp/v1/traces`); 0.2.x dropped it.
 
 For local development with a plaintext collector, set `OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317` (there is no default endpoint: unset means no OTLP export).

@@ -759,6 +759,22 @@ emitted telemetry.
    (`signals=traces changed=service.name,…`); a schema-URL merge conflict is one
    helper warning with both URLs (instead of the SDK's "conflicting Schema URLs"
    notice). An app without a host (a bare `ServiceProvider`) gets no such check.
+11. **Code endpoints follow the contract grammar** (task C7a, contract D1,
+   A17). The validator runs the resolver's own rules on
+   `OtelCollectorEndpoint`, `TracesEndpoint`, `MetricsEndpoint` and
+   `LogsEndpoint`, each with its signal's protocol and INSECURE setting, so a
+   code value that passes is one the helper uses. Newly rejected at start,
+   naming the option and showing at most `<unparseable URL>`: a control
+   character or backslash anywhere, an empty host (`http:///x`), port 0, a
+   space, `%` or IPv6 zone id in the host, `127.1` and other non-canonical
+   numeric hosts, `a{b`, a host that fails IDNA, and for `http/protobuf` an
+   invalid `%` escape in the path; `TelemetryOptions.Insecure` contradicting
+   the scheme of a code URL (`Insecure = true` with `https://…`). Newly
+   accepted: a schemeless per-signal value (`TracesEndpoint = "collector:4318"`;
+   C5 required a URL) and a schemeless value with userinfo
+   (`user:pw@collector:4317`; C5 read `user:` as a scheme) — the userinfo is
+   removed with a warning. A generic value that all three per-signal options
+   shadow is not checked (it is never used), as in Go and Python.
 
 **Telemetry part.** Each row: before (0.2.x) → after, and what to check in
 dashboards and alerts.
@@ -1053,6 +1069,35 @@ dashboards and alerts.
    and one "differs between signals" line naming the signals that lack it when
    an earlier `ConfigureResource` set it for some only; without a host it is
    written when a provider builds its resource.
+16. **OTLP endpoints follow the 0.3 contract** (task C7a, contract R1, R2,
+   D1.a–c, A17). Before (0.2.x) → after:
+
+   | Input | 0.2.x | 0.3 (this branch) |
+   |---|---|---|
+   | URL with a path, `https://gw.example.com/otlp` | path dropped: `https://gw.example.com:4317` (+ `/v1/<signal>` for HTTP) | HTTP keeps it: `https://gw.example.com/otlp/v1/traces`; gRPC dials `https://gw.example.com:4317` |
+   | URL without a port, `http/protobuf` | `:4317` added | scheme default port (80 or 443), as the OTLP specification says |
+   | URL without a port, gRPC | `:4317` added silently | `:4317` added, one warning to set an explicit port |
+   | explicit `:80` / `:443` | replaced by `:4317` (`Uri.IsDefaultPort`) | kept |
+   | schemeless `host` with `http/protobuf` | `:4317` | `:4318`, plus a deprecation warning (use a URL) |
+   | userinfo, query, fragment | dropped silently | removed with one warning per variable and value |
+   | `OTEL_EXPORTER_OTLP_<SIGNAL>_ENDPOINT`, `_PROTOCOL`, `_INSECURE` | not read | read; they beat the generic variable for that signal (a per-signal endpoint is used as written) |
+   | `OTEL_EXPORTER_OTLP_INSECURE=yes` | false, silently | false, warned (also with no endpoint) |
+   | INSECURE contradicting an explicit scheme | scheme wins silently | scheme wins, warned |
+   | `OTEL_EXPORTER_OTLP_PROTOCOL=http/json` | `OptionsValidationException` inside `AddOtelHelper()` | warned, ignored (port inference, else gRPC); since task C5 on this branch already warned |
+   | port 4318, no protocol | `http/protobuf` inferred silently | inferred per signal (the endpoint that signal uses), logged once at INFO |
+   | IDN host `bücher.de` | not converted by the helper | punycode `xn--bcher-kva.de` (UTS #46 non-transitional, the runtime's ICU) |
+   | unparseable value (backslash, control character, zone id, space or `%` in the host, port 0 or > 65535, `127.1`, a host that fails IDNA, an invalid `%` escape with `http/protobuf`) | parsed by `Uri` or rewritten as a schemeless value, no warning | environment: warned with `<unparseable URL>`, the next value is used (per-signal → generic → none); code: host start fails |
+   | unsupported scheme (`ftp://`, `unix:/path`) | rewritten as a schemeless value, no warning (task C5 on this branch: warned, no endpoint) | warned, no OTLP exporter for that signal |
+   | `@` in the path | path dropped | used as parsed (HTTP sends the path), warned ("misplaced credentials?") naming the variable only |
+
+   Check: an `http/protobuf` URL without a port now goes to 80 or 443 (0.2.x:
+   4317), and the path of the generic URL is kept — a collector behind a path
+   prefix now receives `/<prefix>/v1/<signal>`. The helper's diagnostics show
+   at most `scheme://host:port/path`
+   (`scheme://` when the path or query holds an `@`, `<scheme>:` for
+   `unix:/…`). Not yet in this task: the per-signal `_HEADERS`, `_TIMEOUT`,
+   `_COMPRESSION` and TLS-file variables (task C8) and the warning for a path
+   on a gRPC endpoint (task C7b).
 
 ### Collector / platform prerequisites (before rolling 0.3.0 out)
 
@@ -1217,6 +1262,57 @@ Phase C work on this branch (no .NET release yet; the first will be
   Fix round 3: in a host the environment warning moves to the start-time
   check over the three built resources (telemetry row 15); the check skips an
   empty resource and `OTEL_SDK_DISABLED`. Suite 858/858 on SDK 8 and SDK 10 (roll-forward), line coverage 98.67%.
+- **.NET: endpoint parsing and diagnostics (task C7a, contract R1, R2,
+  D1.a–c, A17). BREAKING (telemetry and configuration).** The helper parses
+  every OTLP endpoint by RFC 3986 with the rules Go, Python and Node.js use
+  (`Resolution/EndpointGrammar.cs`, `Resolution/EndpointResolver.cs`): ports
+  compared numerically (1–65535), host rules (no space, `%` or zone id; an
+  IPv6 literal or an RFC 3986 name; canonical dotted quads only), IDN hosts in
+  punycode (UTS #46 non-transitional, through `IdnMapping`), userinfo, query
+  and fragment removed with one redacted warning per variable and value, an
+  `@` in the path warned naming the variable only, `<unparseable URL>` for
+  anything that cannot be parsed. URLs keep their path and the scheme default
+  port for `http/protobuf` (0.2.x rebuilt `scheme://host:4317`); a portless
+  gRPC URL gets `:4317` with a warning; schemeless values get `https://`
+  (`http://` with INSECURE=true) and the protocol's port, deprecated for
+  `http/protobuf`. Per signal: `OTEL_EXPORTER_OTLP_<SIGNAL>_ENDPOINT`,
+  `_PROTOCOL` and `_INSECURE` are read (code per-signal > code generic >
+  env per-signal > env generic; an unparseable environment value falls back,
+  an unsupported scheme leaves the signal unconfigured), the 4318 inference
+  uses the endpoint each signal resolves to and is logged once at INFO, and
+  `http/json` or unknown protocol values are warned and skipped. INSECURE is
+  `true`/`false` (ASCII case-insensitive), anything else false and warned even
+  without an endpoint; a contradiction with an explicit scheme is warned (the
+  scheme wins), and `TelemetryOptions.Insecure` contradicting a code URL fails
+  at start. Code endpoints are validated by the same rules (schemeless
+  per-signal values now accepted). Migration: the .NET guide above, API item
+  11 and telemetry row 16. Parity: the 45 `xfail:C7a` cases pass, so the
+  whole C7a group passes (62 cases by the ownership rule: the 60 of C4 plus
+  the two C6 fix-round `config.code_blank_*` cases); 26 `xfail:C7b` cases
+  pass as well (per-signal export and URL handling on the wire), leaving 4
+  of the C7b group's 55 to C7b: the gRPC-path warning cases (A29).
+  Fixture: 235 `pass` (was 164), 123 `xfail:C<n>`, 12 known-difference skips.
+  Measured (2026-11-10): compose `dotnet-tests` on `sdk:8.0` 1026/1026 and
+  SDK 10.0.403 roll-forward 1026/1026, line coverage 98.45% (branch 96.26%,
+  method 99.32%); 20 mutations of the new rules each fail a test. The IDN
+  conversion needs ICU: in globalization-invariant mode a non-ASCII host is
+  invalid (warned or failing at start, "needs ICU"), never dialed unconverted.
+  Fix round 1 (2026-11-10): hosts that `System.Uri` refuses (sub-delims
+  other than `-` and `_`, such as `a!b`, and empty labels such as `a..b` or
+  `1.2.3.4..`) are invalid with the grammar's warning (Go accepts them); the
+  path reshaping by `System.Uri` (`/a/../v1` → `/v1`, `%7E` → `~`) is
+  documented, not fixed; environment endpoint failures use Go's wording
+  (`<why>; ignored`, the variable as an attribute), and the userinfo warning's
+  `using` is the URL the signal uses; warnings are deduplicated by a hash of
+  the raw value; `AuthenticationException: …` and other exception or error
+  type names are no longer read as credential names by the SDK-text
+  redaction; the IDN divergence is recorded in the contract (D1 row "IDN hosts:
+  Python residual divergence") and the root README gap list. Suite 1038/1038
+  on `sdk:8.0` and SDK 10.0.403 roll-forward, line coverage 98.5%.
+  Fix round 2: that exemption is narrowed to a type name (`^[A-Z][A-Za-z0-9]*(Exception|Error)$`),
+  `:` plus whitespace and a value that starts like prose, so `TokenError: <token>`,
+  `AuthError=x` and `X-Auth-Error: x` stay masked. Suite 1046/1046 on `sdk:8.0` (line 98.51%)
+  and SDK 10.0.403 roll-forward (98.45%).
 
 ### Breaking — telemetry output changes (dashboards/alerts)
 

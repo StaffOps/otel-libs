@@ -157,33 +157,20 @@ public class TlsEndpointResolutionTests : IDisposable
         Assert.Equal("https://gw:4317", opts.OtelCollectorEndpoint);
     }
 
-    [Fact]
-    public void ResolveEndpoint_Unit_Schemeless_Host_Port()
+    [Theory]
+    [InlineData("collector:4317", null, "https://collector:4317")]
+    [InlineData("collector", null, "https://collector:4317")]
+    [InlineData("collector", true, "http://collector:4317")]
+    [InlineData("http://collector:4317", null, "http://collector:4317")]
+    public void EndpointResolver_Unit_Grpc(string raw, bool? insecure, string expected)
     {
-        // Direct unit test of the static helper (no env var side effects for the endpoint itself,
-        // but INSECURE env var is read inside).
-        Environment.SetEnvironmentVariable(TelemetryOptions.InsecureEnvVar, null);
-
-        var result = TelemetryResolver.ResolveEndpoint("collector:4317");
-        Assert.Equal("https://collector:4317", result);
-    }
-
-    [Fact]
-    public void ResolveEndpoint_Unit_Schemeless_Host_Only()
-    {
-        Environment.SetEnvironmentVariable(TelemetryOptions.InsecureEnvVar, null);
-
-        var result = TelemetryResolver.ResolveEndpoint("collector");
-        Assert.Equal("https://collector:4317", result);
-    }
-
-    [Fact]
-    public void ResolveEndpoint_Unit_Http_Explicit()
-    {
-        Environment.SetEnvironmentVariable(TelemetryOptions.InsecureEnvVar, null);
-
-        var result = TelemetryResolver.ResolveEndpoint("http://collector:4317");
-        Assert.Equal("http://collector:4317", result);
+        // C7a: the pure resolver replaces the 0.2 ResolveEndpoint (no environment read).
+        var outcome = EndpointResolver.Resolve(new EndpointInput
+        {
+            Raw = raw, Variable = "V", Signal = "traces", Protocol = TelemetryOptions.ProtocolGrpc, Insecure = insecure,
+            InsecureVariable = "I",
+        });
+        Assert.Equal(expected, outcome.Url);
     }
 
     // --- N10 and the code Insecure option ---
@@ -205,10 +192,16 @@ public class TlsEndpointResolutionTests : IDisposable
     }
 
     [Fact]
-    public void Http_Code_Endpoint_Is_Used_As_Written()
+    public void Http_Code_Endpoint_Keeps_Its_Path_For_Http_Protobuf()
     {
-        var opts = PostConfigure(o => o.OtelCollectorEndpoint = "https://gw.example.com/otlp");
-        Assert.Equal("https://gw.example.com/otlp", opts.OtelCollectorEndpoint);
+        // C7a: an HTTP URL keeps its path (and the scheme default port); gRPC dials host:port only,
+        // a portless gRPC URL gets 4317 (D1.b).
+        var http = PostConfigure(o => { o.OtelCollectorEndpoint = "https://gw.example.com/otlp"; o.OtlpProtocol = TelemetryOptions.ProtocolHttpProtobuf; });
+        Assert.Equal("https://gw.example.com/otlp", http.OtelCollectorEndpoint);
+        Assert.Equal(("https://gw.example.com/otlp/v1/traces", TelemetryOptions.ProtocolHttpProtobuf), http.OtlpTarget("traces"));
+
+        var grpc = PostConfigure(o => o.OtelCollectorEndpoint = "https://gw.example.com/otlp");
+        Assert.Equal("https://gw.example.com:4317", grpc.OtelCollectorEndpoint);
     }
 
     [Fact]
