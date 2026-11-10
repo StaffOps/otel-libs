@@ -81,6 +81,7 @@ namespace StaffOps.OtelHelper
         internal const string MsgAtInPath = "endpoint path contains '@' - misplaced credentials?";
         internal const string MsgSchemelessHttpDeprecated = "schemeless endpoint is deprecated for http/protobuf and will be removed in 1.0; use a URL (http:// or https://)";
         internal const string MsgInsecureConflict = "INSECURE setting contradicts the endpoint scheme; the scheme wins";
+        internal const string MsgGrpcPathIgnored = "endpoint path is ignored by the gRPC exporter";
 
         internal static EndpointOutcome Resolve(EndpointInput input)
         {
@@ -185,6 +186,14 @@ namespace StaffOps.OtelHelper
 
             var path = !http ? "" : input.PerSignal ? sp.Path : sp.Path.TrimEnd('/') + "/v1/" + input.Signal;
             var url = sp.Scheme + "://" + HostWith(port) + path;
+
+            if (!http && sp.Path is not ("" or "/"))
+            {
+                // gRPC has no URL path: the target is host:port (contract D1 row "Path on a gRPC
+                // endpoint", A29). Once per variable, the variable only — never the value or the
+                // path (R8). A bare "/" is no path, as in Go and Python.
+                warnings.Add(new EndpointWarning($"endpoint:{MsgGrpcPathIgnored}:{input.Variable}", MsgGrpcPathIgnored, new[] { ("variable", input.Variable) }));
+            }
 
             if (sp.Userinfo || sp.HasQuery || sp.HasFragment)
             {

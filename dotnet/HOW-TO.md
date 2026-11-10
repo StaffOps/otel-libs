@@ -702,6 +702,7 @@ scheme of TelemetryOptions.OtelCollectorEndpoint; …`).
 | `http://collector` with gRPC | dials `http://collector:4317`, warning `gRPC endpoint has no port; using 4317 - set an explicit port` |
 | `collector:4318` with `http/protobuf` | `https://collector:4318/v1/<signal>` and a deprecation warning: use a URL |
 | `http://bücher.de:4317` | dials `http://xn--bcher-kva.de:4317` (punycode) |
+| `http://collector:4317/otlp` with gRPC | dials `http://collector:4317`; `otelhelper: WARN endpoint path is ignored by the gRPC exporter variable=OTEL_EXPORTER_OTLP_ENDPOINT`, once per variable, never the path (task C7b; a bare `/` is not warned) |
 | `http://collector:04318` | port 4318, so `http/protobuf` is inferred (INFO) |
 | `http://user:4318/secret@collector` | used as parsed; `endpoint path contains '@' - misplaced credentials?` naming the variable only |
 | `http://coll ector:4317`, `http://[fe80::1%eth0]:4317`, `http://127.1:4317`, `http://h:0`, `https://h/x\y`, `http://h:4318/%zz` (`http/protobuf`) | invalid. Environment: `otelhelper: WARN invalid endpoint; ignored variable=OTEL_EXPORTER_OTLP_TRACES_ENDPOINT value="<unparseable URL>" using="next configured endpoint, else none"`, then the generic endpoint is used. Code: host start fails naming the option |

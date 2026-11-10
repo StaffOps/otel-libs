@@ -1098,6 +1098,10 @@ dashboards and alerts.
    `unix:/…`). Not yet in this task: the per-signal `_HEADERS`, `_TIMEOUT`,
    `_COMPRESSION` and TLS-file variables (task C8) and the warning for a path
    on a gRPC endpoint (task C7b).
+   *Update (task C7b):* the gRPC path warning now exists — a path on a gRPC
+   endpoint (any source, schemeless too; not a bare `/`) is ignored as before
+   and warned once per variable, naming only the variable (0.2.x: dropped
+   silently). Still to come: the per-signal variables of task C8.
 
 ### Collector / platform prerequisites (before rolling 0.3.0 out)
 
@@ -1313,6 +1317,22 @@ Phase C work on this branch (no .NET release yet; the first will be
   `:` plus whitespace and a value that starts like prose, so `TokenError: <token>`,
   `AuthError=x` and `X-Auth-Error: x` stay masked. Suite 1046/1046 on `sdk:8.0` (line 98.51%)
   and SDK 10.0.403 roll-forward (98.45%).
+- **.NET: OTLP exporters per signal on the wire (task C7b, contract R1, R2,
+  D1 row "Path on a gRPC endpoint", A29).** A path on a gRPC endpoint is
+  ignored (the target stays `host:port`) and warned once per variable, naming
+  the variable only: `endpoint path is ignored by the gRPC exporter
+  variable=OTEL_EXPORTER_OTLP_ENDPOINT` — for the generic and per-signal
+  variables, code options and schemeless values; a bare `/` is no path, an
+  HTTP path is not warned, and a value the resolution skipped is not warned.
+  Code values only warn (a path is ignored, not invalid). The rest of the C7b
+  scope (explicit generic, per-signal and code targets, `/v1/<signal>` for
+  generic HTTP only, per-signal "configured", the TLS scheme rule, IPv6, path
+  escapes) already passed with C7a; unit tests now also pin per-signal HTTP
+  targets for metrics and logs. Parity: the last 4 `xfail:C7b` cases pass
+  (`export.grpc_endpoint_path_ignored_warned`, `_per_signal_`, `_code_`,
+  `_schemeless_`); the C7b group (55 cases) passes in full. Fixture: 239
+  `pass`, 119 `xfail:C<n>`, 12 known-difference skips. Suite 1062/1062 on `sdk:8.0`
+  and SDK 10.0.403 roll-forward, line coverage 98.45%.
 
 ### Breaking — telemetry output changes (dashboards/alerts)
 

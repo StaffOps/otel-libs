@@ -91,7 +91,7 @@ the contract:
 | `http://collector` (URL, no port) | `grpc` | `http://collector:4317`, with a warning to set an explicit port |
 | `http://collector` (URL, no port) | `http/protobuf` | `http://collector/v1/traces` (scheme default port, 80 or 443) |
 | `https://gw.example.com/otlp` | `http/protobuf` | `https://gw.example.com/otlp/v1/traces` (path kept; a per-signal value is used as written) |
-| `https://gw.example.com/otlp` | `grpc` | `https://gw.example.com:4317` (gRPC dials `host:port`) |
+| `https://gw.example.com/otlp` | `grpc` | `https://gw.example.com:4317` (gRPC dials `host:port`; the path is ignored and warned once per variable, task C7b) |
 | `collector` (schemeless) | `grpc` / `http/protobuf` | `https://collector:4317` / `https://collector:4318/v1/traces` (deprecated for `http/protobuf`, warned) |
 
 ### Endpoint parsing (0.3, this branch)

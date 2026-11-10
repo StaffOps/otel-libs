@@ -365,6 +365,36 @@ public class EndpointGrammarTests
     }
 
     [Theory]
+    [InlineData("http://collector:4317/parity-grpc-path", true)]
+    [InlineData("collector:4317/parity-schemeless-path", true)]
+    [InlineData("http://collector:4317//", true)]
+    [InlineData("http://collector:4317/?x=1", false)]
+    [InlineData("http://collector:4317/", false)]
+    [InlineData("http://collector:4317", false)]
+    [InlineData("collector:4317/", false)]
+    public void A_Grpc_Path_Warns_Naming_The_Variable_Only(string raw, bool warned)
+    {
+        // C7b (A29): a bare "/" is no path; the warning carries the variable and nothing else.
+        var outcome = Resolve(raw, insecure: true);
+        var path = outcome.Warnings.Where(w => w.Message == EndpointResolver.MsgGrpcPathIgnored).ToArray();
+        Assert.Equal(warned ? 1 : 0, path.Length);
+        if (warned)
+        {
+            Assert.Equal(new[] { ("variable", "OTEL_EXPORTER_OTLP_ENDPOINT") }, path[0].Attributes);
+            Assert.DoesNotContain("parity-", Messages(outcome));
+        }
+    }
+
+    [Fact]
+    public void An_Http_Path_Is_Not_Warned_And_The_Grpc_Path_Key_Ignores_The_Value()
+    {
+        Assert.DoesNotContain(Resolve("http://collector:4318/prefix", TelemetryOptions.ProtocolHttpProtobuf).Warnings,
+            w => w.Message == EndpointResolver.MsgGrpcPathIgnored);
+        // Once per variable: two different paths in the same variable share one key.
+        Assert.Equal(Resolve("http://c:4317/a").Warnings.Single().OnceKey, Resolve("http://c:4317/b").Warnings.Single().OnceKey);
+    }
+
+    [Theory]
     [InlineData("http://u:parity-secret-pw@collector:4317", "http://collector:4317")]
     [InlineData("http://collector:4317/?token=parity-secret-q", "http://collector:4317")]
     [InlineData("http://collector:4317/?", "http://collector:4317")]
@@ -561,6 +591,73 @@ public class EndpointResolutionTests : IDisposable
         Assert.Equal(new Uri("http://collector:4318/otlp/v1/traces"), options.Endpoint);
         Assert.Equal(OpenTelemetry.Exporter.OtlpExportProtocol.HttpProtobuf, options.Protocol);
         Assert.DoesNotContain("parity-secret", diagnostics.Text);
+    }
+
+    [Theory]
+    [InlineData("OTEL_EXPORTER_OTLP_ENDPOINT", "http://collector:4317/p", 1)]
+    [InlineData("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT", "http://collector:4317/v1/traces", 1)]
+    public void The_Grpc_Path_Warning_Is_Written_Once_Per_Variable(string variable, string value, int lines)
+    {
+        Set("OTEL_EXPORTER_OTLP_ENDPOINT", "http://collector:4317");
+        Set(variable, value);
+        var (resolved, diagnostics) = Resolve();
+        var warned = diagnostics.Lines.Where(l => l.Contains("endpoint path is ignored by the gRPC exporter")).ToArray();
+        Assert.Equal(lines, warned.Length);
+        Assert.Contains("variable=" + variable, warned[0]);
+        Assert.DoesNotContain(value, warned[0]);
+        Assert.DoesNotContain("value=", warned[0]);
+        Assert.Equal("http://collector:4317", resolved.OtlpTarget("traces")!.Value.Endpoint);
+    }
+
+    [Theory]
+    [InlineData("traces")]
+    [InlineData("metrics")]
+    [InlineData("logs")]
+    public void Exporter_Options_Carry_Each_Signals_Target(string signal)
+    {
+        // C7b audit: the fixture pins per-signal HTTP for traces only; every signal is checked here.
+        // A per-signal HTTP URL is used as written, also without a path (no /v1/<signal> added).
+        Set("OTEL_EXPORTER_OTLP_PROTOCOL", "http/protobuf");
+        Set("OTEL_EXPORTER_OTLP_ENDPOINT", "https://gw:4318/prefix/");
+        Set(TelemetryResolver.SignalVariable(signal, "ENDPOINT"), "http://own-" + signal + ":4318");
+        var (resolved, diagnostics) = Resolve();
+        foreach (var each in ResolvedTelemetry.Signals)
+        {
+            var options = StaffOps.OtelHelper.Exporters.OtlpExporters.OptionsFor(each, resolved, diagnostics.Sink)!;
+            Assert.Equal(OpenTelemetry.Exporter.OtlpExportProtocol.HttpProtobuf, options.Protocol);
+            Assert.Equal(each == signal ? "http://own-" + signal + ":4318/" : "https://gw:4318/prefix/v1/" + each, options.Endpoint.AbsoluteUri);
+        }
+    }
+
+    [Fact]
+    public void A_Signal_Without_A_Target_Gets_No_Exporter_Options()
+    {
+        // Per-signal "configured": only the signal with an endpoint has OTLP options.
+        Set("OTEL_EXPORTER_OTLP_METRICS_ENDPOINT", "http://m:4317");
+        var (resolved, diagnostics) = Resolve();
+        Assert.NotNull(StaffOps.OtelHelper.Exporters.OtlpExporters.OptionsFor("metrics", resolved, diagnostics.Sink));
+        Assert.Null(StaffOps.OtelHelper.Exporters.OtlpExporters.OptionsFor("traces", resolved, diagnostics.Sink));
+        Assert.Null(StaffOps.OtelHelper.Exporters.OtlpExporters.OptionsFor("logs", resolved, diagnostics.Sink));
+        Assert.Equal(new[] { "metrics" }, resolved.SignalTargets.Keys.ToArray());
+    }
+
+    [Fact]
+    public void A_Skipped_Per_Signal_Value_With_A_Path_Is_Not_Warned()
+    {
+        // An invalid per-signal value that fell back is not the chosen one (A29 row).
+        Set("OTEL_EXPORTER_OTLP_ENDPOINT", "http://collector:4317");
+        Set("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT", "http://coll ector:4317/x");
+        Assert.DoesNotContain(Resolve().Diagnostics.Lines, l => l.Contains("ignored by the gRPC exporter"));
+    }
+
+    [Fact]
+    public void A_Code_Grpc_Path_Warns_And_Does_Not_Fail_Start()
+    {
+        Assert.Null(Fail(o => o.OtelCollectorEndpoint = "http://collector:4317/parity-code-path"));
+        var (_, diagnostics) = Resolve(o => o.OtelCollectorEndpoint = "http://collector:4317/parity-code-path");
+        var line = Assert.Single(diagnostics.Lines, l => l.Contains("ignored by the gRPC exporter"));
+        Assert.Contains("variable=TelemetryOptions.OtelCollectorEndpoint", line);
+        Assert.DoesNotContain("parity-code-path", diagnostics.Text);
     }
 
     [Fact]
