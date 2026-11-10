@@ -37,10 +37,6 @@ SR14 not implemented yet (spec draft); owner task: S6
 # when its tests cite the id (added by C4, 2026-11-09; DN11 is cited by ParityTests).
 DN0 shipped by C-patch (done) on release/dotnet-0.2; enforced by that branch's CI, not by a test on this branch
 DN1 pending C0 (runtime retarget); C3 (done) set the dependency set, checked by the build, not by a test
-DN2 pending C5, C7b (helper-owned resolution, explicit exporter values)
-DN3 pending C5, C16 (diagnostics sink, redaction)
-DN4 pending C5, C18 (options API, lifecycle, migration)
-DN5 pending C5, C11 (DI hygiene, keyed instrumentation)
 DN6 pending C10 (debug marker and root activities)
 DN7 pending C11 (instrumentation, health, HTTP/gRPC parity)
 DN8 pending C13 (logging)

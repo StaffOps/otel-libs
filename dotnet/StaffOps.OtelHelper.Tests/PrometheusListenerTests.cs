@@ -68,15 +68,25 @@ public class PrometheusListenerTests : IDisposable
     }
 
     [Fact]
+    public void ConfigurePrometheusListener_Inactive_ClearsEveryPrefix()
+    {
+        // D-NET3 "no listener": the reader exists, the HttpListener gets no prefix.
+        var opts = new PrometheusHttpListenerOptions();
+        MetricsSetup.ConfigurePrometheusListener(opts, 9999, active: false);
+
+        using var listener = new HttpListener();
+        listener.Prefixes.Add("http://localhost:9999/metrics/");
+        opts.ConfigureHttpListener!(opts, listener);
+        Assert.Empty(listener.Prefixes);
+    }
+
+    [Fact]
     public async Task Scrape_IsFresh_NoResponseCache()
     {
         // Upstream caches scrape responses 300 ms by default; 0.2.x did not cache.
         var port = TestPorts.FreeTcpPort();
         using var meter = new Meter("prom-cache-test");
-        using var provider = Sdk.CreateMeterProviderBuilder()
-            .AddMeter("prom-cache-test")
-            .ConfigureMetrics(PrometheusOnly(port))
-            .Build();
+        using var sp = PrometheusOnly(port, "prom-cache-test");
         var counter = meter.CreateCounter<long>("cache_hits");
         using var http = new HttpClient();
 
@@ -113,17 +123,14 @@ public class PrometheusListenerTests : IDisposable
         await Assert.ThrowsAsync<HttpRequestException>(() => http.GetAsync($"http://localhost:{envPort}/metrics"));
     }
 
-    private static TelemetryOptions PrometheusOnly(int port)
-    {
-        var opts = new TelemetryOptions
+    private static ServiceProvider PrometheusOnly(int port, string meter)
+        => TestPipelines.Build(o =>
         {
-            ServiceName = "prom-listener-svc",
-            MetricExporters = "prometheus",
-            PrometheusMetricsPort = port,
-        };
-        new TelemetryOptionsPostConfigure().PostConfigure(null, opts);
-        return opts;
-    }
+            o.ServiceName = "prom-listener-svc";
+            o.MetricExporters = "prometheus";
+            o.PrometheusMetricsPort = port;
+            o.AdditionalMeters.Add(meter);
+        });
 
     private static string SampleLine(string exposition, string metric)
     {

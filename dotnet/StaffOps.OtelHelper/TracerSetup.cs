@@ -1,75 +1,105 @@
 using System;
-using System.Collections.Generic;
 using Microsoft.Extensions.DependencyInjection;
+using OpenTelemetry;
 using OpenTelemetry.Exporter;
+using OpenTelemetry.Instrumentation.AspNetCore;
+using OpenTelemetry.Instrumentation.Http;
 using OpenTelemetry.Trace;
+using StaffOps.OtelHelper.Diagnostics;
+using StaffOps.OtelHelper.Exporters;
 
 namespace StaffOps.OtelHelper.Tracing
 {
+    /// <summary>
+    /// Tracing in two phases (design D-NET3): the instrumentations are registered when
+    /// <c>AddOtelHelper</c> runs; every value — sources, sampler, resource, filters, the
+    /// exporter — is applied when the provider is built, from <see cref="ResolvedTelemetry"/>.
+    /// </summary>
     internal static class TracerSetup
     {
-        internal static TracerProviderBuilder ConfigureTracing(
-            this TracerProviderBuilder builder,
-            TelemetryOptions options)
-        {
-            var healthPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-            {
-                "/ping", "/health", "/healthz", "/ready"
-            };
+        /// <summary>Eager part: service-registering calls only.</summary>
+        internal static TracerProviderBuilder AddHelperInstrumentation(this TracerProviderBuilder builder)
+            => builder
+                .AddAspNetCoreInstrumentation()
+                .AddHttpClientInstrumentation()
+                .AddGrpcClientInstrumentation();
 
-            builder
-                .AddAspNetCoreInstrumentation(opts =>
+        /// <summary>Deferred values of the instrumentation options (health filters).</summary>
+        internal static void ConfigureInstrumentationOptions(IServiceCollection services)
+        {
+            services.AddOptions<AspNetCoreTraceInstrumentationOptions>()
+                .Configure<IServiceProvider>((opts, sp) =>
                 {
+                    if (!ResolvedAccess.TryGet(sp, out var resolved))
+                    {
+                        return;
+                    }
+
+                    var healthPaths = HealthPathSet(resolved);
                     opts.Filter = httpContext => !healthPaths.Contains(httpContext.Request.Path);
                     opts.RecordException = true;
-                })
-                .AddHttpClientInstrumentation(opts =>
-                {
-                    opts.FilterHttpRequestMessage = req =>
-                        !healthPaths.Contains(req.RequestUri?.AbsolutePath ?? "");
-                    opts.RecordException = true;
-                })
-                .AddGrpcClientInstrumentation()
-                .AddSource(options.ServiceName);
-
-            // Standard SDK env config wins when the consumer kept the default
-            // sampler: without SetSampler, the SDK reads OTEL_TRACES_SAMPLER /
-            // OTEL_TRACES_SAMPLER_ARG itself. An explicit sampler set in code
-            // (or OTEL_HELPER_SAMPLE_RATIO when the standard var is absent —
-            // see TelemetryOptionsPostConfigure) still takes precedence.
-            var standardSamplerSet = !string.IsNullOrWhiteSpace(
-                Environment.GetEnvironmentVariable(TelemetryOptions.TracesSamplerEnvVar));
-            if (!(standardSamplerSet && options.Sampler is AlwaysOnSampler))
-                builder.SetSampler(options.Sampler);
-
-            foreach (var source in options.AdditionalActivitySources)
-                builder.AddSource(source);
-
-            // OTLP exporter only when collector endpoint is configured.
-            // Without endpoint, traces are still created for in-process context propagation but not exported.
-            if (!string.IsNullOrWhiteSpace(options.OtelCollectorEndpoint))
-            {
-                var protocol = options.ResolvedOtlpProtocol();
-                builder.AddOtlpExporter(otlp =>
-                {
-                    if (protocol == TelemetryOptions.ProtocolHttpProtobuf)
-                    {
-                        otlp.Protocol = OtlpExportProtocol.HttpProtobuf;
-                        otlp.Endpoint = new Uri(options.OtelCollectorEndpoint.TrimEnd('/') + "/v1/traces");
-                    }
-                    else
-                    {
-                        otlp.Protocol = OtlpExportProtocol.Grpc;
-                        otlp.Endpoint = new Uri(options.OtelCollectorEndpoint);
-                    }
-                    otlp.TimeoutMilliseconds = options.ExportTimeoutMs;
                 });
+            services.AddOptions<HttpClientTraceInstrumentationOptions>()
+                .Configure<IServiceProvider>((opts, sp) =>
+                {
+                    if (!ResolvedAccess.TryGet(sp, out var resolved))
+                    {
+                        return;
+                    }
+
+                    var healthPaths = HealthPathSet(resolved);
+                    opts.FilterHttpRequestMessage = req => !healthPaths.Contains(req.RequestUri?.AbsolutePath ?? "");
+                    opts.RecordException = true;
+                });
+        }
+
+        /// <summary>Deferred part, at provider build.</summary>
+        internal static void ApplyResolved(IServiceProvider sp, TracerProviderBuilder builder)
+        {
+            if (!ResolvedAccess.TryGet(sp, out var resolved))
+            {
+                return;
             }
 
-            if (options.DebugLevel)
-                builder.AddProcessor(new DebugTraceStateProcessor());
+            builder.ConfigureResource(r => ResourceSetup.Apply(r, resolved));
 
-            return builder;
+            // "Off" (disabled signal): instrumentation registered, no source and no exporter (D-NET3).
+            if (!resolved.IsSignalEnabled("traces"))
+            {
+                return;
+            }
+
+            builder.AddSource(resolved.ServiceName);
+            foreach (var source in resolved.AdditionalActivitySources)
+            {
+                builder.AddSource(source);
+            }
+
+            if (resolved.Sampler is { } sampler)
+            {
+                builder.SetSampler(sampler);
+            }
+
+            if (resolved.DebugLevel)
+            {
+                builder.AddProcessor(new DebugTraceStateProcessor());
+            }
+
+            var diagnostics = sp.GetRequiredService<IOtelHelperDiagnostics>();
+            if (OtlpExporters.OptionsFor("traces", resolved, diagnostics, sp.GetRequiredService<ExporterClients>()) is { } otlp)
+            {
+                var batch = sp.GetRequiredService<Microsoft.Extensions.Options.IOptionsMonitor<BatchExportActivityProcessorOptions>>()
+                    .Get(Microsoft.Extensions.Options.Options.DefaultName);
+                builder.AddProcessor(new BatchActivityExportProcessor(
+                    new OtlpTraceExporter(otlp),
+                    batch.MaxQueueSize,
+                    batch.ScheduledDelayMilliseconds,
+                    batch.ExporterTimeoutMilliseconds,
+                    batch.MaxExportBatchSize));
+            }
         }
+
+        private static HashSet<string> HealthPathSet(ResolvedTelemetry resolved)
+            => new(resolved.HealthPaths, StringComparer.OrdinalIgnoreCase);
     }
 }

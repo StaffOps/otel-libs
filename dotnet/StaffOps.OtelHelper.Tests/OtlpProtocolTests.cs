@@ -1,3 +1,4 @@
+using Microsoft.Extensions.DependencyInjection;
 using System;
 using System.Diagnostics;
 using System.Diagnostics.Metrics;
@@ -38,16 +39,13 @@ public class OtlpProtocolTests : IDisposable
             Environment.SetEnvironmentVariable(v, null);
     }
 
-    private static TelemetryOptions Resolved(Action<TelemetryOptions>? configure = null)
+    private static ResolvedTelemetry Resolved(Action<TelemetryOptions>? configure = null)
+        => TestDiagnostics.ResolveQuiet(configure);
+
+    private static string? Validate(Action<TelemetryOptions> configure)
     {
         var opts = new TelemetryOptions();
-        configure?.Invoke(opts);
-        new TelemetryOptionsPostConfigure().PostConfigure(null, opts);
-        return opts;
-    }
-
-    private static string? Validate(TelemetryOptions opts)
-    {
+        configure(opts);
         var result = new TelemetryOptionsValidator().Validate(null, opts);
         return result.Failed ? result.FailureMessage : null;
     }
@@ -128,22 +126,28 @@ public class OtlpProtocolTests : IDisposable
     // --- validation ---
 
     [Fact]
-    public void UnknownValue_FailsValidation()
+    public void UnknownEnvValue_Warns_And_Falls_Back()
     {
+        // D-NET6: an env value warns naming the variable and the value, and the default applies.
         Environment.SetEnvironmentVariable(TelemetryOptions.OtlpProtocolEnvVar, "http/json");
-        var failure = Validate(Resolved(o => o.ServiceName = "svc"));
-        Assert.NotNull(failure);
-        Assert.Contains("Unknown OTLP protocol", failure);
+        var diagnostics = new TestDiagnostics();
+        var opts = diagnostics.Resolve(o => o.OtelCollectorEndpoint = "http://collector:4317");
+        Assert.Equal(TelemetryOptions.ProtocolGrpc, opts.ResolvedOtlpProtocol());
+        var line = Assert.Single(diagnostics.Lines);
+        Assert.StartsWith("otelhelper: WARN invalid OTEL_EXPORTER_OTLP_PROTOCOL", line);
+        Assert.Contains("value=http/json", line);
     }
 
     [Fact]
-    public void HttpJson_RejectedEvenThoughSpecValid()
+    public void UnknownCodeValue_FailsValidation_NamingTheOption()
     {
         // http/json is a valid spec value but no .NET OTLP exporter implements it
-        // for traces/metrics/logs — must fail loud, not silently downgrade.
-        Environment.SetEnvironmentVariable(TelemetryOptions.OtlpProtocolEnvVar, "http/json");
-        var failure = Validate(Resolved(o => o.ServiceName = "svc"));
+        // for traces/metrics/logs — set in code it fails loud.
+        var failure = Validate(o => o.OtlpProtocol = "http/json");
         Assert.NotNull(failure);
+        Assert.Contains("Unknown OTLP protocol", failure);
+        Assert.Contains("TelemetryOptions.OtlpProtocol", failure);
+        Assert.DoesNotContain(TelemetryOptions.OtlpProtocolEnvVar, failure);
     }
 
     [Theory]
@@ -151,12 +155,11 @@ public class OtlpProtocolTests : IDisposable
     [InlineData("http/protobuf")]
     public void GrpcAndHttpProtobuf_PassValidation(string protocol)
     {
-        var opts = Resolved(o =>
+        Assert.Null(Validate(o =>
         {
             o.ServiceName = "svc";
             o.OtlpProtocol = protocol;
-        });
-        Assert.Null(Validate(opts));
+        }));
     }
 
     // --- live integration: HTTP protocol actually delivers to /v1/{signal} ---
@@ -177,14 +180,13 @@ public class OtlpProtocolTests : IDisposable
             ctx.Response.Close();
         });
 
-        var opts = Resolved(o =>
+        using var sp = TestPipelines.Build(o =>
         {
             o.ServiceName = "http-trace-test";
             o.OtelCollectorEndpoint = $"http://localhost:{port}";
             o.OtlpProtocol = TelemetryOptions.ProtocolHttpProtobuf;
         });
-
-        using var tp = Sdk.CreateTracerProviderBuilder().ConfigureTracing(opts).Build();
+        var tp = sp.GetRequiredService<TracerProvider>();
         using (var source = new ActivitySource("http-trace-test"))
         using (var activity = source.StartActivity("test-span"))
         {
@@ -211,15 +213,14 @@ public class OtlpProtocolTests : IDisposable
             ctx.Response.Close();
         });
 
-        var opts = Resolved(o =>
+        using var sp = TestPipelines.Build(o =>
         {
             o.ServiceName = "http-metric-test";
             o.OtelCollectorEndpoint = $"http://localhost:{port}";
             o.MetricExporters = "otlp";
             o.OtlpProtocol = TelemetryOptions.ProtocolHttpProtobuf;
         });
-
-        using var mp = Sdk.CreateMeterProviderBuilder().ConfigureMetrics(opts).Build();
+        var mp = sp.GetRequiredService<MeterProvider>();
         using var meter = new Meter("http-metric-test");
         var counter = meter.CreateCounter<long>("http_protocol_test");
         counter.Add(1);

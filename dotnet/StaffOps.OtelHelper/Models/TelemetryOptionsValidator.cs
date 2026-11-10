@@ -1,76 +1,131 @@
-using System;
-using System.Linq;
+using System.Globalization;
 using Microsoft.Extensions.Options;
+using StaffOps.OtelHelper.Diagnostics;
 
 namespace StaffOps.OtelHelper
 {
     /// <summary>
-    /// Validates <see cref="TelemetryOptions"/> after environment variables are applied;
-    /// registered by <c>AddOtelHelper</c>, so an invalid configuration fails at startup.
+    /// Validates the values set in code (design D-NET6): an invalid code value fails host
+    /// start (<c>ValidateOnStart</c>) with a message naming the option. Environment values
+    /// are never checked here: the resolver warns about them and uses the default. Every
+    /// echoed value is redacted, cut and escaped (requirement DN3).
     /// </summary>
-    public class TelemetryOptionsValidator : IValidateOptions<TelemetryOptions>
+    internal sealed class TelemetryOptionsValidator : IValidateOptions<TelemetryOptions>
     {
-        /// <summary>Checks the resolved options and returns the first failure found.</summary>
-        /// <param name="name">Options instance name (unused; the helper uses the default instance).</param>
-        /// <param name="options">Resolved options to validate.</param>
-        /// <returns><see cref="ValidateOptionsResult.Success"/>, or a failure naming the invalid option.</returns>
+        private const string Owner = "TelemetryOptions.";
+
         public ValidateOptionsResult Validate(string? name, TelemetryOptions options)
         {
-            if (string.IsNullOrWhiteSpace(options.ServiceName))
-                return ValidateOptionsResult.Fail(
-                    $"ServiceName is required. Set the {TelemetryOptions.ServiceNameEnvVar} environment variable.");
+            var failures = new List<string>();
 
-            // OtelCollectorEndpoint is optional — empty means Prometheus fallback mode.
-            // But if set, it must be a valid URI.
-            if (!string.IsNullOrWhiteSpace(options.OtelCollectorEndpoint)
-                && !Uri.TryCreate(options.OtelCollectorEndpoint, UriKind.Absolute, out _))
-                return ValidateOptionsResult.Fail($"OtelCollectorEndpoint '{options.OtelCollectorEndpoint}' is not a valid URI.");
+            CheckEndpoint(failures, nameof(TelemetryOptions.OtelCollectorEndpoint), options.OtelCollectorEndpoint, allowSchemeless: true);
+            CheckEndpoint(failures, nameof(TelemetryOptions.TracesEndpoint), options.TracesEndpoint, allowSchemeless: false);
+            CheckEndpoint(failures, nameof(TelemetryOptions.MetricsEndpoint), options.MetricsEndpoint, allowSchemeless: false);
+            CheckEndpoint(failures, nameof(TelemetryOptions.LogsEndpoint), options.LogsEndpoint, allowSchemeless: false);
 
-            if (options.ExportTimeoutMs <= 0)
-                return ValidateOptionsResult.Fail("ExportTimeoutMs must be greater than 0.");
-
-            if (options.ExportIntervalMs is <= 0)
-                return ValidateOptionsResult.Fail("ExportIntervalMs must be greater than 0.");
-
-            // 0 = standalone listener disabled (mounted-endpoint mode).
-            if (options.PrometheusMetricsPort < 0 || options.PrometheusMetricsPort > 65535)
-                return ValidateOptionsResult.Fail("PrometheusMetricsPort must be between 0 and 65535.");
-
-            if (!string.IsNullOrWhiteSpace(options.MetricExporters))
+            if (options.ExportTimeoutMs is { } timeout && (timeout < 1 || timeout > TelemetryOptions.MaxExportTimeoutMs))
             {
-                var exporters = options.MetricExporters
-                    .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-                    .Select(e => e.ToLowerInvariant())
-                    .ToArray();
-
-                var unknown = exporters.Except(TelemetryOptions.ValidMetricExporters).ToArray();
-                if (unknown.Length > 0)
-                    return ValidateOptionsResult.Fail(
-                        $"Unknown metric exporter(s) '{string.Join(", ", unknown)}' in {TelemetryOptions.MetricsExporterEnvVar}. " +
-                        $"Valid values: {string.Join(", ", TelemetryOptions.ValidMetricExporters)}.");
-
-                if (exporters.Contains("none") && exporters.Length > 1)
-                    return ValidateOptionsResult.Fail(
-                        $"'none' cannot be combined with other metric exporters in {TelemetryOptions.MetricsExporterEnvVar}.");
+                failures.Add($"{Owner}{nameof(TelemetryOptions.ExportTimeoutMs)} must be in [1, {TelemetryOptions.MaxExportTimeoutMs}] ms, got {timeout.ToString(CultureInfo.InvariantCulture)}.");
             }
 
-            if (options.ResolvedMetricExporters().Contains("otlp") && string.IsNullOrWhiteSpace(options.OtelCollectorEndpoint))
-                return ValidateOptionsResult.Fail(
-                    $"Metric exporter 'otlp' requires an endpoint. Set {TelemetryOptions.CollectorEndpointEnvVar} " +
-                    $"or remove 'otlp' from {TelemetryOptions.MetricsExporterEnvVar}.");
-
-            // http/json is a valid OTel spec value but no .NET OTLP exporter implements
-            // it — must fail loud, not silently fall back to another protocol.
-            if (!string.IsNullOrWhiteSpace(options.OtlpProtocol))
+            if (options.ExportIntervalMs is { } interval && (interval < 1 || interval > int.MaxValue))
             {
-                var protocol = options.OtlpProtocol.Trim().ToLowerInvariant();
-                if (!TelemetryOptions.ValidOtlpProtocols.Contains(protocol))
-                    return ValidateOptionsResult.Fail(
-                        $"Unknown OTLP protocol '{options.OtlpProtocol}' in {TelemetryOptions.OtlpProtocolEnvVar}. " +
-                        $"Valid values: {string.Join(", ", TelemetryOptions.ValidOtlpProtocols)}.");
+                failures.Add($"{Owner}{nameof(TelemetryOptions.ExportIntervalMs)} must be in [1, {int.MaxValue}] ms, got {interval.ToString(CultureInfo.InvariantCulture)}.");
             }
 
-            return ValidateOptionsResult.Success;
+            if (options.PrometheusMetricsPort is { } port && (port < 0 || port > 65535))
+            {
+                failures.Add($"{Owner}{nameof(TelemetryOptions.PrometheusMetricsPort)} must be in [0, 65535] (0 = no listener), got {port.ToString(CultureInfo.InvariantCulture)}.");
+            }
+
+            if (options.SampleRatio is { } ratio && !(ratio >= 0.0 && ratio <= 1.0))
+            {
+                failures.Add($"{Owner}{nameof(TelemetryOptions.SampleRatio)} must be in [0, 1], got {ratio.ToString("R", CultureInfo.InvariantCulture)}.");
+            }
+
+            if (!string.IsNullOrWhiteSpace(options.OtlpProtocol)
+                && !TelemetryOptions.ValidOtlpProtocols.Contains(options.OtlpProtocol.Trim().ToLowerInvariant()))
+            {
+                failures.Add($"Unknown OTLP protocol {DiagnosticText.Echo(options.OtlpProtocol)} in {Owner}{nameof(TelemetryOptions.OtlpProtocol)}. " +
+                    $"Valid values: {string.Join(", ", TelemetryOptions.ValidOtlpProtocols)}.");
+            }
+
+            if (!string.IsNullOrWhiteSpace(options.Compression)
+                && !TelemetryOptions.ValidCompressions.Contains(options.Compression.Trim().ToLowerInvariant()))
+            {
+                failures.Add($"Unknown compression {DiagnosticText.Echo(options.Compression)} in {Owner}{nameof(TelemetryOptions.Compression)}. " +
+                    $"Valid values: {string.Join(", ", TelemetryOptions.ValidCompressions)}.");
+            }
+
+            CheckMetricExporters(failures, options);
+
+            return failures.Count == 0 ? ValidateOptionsResult.Success : ValidateOptionsResult.Fail(failures);
+        }
+
+        private static void CheckEndpoint(List<string> failures, string option, string? value, bool allowSchemeless)
+        {
+            if (string.IsNullOrWhiteSpace(value) || TelemetryResolver.IsHttpUrl(value))
+            {
+                return;
+            }
+
+            if (allowSchemeless && IsSchemeless(value.Trim()))
+            {
+                return;
+            }
+
+            failures.Add($"{Owner}{option} {DiagnosticText.RenderUrl(value)} is not a valid OTLP endpoint: use an http:// or https:// URL" +
+                (allowSchemeless ? " or host:port." : "."));
+        }
+
+        /// <summary><c>host</c>, <c>host:port</c> or <c>[ipv6]:port</c>, optionally with a path; no scheme, no userinfo.</summary>
+        private static bool IsSchemeless(string value)
+        {
+            if (value.Contains("://", StringComparison.Ordinal) || value.Contains('@') || value.StartsWith('/'))
+            {
+                return false;
+            }
+
+            return Uri.TryCreate("https://" + value, UriKind.Absolute, out var uri) && uri.Host.Length > 0
+                && DiagnosticText.RenderUrl(value) != DiagnosticText.UnparseableUrl
+                && !DiagnosticText.RenderUrl(value).EndsWith(':');
+        }
+
+        private static void CheckMetricExporters(List<string> failures, TelemetryOptions options)
+        {
+            const string option = Owner + nameof(TelemetryOptions.MetricExporters);
+            if (string.IsNullOrWhiteSpace(options.MetricExporters))
+            {
+                return;
+            }
+
+            var exporters = options.MetricExporters
+                .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Select(e => e.ToLowerInvariant())
+                .ToArray();
+
+            var unknown = exporters.Except(TelemetryOptions.ValidMetricExporters).ToArray();
+            if (unknown.Length > 0)
+            {
+                failures.Add($"Unknown metric exporter(s) {string.Join(", ", unknown.Select(DiagnosticText.Echo))} in {option}. " +
+                    $"Valid values: {string.Join(", ", TelemetryOptions.ValidMetricExporters)}.");
+                return;
+            }
+
+            if (exporters.Contains("none") && exporters.Distinct().Count() > 1)
+            {
+                failures.Add($"'none' cannot be combined with other metric exporters in {option}.");
+                return;
+            }
+
+            var hasEndpoint = !string.IsNullOrWhiteSpace(options.OtelCollectorEndpoint)
+                || !string.IsNullOrWhiteSpace(options.MetricsEndpoint)
+                || !string.IsNullOrWhiteSpace(System.Environment.GetEnvironmentVariable(TelemetryOptions.CollectorEndpointEnvVar));
+            if (exporters.Contains("otlp") && !hasEndpoint)
+            {
+                failures.Add($"Metric exporter 'otlp' in {option} requires an endpoint. Set {Owner}{nameof(TelemetryOptions.OtelCollectorEndpoint)}, " +
+                    $"{Owner}{nameof(TelemetryOptions.MetricsEndpoint)} or {TelemetryOptions.CollectorEndpointEnvVar}.");
+            }
         }
     }
 }

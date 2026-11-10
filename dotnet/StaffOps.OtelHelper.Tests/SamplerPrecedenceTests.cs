@@ -30,21 +30,19 @@ public class SamplerPrecedenceTests : IDisposable
         Environment.SetEnvironmentVariable(TelemetryOptions.SampleRatioEnvVar, null);
     }
 
-    private static TelemetryOptions Resolved(Action<TelemetryOptions>? configure = null)
+    private static Action<TelemetryOptions> WithName(Action<TelemetryOptions>? configure) => o =>
     {
-        var opts = new TelemetryOptions { ServiceName = "sampler-test" };
-        configure?.Invoke(opts);
-        new TelemetryOptionsPostConfigure().PostConfigure(null, opts);
-        return opts;
-    }
+        o.ServiceName = "sampler-test";
+        configure?.Invoke(o);
+    };
 
-    private static bool BuildAndCheckSampled(TelemetryOptions opts)
+    private static ResolvedTelemetry Resolved(Action<TelemetryOptions>? configure = null)
+        => TestDiagnostics.ResolveQuiet(WithName(configure));
+
+    private static bool BuildAndCheckSampled(Action<TelemetryOptions>? configure = null)
     {
-        using var provider = Sdk.CreateTracerProviderBuilder()
-            .ConfigureTracing(opts)
-            .Build();
-
-        using var source = new ActivitySource(opts.ServiceName);
+        using var provider = TestPipelines.Build(WithName(configure));
+        using var source = new ActivitySource("sampler-test");
         using var activity = source.StartActivity("probe");
         return activity?.Recorded ?? false;
     }
@@ -64,11 +62,10 @@ public class SamplerPrecedenceTests : IDisposable
         Environment.SetEnvironmentVariable(TelemetryOptions.TracesSamplerEnvVar, "always_off");
         var opts = Resolved();
 
-        // Helper stays on the AlwaysOnSampler default (no ratio applied)...
-        Assert.IsType<AlwaysOnSampler>(opts.Sampler);
-        // ...but the built provider must follow the SDK's own env-var reading
-        // (ConfigureTracing skips SetSampler when the standard var is present).
-        Assert.False(BuildAndCheckSampled(opts));
+        // The helper sets no sampler (null)...
+        Assert.Null(opts.Sampler);
+        // ...so the built provider follows the SDK's own env-var reading.
+        Assert.False(BuildAndCheckSampled());
     }
 
     [Fact]
@@ -79,8 +76,8 @@ public class SamplerPrecedenceTests : IDisposable
         var opts = Resolved();
 
         // OTEL_HELPER_SAMPLE_RATIO must be ignored entirely when the standard var is set.
-        Assert.IsType<AlwaysOnSampler>(opts.Sampler);
-        Assert.False(BuildAndCheckSampled(opts));
+        Assert.Null(opts.Sampler);
+        Assert.False(BuildAndCheckSampled());
     }
 
     [Fact]
@@ -89,9 +86,30 @@ public class SamplerPrecedenceTests : IDisposable
         // Env says always_on; explicit code says ratio 0. Explicit must win,
         // so the span must NOT be sampled.
         Environment.SetEnvironmentVariable(TelemetryOptions.TracesSamplerEnvVar, "always_on");
-        var opts = Resolved(o => o.Sampler = new TraceIdRatioBasedSampler(0.0));
+        Assert.False(BuildAndCheckSampled(o => o.Sampler = new TraceIdRatioBasedSampler(0.0)));
+    }
 
-        Assert.False(BuildAndCheckSampled(opts));
+    [Fact]
+    public void CodeAlwaysOn_BeatsStandardVar()
+    {
+        // "Set in code wins, whatever the value" (DN4): an explicit AlwaysOnSampler is not a default.
+        Environment.SetEnvironmentVariable(TelemetryOptions.TracesSamplerEnvVar, "always_off");
+        Assert.True(BuildAndCheckSampled(o => o.Sampler = new AlwaysOnSampler()));
+    }
+
+    [Fact]
+    public void CodeSampleRatio_Is_ParentBased_And_Beats_Env()
+    {
+        Environment.SetEnvironmentVariable(TelemetryOptions.TracesSamplerEnvVar, "always_off");
+        Environment.SetEnvironmentVariable(TelemetryOptions.SampleRatioEnvVar, "0");
+        Assert.IsType<ParentBasedSampler>(Resolved(o => o.SampleRatio = 1.0).Sampler);
+        Assert.True(BuildAndCheckSampled(o => o.SampleRatio = 1.0));
+    }
+
+    [Fact]
+    public void CodeSampler_Beats_CodeSampleRatio()
+    {
+        Assert.IsType<AlwaysOffSampler>(Resolved(o => { o.SampleRatio = 1.0; o.Sampler = new AlwaysOffSampler(); }).Sampler);
     }
 
     [Fact]
@@ -100,6 +118,6 @@ public class SamplerPrecedenceTests : IDisposable
         var opts = Resolved();
 
         Assert.IsType<AlwaysOnSampler>(opts.Sampler);
-        Assert.True(BuildAndCheckSampled(opts));
+        Assert.True(BuildAndCheckSampled());
     }
 }

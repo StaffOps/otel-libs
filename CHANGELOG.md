@@ -645,6 +645,75 @@ emitted telemetry.
    `OtelHelper.Profiling` (its prerequisite warning still names it): do not
    rename `Logging:LogLevel` filters for that category.
 
+2. **The helper's `ActivitySource` and `Meter` are keyed DI services** (task
+   C5, requirement DN5, N1). 0.2.x registered them unkeyed, which replaced the
+   `ActivitySource` ASP.NET Core resolves for its server spans (they were
+   exported under the service's scope instead of `Microsoft.AspNetCore`). Inject
+   them with `[FromKeyedServices(OtelHelperKeys.Instrumentation)] ActivitySource source`
+   (and `Meter`), or `GetRequiredKeyedService<ActivitySource>(OtelHelperKeys.Instrumentation)`.
+   Unkeyed injection still compiles and gives no error: in a worker it resolves to
+   `null`; in a web host an unkeyed `ActivitySource` **silently** resolves to the
+   `Microsoft.AspNetCore` source, so custom spans are exported under that scope;
+   an unkeyed `Meter` is `null`. Search for `ActivitySource` and `Meter`
+   constructor parameters and `GetService<ActivitySource>()`.
+3. **`TelemetryOptions` holds only what the application sets** (task C5, design
+   D-NET4, requirement DN4). Every option with an environment counterpart is
+   nullable, `null` meaning "not set in code"; a value set in code wins over the
+   environment whatever it is, including a value equal to the default (0.2.x
+   compared with the default, so `ServiceName = "my-service"` or
+   `Environment = LOCAL` in code lost to the environment). A blank string counts
+   as not set. Reading `IOptions<TelemetryOptions>.Value` no longer gives the
+   resolved values (environment, defaults): those are internal now.
+
+   | 0.2.x | 0.3 |
+   |---|---|
+   | `string ServiceName = "my-service"`, `[Required]` | `string? ServiceName` |
+   | `DeploymentEnvironment Environment = LOCAL` (enum `LOCAL/DEV/HML/PRD`) | `string? Environment`, written as is; the enum is removed, constants in `DeploymentEnvironments` (`DeploymentEnvironments.PRD` …) |
+   | `static GetDefaultLogLevel(DeploymentEnvironment, bool debugLevel = false)` | `static GetDefaultLogLevel(string? environment, bool debug = false)`; an unknown name gives Information |
+   | `string OtelCollectorEndpoint = ""` | `string? OtelCollectorEndpoint`; new `TracesEndpoint`, `MetricsEndpoint`, `LogsEndpoint` (used as written, no `/v1/<signal>` appended) |
+   | `bool DebugLevel` | `bool? DebugLevel` |
+   | `string ExtraInstrumentation = "SQL"` | `[Obsolete] string? ExtraInstrumentation`: no effect (it never had a production caller), one warning when set |
+   | `int ExportTimeoutMs = 10_000` | `int? ExportTimeoutMs`, in [1, 86 400 000] |
+   | `Sampler Sampler = new AlwaysOnSampler()` | `Sampler? Sampler`; new `double? SampleRatio` in [0, 1] → `ParentBased(TraceIdRatioBased(ratio))` |
+   | `string DisabledSignals = ""`, `DisabledMetrics = ""`, `MetricExporters = ""` | `string?` each |
+   | `int? ExportIntervalMs` | `long? ExportIntervalMs`, in [1, 2 147 483 647] (`int` assignments still compile) |
+   | `int PrometheusMetricsPort = 9464` | `int? PrometheusMetricsPort`, in [0, 65535] |
+   | — | new `bool? Insecure`, `string? Compression` (`gzip`/`none`), `List<string>? HealthPaths`, `List<string> AdditionalMeters`, `bool ForwardSdkDiagnostics = true` |
+   | public `IsSignalEnabled()`, `ResolvedMetricExporters()`, `ResolvedOtlpProtocol()` | removed (they answered from code-only state) |
+   | public `TelemetryOptionsValidator` | internal |
+4. **Invalid values: environment warns, code fails at start** (task C5, design
+   D-NET6). 0.2.x threw `OptionsValidationException` inside the
+   `AddOtelHelper()` call for some environment values (`OTEL_METRICS_EXPORTER=console`,
+   `OTEL_EXPORTER_OTLP_PROTOCOL=http/json`, an out-of-range
+   `OTEL_HELPER_METRICS_PORT`, `otlp` without an endpoint). Now an environment
+   value the helper cannot use is warned on standard error (telemetry row 7)
+   and replaced by the default; the app starts. The same value set in code
+   fails host start (`ValidateOnStart`, not `AddOtelHelper()` any more) with an
+   `OptionsValidationException` that names the option (`TelemetryOptions.OtlpProtocol`,
+   not `OTEL_EXPORTER_OTLP_PROTOCOL`) and never echoes URL userinfo or a query.
+   A test that expected `AddOtelHelper()` to throw now sees the exception at
+   `host.StartAsync()` (or at the first `IOptions<TelemetryOptions>.Value`).
+   `ServiceName = ""` is no longer an error (blank = not set).
+5. **Options bound from `IConfiguration` count as code** (requirement DN4):
+   `services.Configure<TelemetryOptions>(configuration.GetSection("Otel"))`
+   now beats `OTEL_*` environment variables — the reverse of the usual .NET
+   order (environment over `appsettings.json`). Move a value you want the
+   deployment to override out of the bound section.
+6. **`Configure<TelemetryOptions>` after `AddOtelHelper()` is honored** (N4):
+   0.2.x resolved the options inside `AddOtelHelper()`, so a later
+   `Configure` changed `IOptions` but not the pipeline. Now every value,
+   including whether the Prometheus listener binds, follows the final options.
+7. **Smaller changes in code options:** a code `PrometheusMetricsPort` beats
+   `OTEL_HELPER_METRICS_PORT` (N8; 0.2.x let the variable win); `ExportIntervalMs`
+   is `long?`, but `OTEL_METRIC_EXPORT_INTERVAL` is still read as an `int` until
+   task C9 (a larger value is ignored); a schemeless
+   code endpoint (`collector:4317`) is resolved like the environment value
+   (`https://`, or `http://` with `Insecure`), not taken as a URL with scheme
+   `collector` (N10); a code `Sampler = new AlwaysOnSampler()` now beats
+   `OTEL_TRACES_SAMPLER` (0.2.x let the variable win while the code sampler
+   stayed `AlwaysOnSampler`); a second `AddOtelHelper()` call still changes
+   nothing and now warns once.
+
 **Telemetry part.** Each row: before (0.2.x) → after, and what to check in
 dashboards and alerts.
 
@@ -755,7 +824,132 @@ dashboards and alerts.
      those records no longer reach stdout or the log backend;
    - `OTEL_EXPORTER_OTLP_COMPRESSION=gzip` set by the deployment now
      compresses (OTLP exporter 1.16.0; the helper sets no compression yet).
+     *Since task C5 (2026-11-10) the helper assigns the compression itself:
+     the same variable, default none until task C8 makes `gzip` the default.*
    From the upstream CHANGELOGs unless marked measured.
+7. **Helper diagnostics on standard error** (task C5, design D-NET5): 0.2.x
+   wrote none. Each record is one line `otelhelper: <INFO|WARN|ERROR> <message> key=value…`
+   (values cut at 64 code points, control characters escaped, no header value,
+   URL userinfo or query). The OpenTelemetry SDK's own warnings and errors
+   (its `EventSource` events, invisible in 0.2.x — export failures among them)
+   are forwarded as `otelhelper: <LEVEL> sdk <EventSource>: <text>`, with the
+   response body of a failed export dropped and the configured OTLP header
+   values and endpoint credentials masked; `ForwardSdkDiagnostics = false`
+   turns the forwarding off for that host's sink. One listener serves the
+   process: each event is written once, to the most recently started host that
+   forwards, with the secrets of every live host masked (also of a host that
+   opted out). Three kinds of SDK events are not forwarded: the Prometheus
+   listener's cancel once any host is stopping (always, in a service provider
+   without a host), the "View configuration asks to drop this instrument" notices,
+   and the SDK constructor's parse warnings for `OTEL_EXPORTER_OTLP_ENDPOINT`,
+   `_PROTOCOL` and `_COMPRESSION` (the helper resolves those and warns itself);
+   its warnings about the other OTLP variables (timeout, headers, certificate
+   files, temporality) are forwarded. A log pipeline that collects the
+   container's standard error sees these lines; they do not go through
+   `ILogger`. A code value that fails validation is also reported once as an
+   ERROR line when a provider or the host's first logger is built before
+   start; start then fails with the `OptionsValidationException`.
+8. **The helper builds the OTLP exporters** (task C5, ADR-013). Helper-owned
+   `OTEL_EXPORTER_OTLP_*` rows come from the process environment only: a key
+   that exists only in `IConfiguration` (`appsettings.json`, command line,
+   `DOTNET_`/`ASPNETCORE_`-prefixed variables) no longer affects the endpoint,
+   protocol, timeout, compression, headers or TLS files (0.2.x and the SDK read
+   them from there). `OTEL_SDK_DISABLED` is still read from `IConfiguration`,
+   as the SDK reads it. The exporters use the helper's own `HttpClient` (one
+   per exporter, no redirects followed): the named `IHttpClientFactory` clients
+   `OtlpTraceExporter`, `OtlpMetricExporter` and `OtlpLogExporter` an app could
+   configure are no longer used, and with `services.AddHttpClient()` a `3xx`
+   answer is no longer followed either, so the redirect regression of row 5
+   now applies to every app until task C8. Unchanged on the wire: endpoint,
+   protocol, compression (`OTEL_EXPORTER_OTLP_COMPRESSION`, default none), the
+   10 s timeout, the SDK `User-Agent` (`OTel-OTLP-Exporter-Dotnet/<version>`)
+   and, for an `https://` target, the CA and client certificate files — the
+   parity export cases that passed before still pass. Changed in
+   `OTEL_EXPORTER_OTLP_HEADERS`: a malformed item (no `=` or an empty key) is
+   skipped with one warning naming the variable, where the SDK failed provider
+   construction; each item's key and value are percent-decoded on their own
+   (the SDK decoded the whole string, so a `%2C` split an item), and an invalid
+   escape such as `%zz` is sent as written, without a warning until task C8; a
+   repeated key keeps its last value (the SDK threw); an item whose decoded key
+   or value holds a control character, or whose name the HTTP client rejects,
+   is skipped with a warning naming the key.
+   An unreadable CA file now warns and falls back to the system trust store;
+   for an `http://` target the certificate files are not read at all (the
+   warning that they are ignored there comes with task C8). The metric
+   temporality (`OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE`) is still
+   read from `IConfiguration` (by the helper now, into the default
+   `MetricReaderOptions`, so an app's own `Configure<MetricReaderOptions>`
+   still wins); an invalid value (also a number, which upstream accepted)
+   warns and is cumulative. `OTEL_EXPORTER_OTLP_METRICS_DEFAULT_HISTOGRAM_AGGREGATION`
+   still works (owner decision, 2026-11-10) when it is set to
+   `base2_exponential_bucket_histogram` in the **process environment** (or in
+   an `IConfiguration` instance registered before `AddOtelHelper`) as
+   `AddOtelHelper` runs: the helper then keeps the SDK's `AddOtlpExporter`
+   metric reader, which sends exponential histograms, and gives it the
+   helper's endpoint, protocol, headers and client and the resolved interval
+   (always the helper's value); from the default `MetricReaderOptions` it takes
+   only the temporality and the export timeout, so an app's
+   `Configure<MetricReaderOptions>` (default name, or that reader's name) still
+   wins for those. Set only in `appsettings.json` or another host configuration
+   source, it is **warned, not applied** (the host registers its configuration
+   as a factory, which `AddOtelHelper` cannot read). If the process environment holds
+   a different value while a source that outranks it holds
+   `base2_exponential_bucket_histogram` (the command line; in the default host
+   the environment outranks `appsettings.json`), the warning names the value
+   `AddOtelHelper` used.
+   `explicit_bucket_histogram` is the default and changes nothing; any other
+   value — also a padded one, which the SDK ignores — warns and is ignored. If
+   OTLP metrics turn out inactive, that reader only collects; on `ForceFlush`,
+   shutdown and every ~24.8 days (interval `int.MaxValue`) it exports to a
+   client that answers locally, never over the network, and the helper warns
+   once; it still aggregates every subscribed series a second time, the app's
+   meters included (the idle-reader cost of row 9). Without the variable the
+   helper builds its own reader, as before. **Do not combine `UseOtlpExporter()`
+   with `AddOtelHelper()`**: both export, so every signal is sent twice (the
+   helper warns once at provider build when it exports over OTLP itself). With
+   the variable set as well, `UseOtlpExporter()` called before `AddOtelHelper()`
+   keeps the helper from registering its histogram reader (two warnings: no
+   second reader, and the doubling; `UseOtlpExporter`'s own reader applies the
+   variable), and called after it makes the SDK fail the
+   `MeterProvider` build with `NotSupportedException`, which the helper
+   announces with one ERROR line naming the variable. An env endpoint with `://` that is
+   not a usable `http(s)` URL (another scheme, a port out of range, no host)
+   is warned and configures no OTLP endpoint (0.2.x rewrote it into a
+   schemeless `https://http://…` target).
+9. **"Off" is no exporter, not no instrumentation** (design D-NET3): with a
+   signal in `OTEL_HELPER_DISABLED_SIGNALS` (or `DisabledSignals`) the
+   instrumentations are still registered and spans are still created; only
+   the source, meters and exporter of that signal are not added. The
+   Prometheus listener reader always exists: when it is not active (port 0,
+   no `prometheus` exporter, metrics or SDK disabled) it binds nothing. When
+   metrics are disabled or no metric exporter is configured (`none`), a view
+   drops the helper's own instrumentation meters (the service meter, the
+   additional meters, `Microsoft.AspNetCore.*`, `System.Net.*`,
+   `System.Runtime`, `OpenTelemetry.Instrumentation.*`), so the idle reader
+   aggregates nothing of the helper's; the application's other meters, and
+   its readers for them, are untouched. While helper metrics are off, the same
+   view also drops an app's own ASP.NET Core or `HttpClient` metrics
+   instrumentation and any meter named after the service (they share the
+   helper's meter names), and the SDK's "will be ignored" notice for the
+   service meter is not forwarded. `prometheus` with `PrometheusMetricsPort = 0` (the
+   mounted-endpoint recipe of the HOW-TO) counts as an active exporter. With OTLP only, the idle Prometheus reader still
+   aggregates every series a second time: measured on SDK 1.20.1 with 1 500
+   series each of a counter and a histogram, the managed heap after recording
+   grew 1 005 544 bytes with the OTLP reader alone and 1 950 832 bytes with
+   the OTLP reader plus the idle listener reader (three runs, same numbers) —
+   about 1.9×, roughly 315 bytes per extra metric stream. The log level and
+   the `Microsoft`/`System.Net.Http` filters now apply also when logs are
+   disabled.
+10. **ASP.NET Core server spans change instrumentation scope** (task C5, N1,
+   requirement DN5): measured on a minimal web app with `ServiceName =
+   "scope-probe"`, the `GET /x` SERVER span had scope `scope-probe` with 0.2.x
+   (the helper's unkeyed `ActivitySource` replaced the one ASP.NET Core
+   resolves) and has scope `Microsoft.AspNetCore` now, as in every other
+   language's HTTP server instrumentation. Span names and attributes are
+   unchanged. Check queries, dashboards and sampling or filter rules that
+   select server spans by `otel_scope_name` / `InstrumentationScope.Name` equal
+   to the service name — also Collector `filter` / tail-sampling rules on the
+   scope and TraceQL `instrumentation.name` queries.
 
 ### Collector / platform prerequisites (before rolling 0.3.0 out)
 
@@ -864,6 +1058,33 @@ Phase C work on this branch (no .NET release yet; the first will be
   `xfail:C<n>`, 13 `skip:C5-no-api`, 12 known-difference skips. No library
   change; suite 571/571 on SDK 8 and on SDK 10 (roll-forward), line coverage
   98.77%.
+- **.NET: resolver core (task C5, ADR-013, design D-NET3–D-NET6). BREAKING
+  (source and behavior).** `AddOtelHelper()` no longer builds a bootstrap
+  service provider: services are registered eagerly (instrumentations, the
+  logger provider and the Prometheus listener reader, always) and every value
+  is applied when the providers are built, from options resolved once per
+  container (`Configure<TelemetryOptions>` after `AddOtelHelper()` is honored,
+  N4). The OTLP exporters are constructed by the helper with every option
+  assigned and the helper's `HttpClient` factory (headers and TLS files from
+  the process environment; contract parsing of those comes with task C8).
+  `TelemetryOptions` gets nullable code fields and the new members of the
+  design API table (`TracesEndpoint`, `MetricsEndpoint`, `LogsEndpoint`,
+  `Insecure`, `Compression`, `SampleRatio`, `HealthPaths`, `AdditionalMeters`,
+  `ForwardSdkDiagnostics`, `long? ExportIntervalMs`); `Environment` is a
+  string; the service `ActivitySource`/`Meter` are keyed DI services. One
+  diagnostics channel on standard error (`otelhelper: <LEVEL> …`, redacted,
+  cut, line-forging characters escaped) with the SDK `EventSource` warnings
+  forwarded; environment values warn, code values fail at start naming the
+  option; `OTEL_CONFIG_FILE` / `OTEL_EXPERIMENTAL_CONFIG_FILE` warned once by
+  name; the `OTEL_SDK_DISABLED=true` INFO line (read from `IConfiguration`, as
+  the SDK); a second `AddOtelHelper()` warns. Migration: the .NET guide above,
+  API items 2–7 and telemetry rows 7–10. Parity: the 13 `skip:C5-no-api` cases
+  now run.
+  Fixture: 133 `pass` (was 91), 223 `xfail:C<n>`, 12 known-difference skips,
+  no `skip:C5-no-api` left; four warning cases also assert `helper_log`, and
+  the code-error regexes accept the .NET option names (`OtelCollectorEndpoint`,
+  `TracesEndpoint`, `SampleRatio`, `Insecure`, qualified `TelemetryOptions.`); suite 782/782, line coverage
+  98.72% (cobertura line rate 0.9872; SDK 10 roll-forward 98.8%; the figure varies by about ±0.1 point between runs), on SDK 8 and SDK 10 (roll-forward).
 
 ### Breaking — telemetry output changes (dashboards/alerts)
 

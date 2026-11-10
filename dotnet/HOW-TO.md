@@ -69,8 +69,8 @@ Without any additional code, the lib instruments:
 
 SQL, AWS and Redis instrumentation come only from the opt-in subpackages
 (`StaffOps.OtelHelper.Sql`, `StaffOps.OtelHelper.AWS`, `StaffOps.OtelHelper.Redis` — see §14).
-`OTEL_HELPER_EXTRA_INSTRUMENTATION` is still read into
-`TelemetryOptions.ExtraInstrumentation` but **has no effect** in core, and
+`OTEL_HELPER_EXTRA_INSTRUMENTATION` and the `[Obsolete]` option
+`TelemetryOptions.ExtraInstrumentation` **have no effect** in core, and
 `OTEL_HELPER_DEBUG_LEVEL=true` does not turn instrumentations on.
 
 ### gRPC with Service Mesh (REQUIRED)
@@ -164,13 +164,14 @@ GET /order/42                          ← ASP.NET Core (automatic)
 
 ### Custom Traces (manual spans)
 
-The lib registers an `ActivitySource` and a `Meter` in DI with the service name. Inject directly:
+The lib registers an `ActivitySource` and a `Meter` in DI with the service name, as keyed services (key `OtelHelperKeys.Instrumentation`; an unkeyed `ActivitySource` in a web host resolves to ASP.NET Core's own source). Inject them with the key:
 
 ```csharp
 using System.Diagnostics;
+using StaffOps.OtelHelper;
 
 // Via DI (recommended)
-public class MyService(ActivitySource activitySource) { }
+public class MyService([FromKeyedServices(OtelHelperKeys.Instrumentation)] ActivitySource activitySource) { }
 
 // Or static field (minimal APIs)
 var activitySource = new ActivitySource(
@@ -252,13 +253,14 @@ while (!ct.IsCancellationRequested)
 
 ## 6. Metrics
 
-The lib registers a `Meter` in DI with the service name. Inject or create manually:
+The lib registers a `Meter` in DI with the service name (keyed, `OtelHelperKeys.Instrumentation`). Inject or create manually:
 
 ```csharp
 using System.Diagnostics.Metrics;
+using StaffOps.OtelHelper;
 
 // Via DI (recommended)
-public class MyService(Meter meter) { }
+public class MyService([FromKeyedServices(OtelHelperKeys.Instrumentation)] Meter meter) { }
 
 // Or static field (minimal APIs)
 var meter = new Meter(
@@ -573,6 +575,9 @@ dotnet add package OpenTelemetry.Exporter.Prometheus.AspNetCore
 ```
 
 ```csharp
+using OpenTelemetry.Metrics;
+using StaffOps.OtelHelper;
+
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddOtelHelper(opts =>
@@ -580,6 +585,8 @@ builder.Services.AddOtelHelper(opts =>
     opts.MetricExporters = "prometheus"; // or "otlp,prometheus" for dual mode
     opts.PrometheusMetricsPort = 0;       // disable the standalone HttpListener
 });
+// The scraping endpoint needs its own exporter on the same MeterProvider.
+builder.Services.AddOpenTelemetry().WithMetrics(b => b.AddPrometheusExporter());
 
 var app = builder.Build();
 app.MapPrometheusScrapingEndpoint(); // serves /metrics on the app's own Kestrel pipeline
@@ -587,6 +594,21 @@ app.Run();
 ```
 
 `PrometheusMetricsPort = 0` is required here — otherwise the core library still binds its own listener on 9464 alongside the ASP.NET Core endpoint, which is redundant (and a second port to manage). Use the standalone listener (default `PrometheusMetricsPort = 9464`, no code change needed) only for headless processes without their own HTTP pipeline.
+
+### Exponential histograms on OTLP
+
+Set `OTEL_EXPORTER_OTLP_METRICS_DEFAULT_HISTOGRAM_AGGREGATION=base2_exponential_bucket_histogram`
+in the **process environment** (or in an `IConfiguration` instance you register
+before calling `AddOtelHelper`): the OTLP metrics then carry exponential
+histograms. A value only in `appsettings.json` (or another host configuration
+source) is warned, not applied: the host registers its configuration as a
+factory, which `AddOtelHelper` cannot read. `explicit_bucket_histogram` is the
+default; any other value (also a padded one) is warned and ignored.
+
+**Do not combine `UseOtlpExporter()` with `AddOtelHelper()`.** Both export, so
+every signal is sent twice; the helper warns once. With the histogram variable
+set as well, a `UseOtlpExporter()` called after `AddOtelHelper()` makes the SDK
+fail the `MeterProvider` build (the helper writes one ERROR line first).
 
 ### Scoping down what gets scraped
 
@@ -643,7 +665,7 @@ If left unset, the protocol is inferred from the endpoint port: `4318` resolves 
 
 Priority: code config (`TelemetryOptions.OtlpProtocol`) > `OTEL_EXPORTER_OTLP_PROTOCOL` env var > port-based inference (`4318` → `http/protobuf`) > `grpc` default.
 
-`http/json` is a valid value per the OTel spec but has no exporter implementation for traces/metrics/logs in this library — it fails validation at startup instead of silently falling back to another protocol.
+`http/json` is a valid value per the OTel spec but has no exporter implementation for traces/metrics/logs in this library: in `OTEL_EXPORTER_OTLP_PROTOCOL` it is warned on standard error (`otelhelper: WARN invalid OTEL_EXPORTER_OTLP_PROTOCOL …`) and the default applies; set in `TelemetryOptions.OtlpProtocol` it fails host start, naming the option.
 
 `/v1/traces`, `/v1/metrics`, `/v1/logs` are appended to the endpoint automatically when `http/protobuf` is selected — do not include them in `OTEL_EXPORTER_OTLP_ENDPOINT`.
 

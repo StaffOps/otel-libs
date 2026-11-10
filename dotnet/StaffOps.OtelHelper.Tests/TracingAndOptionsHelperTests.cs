@@ -111,10 +111,13 @@ public class TracingAndOptionsHelperTests
 
     // --- IsSignalEnabled ---
 
+    private static ResolvedTelemetry WithDisabledSignals(string disabled)
+        => TestDiagnostics.ResolveQuiet(o => o.DisabledSignals = disabled);
+
     [Fact]
     public void IsSignalEnabled_Returns_True_When_DisabledSignals_Empty()
     {
-        var opts = new TelemetryOptions { DisabledSignals = "" };
+        var opts = WithDisabledSignals("");
 
         Assert.True(opts.IsSignalEnabled("traces"));
         Assert.True(opts.IsSignalEnabled("metrics"));
@@ -124,7 +127,7 @@ public class TracingAndOptionsHelperTests
     [Fact]
     public void IsSignalEnabled_Returns_False_When_Signal_Disabled()
     {
-        var opts = new TelemetryOptions { DisabledSignals = "metrics,logs" };
+        var opts = WithDisabledSignals("metrics,logs");
 
         Assert.True(opts.IsSignalEnabled("traces"));
         Assert.False(opts.IsSignalEnabled("metrics"));
@@ -134,70 +137,24 @@ public class TracingAndOptionsHelperTests
     [Fact]
     public void IsSignalEnabled_Is_Case_Insensitive()
     {
-        var opts = new TelemetryOptions { DisabledSignals = "TRACES" };
+        var opts = WithDisabledSignals("TRACES");
 
         Assert.False(opts.IsSignalEnabled("traces"));
         Assert.False(opts.IsSignalEnabled("Traces"));
         Assert.False(opts.IsSignalEnabled("TRACES"));
     }
 
-    // --- HasInstrumentation ---
+    // --- ExtraInstrumentation: obsolete, no effect, warned ---
 
     [Fact]
-    public void HasInstrumentation_Default_Has_SQL()
+    public void ExtraInstrumentation_Code_Value_Has_No_Effect_And_Warns_Once()
     {
-        var opts = new TelemetryOptions(); // default ExtraInstrumentation = "SQL"
-
-        Assert.True(opts.HasInstrumentation("SQL"));
-        Assert.False(opts.HasInstrumentation("AWS"));
-        Assert.False(opts.HasInstrumentation("REDIS"));
-    }
-
-    [Fact]
-    public void HasInstrumentation_Multiple_Values()
-    {
-        var opts = new TelemetryOptions { ExtraInstrumentation = "SQL,AWS,REDIS" };
-
-        Assert.True(opts.HasInstrumentation("SQL"));
-        Assert.True(opts.HasInstrumentation("AWS"));
-        Assert.True(opts.HasInstrumentation("REDIS"));
-    }
-
-    [Fact]
-    public void HasInstrumentation_Case_Insensitive()
-    {
-        var opts = new TelemetryOptions { ExtraInstrumentation = "sql,aws" };
-
-        Assert.True(opts.HasInstrumentation("SQL"));
-        Assert.True(opts.HasInstrumentation("Sql"));
-        Assert.True(opts.HasInstrumentation("AWS"));
-        Assert.True(opts.HasInstrumentation("aws"));
-    }
-
-    [Fact]
-    public void HasInstrumentation_Empty_Disables_All()
-    {
-        var opts = new TelemetryOptions { ExtraInstrumentation = "" };
-
-        Assert.False(opts.HasInstrumentation("SQL"));
-        Assert.False(opts.HasInstrumentation("AWS"));
-        Assert.False(opts.HasInstrumentation("REDIS"));
-    }
-
-    [Fact]
-    public void DebugLevel_Enables_All_Instrumentation()
-    {
-        var opts = new TelemetryOptions
-        {
-            DebugLevel = true,
-            ExtraInstrumentation = "" // normally this would disable all
-        };
-
-        // DebugLevel=true bypasses the list check
-        Assert.True(opts.HasInstrumentation("SQL"));
-        Assert.True(opts.HasInstrumentation("AWS"));
-        Assert.True(opts.HasInstrumentation("REDIS"));
-        Assert.True(opts.HasInstrumentation("anything"));
+        var diagnostics = new TestDiagnostics();
+#pragma warning disable CS0618 // the obsolete member is part of the API under test
+        diagnostics.Resolve(o => o.ExtraInstrumentation = "SQL,AWS");
+        diagnostics.Resolve(o => o.ExtraInstrumentation = "SQL,AWS");
+#pragma warning restore CS0618
+        Assert.Single(diagnostics.Lines, l => l.Contains("TelemetryOptions.ExtraInstrumentation has no effect"));
     }
 
     // --- GetDefaultLogLevel ---
@@ -205,79 +162,146 @@ public class TracingAndOptionsHelperTests
     [Fact]
     public void GetDefaultLogLevel_Returns_Correct_Values()
     {
-        Assert.Equal(LogLevel.Debug, TelemetryOptions.GetDefaultLogLevel(DeploymentEnvironment.LOCAL));
-        Assert.Equal(LogLevel.Information, TelemetryOptions.GetDefaultLogLevel(DeploymentEnvironment.DEV));
-        Assert.Equal(LogLevel.Information, TelemetryOptions.GetDefaultLogLevel(DeploymentEnvironment.HML));
-        Assert.Equal(LogLevel.Warning, TelemetryOptions.GetDefaultLogLevel(DeploymentEnvironment.PRD));
+        Assert.Equal(LogLevel.Debug, TelemetryOptions.GetDefaultLogLevel(DeploymentEnvironments.LOCAL));
+        Assert.Equal(LogLevel.Information, TelemetryOptions.GetDefaultLogLevel(DeploymentEnvironments.DEV));
+        Assert.Equal(LogLevel.Information, TelemetryOptions.GetDefaultLogLevel(DeploymentEnvironments.HML));
+        Assert.Equal(LogLevel.Warning, TelemetryOptions.GetDefaultLogLevel(DeploymentEnvironments.PRD));
 
         // DebugLevel overrides all environments to Debug
-        Assert.Equal(LogLevel.Debug, TelemetryOptions.GetDefaultLogLevel(DeploymentEnvironment.PRD, debugLevel: true));
-        Assert.Equal(LogLevel.Debug, TelemetryOptions.GetDefaultLogLevel(DeploymentEnvironment.DEV, debugLevel: true));
+        Assert.Equal(LogLevel.Debug, TelemetryOptions.GetDefaultLogLevel(DeploymentEnvironments.PRD, debug: true));
+        Assert.Equal(LogLevel.Debug, TelemetryOptions.GetDefaultLogLevel(DeploymentEnvironments.DEV, debug: true));
     }
 
-    // --- Validator ---
+    // --- Validator (code values only, D-NET6) ---
 
-    [Fact]
-    public void Validator_Fails_On_Empty_ServiceName()
+    private static string? Fail(Action<TelemetryOptions> configure)
     {
-        var validator = new TelemetryOptionsValidator();
-        var opts = new TelemetryOptions
-        {
-            ServiceName = "",
-            OtelCollectorEndpoint = "http://localhost:4317"
-        };
-
-        var result = validator.Validate(null, opts);
-
-        Assert.True(result.Failed);
-        Assert.Contains("ServiceName", result.FailureMessage);
+        var opts = new TelemetryOptions();
+        configure(opts);
+        var result = new TelemetryOptionsValidator().Validate(null, opts);
+        return result.Failed ? result.FailureMessage : null;
     }
 
     [Fact]
-    public void Validator_Succeeds_On_Empty_Endpoint_Prometheus_Mode()
+    public void Validator_Accepts_Defaults_And_Blank_Strings()
     {
-        var validator = new TelemetryOptionsValidator();
-        var opts = new TelemetryOptions
+        Assert.Null(Fail(_ => { }));
+        Assert.Null(Fail(o =>
         {
-            ServiceName = "test",
-            OtelCollectorEndpoint = ""
-        };
+            o.ServiceName = "";
+            o.OtelCollectorEndpoint = "";
+            o.OtlpProtocol = " ";
+            o.Compression = "";
+            o.MetricExporters = "";
+        }));
+    }
 
-        var result = validator.Validate(null, opts);
+    [Theory]
+    [InlineData("http://localhost:4317")]
+    [InlineData("https://collector.example.com/otlp")]
+    [InlineData("collector:4317")]
+    [InlineData("collector")]
+    [InlineData("[::1]:4317")]
+    public void Validator_Accepts_Http_Urls_And_Schemeless_Endpoints(string endpoint)
+    {
+        Assert.Null(Fail(o => o.OtelCollectorEndpoint = endpoint));
+    }
 
-        Assert.False(result.Failed);
+    [Theory]
+    [InlineData("unix:/tmp/parity-secret", "unix:")]
+    [InlineData("ftp://collector:21", "ftp://collector:21")]
+    [InlineData("http://u:parity-secret@/x", "<unparseable URL>")]
+    [InlineData("//collector:4317", "<unparseable URL>")]
+    [InlineData("user:parity-secret@collector:4317", "user:")]
+    public void Validator_Fails_On_Unsupported_Endpoint_Redacted(string endpoint, string rendered)
+    {
+        var message = Fail(o => o.OtelCollectorEndpoint = endpoint);
+        Assert.NotNull(message);
+        Assert.Contains("TelemetryOptions.OtelCollectorEndpoint", message);
+        Assert.Contains(rendered, message);
+        Assert.DoesNotContain("parity-secret", message);
+    }
+
+    [Theory]
+    [InlineData("collector:4318")]
+    [InlineData("unix:/x")]
+    public void Validator_Per_Signal_Endpoints_Need_An_Http_Url(string endpoint)
+    {
+        Assert.Contains("TelemetryOptions.TracesEndpoint", Fail(o => o.TracesEndpoint = endpoint));
+        Assert.Contains("TelemetryOptions.MetricsEndpoint", Fail(o => o.MetricsEndpoint = endpoint));
+        Assert.Contains("TelemetryOptions.LogsEndpoint", Fail(o => o.LogsEndpoint = endpoint));
+    }
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(86_400_001)]
+    [InlineData(-1)]
+    public void Validator_Fails_On_Timeout_Out_Of_Range(int timeout)
+    {
+        var message = Fail(o => o.ExportTimeoutMs = timeout);
+        Assert.Contains("TelemetryOptions.ExportTimeoutMs", message);
+        Assert.Contains("86400000", message);
+    }
+
+    [Theory]
+    [InlineData(0L)]
+    [InlineData(2_147_483_648L)]
+    public void Validator_Fails_On_Interval_Out_Of_Range(long interval)
+    {
+        var message = Fail(o => o.ExportIntervalMs = interval);
+        Assert.Contains("TelemetryOptions.ExportIntervalMs", message);
+        Assert.Contains("2147483647", message);
     }
 
     [Fact]
-    public void Validator_Fails_On_Invalid_URI()
+    public void Validator_Accepts_Interval_And_Timeout_Bounds()
     {
-        var validator = new TelemetryOptionsValidator();
-        var opts = new TelemetryOptions
-        {
-            ServiceName = "test",
-            OtelCollectorEndpoint = "not-a-valid-uri"
-        };
+        Assert.Null(Fail(o => { o.ExportIntervalMs = int.MaxValue; o.ExportTimeoutMs = 86_400_000; }));
+        Assert.Null(Fail(o => { o.ExportIntervalMs = 1; o.ExportTimeoutMs = 1; }));
+    }
 
-        var result = validator.Validate(null, opts);
+    [Theory]
+    [InlineData(-1)]
+    [InlineData(65_536)]
+    public void Validator_Fails_On_Port_Out_Of_Range(int port)
+    {
+        Assert.Contains("TelemetryOptions.PrometheusMetricsPort", Fail(o => o.PrometheusMetricsPort = port));
+    }
 
-        Assert.True(result.Failed);
-        Assert.Contains("OtelCollectorEndpoint", result.FailureMessage);
+    [Theory]
+    [InlineData(1.5)]
+    [InlineData(-0.1)]
+    [InlineData(double.NaN)]
+    public void Validator_Fails_On_SampleRatio_Out_Of_Range(double ratio)
+    {
+        Assert.Contains("TelemetryOptions.SampleRatio", Fail(o => o.SampleRatio = ratio));
     }
 
     [Fact]
-    public void Validator_Fails_On_Zero_Timeout()
+    public void Validator_Fails_On_Unknown_Protocol_And_Compression_Naming_The_Option()
     {
-        var validator = new TelemetryOptionsValidator();
-        var opts = new TelemetryOptions
-        {
-            ServiceName = "test",
-            OtelCollectorEndpoint = "http://localhost:4317",
-            ExportTimeoutMs = 0
-        };
+        Assert.Contains("TelemetryOptions.OtlpProtocol", Fail(o => o.OtlpProtocol = "http/json"));
+        var compression = Fail(o => o.Compression = "zstd\nforged");
+        Assert.Contains("TelemetryOptions.Compression", compression);
+        Assert.DoesNotContain("\n", compression);
+    }
 
-        var result = validator.Validate(null, opts);
+    [Fact]
+    public void Validator_MetricExporters_Code_Errors_Name_The_Option()
+    {
+        var unknown = Fail(o => o.MetricExporters = "logging");
+        Assert.Contains("TelemetryOptions.MetricExporters", unknown);
+        Assert.DoesNotContain("OTEL_METRICS_EXPORTER", unknown);
+        Assert.Contains("cannot be combined", Fail(o => o.MetricExporters = "none,prometheus"));
+        Assert.Contains("requires an endpoint", Fail(o => o.MetricExporters = "otlp"));
+        Assert.Null(Fail(o => { o.MetricExporters = "otlp"; o.MetricsEndpoint = "http://c:4318/v1/metrics"; }));
+    }
 
-        Assert.True(result.Failed);
-        Assert.Contains("ExportTimeoutMs", result.FailureMessage);
+    [Fact]
+    public void Validator_Reports_Every_Failure()
+    {
+        var message = Fail(o => { o.ExportTimeoutMs = 0; o.PrometheusMetricsPort = -1; });
+        Assert.Contains("ExportTimeoutMs", message);
+        Assert.Contains("PrometheusMetricsPort", message);
     }
 }

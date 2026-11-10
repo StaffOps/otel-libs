@@ -5,8 +5,8 @@ namespace StaffOps.OtelHelper.ParityDriver;
 /// <summary>
 /// Maps a fixture `code` object (snake_case) to <see cref="TelemetryOptions"/>
 /// members. An unmapped key is an adapter error (fails the case whatever its
-/// status), so a case for a key with no 0.2 API is `skip:C5-no-api` until
-/// task C5 adds the option (design D-NET12).
+/// status; design D-NET12). Every fixture key has a member since task C5,
+/// except `http_opt_in_metrics` (task C11).
 /// </summary>
 internal static class CodeMapper
 {
@@ -49,26 +49,28 @@ internal static class CodeMapper
     private static Action<TelemetryOptions>? MapKey(string key, JsonNode value) => key switch
     {
         "service_name" => o => o.ServiceName = value.GetValue<string>(),
-        "environment" => o => o.Environment = ParseEnvironment(value.GetValue<string>()),
+        "environment" => o => o.Environment = value.GetValue<string>(),
         "otel_endpoint" => o => o.OtelCollectorEndpoint = value.GetValue<string>(),
+        "traces_endpoint" => o => o.TracesEndpoint = value.GetValue<string>(),
+        "metrics_endpoint" => o => o.MetricsEndpoint = value.GetValue<string>(),
+        "logs_endpoint" => o => o.LogsEndpoint = value.GetValue<string>(),
         "otlp_protocol" => o => o.OtlpProtocol = value.GetValue<string>(),
+        "insecure" => o => o.Insecure = value.GetValue<bool>(),
+        "compression" => o => o.Compression = value.GetValue<string>(),
         "export_timeout_ms" => o => o.ExportTimeoutMs = value.GetValue<int>(),
-        "export_interval_ms" => o => o.ExportIntervalMs = value.GetValue<int>(),
+        "export_interval_ms" => o => o.ExportIntervalMs = value.GetValue<long>(),
         "metric_exporters" => o => o.MetricExporters = string.Join(",", value.AsArray().Select(v => (string)v!)),
         "disabled_signals" => o => o.DisabledSignals = string.Join(",", value.AsArray().Select(v => (string)v!)),
         "debug" => o => o.DebugLevel = value.GetValue<bool>(),
+        "sample_ratio" => o => o.SampleRatio = value.GetValue<double>(),
+        "health_paths" => o => o.HealthPaths = value.AsArray().Select(v => (string)v!).ToList(),
         "prometheus_metrics_port" => o => o.PrometheusMetricsPort = value.GetValue<int>(),
         "resource_attributes" => o => MapResourceAttributes(o, value.AsObject()),
-        // No 0.2 option (task C11 adds it): accepted so the cases can run, and they
-        // stay xfail because `http_opt_in_metrics` is absent from the snapshot.
+        // No option until task C11: accepted so the cases can run, and they stay
+        // xfail because `http_opt_in_metrics` is absent from the snapshot.
         "http_opt_in_metrics" => _ => { },
         _ => null,
     };
-
-    private static DeploymentEnvironment ParseEnvironment(string text) =>
-        Enum.TryParse<DeploymentEnvironment>(text.Replace("-", "_"), ignoreCase: true, out var parsed)
-            ? parsed
-            : throw new AdapterException($"environment \"{text}\" has no 0.2 enum value");
 
     private static void MapResourceAttributes(TelemetryOptions options, JsonObject attributes)
     {

@@ -7,15 +7,11 @@ using Xunit;
 
 namespace StaffOps.OtelHelper.Tests;
 
+[Collection("EnvVarTests")]
 public class TelemetryPipelineTests
 {
-    private static TelemetryOptions CreateResolved(Action<TelemetryOptions>? configure = null)
-    {
-        var opts = new TelemetryOptions();
-        configure?.Invoke(opts);
-        new TelemetryOptionsPostConfigure().PostConfigure(null, opts);
-        return opts;
-    }
+    private static ResolvedTelemetry CreateResolved(Action<TelemetryOptions>? configure = null)
+        => TestDiagnostics.ResolveQuiet(configure);
 
     private static ServiceProvider BuildProvider(Action<TelemetryOptions>? configure = null)
     {
@@ -27,11 +23,11 @@ public class TelemetryPipelineTests
     // --- Tracing: AlwaysOnSampler for all environments (sampling delegated to Collector) ---
 
     [Theory]
-    [InlineData(DeploymentEnvironment.LOCAL)]
-    [InlineData(DeploymentEnvironment.DEV)]
-    [InlineData(DeploymentEnvironment.HML)]
-    [InlineData(DeploymentEnvironment.PRD)]
-    public void All_Environments_Register_Pipeline_Without_Error(DeploymentEnvironment env)
+    [InlineData(DeploymentEnvironments.LOCAL)]
+    [InlineData(DeploymentEnvironments.DEV)]
+    [InlineData(DeploymentEnvironments.HML)]
+    [InlineData(DeploymentEnvironments.PRD)]
+    public void All_Environments_Register_Pipeline_Without_Error(string env)
     {
         using var provider = BuildProvider(opts =>
         {
@@ -45,11 +41,11 @@ public class TelemetryPipelineTests
     // --- Logging: log level per environment ---
 
     [Theory]
-    [InlineData(DeploymentEnvironment.LOCAL, LogLevel.Debug)]
-    [InlineData(DeploymentEnvironment.DEV, LogLevel.Information)]
-    [InlineData(DeploymentEnvironment.HML, LogLevel.Information)]
-    [InlineData(DeploymentEnvironment.PRD, LogLevel.Warning)]
-    public void LogLevel_Matches_Environment(DeploymentEnvironment env, LogLevel expectedMinLevel)
+    [InlineData(DeploymentEnvironments.LOCAL, LogLevel.Debug)]
+    [InlineData(DeploymentEnvironments.DEV, LogLevel.Information)]
+    [InlineData(DeploymentEnvironments.HML, LogLevel.Information)]
+    [InlineData(DeploymentEnvironments.PRD, LogLevel.Warning)]
+    public void LogLevel_Matches_Environment(string env, LogLevel expectedMinLevel)
     {
         using var provider = BuildProvider(opts =>
         {
@@ -80,7 +76,7 @@ public class TelemetryPipelineTests
         using var provider = BuildProvider(opts =>
         {
             opts.ServiceName = "test";
-            opts.Environment = DeploymentEnvironment.PRD; // normally Warning
+            opts.Environment = DeploymentEnvironments.PRD; // normally Warning
             opts.DebugLevel = true;
             opts.OtelCollectorEndpoint = "http://localhost:4317";
         });
@@ -90,46 +86,6 @@ public class TelemetryPipelineTests
     }
 
     // --- Endpoint resolution ---
-
-    [Fact]
-    public void ExtraInstrumentation_Default_Has_SQL()
-    {
-        var opts = CreateResolved();
-        Assert.True(opts.HasInstrumentation("SQL"));
-        Assert.False(opts.HasInstrumentation("AWS"));
-    }
-
-    [Fact]
-    public void ExtraInstrumentation_Multiple_Values()
-    {
-        var opts = new TelemetryOptions { ExtraInstrumentation = "SQL,AWS" };
-        Assert.True(opts.HasInstrumentation("SQL"));
-        Assert.True(opts.HasInstrumentation("AWS"));
-    }
-
-    [Fact]
-    public void ExtraInstrumentation_Case_Insensitive()
-    {
-        var opts = new TelemetryOptions { ExtraInstrumentation = "sql,aws" };
-        Assert.True(opts.HasInstrumentation("SQL"));
-        Assert.True(opts.HasInstrumentation("AWS"));
-    }
-
-    [Fact]
-    public void ExtraInstrumentation_Empty_Disables_All()
-    {
-        var opts = new TelemetryOptions { ExtraInstrumentation = "" };
-        Assert.False(opts.HasInstrumentation("SQL"));
-        Assert.False(opts.HasInstrumentation("AWS"));
-    }
-
-    [Fact]
-    public void DebugLevel_Enables_All_Extra_Instrumentation()
-    {
-        var opts = new TelemetryOptions { DebugLevel = true, ExtraInstrumentation = "" };
-        Assert.True(opts.HasInstrumentation("SQL"));
-        Assert.True(opts.HasInstrumentation("AWS"));
-    }
 
     [Fact]
     public void Default_Endpoint_Is_Empty_Without_EnvVar()
@@ -174,7 +130,7 @@ public class TelemetryPipelineTests
         using var provider = BuildProvider(opts =>
         {
             opts.ServiceName = "integration-test";
-            opts.Environment = DeploymentEnvironment.DEV;
+            opts.Environment = DeploymentEnvironments.DEV;
             opts.OtelCollectorEndpoint = "http://localhost:4317";
         });
 
@@ -210,7 +166,7 @@ public class TelemetryPipelineTests
         using var provider = BuildProvider(opts =>
         {
             opts.ServiceName = "test";
-            opts.Environment = DeploymentEnvironment.PRD; // normally Warning
+            opts.Environment = DeploymentEnvironments.PRD; // normally Warning
             opts.MinimumLogLevel = LogLevel.Information;
             opts.OtelCollectorEndpoint = "http://localhost:4317";
         });
@@ -270,10 +226,10 @@ public class TelemetryPipelineTests
     [Fact]
     public void GetDefaultLogLevel_Returns_Correct_Values()
     {
-        Assert.Equal(LogLevel.Debug, TelemetryOptions.GetDefaultLogLevel(DeploymentEnvironment.LOCAL));
-        Assert.Equal(LogLevel.Information, TelemetryOptions.GetDefaultLogLevel(DeploymentEnvironment.DEV));
-        Assert.Equal(LogLevel.Warning, TelemetryOptions.GetDefaultLogLevel(DeploymentEnvironment.PRD));
-        Assert.Equal(LogLevel.Debug, TelemetryOptions.GetDefaultLogLevel(DeploymentEnvironment.PRD, debugLevel: true));
+        Assert.Equal(LogLevel.Debug, TelemetryOptions.GetDefaultLogLevel(DeploymentEnvironments.LOCAL));
+        Assert.Equal(LogLevel.Information, TelemetryOptions.GetDefaultLogLevel(DeploymentEnvironments.DEV));
+        Assert.Equal(LogLevel.Warning, TelemetryOptions.GetDefaultLogLevel(DeploymentEnvironments.PRD));
+        Assert.Equal(LogLevel.Debug, TelemetryOptions.GetDefaultLogLevel(DeploymentEnvironments.PRD, debug: true));
     }
 
     // --- DI: ActivitySource and Meter ---
@@ -287,7 +243,7 @@ public class TelemetryPipelineTests
             opts.OtelCollectorEndpoint = "http://localhost:4317";
         });
 
-        var source = provider.GetService<ActivitySource>();
+        var source = provider.GetKeyedService<ActivitySource>(OtelHelperKeys.Instrumentation);
         Assert.NotNull(source);
         Assert.Equal("test-svc", source!.Name);
     }
@@ -301,7 +257,7 @@ public class TelemetryPipelineTests
             opts.OtelCollectorEndpoint = "http://localhost:4317";
         });
 
-        var meter = provider.GetService<Meter>();
+        var meter = provider.GetKeyedService<Meter>(OtelHelperKeys.Instrumentation);
         Assert.NotNull(meter);
         Assert.Equal("test-svc", meter!.Name);
     }
@@ -486,82 +442,12 @@ public class TelemetryPipelineTests
         try
         {
             var opts = CreateResolved();
-            Assert.Equal(DeploymentEnvironment.PRD, opts.Environment);
+            Assert.Equal(DeploymentEnvironments.PRD, opts.Environment);
         }
         finally
         {
             System.Environment.SetEnvironmentVariable("ENVIRONMENT", null);
         }
-    }
-
-    // --- Validator ---
-
-    [Fact]
-    public void Validator_Fails_On_Empty_ServiceName()
-    {
-        var validator = new TelemetryOptionsValidator();
-        var opts = new TelemetryOptions { ServiceName = "", OtelCollectorEndpoint = "http://localhost:4317" };
-        var result = validator.Validate(null, opts);
-        Assert.True(result.Failed);
-        Assert.Contains("ServiceName", result.FailureMessage);
-    }
-
-    [Fact]
-    public void Validator_Succeeds_On_Empty_Endpoint_Prometheus_Mode()
-    {
-        var validator = new TelemetryOptionsValidator();
-        var opts = new TelemetryOptions { ServiceName = "test", OtelCollectorEndpoint = "" };
-        var result = validator.Validate(null, opts);
-        Assert.False(result.Failed);
-    }
-
-    [Fact]
-    public void Validator_Fails_On_Invalid_URI()
-    {
-        var validator = new TelemetryOptionsValidator();
-        var opts = new TelemetryOptions { ServiceName = "test", OtelCollectorEndpoint = "not-a-uri" };
-        var result = validator.Validate(null, opts);
-        Assert.True(result.Failed);
-        Assert.Contains("OtelCollectorEndpoint", result.FailureMessage);
-    }
-
-    [Fact]
-    public void Validator_Fails_On_Zero_Timeout()
-    {
-        var validator = new TelemetryOptionsValidator();
-        var opts = new TelemetryOptions { ServiceName = "test", OtelCollectorEndpoint = "http://localhost:4317", ExportTimeoutMs = 0 };
-        var result = validator.Validate(null, opts);
-        Assert.True(result.Failed);
-        Assert.Contains("ExportTimeoutMs", result.FailureMessage);
-    }
-
-    // --- IsSignalEnabled ---
-
-    [Fact]
-    public void IsSignalEnabled_Returns_True_When_DisabledSignals_Empty()
-    {
-        var opts = new TelemetryOptions { DisabledSignals = "" };
-        Assert.True(opts.IsSignalEnabled("traces"));
-        Assert.True(opts.IsSignalEnabled("metrics"));
-        Assert.True(opts.IsSignalEnabled("logs"));
-    }
-
-    [Fact]
-    public void IsSignalEnabled_Returns_False_When_Signal_In_DisabledSignals()
-    {
-        var opts = new TelemetryOptions { DisabledSignals = "metrics,logs" };
-        Assert.True(opts.IsSignalEnabled("traces"));
-        Assert.False(opts.IsSignalEnabled("metrics"));
-        Assert.False(opts.IsSignalEnabled("logs"));
-    }
-
-    [Fact]
-    public void IsSignalEnabled_Is_Case_Insensitive()
-    {
-        var opts = new TelemetryOptions { DisabledSignals = "TRACES" };
-        Assert.False(opts.IsSignalEnabled("traces"));
-        Assert.False(opts.IsSignalEnabled("Traces"));
-        Assert.False(opts.IsSignalEnabled("TRACES"));
     }
 
     [Fact]
@@ -618,24 +504,6 @@ public class TelemetryPipelineTests
         Assert.NotNull(provider);
         var loggerFactory = provider.GetService<ILoggerFactory>();
         Assert.NotNull(loggerFactory);
-    }
-
-    // --- HasInstrumentation("REDIS") ---
-
-    [Fact]
-    public void HasInstrumentation_Redis_Works_Like_SQL_AWS()
-    {
-        var opts = new TelemetryOptions { ExtraInstrumentation = "SQL,REDIS" };
-        Assert.True(opts.HasInstrumentation("SQL"));
-        Assert.True(opts.HasInstrumentation("REDIS"));
-        Assert.False(opts.HasInstrumentation("AWS"));
-    }
-
-    [Fact]
-    public void HasInstrumentation_Redis_Case_Insensitive()
-    {
-        var opts = new TelemetryOptions { ExtraInstrumentation = "redis" };
-        Assert.True(opts.HasInstrumentation("REDIS"));
     }
 
     // --- DisabledMetrics glob pattern via pipeline ---
@@ -705,33 +573,5 @@ public class TelemetryPipelineTests
         {
             System.Environment.SetEnvironmentVariable("OTEL_EXPORTER_OTLP_ENDPOINT", null);
         }
-    }
-
-    // --- AWS instrumentation in full pipeline ---
-
-    [Fact]
-    public void Pipeline_Registers_With_AWS_Instrumentation()
-    {
-        using var provider = BuildProvider(opts =>
-        {
-            opts.ServiceName = "test-aws";
-            opts.OtelCollectorEndpoint = "http://localhost:4317";
-            opts.ExtraInstrumentation = "SQL,AWS";
-        });
-        Assert.NotNull(provider);
-    }
-
-    // --- REDIS instrumentation in full pipeline ---
-
-    [Fact]
-    public void Pipeline_Registers_With_Redis_Instrumentation()
-    {
-        using var provider = BuildProvider(opts =>
-        {
-            opts.ServiceName = "test-redis";
-            opts.OtelCollectorEndpoint = "http://localhost:4317";
-            opts.ExtraInstrumentation = "SQL,REDIS";
-        });
-        Assert.NotNull(provider);
     }
 }

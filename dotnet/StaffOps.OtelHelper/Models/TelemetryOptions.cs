@@ -1,12 +1,16 @@
-using System.ComponentModel.DataAnnotations;
 using Microsoft.Extensions.Logging;
 using OpenTelemetry.Trace;
 
 namespace StaffOps.OtelHelper
 {
     /// <summary>
-    /// Configuration options for StaffOps.OtelHelper telemetry.
-    /// This is a POCO — environment variable resolution is handled by TelemetryOptionsPostConfigure.
+    /// Code options of StaffOps.OtelHelper. Every option that has an environment
+    /// counterpart is nullable: <c>null</c> means "not set in code", and a value set
+    /// in code wins over the environment whatever it is (also when it equals the
+    /// helper default). A blank string counts as not set. The values the helper
+    /// actually uses are resolved internally from these options and the process
+    /// environment; this type holds only what the application set.
+    /// A section bound from <c>IConfiguration</c> into these options counts as code.
     /// </summary>
     public class TelemetryOptions
     {
@@ -16,11 +20,11 @@ namespace StaffOps.OtelHelper
         public const string ServiceNameEnvVar = "SERVICE_NAME";
         /// <summary>Environment variable name: Standard OpenTelemetry service name variable, read when <see cref="ServiceNameEnvVar"/> is unset.</summary>
         public const string OtelServiceNameEnvVar = "OTEL_SERVICE_NAME";
-        /// <summary>Environment variable name: Deployment environment (<c>LOCAL</c>, <c>DEV</c>, <c>HML</c>, <c>PRD</c>); see <see cref="DeploymentEnvironment"/>.</summary>
+        /// <summary>Environment variable name: Deployment environment; see <see cref="DeploymentEnvironments"/>.</summary>
         public const string EnvironmentEnvVar = "ENVIRONMENT";
         /// <summary>Environment variable name: Debug mode switch (<c>true</c>/<c>false</c>); see <see cref="DebugLevel"/>.</summary>
         public const string DebugLevelEnvVar = "OTEL_HELPER_DEBUG_LEVEL";
-        /// <summary>Environment variable name: Comma-separated extra instrumentations; see <see cref="ExtraInstrumentation"/>.</summary>
+        /// <summary>Environment variable name: Extra instrumentations; it has no effect in .NET.</summary>
         public const string ExtraInstrumentationEnvVar = "OTEL_HELPER_EXTRA_INSTRUMENTATION";
         /// <summary>Environment variable name: Trace sample ratio in [0, 1], used only when no sampler is set in code and <see cref="TracesSamplerEnvVar"/> is unset.</summary>
         public const string SampleRatioEnvVar = "OTEL_HELPER_SAMPLE_RATIO";
@@ -40,187 +44,184 @@ namespace StaffOps.OtelHelper
         public const string TracesSamplerEnvVar = "OTEL_TRACES_SAMPLER";
         /// <summary>Environment variable name: Standard OpenTelemetry OTLP protocol (<c>grpc</c> or <c>http/protobuf</c>); see <see cref="OtlpProtocol"/>.</summary>
         public const string OtlpProtocolEnvVar = "OTEL_EXPORTER_OTLP_PROTOCOL";
+        /// <summary>Environment variable name: Standard OpenTelemetry OTLP compression (<c>gzip</c> or <c>none</c>); see <see cref="Compression"/>.</summary>
+        public const string CompressionEnvVar = "OTEL_EXPORTER_OTLP_COMPRESSION";
+        /// <summary>Environment variable name: Standard OpenTelemetry switch that disables the SDK, read from <c>IConfiguration</c> as the SDK reads it.</summary>
+        public const string SdkDisabledEnvVar = "OTEL_SDK_DISABLED";
+        /// <summary>Environment variable name: Declarative configuration file; not supported by the helper (warned, ignored).</summary>
+        public const string ConfigFileEnvVar = "OTEL_CONFIG_FILE";
+        /// <summary>Environment variable name: Deprecated name of <see cref="ConfigFileEnvVar"/>; not supported (warned, ignored).</summary>
+        public const string ExperimentalConfigFileEnvVar = "OTEL_EXPERIMENTAL_CONFIG_FILE";
 
         internal const int DefaultExportIntervalMs = 30_000;
+        internal const int DefaultExportTimeoutMs = 10_000;
+        internal const int MaxExportTimeoutMs = 86_400_000;
+        internal const int DefaultPrometheusMetricsPort = 9464;
         internal const int DefaultOtlpHttpPort = 4318;
         internal const string ProtocolGrpc = "grpc";
         internal const string ProtocolHttpProtobuf = "http/protobuf";
+        internal const string CompressionGzip = "gzip";
+        internal const string CompressionNone = "none";
         internal static readonly string[] ValidMetricExporters = { "otlp", "prometheus", "none" };
         internal static readonly string[] ValidOtlpProtocols = { ProtocolGrpc, ProtocolHttpProtobuf };
+        internal static readonly string[] ValidCompressions = { CompressionGzip, CompressionNone };
 
         /// <summary>
-        /// Service name, emitted as <c>service.name</c>. Default <c>my-service</c>; while it
-        /// keeps the default, <c>SERVICE_NAME</c> and then <c>OTEL_SERVICE_NAME</c> replace it.
-        /// Required: an empty value fails options validation.
+        /// Service name, emitted as <c>service.name</c>. Not set: <c>SERVICE_NAME</c>, then
+        /// <c>OTEL_SERVICE_NAME</c>, then <c>my-service</c>.
         /// </summary>
-        [Required(AllowEmptyStrings = false)]
-        public string ServiceName { get; set; } = "my-service";
+        public string? ServiceName { get; set; }
 
         /// <summary>
-        /// Deployment environment, emitted as <c>deployment.environment.name</c>. Default
-        /// <see cref="DeploymentEnvironment.LOCAL"/>; while it keeps the default, the
-        /// <c>ENVIRONMENT</c> variable replaces it.
+        /// Deployment environment, emitted as <c>deployment.environment.name</c> as written.
+        /// Not set: the <c>ENVIRONMENT</c> variable. See <see cref="DeploymentEnvironments"/>.
         /// </summary>
-        public DeploymentEnvironment Environment { get; set; } = DeploymentEnvironment.LOCAL;
+        public string? Environment { get; set; }
 
         /// <summary>
-        /// OTLP collector endpoint. Empty (the default) reads <c>OTEL_EXPORTER_OTLP_ENDPOINT</c>;
-        /// when both are empty, metrics fall back to the Prometheus <c>/metrics</c> endpoint and
-        /// logs to stdout. A non-empty value must be an absolute URI.
+        /// OTLP collector endpoint for every signal. Not set: <c>OTEL_EXPORTER_OTLP_ENDPOINT</c>;
+        /// when neither is set, metrics fall back to the Prometheus <c>/metrics</c> endpoint and
+        /// logs to stdout. An <c>http</c>/<c>https</c> URL is used as written (HTTP/protobuf
+        /// appends <c>/v1/&lt;signal&gt;</c>); a schemeless <c>host:port</c> gets <c>https://</c>
+        /// (<c>http://</c> with <see cref="Insecure"/>). Any other scheme fails at start.
         /// </summary>
-        public string OtelCollectorEndpoint { get; set; } = "";
+        public string? OtelCollectorEndpoint { get; set; }
+
+        /// <summary>OTLP endpoint for traces only, used as written (no signal path appended). Wins over <see cref="OtelCollectorEndpoint"/>.</summary>
+        public string? TracesEndpoint { get; set; }
+
+        /// <summary>OTLP endpoint for metrics only, used as written (no signal path appended). Wins over <see cref="OtelCollectorEndpoint"/>.</summary>
+        public string? MetricsEndpoint { get; set; }
+
+        /// <summary>OTLP endpoint for logs only, used as written (no signal path appended). Wins over <see cref="OtelCollectorEndpoint"/>.</summary>
+        public string? LogsEndpoint { get; set; }
 
         /// <summary>
-        /// Debug mode. When true: log level lowered to Debug, all instrumentations enabled.
+        /// Debug mode: log level Debug and the <c>debug=true</c> marker on root spans.
+        /// Not set: <c>OTEL_HELPER_DEBUG_LEVEL</c>.
         /// </summary>
-        public bool DebugLevel { get; set; }
+        public bool? DebugLevel { get; set; }
+
+        /// <summary>No effect in .NET: instrumentations are added by the opt-in packages.</summary>
+        [Obsolete("ExtraInstrumentation has no effect: add the opt-in packages (StaffOps.OtelHelper.Sql, .AWS, .Redis) instead.")]
+        public string? ExtraInstrumentation { get; set; }
+
+        /// <summary>OTLP export timeout in milliseconds, in [1, 86 400 000]. Not set: 10 000.</summary>
+        public int? ExportTimeoutMs { get; set; }
 
         /// <summary>
-        /// Comma-separated list of extra instrumentations to enable.
-        /// Supported values: SQL, AWS. Case-insensitive.
-        /// Default: "SQL". Debug mode enables all.
+        /// Trace sampler; wins over <see cref="SampleRatio"/> and the environment. Not set:
+        /// <see cref="SampleRatio"/>, else <c>OTEL_TRACES_SAMPLER</c> (applied by the SDK, which
+        /// reads it from <c>IConfiguration</c>), else <c>OTEL_HELPER_SAMPLE_RATIO</c>, else
+        /// <c>AlwaysOnSampler</c>. Tail sampling in the Collector is preferred.
         /// </summary>
-        public string ExtraInstrumentation { get; set; } = "SQL";
+        public Sampler? Sampler { get; set; }
 
         /// <summary>
-        /// OTLP export timeout in milliseconds. Default: 10000 (10s).
+        /// Trace sample ratio in [0, 1]: <c>ParentBased(TraceIdRatioBased(ratio))</c>. Ignored when
+        /// <see cref="Sampler"/> is set.
         /// </summary>
-        public int ExportTimeoutMs { get; set; } = 10_000;
+        public double? SampleRatio { get; set; }
 
         /// <summary>
-        /// Trace sampler. Default: AlwaysOnSampler.
-        /// Override only if you have a specific reason — tail-based sampling in the Collector is preferred.
-        /// </summary>
-        public Sampler Sampler { get; set; } = new AlwaysOnSampler();
-
-        /// <summary>
-        /// Minimum log level. When null, resolved automatically based on Environment.
-        /// Set explicitly to override.
+        /// Minimum log level. When null, resolved from the environment and debug mode.
         /// </summary>
         public LogLevel? MinimumLogLevel { get; set; }
 
         /// <summary>
         /// Additional resource attributes added to all signals (traces, metrics, logs).
-        /// Note: k8s.*, cloud.*, deployment.environment are enriched by the Collector — avoid duplicating.
+        /// Note: k8s.*, cloud.* are enriched by the Collector — avoid duplicating.
         /// </summary>
         public Dictionary<string, object> ResourceAttributes { get; set; } = new();
 
         /// <summary>
-        /// Additional ActivitySource names to subscribe to, beyond ServiceName.
-        /// Use when the app creates ActivitySources with different names.
+        /// Additional ActivitySource names to subscribe to, beyond the service name.
         /// </summary>
         public List<string> AdditionalActivitySources { get; set; } = new();
 
         /// <summary>
-        /// Comma-separated list of signals to disable. Values: traces, metrics, logs. Case-insensitive.
+        /// Additional Meter names to export, beyond the service name.
         /// </summary>
-        public string DisabledSignals { get; set; } = "";
+        public List<string> AdditionalMeters { get; set; } = new();
 
         /// <summary>
-        /// Comma-separated list of metric name patterns to drop. Supports * wildcard. Case-insensitive.
+        /// Comma-separated signals to disable: <c>traces</c>, <c>metrics</c>, <c>logs</c>
+        /// (case-insensitive). Not set: <c>OTEL_HELPER_DISABLED_SIGNALS</c>.
         /// </summary>
-        public string DisabledMetrics { get; set; } = "";
+        public string? DisabledSignals { get; set; }
 
         /// <summary>
-        /// Comma-separated metric exporters: "otlp", "prometheus", "none".
-        /// Empty = resolve from OTEL_METRICS_EXPORTER, falling back to legacy
-        /// inference (otlp when an endpoint is set, prometheus otherwise).
+        /// Comma-separated metric name patterns to drop (<c>*</c> wildcard).
+        /// Not set: <c>OTEL_HELPER_DISABLED_METRICS</c>.
         /// </summary>
-        public string MetricExporters { get; set; } = "";
+        public string? DisabledMetrics { get; set; }
 
         /// <summary>
-        /// Metric export interval (ms) for the OTLP reader.
-        /// Null = resolve from OTEL_METRIC_EXPORT_INTERVAL, else 30000.
+        /// Comma-separated metric exporters: <c>otlp</c>, <c>prometheus</c>, <c>none</c>.
+        /// Not set: <c>OTEL_METRICS_EXPORTER</c>, else <c>otlp</c> with an endpoint and
+        /// <c>prometheus</c> without one.
         /// </summary>
-        public int? ExportIntervalMs { get; set; }
+        public string? MetricExporters { get; set; }
 
         /// <summary>
-        /// Port for the standalone Prometheus /metrics HTTP listener.
-        /// Default: 9464 (OTEL_HELPER_METRICS_PORT). 0 disables the listener —
-        /// for ASP.NET Core apps, prefer OpenTelemetry.Exporter.Prometheus.AspNetCore
-        /// with MapPrometheusScrapingEndpoint() on the app's own pipeline.
+        /// Metric export interval (ms) of the OTLP reader, in [1, 2 147 483 647].
+        /// Not set: <c>OTEL_METRIC_EXPORT_INTERVAL</c> (read as an <c>int</c>, a larger or
+        /// non-numeric value is ignored until task C9), else 30 000.
         /// </summary>
-        public int PrometheusMetricsPort { get; set; } = 9464;
+        public long? ExportIntervalMs { get; set; }
 
         /// <summary>
-        /// OTLP wire protocol: "grpc" or "http/protobuf".
-        /// Null/empty = resolve from OTEL_EXPORTER_OTLP_PROTOCOL, falling back to
-        /// port-based inference (4318 -> http/protobuf, else grpc).
+        /// Port of the standalone Prometheus <c>/metrics</c> listener, in [0, 65535]; 0 means no
+        /// listener. Not set: <c>OTEL_HELPER_METRICS_PORT</c>, else 9464.
+        /// </summary>
+        public int? PrometheusMetricsPort { get; set; }
+
+        /// <summary>
+        /// OTLP wire protocol: <c>grpc</c> or <c>http/protobuf</c>. Not set:
+        /// <c>OTEL_EXPORTER_OTLP_PROTOCOL</c>, else port 4318 means <c>http/protobuf</c>, else <c>grpc</c>.
         /// </summary>
         public string? OtlpProtocol { get; set; }
 
         /// <summary>
-        /// Returns true if the given signal is NOT in the DisabledSignals list.
+        /// Plaintext for a schemeless endpoint (<c>http://</c> instead of <c>https://</c>).
+        /// Not set: <c>OTEL_EXPORTER_OTLP_INSECURE</c>.
         /// </summary>
-        public bool IsSignalEnabled(string signal)
-            => !DisabledSignals.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-                .Any(s => s.Equals(signal, StringComparison.OrdinalIgnoreCase));
+        public bool? Insecure { get; set; }
 
         /// <summary>
-        /// Returns the default log level for a given environment.
-        /// Use this to align external logging config with the lib's defaults.
+        /// OTLP compression: <c>gzip</c> or <c>none</c>. Not set: <c>OTEL_EXPORTER_OTLP_COMPRESSION</c>.
         /// </summary>
-        public static LogLevel GetDefaultLogLevel(DeploymentEnvironment environment, bool debugLevel = false)
+        public string? Compression { get; set; }
+
+        /// <summary>
+        /// HTTP paths whose server and client spans are not recorded. Not set: the helper's
+        /// default health paths.
+        /// </summary>
+        public List<string>? HealthPaths { get; set; }
+
+        /// <summary>
+        /// Forward OpenTelemetry SDK warnings and errors (its <c>EventSource</c> events) to the
+        /// helper's standard-error diagnostics, redacted. Default <c>true</c>.
+        /// </summary>
+        public bool ForwardSdkDiagnostics { get; set; } = true;
+
+        /// <summary>
+        /// Default minimum log level for an environment name: <c>LOCAL</c> → Debug,
+        /// <c>DEV</c> and <c>HML</c> → Information, <c>PRD</c> → Warning, any other value →
+        /// Information. Debug mode → Debug.
+        /// </summary>
+        public static LogLevel GetDefaultLogLevel(string? environment, bool debug = false)
         {
-            if (debugLevel) return LogLevel.Debug;
+            if (debug) return LogLevel.Debug;
 
             return environment switch
             {
-                DeploymentEnvironment.LOCAL => LogLevel.Debug,
-                DeploymentEnvironment.DEV => LogLevel.Information,
-                DeploymentEnvironment.HML => LogLevel.Information,
-                DeploymentEnvironment.PRD => LogLevel.Warning,
+                DeploymentEnvironments.LOCAL => LogLevel.Debug,
+                DeploymentEnvironments.DEV => LogLevel.Information,
+                DeploymentEnvironments.HML => LogLevel.Information,
+                DeploymentEnvironments.PRD => LogLevel.Warning,
                 _ => LogLevel.Information,
             };
-        }
-
-        /// <summary>
-        /// Active metric exporters after resolution. "none" resolves to empty
-        /// (metrics disabled). Legacy inference when MetricExporters is unset:
-        /// otlp when an endpoint is configured, prometheus otherwise.
-        /// </summary>
-        public string[] ResolvedMetricExporters()
-        {
-            if (string.IsNullOrWhiteSpace(MetricExporters))
-                return string.IsNullOrWhiteSpace(OtelCollectorEndpoint)
-                    ? new[] { "prometheus" }
-                    : new[] { "otlp" };
-
-            var exporters = MetricExporters
-                .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-                .Select(e => e.ToLowerInvariant())
-                .ToArray();
-
-            return exporters.Length == 1 && exporters[0] == "none"
-                ? Array.Empty<string>()
-                : exporters;
-        }
-
-        /// <summary>
-        /// Resolved OTLP wire protocol. Precedence: explicit OtlpProtocol (set by
-        /// consumer code or resolved from OTEL_EXPORTER_OTLP_PROTOCOL in
-        /// TelemetryOptionsPostConfigure) > port-based inference (4318 ->
-        /// http/protobuf) > grpc default.
-        /// </summary>
-        public string ResolvedOtlpProtocol()
-        {
-            if (!string.IsNullOrWhiteSpace(OtlpProtocol))
-                return OtlpProtocol.Trim().ToLowerInvariant();
-
-            if (!string.IsNullOrWhiteSpace(OtelCollectorEndpoint)
-                && Uri.TryCreate(OtelCollectorEndpoint, UriKind.Absolute, out var uri)
-                && uri.Port == DefaultOtlpHttpPort)
-                return ProtocolHttpProtobuf;
-
-            return ProtocolGrpc;
-        }
-
-        internal bool HasInstrumentation(string name)
-        {
-            if (DebugLevel) return true;
-            return ExtraInstrumentation
-                .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-                .Any(x => x.Equals(name, StringComparison.OrdinalIgnoreCase));
         }
     }
 }

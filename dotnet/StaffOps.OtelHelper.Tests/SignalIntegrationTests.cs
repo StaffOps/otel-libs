@@ -48,7 +48,7 @@ public class SignalIntegrationTests : IDisposable
         });
 
         using var provider = services.BuildServiceProvider();
-        var meter = provider.GetRequiredService<Meter>();
+        var meter = provider.GetRequiredKeyedService<Meter>(OtelHelperKeys.Instrumentation);
 
         Assert.Equal("meter-name-test", meter.Name);
     }
@@ -66,7 +66,7 @@ public class SignalIntegrationTests : IDisposable
         });
 
         using var provider = services.BuildServiceProvider();
-        var source = provider.GetRequiredService<ActivitySource>();
+        var source = provider.GetRequiredKeyedService<ActivitySource>(OtelHelperKeys.Instrumentation);
 
         Assert.Equal("source-name-test", source.Name);
     }
@@ -119,49 +119,51 @@ public class SignalIntegrationTests : IDisposable
         Assert.Equal("test.value", exportedActivities[0].GetTagItem("test.key")?.ToString());
     }
 
-    // --- ValidateOnStart throws with empty ServiceName ---
+    // --- A blank code ServiceName is not set ---
 
     [Fact]
-    public void ValidateOnStart_Throws_With_Empty_ServiceName()
+    public void Blank_Code_ServiceName_Is_Not_Set()
     {
-        // AddOtelHelper resolves IOptions<TelemetryOptions> through the real DI options
-        // pipeline (Configure -> PostConfigure -> Validate) as part of registration, so
-        // invalid config now fails fast right here instead of waiting for a later resolution
-        // (e.g. the ValidateOnStart hosted service at real app startup) — see the P9 fix.
         var services = new ServiceCollection();
+        services.AddOtelHelper(opts =>
+        {
+            opts.ServiceName = "  ";
+            opts.OtelCollectorEndpoint = "http://localhost:4317";
+        });
 
-        var ex = Assert.Throws<OptionsValidationException>(() =>
-            services.AddOtelHelper(opts =>
-            {
-                opts.ServiceName = "";
-                opts.OtelCollectorEndpoint = "http://localhost:4317";
-            }));
-        Assert.Contains("ServiceName", ex.Message);
+        using var provider = services.BuildServiceProvider();
+        Assert.Equal(TelemetryResolver.DefaultServiceName, provider.GetRequiredService<ResolvedTelemetry>().ServiceName);
     }
 
-    // --- Invalid config throws at AddOtelHelper time (fail-fast) ---
+    // --- An invalid code endpoint fails when the options are first read, naming the option ---
 
-    [Fact]
-    public void ValidateOnStart_Throws_With_Invalid_Endpoint()
+    [Theory]
+    [InlineData("unix:/var/run/parity-secret.sock", "unix:")]
+    [InlineData("ftp://user:parity-secret@collector:4317/?token=parity-secret", "ftp://collector:4317/")]
+    public void Invalid_Code_Endpoint_Fails_At_Start_Redacted(string endpoint, string rendered)
     {
         var services = new ServiceCollection();
+        // AddOtelHelper no longer builds a bootstrap provider (D-NET3): registration never throws.
+        services.AddOtelHelper(opts =>
+        {
+            opts.ServiceName = "test";
+            opts.OtelCollectorEndpoint = endpoint;
+        });
 
-        var ex = Assert.Throws<OptionsValidationException>(() =>
-            services.AddOtelHelper(opts =>
-            {
-                opts.ServiceName = "test";
-                opts.OtelCollectorEndpoint = "not-a-uri";
-            }));
-        Assert.Contains("OtelCollectorEndpoint", ex.Message);
+        using var provider = services.BuildServiceProvider();
+        var ex = Assert.Throws<OptionsValidationException>(() => provider.GetRequiredService<IOptions<TelemetryOptions>>().Value);
+        Assert.Contains("TelemetryOptions.OtelCollectorEndpoint", ex.Message);
+        Assert.Contains(rendered, ex.Message);
+        Assert.DoesNotContain("parity-secret", ex.Message);
     }
 
     // --- LogLevel above minimum are enabled (parameterized) ---
 
     [Theory]
-    [InlineData(DeploymentEnvironment.LOCAL, LogLevel.Debug)]
-    [InlineData(DeploymentEnvironment.DEV, LogLevel.Information)]
-    [InlineData(DeploymentEnvironment.PRD, LogLevel.Warning)]
-    public void LogLevel_Above_Minimum_Are_Enabled(DeploymentEnvironment env, LogLevel expectedMinLevel)
+    [InlineData(DeploymentEnvironments.LOCAL, LogLevel.Debug)]
+    [InlineData(DeploymentEnvironments.DEV, LogLevel.Information)]
+    [InlineData(DeploymentEnvironments.PRD, LogLevel.Warning)]
+    public void LogLevel_Above_Minimum_Are_Enabled(string env, LogLevel expectedMinLevel)
     {
         var services = new ServiceCollection();
         services.AddOtelHelper(opts =>
@@ -196,7 +198,7 @@ public class SignalIntegrationTests : IDisposable
         services.AddOtelHelper(opts =>
         {
             opts.ServiceName = "full-pipeline-test";
-            opts.Environment = DeploymentEnvironment.DEV;
+            opts.Environment = DeploymentEnvironments.DEV;
             opts.OtelCollectorEndpoint = "http://localhost:4317";
         });
 
@@ -210,10 +212,10 @@ public class SignalIntegrationTests : IDisposable
         Assert.Equal("full-pipeline-test", options.Value.ServiceName);
 
         // DI ActivitySource registered
-        Assert.NotNull(provider.GetService<ActivitySource>());
+        Assert.NotNull(provider.GetKeyedService<ActivitySource>(OtelHelperKeys.Instrumentation));
 
         // DI Meter registered
-        Assert.NotNull(provider.GetService<Meter>());
+        Assert.NotNull(provider.GetKeyedService<Meter>(OtelHelperKeys.Instrumentation));
     }
 
     // --- DebugLevel forces Debug LogLevel ---
@@ -225,7 +227,7 @@ public class SignalIntegrationTests : IDisposable
         services.AddOtelHelper(opts =>
         {
             opts.ServiceName = "debug-level-test";
-            opts.Environment = DeploymentEnvironment.PRD; // normally Warning
+            opts.Environment = DeploymentEnvironments.PRD; // normally Warning
             opts.DebugLevel = true;
             opts.OtelCollectorEndpoint = "http://localhost:4317";
         });
@@ -246,7 +248,7 @@ public class SignalIntegrationTests : IDisposable
         services.AddOtelHelper(opts =>
         {
             opts.ServiceName = "min-level-override-test";
-            opts.Environment = DeploymentEnvironment.PRD; // normally Warning
+            opts.Environment = DeploymentEnvironments.PRD; // normally Warning
             opts.MinimumLogLevel = LogLevel.Information;
             opts.OtelCollectorEndpoint = "http://localhost:4317";
         });

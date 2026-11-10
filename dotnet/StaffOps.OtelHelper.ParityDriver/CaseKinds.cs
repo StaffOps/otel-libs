@@ -22,6 +22,7 @@ using OpenTelemetry;
 using OpenTelemetry.Context.Propagation;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Trace;
+using StaffOps.OtelHelper.Diagnostics;
 
 namespace StaffOps.OtelHelper.ParityDriver;
 
@@ -67,7 +68,7 @@ internal static class CaseKinds
     private sealed class Run
     {
         public required IHost Host { get; init; }
-        public required TelemetryOptions Options { get; init; }
+        public required ResolvedTelemetry Resolved { get; init; }
         public required SpanCapture Spans { get; init; }
     }
 
@@ -126,15 +127,18 @@ internal static class CaseKinds
             // Only what the helper installs: no default console or debug providers.
             builder.Logging.ClearProviders();
 
+            // The helper's diagnostics sink, with the driver's capture (design D-NET5):
+            // registered first, so AddOtelHelper keeps it (TryAdd) and also uses it for
+            // registration-time records.
+            builder.Services.AddSingleton<IOtelHelperDiagnostics>(DriverDiagnostics.Sink);
             builder.Services.AddOtelHelper(options =>
             {
                 map(options);
-                // The parity scope: AdditionalActivitySources is the helper API for an
-                // app source of another name. Metrics have no 0.2 option (task C11).
+                // The parity scope: the helper API for an app source and meter of another name.
                 options.AdditionalActivitySources.Add(ParityScope);
+                options.AdditionalMeters.Add(ParityScope);
             });
             builder.Services.ConfigureOpenTelemetryTracerProvider(b => b.AddProcessor(capture));
-            builder.Services.ConfigureOpenTelemetryMeterProvider(b => b.AddMeter(ParityScope));
 
             if (web is not null && model == HostModel.Http2Grpc)
             {
@@ -155,8 +159,8 @@ internal static class CaseKinds
             }
 
             await host.StartAsync();
-            var options = host.Services.GetRequiredService<IOptions<TelemetryOptions>>().Value;
-            return new Run { Host = host, Options = options, Spans = capture };
+            var resolved = host.Services.GetRequiredService<ResolvedTelemetry>();
+            return new Run { Host = host, Resolved = resolved, Spans = capture };
         }
         catch (Exception ex) when (ex is not AdapterException)
         {
@@ -214,33 +218,21 @@ internal static class CaseKinds
         if (run is not null)
         {
             snap["resource"] = ResourceOf(run.Host.Services.GetRequiredService<TracerProvider>());
-            var o = run.Options;
-            var sdkDisabled = SdkDisabled(run.Host.Services);
-            var metricsActive = o.IsSignalEnabled("metrics") && !sdkDisabled;
-            snap["metric_exporters"] = ToJsonArray(metricsActive ? o.ResolvedMetricExporters() : Array.Empty<string>());
+            var r = run.Resolved;
+            // Empty when metrics are disabled or OTEL_SDK_DISABLED is true (read where the SDK reads it).
+            snap["metric_exporters"] = ToJsonArray(r.ResolvedMetricExporters());
             // The resolved interval is what the helper hands the periodic reader (MetricsSetup);
-            // the SDK has no public getter for a reader's interval, so the resolved option is read.
-            snap["metric_export_interval_ms"] = o.ExportIntervalMs
-                ?? throw new AdapterException("ExportIntervalMs is unresolved after setup");
+            // the SDK has no public getter for a reader's interval, so the resolved value is read.
+            snap["metric_export_interval_ms"] = r.ExportIntervalMs;
             // The level the helper installed: LoggingSetup calls SetMinimumLevel, which sets this.
             snap["log_level"] = LogLevelName(run.Host.Services.GetRequiredService<IOptions<LoggerFilterOptions>>().Value.MinLevel);
-            snap["prometheus_metrics_port"] = o.PrometheusMetricsPort;
-            // prometheus_metrics_host and http_opt_in_metrics are omitted: 0.2 has no such
-            // setting (it binds IPv4 "+" whatever the environment says); tasks C12 and C11.
+            snap["prometheus_metrics_port"] = r.PrometheusMetricsPort;
+            // prometheus_metrics_host and http_opt_in_metrics are omitted: the helper has no such
+            // setting yet (it binds IPv4 "+" whatever the environment says); tasks C12 and C11.
         }
 
         await ShutdownAsync(run);
         return snap;
-    }
-
-    /// <summary>
-    /// OTEL_SDK_DISABLED as the SDK reads it (IConfiguration). The SDK exposes no public
-    /// "disabled" flag on the installed providers, so the driver reads the same key.
-    /// </summary>
-    private static bool SdkDisabled(IServiceProvider services)
-    {
-        var raw = services.GetService<IConfiguration>()?["OTEL_SDK_DISABLED"];
-        return bool.TryParse(raw, out var disabled) && disabled;
     }
 
     private static string LogLevelName(LogLevel level) => level switch
@@ -689,9 +681,9 @@ internal static class CaseKinds
     }
 
     /// <summary>The port the helper resolved; 0 (no listener) cannot be scraped.</summary>
-    private static int ListenerPort(Run run) => run.Options.PrometheusMetricsPort > 0
-        ? run.Options.PrometheusMetricsPort
-        : throw new AdapterException("the case sets the listener port to 0: there is no /metrics to scrape on 0.2");
+    private static int ListenerPort(Run run) => run.Resolved.PrometheusMetricsPort > 0
+        ? run.Resolved.PrometheusMetricsPort
+        : throw new AdapterException("the case sets the listener port to 0: there is no /metrics to scrape (no mounted handler, D-NET11)");
 
     private static int FreePort()
     {

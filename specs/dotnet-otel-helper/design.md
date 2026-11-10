@@ -427,6 +427,50 @@ N4, double construction); fully deferred registration (rejected: throws);
 eager Prometheus decision (r2; rejected in r3: runs the user delegate twice
 and ignores bound options).
 
+> **Corrected 2026-11-10 (task C5 fix round, observability M3, code-review L12).**
+> "The cost is an idle reader" holds for the listener only: when **no** metric
+> exporter is active (metrics disabled, `none`, or `prometheus` with no
+> listener) the helper adds a view that drops every instrument, so nothing is
+> aggregated. With OTLP only, the idle Prometheus reader still aggregates every
+> series a second time (no per-reader view exists); the measured cost is in
+> the C5 row of tasks.md and the migration guide, telemetry row 9. Deferred
+> steps that hit an invalid code value report one ERROR through the sink and
+> configure nothing; host start fails through `ValidateOnStart` (D-NET6). The
+> SDK forwarder of D-NET5 is one per process (lease per container, latest live
+> sink, every live container's code secrets masked).
+
+> **Corrected again 2026-11-10 (task C5 fix round 2, observability + code-review H4).**
+> The drop view above dropped every instrument, which silenced the
+> application's own meters and readers and broke the HOW-TO mounted-endpoint
+> recipe (`MetricExporters = "prometheus"`, `PrometheusMetricsPort = 0`). Now:
+> `prometheus` with port 0 is an active exporter (meters added, no view); when
+> metrics are disabled or `none`, the view drops only the helper's own
+> instrumentation meters (service meter, additional meters,
+> `Microsoft.AspNetCore.*`, `System.Net.*`, `System.Runtime`,
+> `OpenTelemetry.Instrumentation.*`) and returns no decision for any other.
+> The forwarder lease is taken by every service provider, also one with
+> `ForwardSdkDiagnostics = false`; events go to the latest forwarding lease.
+
+> **Added 2026-11-10 (task C5 fix round 3, owner decision on the histogram
+> aggregation).** One exception to "values only, deferred": when
+> `OTEL_EXPORTER_OTLP_METRICS_DEFAULT_HISTOGRAM_AGGREGATION` is set as
+> `AddOtelHelper` runs, the SDK's named `AddOtlpExporter` metric reader is
+> registered eagerly (ADR-013 note of the same date) and replaces the helper's
+> own OTLP reader. Its opt-in cost: if OTLP metrics turn out inactive, the
+> reader stays registered, idle (no network), and aggregates the helper's
+> series a second time, as the idle Prometheus reader does; the helper warns
+> once.
+
+> **Added 2026-11-10 (task C5 fix round 4).** Wording of the note above made
+> precise: the idle reader of the histogram path aggregates **every subscribed
+> series**, the application's meters included, not only the helper's; it only
+> collects (interval `int.MaxValue`) and never exports.
+
+> **Added 2026-11-10 (task C5 fix round 5).** "Never exports" in the note above
+> is imprecise: the idle histogram-path reader exports on `ForceFlush`, at
+> shutdown and every ~24.8 days (interval `int.MaxValue`), to a client that
+> answers locally; nothing is ever sent over the network.
+
 ### D-NET4 — Options API: nullable code fields, one breaking release
 **Choice**: the API table above. Every option with an env counterpart becomes
 nullable and holds **only** the code value; the resolver keeps the effective

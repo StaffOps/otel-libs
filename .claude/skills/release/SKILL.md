@@ -355,6 +355,10 @@ task C3, 1.15.x → 1.20.x):
   new versions add or change (AspNetCore gRPC spans, new root span, SqlClient
   returned rows): the helper never sets them; the migration guide says which
   ones change telemetry.
+- **Internal type the helper matches by name.** `OpenTelemetry.Exporter.UseOtlpExporterRegistration`
+  (the `UseOtlpExporter()` marker the SDK's `EnsureNoUseOtlpExporterRegistrations`
+  checks; `MetricsSetup.UseOtlpExporterRegistrationType`, C5): the canary test
+  `UseOtlpExporter_Registration_Type_Still_Exists` fails if a bump renames it.
 - **Breaking entries.** Re-read each package's CHANGELOG at its tag (core
   `core-<v>`, Prometheus `coreunstable-<v>`, contrib `Instrumentation.<X>-<v>`)
   and walk every **Breaking** line with a before/after measurement.

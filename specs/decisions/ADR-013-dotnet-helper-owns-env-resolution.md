@@ -78,6 +78,99 @@ Rows that stay with the SDK, and where it reads them:
 | Retry, transports | SDK | — |
 | `OTEL_EXPORTER_PROMETHEUS_HOST` / `_PORT` | owner decision O10 (a), 2026-11-04: ignored — the helper sets `Port` and replaces the listener prefix, so `HOST` has no effect — with one warning naming the variable (value truncated, D1); the contract question goes to Go + Python | env / `IConfiguration` |
 
+> **Added 2026-11-10 (task C5 fix round, code-review H1).** Row
+> `OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE`: read by the **helper**
+> from the same source the SDK reads (`IConfiguration`, else the environment),
+> as for `OTEL_SDK_DISABLED`: `cumulative`, `delta`, `lowmemory`
+> (case-insensitive); anything else warns naming the variable and the default
+> (`cumulative`). Reason, measured on 1.20.1: the SDK's `MetricReaderOptions`
+> read the variable only when `AddOtlpExporter` registers them, so the reader
+> the helper constructs got `Cumulative` whatever the variable said (0.2.x got
+> the value through `AddOtlpExporter((e, r) => …)`). `OTEL_METRIC_EXPORT_TIMEOUT`
+> is still read by the SDK's `MetricReaderOptions` (measured) and stays there.
+> The SDK constructor's parse warnings for the rows the helper resolves and
+> warns about (`OTEL_EXPORTER_OTLP_ENDPOINT`, `_PROTOCOL`, `_COMPRESSION`) are
+> not forwarded; those for the other OTLP variables are (design D-NET5).
+
+> **Added 2026-11-10 (task C5 fix round 2).** (1) The temporality is applied
+> through the default `MetricReaderOptions` (an `IConfigureOptions` registered
+> by `AddOtelHelper`, as upstream registers one in `AddOtlpExporter`), so an
+> application's later `Configure<MetricReaderOptions>` wins; it accepts the
+> names only (`cumulative`, `delta`, `lowmemory`), where upstream's
+> `Enum.TryParse` also took a number: a number warns. (2)
+> `OTEL_EXPORTER_OTLP_METRICS_DEFAULT_HISTOGRAM_AGGREGATION` is **not applied**:
+> the SDK applies it only on the reader `AddOtlpExporter` builds (the reader
+> option is internal), and calling `AddOtlpExporter` is a service-registering
+> call, so it must run when `AddOtelHelper` runs (D-NET3); whether OTLP is
+> active is known only at provider build, so the reader would exist for every
+> app — exporting to a default endpoint or, made inert, aggregating every
+> series a second time (measured 1.9× heap for the idle-reader case). The
+> helper warns once naming the variable (migration guide, telemetry row 8).
+> (3) `OTEL_METRIC_EXPORT_INTERVAL` is resolved by the helper from the process
+> environment, while `OTEL_METRIC_EXPORT_TIMEOUT` is still read by the SDK's
+> `MetricReaderOptions` from `IConfiguration`: an `IConfiguration`-only interval
+> has no effect, an `IConfiguration`-only timeout does (documented; task C9
+> decides one source). (4) `IConfiguration`-only `OTEL_DOTNET_EXPERIMENTAL_OTLP_*`
+> keys (retry, disk storage) are no longer read for the helper's exporters
+> (found by the C5 fix-round review; not measured in this round), and
+> an `IConfiguration`-only invalid `OTEL_EXPORTER_OTLP_PROTOCOL`,
+> `_COMPRESSION` or `_ENDPOINT` is ignored without a warning (the helper reads
+> the process environment; the SDK constructor's warnings for those three are
+> not forwarded). Nothing of (4) is restored by this round.
+
+> **Added 2026-11-10 (task C5 fix round 3, owner decision: option (c)).**
+> *(Superseded in its details by the round-4 and round-5 notes below.)*
+> Item (2) of the note above is superseded: when
+> `OTEL_EXPORTER_OTLP_METRICS_DEFAULT_HISTOGRAM_AGGREGATION` is set as
+> `AddOtelHelper` runs (process environment, or an `IConfiguration` instance
+> already registered), the helper registers the SDK's named `AddOtlpExporter`
+> metric path eagerly, so the SDK applies the aggregation, and sets every
+> value late: the named `OtlpExporterOptions` get the helper's endpoint,
+> protocol, timeout, compression, empty `Headers` and `HttpClientFactory`; the
+> named `MetricReaderOptions` get the resolved interval and temporality before
+> any application `Configure`, which still wins. With OTLP metrics inactive at
+> provider build, that reader gets a client that answers locally (no network)
+> and the helper warns once. Measured: `base2_exponential_bucket_histogram`
+> sends Metric field 10 (exponential histogram), unset sends field 9.
+> Without the variable nothing changes: no extra reader.
+
+> **Added 2026-11-10 (task C5 fix round 4).** The path of option (c) is
+> registered only for `base2_exponential_bucket_histogram` (case-insensitive);
+> `explicit_bucket_histogram` is the default and needs none; any other value
+> warns by name. Where the variable is read: the process environment, or an
+> `IConfiguration` registered as an instance before `AddOtelHelper`. A host
+> builder registers its configuration as a factory (`HostBuilder`
+> `PopulateServiceCollection`, `services.AddSingleton(_ => appConfiguration)`),
+> so an `appsettings.json`-only value cannot be seen when `AddOtelHelper` runs:
+> it is warned once at provider build, not applied. The named reader options
+> start from the default-named `MetricReaderOptions` (an app's default
+> `Configure`, the helper's temporality, the SDK's export timeout) and get the
+> resolved interval; an inactive reader only collects (interval
+> `int.MaxValue`). `UseOtlpExporter()` together with the variable throws
+> `NotSupportedException` at provider build (upstream refuses the
+> combination): a migration-guide line.
+
+> **Added 2026-11-10 (task C5 fix round 5).** `UseOtlpExporter()` next to
+> `AddOtelHelper()` exports every signal twice (measured by the review: 4
+> `/v1/metrics` requests for 2 flushes); the helper detects the SDK's internal
+> `OpenTelemetry.Exporter.UseOtlpExporterRegistration` by type name (the
+> registration `EnsureNoUseOtlpExporterRegistrations` checks) and warns once at
+> provider build. With the histogram variable: registered before
+> `AddOtelHelper`, the helper registers no histogram reader (warned;
+> `UseOtlpExporter`'s reader applies the variable from `IConfiguration`, so the
+> host-configuration warning is skipped); registered after, the SDK's
+> `NotSupportedException` at provider build cannot be avoided, and a callback
+> registered just before the helper's `AddOtlpExporter` writes one ERROR first.
+> The variable is compared as written (case-insensitive, untrimmed), as the SDK
+> reads it: a padded value warns and registers nothing. The host-configuration
+> warning names the process-environment value `AddOtelHelper` used when it
+> differs from `IConfiguration`. *(Round 6, 2026-11-10:* that happens only when a source outranking the
+> environment — the command line — holds `base2_exponential_bucket_histogram`;
+> in the default host the environment outranks `appsettings.json`. With
+> `UseOtlpExporter()` first and the variable in env, two warnings print — no
+> second reader, and the doubling — and the doubling warning prints only when
+> the helper itself has an OTLP target.*)
+
 **Exception to ADR-001's fixture rule — the exemplar filter.** The helper
 parses `OTEL_METRICS_EXEMPLAR_FILTER` (`always_on`, `always_off`,
 `trace_based`; default `trace_based`) and always calls `SetExemplarFilter`,

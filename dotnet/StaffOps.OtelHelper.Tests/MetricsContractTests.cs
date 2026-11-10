@@ -34,18 +34,26 @@ public class MetricsContractTests : IDisposable
             Environment.SetEnvironmentVariable(v, null);
     }
 
-    private static TelemetryOptions Resolved(Action<TelemetryOptions>? configure = null)
+    private static ResolvedTelemetry Resolved(Action<TelemetryOptions>? configure = null)
+        => TestDiagnostics.ResolveQuiet(configure);
+
+    private static string? Validate(Action<TelemetryOptions>? configure = null)
     {
         var opts = new TelemetryOptions();
         configure?.Invoke(opts);
-        new TelemetryOptionsPostConfigure().PostConfigure(null, opts);
-        return opts;
-    }
-
-    private static string? Validate(TelemetryOptions opts)
-    {
         var result = new TelemetryOptionsValidator().Validate(null, opts);
         return result.Failed ? result.FailureMessage : null;
+    }
+
+    /// <summary>A service provider with the helper set up, its MeterProvider built.</summary>
+    private static ServiceProvider BuildMeterPipeline(Action<TelemetryOptions> configure)
+    {
+        var services = new ServiceCollection();
+        services.AddSingleton<StaffOps.OtelHelper.Diagnostics.IOtelHelperDiagnostics>(new TestDiagnostics().Sink);
+        services.AddOtelHelper(configure);
+        var provider = services.BuildServiceProvider();
+        provider.GetRequiredService<MeterProvider>();
+        return provider;
     }
 
     // --- US-1: exporter resolution table ---
@@ -85,7 +93,6 @@ public class MetricsContractTests : IDisposable
     {
         Environment.SetEnvironmentVariable(TelemetryOptions.MetricsExporterEnvVar, "none");
         var opts = Resolved(o => o.OtelCollectorEndpoint = "http://collector:4317");
-        Assert.Null(Validate(opts));
         Assert.Empty(opts.ResolvedMetricExporters());
     }
 
@@ -109,30 +116,81 @@ public class MetricsContractTests : IDisposable
         Assert.Equal(new[] { "prometheus" }, opts.ResolvedMetricExporters());
     }
 
+    // Env values warn and fall back (D-NET6); the same values set in code fail at start.
+
     [Fact]
-    public void UnknownValue_FailsValidation()
+    public void UnknownEnvValue_Warns_And_Is_Ignored()
+    {
+        Environment.SetEnvironmentVariable(TelemetryOptions.MetricsExporterEnvVar, "statsd,prometheus");
+        var diagnostics = new TestDiagnostics();
+        var opts = diagnostics.Resolve();
+        Assert.Equal(new[] { "prometheus" }, opts.ResolvedMetricExporters());
+        Assert.Contains(diagnostics.Lines, l => l.Contains("invalid OTEL_METRICS_EXPORTER") && l.Contains("value=statsd,prometheus"));
+    }
+
+    [Fact]
+    public void OnlyUnknownEnvValues_Warn_And_Use_The_Default()
     {
         Environment.SetEnvironmentVariable(TelemetryOptions.MetricsExporterEnvVar, "statsd");
-        var failure = Validate(Resolved());
+        var diagnostics = new TestDiagnostics();
+        Assert.Equal(new[] { "prometheus" }, diagnostics.Resolve().ResolvedMetricExporters());
+        Assert.Single(diagnostics.Lines);
+    }
+
+    [Fact]
+    public void UnknownCodeValue_FailsValidation()
+    {
+        var failure = Validate(o => o.MetricExporters = "statsd");
         Assert.NotNull(failure);
         Assert.Contains("statsd", failure);
+        Assert.Contains("TelemetryOptions.MetricExporters", failure);
         Assert.Contains("Valid values", failure);
     }
 
     [Fact]
-    public void OtlpWithoutEndpoint_FailsValidation()
+    public void OtlpEnvWithoutEndpoint_Warns_And_Is_Dropped()
     {
-        Environment.SetEnvironmentVariable(TelemetryOptions.MetricsExporterEnvVar, "otlp");
-        var failure = Validate(Resolved());
+        Environment.SetEnvironmentVariable(TelemetryOptions.MetricsExporterEnvVar, "otlp,prometheus");
+        var diagnostics = new TestDiagnostics();
+        Assert.Equal(new[] { "prometheus" }, diagnostics.Resolve().ResolvedMetricExporters());
+        Assert.Contains(diagnostics.Lines, l => l.Contains("'otlp' has no endpoint") && l.Contains("variable=OTEL_METRICS_EXPORTER"));
+    }
+
+    [Fact]
+    public void OtlpCodeWithoutEndpoint_FailsValidation()
+    {
+        var failure = Validate(o => o.MetricExporters = "otlp");
         Assert.NotNull(failure);
         Assert.Contains("requires an endpoint", failure);
     }
 
     [Fact]
-    public void NoneCombined_FailsValidation()
+    public void OtlpCode_WithEnvEndpoint_IsValid()
+    {
+        Environment.SetEnvironmentVariable(TelemetryOptions.CollectorEndpointEnvVar, "http://collector:4317");
+        try
+        {
+            Assert.Null(Validate(o => o.MetricExporters = "otlp"));
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable(TelemetryOptions.CollectorEndpointEnvVar, null);
+        }
+    }
+
+    [Fact]
+    public void NoneCombinedEnv_Warns_And_Disables()
     {
         Environment.SetEnvironmentVariable(TelemetryOptions.MetricsExporterEnvVar, "none,prometheus");
-        var failure = Validate(Resolved());
+        var diagnostics = new TestDiagnostics();
+        Assert.Empty(diagnostics.Resolve().ResolvedMetricExporters());
+        Assert.Contains(diagnostics.Lines, l => l.Contains("'none' combined"));
+    }
+
+    [Fact]
+    public void NoneCombinedCode_FailsValidation()
+    {
+        var failure = Validate(o => o.MetricExporters = "none,prometheus");
         Assert.NotNull(failure);
         Assert.Contains("cannot be combined", failure);
     }
@@ -169,7 +227,7 @@ public class MetricsContractTests : IDisposable
     [Fact]
     public void Interval_NonPositive_FailsValidation()
     {
-        var failure = Validate(Resolved(o => o.ExportIntervalMs = 0));
+        var failure = Validate(o => o.ExportIntervalMs = 0);
         Assert.NotNull(failure);
         Assert.Contains("ExportIntervalMs", failure);
     }
@@ -179,7 +237,8 @@ public class MetricsContractTests : IDisposable
     [Fact]
     public void PortZero_IsValid()
     {
-        Assert.Null(Validate(Resolved(o => o.PrometheusMetricsPort = 0)));
+        Assert.Null(Validate(o => o.PrometheusMetricsPort = 0));
+        Assert.False(Resolved(o => o.PrometheusMetricsPort = 0).PrometheusListenerActive);
     }
 
     // --- US-1/US-6: dual-mode pipeline — same counter reaches both readers ---
@@ -218,16 +277,13 @@ public class MetricsContractTests : IDisposable
         // prometheus-only with an endpoint set must not register the OTLP exporter;
         // builder must build cleanly with only the listener (on a free port).
         var port = TestPorts.FreeTcpPort();
-        var opts = Resolved(o =>
+        using var provider = BuildMeterPipeline(o =>
         {
             o.ServiceName = "prom-svc";
             o.OtelCollectorEndpoint = "http://localhost:4317";
             o.MetricExporters = "prometheus";
             o.PrometheusMetricsPort = port;
         });
-
-        using var provider = Sdk.CreateMeterProviderBuilder().ConfigureMetrics(opts).Build();
-        Assert.NotNull(provider);
 
         using var http = new HttpClient();
         var response = await http.GetAsync($"http://localhost:{port}/metrics");
@@ -237,15 +293,49 @@ public class MetricsContractTests : IDisposable
     [Fact]
     public void ConfigureMetrics_PortZero_SkipsListener()
     {
-        var opts = Resolved(o =>
+        // Builds without binding anything — the reader is registered, with no prefix (D-NET3).
+        using var provider = BuildMeterPipeline(o =>
         {
             o.ServiceName = "noport-svc";
             o.MetricExporters = "prometheus";
             o.PrometheusMetricsPort = 0;
         });
+        Assert.NotNull(provider.GetRequiredService<MeterProvider>());
+    }
 
-        // Builds without binding anything — no listener, reader stays passive.
-        using var provider = Sdk.CreateMeterProviderBuilder().ConfigureMetrics(opts).Build();
-        Assert.NotNull(provider);
+    [Theory]
+    [InlineData("none")]
+    [InlineData("otlp")]
+    public async Task Inactive_Prometheus_Listener_Binds_Nothing(string exporters)
+    {
+        // The reader is always registered (D-NET3); without "prometheus" it gets no prefix.
+        var port = TestPorts.FreeTcpPort();
+        using var provider = BuildMeterPipeline(o =>
+        {
+            o.ServiceName = "inactive-svc";
+            o.OtelCollectorEndpoint = "http://127.0.0.1:1";
+            o.MetricExporters = exporters;
+            o.PrometheusMetricsPort = port;
+        });
+
+        using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(5) };
+        await Assert.ThrowsAsync<HttpRequestException>(() => http.GetAsync($"http://localhost:{port}/metrics"));
+    }
+
+    [Fact]
+    public async Task Late_Configure_Decides_Whether_The_Listener_Binds()
+    {
+        // N4/DN4: a Configure registered after AddOtelHelper also decides the listener.
+        var port = TestPorts.FreeTcpPort();
+        var services = new ServiceCollection();
+        services.AddSingleton<StaffOps.OtelHelper.Diagnostics.IOtelHelperDiagnostics>(new TestDiagnostics().Sink);
+        services.AddOtelHelper(o => { o.ServiceName = "late-svc"; o.PrometheusMetricsPort = 0; });
+        services.Configure<TelemetryOptions>(o => o.PrometheusMetricsPort = port);
+        using var provider = services.BuildServiceProvider();
+        provider.GetRequiredService<MeterProvider>();
+
+        using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(5) };
+        var response = await http.GetAsync($"http://localhost:{port}/metrics");
+        Assert.Equal(System.Net.HttpStatusCode.OK, response.StatusCode);
     }
 }

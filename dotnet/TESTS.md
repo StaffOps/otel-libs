@@ -1,6 +1,6 @@
 # Tests — StaffOps.OtelHelper (.NET)
 
-571 tests (xUnit) with the parity runner, 0 failed, 0 warnings (compose `dotnet-tests` on `sdk:8.0`, and on `sdk:10.0` with `DOTNET_ROLL_FORWARD=Major`, 2026-11-09).
+782 tests (xUnit) with the parity runner, 0 failed, 0 warnings (compose `dotnet-tests` on `sdk:8.0`, and on `sdk:10.0` with `DOTNET_ROLL_FORWARD=Major`, 2026-11-10); coverlet total on `sdk:8.0` `| Total | 98.72% | 97.27% | 99.02% |` (line, branch, method), cobertura `line-rate` 0.9872; on `sdk:10.0` `| Total | 98.8% | 97.15% | 99.02% |`, 0.988. The total varies by about ±0.1 point between runs; the cause was not investigated.
 
 From `dotnet/`; the repository root is mounted because the parity runner reads
 `parity/cases.json` (and `specs/dotnet-otel-helper/tasks.md`) from it:
@@ -91,16 +91,6 @@ Validate defaults and env var resolution.
 | `LogLevel_Matches_Environment` × 4 | LOCAL=Debug, DEV/HML=Info, PRD=Warning |
 | `DebugLevel_Forces_Debug_LogLevel` | Debug mode forces LogLevel.Debug in PRD |
 
-### Extra Instrumentation
-
-| Test | Description |
-|-------|-----------|
-| `ExtraInstrumentation_Default_Has_SQL` | SQL enabled, AWS disabled by default |
-| `ExtraInstrumentation_Multiple_Values` | SQL,AWS enables both |
-| `ExtraInstrumentation_Case_Insensitive` | sql,aws works |
-| `ExtraInstrumentation_Empty_Disables_All` | Empty string disables all |
-| `DebugLevel_Enables_All_Extra_Instrumentation` | Debug mode enables all |
-
 ### Endpoint Resolution
 
 | Test | Description |
@@ -168,30 +158,20 @@ Validate defaults and env var resolution.
 |-------|-----------|
 | `Double_AddOtelHelper_Does_Not_Duplicate_Registration` | Second call is no-op |
 
-### PostConfigure
+### Environment resolution (`TelemetryResolver`)
 
 | Test | Description |
 |-------|-----------|
-| `PostConfigure_Resolves_Environment_From_EnvVar` | ENVIRONMENT=PRD → DeploymentEnvironment.PRD |
+| `PostConfigure_Resolves_Environment_From_EnvVar` | ENVIRONMENT=PRD → resolved `PRD` (`DeploymentEnvironments.PRD`) |
 | `PostConfigure_Resolves_DisabledSignals_From_EnvVar` | OTEL_HELPER_DISABLED_SIGNALS resolves the list |
 | `PostConfigure_Resolves_DisabledMetrics_From_EnvVar` | OTEL_HELPER_DISABLED_METRICS resolves wildcard patterns |
 | `PostConfigure_DisabledMetrics_Stays_Empty_When_EnvVar_Not_Set` | Stays empty when unset |
-
-### Validator
-
-| Test | Description |
-|-------|-----------|
-| `Validator_Fails_On_Empty_ServiceName` | Empty ServiceName fails |
-| `Validator_Succeeds_On_Empty_Endpoint_Prometheus_Mode` | Empty endpoint is valid (Prometheus fallback mode) |
-| `Validator_Fails_On_Invalid_URI` | Invalid URI fails |
-| `Validator_Fails_On_Zero_Timeout` | ExportTimeoutMs ≤ 0 fails |
 
 ### IsSignalEnabled
 
 | Test | Description |
 |-------|-----------|
 | `IsSignalEnabled_Returns_True_When_DisabledSignals_Empty` | All signals enabled when DisabledSignals is empty |
-| `IsSignalEnabled_Returns_False_When_Signal_In_DisabledSignals` | Signal in DisabledSignals → disabled |
 | `IsSignalEnabled_Is_Case_Insensitive` | Case-insensitive matching |
 
 ### Disabled Signals — Full Pipeline
@@ -203,20 +183,6 @@ Validate defaults and env var resolution.
 | `Pipeline_Registers_When_Traces_Disabled` | Traces disabled, pipeline still registers |
 | `Pipeline_Registers_When_Logs_Disabled` | Logs disabled, pipeline still registers |
 | `Pipeline_Registers_When_All_Signals_Disabled` | All three disabled at once |
-
-### HasInstrumentation("REDIS")
-
-| Test | Description |
-|-------|-----------|
-| `HasInstrumentation_Redis_Works_Like_SQL_AWS` | REDIS enables like SQL/AWS |
-| `HasInstrumentation_Redis_Case_Insensitive` | "redis" (lowercase) works |
-
-### Opt-in Extra Instrumentation — Full Pipeline
-
-| Test | Description |
-|-------|-----------|
-| `Pipeline_Registers_With_AWS_Instrumentation` | ExtraInstrumentation=SQL,AWS registers cleanly |
-| `Pipeline_Registers_With_Redis_Instrumentation` | ExtraInstrumentation=SQL,REDIS registers cleanly |
 
 ## TracingAndOptionsHelperTests
 
@@ -244,30 +210,11 @@ Tracing helpers (`StartRootActivity`, `DebugTraceStateProcessor`) and `Telemetry
 | `IsSignalEnabled_Returns_False_When_Signal_Disabled` | Disabled signal reports false |
 | `IsSignalEnabled_Is_Case_Insensitive` | Case-insensitive matching |
 
-### HasInstrumentation
-
-| Test | Description |
-|-------|-----------|
-| `HasInstrumentation_Default_Has_SQL` | SQL enabled, AWS/REDIS disabled by default |
-| `HasInstrumentation_Multiple_Values` | SQL,AWS,REDIS all enable |
-| `HasInstrumentation_Case_Insensitive` | Mixed case works |
-| `HasInstrumentation_Empty_Disables_All` | Empty string disables all |
-| `DebugLevel_Enables_All_Instrumentation` | Debug mode bypasses the list check entirely |
-
 ### GetDefaultLogLevel
 
 | Test | Description |
 |-------|-----------|
 | `GetDefaultLogLevel_Returns_Correct_Values` | LOCAL=Debug, DEV/HML=Info, PRD=Warning, debug override |
-
-### Validator
-
-| Test | Description |
-|-------|-----------|
-| `Validator_Fails_On_Empty_ServiceName` | Empty ServiceName fails |
-| `Validator_Succeeds_On_Empty_Endpoint_Prometheus_Mode` | Empty endpoint is valid |
-| `Validator_Fails_On_Invalid_URI` | Invalid URI fails |
-| `Validator_Fails_On_Zero_Timeout` | ExportTimeoutMs ≤ 0 fails |
 
 ## SignalIntegrationTests
 
@@ -279,8 +226,6 @@ Integration tests verifying signals are actually collected or dropped via in-mem
 | `ActivitySource_Name_Matches_ServiceName` | DI-resolved ActivitySource name equals ServiceName |
 | `Custom_Metrics_Via_DI_Meter_Are_Collected` | A counter created via the DI Meter is exported |
 | `Traces_Via_DI_ActivitySource_Are_Collected` | A span created via the DI ActivitySource is exported with its tags |
-| `ValidateOnStart_Throws_With_Empty_ServiceName` | Invalid ServiceName fails fast inside `AddOtelHelper()` (P9) |
-| `ValidateOnStart_Throws_With_Invalid_Endpoint` | Invalid endpoint URI fails fast inside `AddOtelHelper()` (P9) |
 | `LogLevel_Above_Minimum_Are_Enabled` × 3 | LOCAL/DEV/PRD minimum log level enabled, level below disabled |
 | `Full_Pipeline_Registers_All_Signals` | Logging, Options, ActivitySource, Meter all resolve from the built provider |
 | `DebugLevel_Forces_Debug_LogLevel` | Debug mode forces Debug level even in PRD |
@@ -300,7 +245,7 @@ Opt-in subpackage extensions (AWS, SQL, Redis) — each verifies the fluent `ISe
 
 ## TlsEndpointResolutionTests
 
-`TelemetryOptionsPostConfigure`'s TLS scheme resolution — secure by default, `OTEL_EXPORTER_OTLP_INSECURE` override, explicit scheme always wins. Uses `[Collection("EnvVarTests")]`.
+`TelemetryResolver`'s TLS scheme resolution — secure by default, `OTEL_EXPORTER_OTLP_INSECURE` override, explicit scheme always wins. Uses `[Collection("EnvVarTests")]`.
 
 | Test | Description |
 |-------|-----------|
@@ -312,7 +257,7 @@ Opt-in subpackage extensions (AWS, SQL, Redis) — each verifies the fluent `ISe
 | `Schemeless_HostOnly_Defaults_Port_4317_And_Https` | Host-only (no port) → `https://host:4317` |
 | `HttpsScheme_Preserves_Custom_Port` | `https://gw:4318` keeps the custom port |
 | `Schemeless_With_Custom_Port_And_Insecure` | `gw:4318` + INSECURE=true → `http://gw:4318` |
-| `ConsumerSet_Endpoint_Not_Overridden` | Endpoint set in code is not overwritten by PostConfigure |
+| `ConsumerSet_Endpoint_Not_Overridden` | Endpoint set in code is not overwritten by the environment |
 | `Insecure_EnvVar_Ignored_When_Scheme_Explicit_Https` | Explicit `https://` scheme wins over INSECURE=true |
 | `HttpsScheme_DefaultPort_Gets_4317` | `https://gw` (no port) normalizes to :4317 |
 | `ResolveEndpoint_Unit_Schemeless_Host_Port` | `ResolveEndpoint` static helper: schemeless host:port |
@@ -355,9 +300,6 @@ Opt-in subpackage extensions (AWS, SQL, Redis) — each verifies the fluent `ISe
 | `None_DisablesMetrics` | `none` → empty resolved list |
 | `CaseAndWhitespace_Tolerated` | " OTLP , Prometheus " parses correctly |
 | `ExplicitOption_BeatsEnv` | `MetricExporters` property wins over the env var |
-| `UnknownValue_FailsValidation` | Unknown value → validation error listing valid values |
-| `OtlpWithoutEndpoint_FailsValidation` | `otlp` without an endpoint → validation error |
-| `NoneCombined_FailsValidation` | `none,prometheus` → validation error |
 
 ### Export interval
 
@@ -432,13 +374,29 @@ OTLP wire protocol selection (grpc vs http/protobuf) — tracing and metrics. Cr
 
 | Test | Description |
 |-------|-----------|
-| `UnknownValue_FailsValidation` | Unknown protocol value → validation error |
-| `HttpJson_RejectedEvenThoughSpecValid` | `http/json` is a valid OTel spec value but unsupported here → fails validation |
 | `GrpcAndHttpProtobuf_PassValidation` × 2 | `grpc` and `http/protobuf` both pass validation |
 
 ### Live integration — HTTP protocol delivers to /v1/{signal}
 
 | Test | Description |
 |-------|-----------|
-| `Tracing_Http_DeliversToV1Traces` | `ConfigureTracing` with http/protobuf sends the request to `/v1/traces` on a real `HttpListener` |
-| `Metrics_Http_DeliversToV1Metrics` | `ConfigureMetrics` with http/protobuf sends the request to `/v1/metrics` on a real `HttpListener` |
+| `Tracing_Http_DeliversToV1Traces` | `AddOtelHelper` with http/protobuf sends the request to `/v1/traces` on a real `HttpListener` |
+| `Metrics_Http_DeliversToV1Metrics` | `AddOtelHelper` with http/protobuf sends the request to `/v1/metrics` on a real `HttpListener` |
+
+## Resolver core (task C5)
+
+`DiagnosticsTests`, `ResolverCoreTests`, `ResolverCoreFixRoundTests` (helpers in
+`TestDiagnostics.cs`: a sink of its own per test, never `Console.SetError`;
+`TestEventSources.cs`). They cover the diagnostics sink (record format,
+escaping of control, separator and bidi characters, 64-code-point cut, once
+per sink, URL rendering, free-text redaction), the SDK `EventSource`
+forwarding (one listener per process, the latest sink, masked code and env
+secrets, response bodies dropped by payload position, noise rules), the
+`IConfiguration` neutralization of the exporter options (DN2), bound options
+as code (DN4), keyed `ActivitySource`/`Meter` (DN5), env-warns / code-fails
+validation naming the option, `OTEL_SDK_DISABLED` from `IConfiguration`, the
+config-file warnings, the metric temporality, header parsing (malformed and
+control-character items skipped, warned by name), TLS files and a custom root
+with an intermediate, client disposal, the SDK `User-Agent`, the drop-all view
+when no metric exporter is active, and an invalid code value reported once
+when a provider is built before start.

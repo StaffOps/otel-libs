@@ -13,13 +13,13 @@
 // the parent.
 //
 // `adapter_error` is a fixture/adapter bug (unknown kind, scenario or code key
-// with no 0.2 API); the case fails whatever its status.
+// without an option); the case fails whatever its status.
 
 using System.Diagnostics.CodeAnalysis;
-using System.Diagnostics.Tracing;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using StaffOps.OtelHelper.Diagnostics;
 
 [assembly: ExcludeFromCodeCoverage]
 
@@ -41,7 +41,6 @@ internal static class Program
         // Keep the real stdout for the snapshot; Console output becomes `console` via stderr.
         var realStdout = Console.OpenStandardOutput();
         Console.SetOut(new StderrWriter());
-        using var sdkEvents = new SdkEventListener();
 
         JsonObject snapshot;
         try
@@ -62,12 +61,10 @@ internal static class Program
             snapshot = new JsonObject { ["driver_crash"] = ex.ToString() };
         }
 
-        // The 0.2 helper has no diagnostics channel (task C5): nothing of its own to report.
-        // SDK EventSource events go to `sdk_events`, which no matcher reads, until C5
-        // forwards them through the helper's sink.
-        snapshot["diagnostics"] = "";
-        snapshot["helper_log"] = "";
-        snapshot["sdk_events"] = sdkEvents.Joined();
+        // The helper's sink (design D-NET5): `diagnostics` = WARN and above of both origins
+        // (the helper and the SDK events it forwards), `helper_log` = every helper record.
+        snapshot["diagnostics"] = DriverDiagnostics.Diagnostics();
+        snapshot["helper_log"] = DriverDiagnostics.HelperLog();
 
         var bytes = Encoding.UTF8.GetBytes(snapshot.ToJsonString());
         realStdout.Write(bytes, 0, bytes.Length);
@@ -93,51 +90,34 @@ internal sealed class StderrWriter : TextWriter
 }
 
 /// <summary>
-/// Captures OpenTelemetry SDK events at Warning and above into `sdk_events` (not
-/// matched). They are not printed: the process does not print them either, so
-/// `console` and `log` hold only what the process really writes. Task C5 forwards
-/// them through the helper's diagnostics sink.
+/// The helper diagnostics sink the driver registers before AddOtelHelper: it writes
+/// each record to stderr as an application's sink would (so `console` sees it) and
+/// keeps a copy for `diagnostics` and `helper_log`.
 /// </summary>
-internal sealed class SdkEventListener : EventListener
+internal static class DriverDiagnostics
 {
-    private readonly List<string> _lines = new();
-    private static readonly object Gate = new();
+    private static readonly List<DiagnosticRecord> Records = new();
 
-    protected override void OnEventSourceCreated(EventSource eventSource)
+    public static OtelHelperDiagnostics Sink { get; } = new(() => Console.Error)
     {
-        if (eventSource.Name.StartsWith("OpenTelemetry", StringComparison.Ordinal))
+        Observer = record =>
         {
-            EnableEvents(eventSource, EventLevel.Warning);
-        }
-    }
+            lock (Records)
+            {
+                Records.Add(record);
+            }
+        },
+    };
 
-    protected override void OnEventWritten(EventWrittenEventArgs eventData)
+    public static string Diagnostics() => Join(r => r.Level != DiagnosticLevel.Info);
+
+    public static string HelperLog() => Join(r => r.Origin == DiagnosticOrigin.Helper);
+
+    private static string Join(Func<DiagnosticRecord, bool> keep)
     {
-        var payload = eventData.Payload?.ToArray() ?? Array.Empty<object?>();
-        string line;
-        try
+        lock (Records)
         {
-            line = eventData.Message is null
-                ? string.Join(" ", payload)
-                : string.Format(eventData.Message, payload);
-        }
-        catch (FormatException)
-        {
-            line = $"{eventData.Message} {string.Join(" ", payload)}";
-        }
-
-        line = line.ReplaceLineEndings(" ");
-        lock (Gate)
-        {
-            _lines.Add(line);
-        }
-    }
-
-    public string Joined()
-    {
-        lock (Gate)
-        {
-            return string.Join("\n", _lines);
+            return string.Join("\n", Records.Where(keep).Select(r => r.Line));
         }
     }
 }

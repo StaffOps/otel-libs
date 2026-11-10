@@ -277,33 +277,49 @@ docker compose -f testing/docker-compose.yml run --rm -e PARITY_ONLY=export.grpc
   `IConfiguration` (which OTel .NET reads): every key matching
   `^(DOTNET_|ASPNETCORE_)?(OTEL_|SERVICE_NAME$|ENVIRONMENT$)` (any case) and
   `Logging__*` is removed before the case env is applied.
-- **`helper_log`, `diagnostics`, `console`.** The 0.2 helper has no
-  diagnostics channel (task C5 adds it), so `helper_log` and `diagnostics` are
-  empty. The OpenTelemetry SDK `EventSource` events at Warning and above (an
-  `EventListener` in the driver) go to `sdk_events`, which no matcher reads,
-  and are not printed: `console` and `log` hold only what the process really
-  writes. C5 forwards them through the helper's sink.
+- **`helper_log`, `diagnostics`, `console`.** Since task C5 (2026-11-10) the
+  driver registers the helper's diagnostics sink (design D-NET5) before
+  `AddOtelHelper` — an internal type, reached through `InternalsVisibleTo`;
+  applications cannot replace it — writing every record to stderr (so
+  `console` sees it) and keeping it for the snapshot. `diagnostics` holds
+  the WARN and ERROR records of both origins — the helper's own and the
+  OpenTelemetry SDK `EventSource` events the helper forwards (origin `sdk`,
+  redacted; `ForwardSdkDiagnostics`) — and `helper_log` every record of
+  origin `helper`, INFO included. The C4 field `sdk_events` and the driver's own
+  `EventListener` are gone: forwarded SDK events are real output now and reach
+  `diagnostics`, `console` and `log` like any record. The helper does not
+  forward the Prometheus listener's cancel once the host is stopping, the
+  SDK's view-drop notices, nor the SDK's parse warnings for
+  `OTEL_EXPORTER_OTLP_ENDPOINT`, `_PROTOCOL` and `_COMPRESSION` (it resolves
+  and warns about those itself). A case whose warning only the SDK writes
+  (`sampler.*`, `OTEL_SDK_DISABLED`, `OTEL_EXPORTER_PROMETHEUS_PORT` until
+  C9, C10, C12) also asserts `helper_log`, so an SDK line cannot pass it
+  (C5 fix round, 2026-11-10). .NET escapes more characters in a record than Node: C0, C1, DEL,
+  U+2028/U+2029 and also the bidirectional format characters (U+061C,
+  U+200E, U+200F, U+202A–U+202E, U+2066–U+2069). The code-error regexes
+  accept the .NET option names qualified (`TelemetryOptions\.SampleRatio`,
+  `TelemetryOptions\.OtelCollectorEndpoint`, …).
 - **Adapter seams.** Setup is `AddOtelHelper(…)` on
   `Host.CreateApplicationBuilder()` (Kestrel `WebApplication` for
   `http_server` and `grpc_server`).
   - Logging: `builder.Logging.ClearProviders()` runs before `AddOtelHelper`,
     so only what the helper installs logs (no host console provider; C13).
-  - Scope `parity`: traces through `AdditionalActivitySources`; metrics through
-    `ConfigureOpenTelemetryMeterProvider(b => b.AddMeter("parity"))`, because
-    0.2 has no meter option. When C11 adds `AdditionalMeters`, the driver uses
-    `options.AdditionalMeters.Add("parity")` instead.
+  - Scope `parity`: traces through `AdditionalActivitySources`, metrics through
+    `AdditionalMeters` (added by task C5; C4 used
+    `ConfigureOpenTelemetryMeterProvider(b => b.AddMeter("parity"))`).
   - An in-memory span processor captures spans; `resource` is
     `TracerProvider.GetResource()`.
-  - `metric_exporters`, the interval and the port come from the resolved
-    `IOptions<TelemetryOptions>` (the SDK has no public getter for a reader's
-    interval); `log_level` is the installed `LoggerFilterOptions.MinLevel`;
-    `metric_exporters` is `[]` when metrics are disabled or `OTEL_SDK_DISABLED`
-    is true in `IConfiguration` (read as the SDK does; the providers expose no
-    public flag).
-  - `prometheus_metrics_host` and `http_opt_in_metrics` are omitted: 0.2 has
-    neither setting (it binds the IPv4-only `+` prefix, whatever the
+  - `metric_exporters`, the interval and the port come from the helper's
+    internal resolved state (`ResolvedTelemetry`, through `InternalsVisibleTo`;
+    since C5 `IOptions<TelemetryOptions>` holds code values only, and the SDK
+    has no public getter for a reader's interval); `log_level` is the installed
+    `LoggerFilterOptions.MinLevel`; `metric_exporters` is `[]` when metrics are
+    disabled or `OTEL_SDK_DISABLED` is true, which the helper reads from
+    `IConfiguration` as the SDK does (the providers expose no public flag).
+  - `prometheus_metrics_host` and `http_opt_in_metrics` are omitted: the helper
+    has neither setting yet (it binds the IPv4-only `+` prefix, whatever the
     environment says; tasks C12 and C11).
-  - The 0.2 helper has no mounted `/metrics` handler, so `scrape` comes from the
+  - The helper has no mounted `/metrics` handler (D-NET11), so `scrape` comes from the
     helper's own listener: the driver sets `OTEL_HELPER_METRICS_PORT` to a free
     port only when the case sets no port (env or code) and scrapes the resolved
     port (a resolved `0` is an adapter error); `scrape_status` is `0` when
@@ -312,10 +328,15 @@ docker compose -f testing/docker-compose.yml run --rm -e PARITY_ONLY=export.grpc
     `OTEL_DOTNET_EXPERIMENTAL_ASPNETCORE_ENABLE_GRPC_INSTRUMENTATION=true`
     (O7 (b)) and serves raw-byte methods (no protoc). Requests to the test
     servers go over plain sockets: the helper instruments `HttpClient`.
-- **`code` keys.** Mapped to `TelemetryOptions`; a key without a 0.2 member
-  (`traces_endpoint`, `insecure`, `compression`, `sample_ratio`,
-  `health_paths`) is an adapter error, so those cases are `skip:C5-no-api`.
+- **`code` keys.** Mapped to `TelemetryOptions` members (`CodeMapper`); since
+  task C5 every fixture key has one (`traces_endpoint` → `TracesEndpoint`,
+  `insecure`, `compression`, `sample_ratio`, `health_paths`,
+  `export_interval_ms` as `long`, `environment` as the string), so no case is
+  `skip:C5-no-api` any more; a key without a member is an adapter error.
   `http_opt_in_metrics` is accepted without effect (no member until C11).
+  .NET errors name the option in its C# spelling (`TelemetryOptions.SampleRatio`),
+  which some fixture regexes (`sample_ratio|sampleRatio`, `otel_endpoint|otelEndpoint`,
+  the substring `insecure`) do not match yet: those cases stay `xfail:C<n>`.
 - **`fork`.** Never spawned (`skip:no-prefork-model`).
 
 ### Rules the fixture cannot express (A30, 2026-11-08)

@@ -496,7 +496,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C7a",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -563,7 +563,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C9",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -634,7 +634,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C9",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -909,7 +909,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C8",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -1133,6 +1133,9 @@
       "code": {},
       "expect": {
         "warning": "OTEL_SDK_DISABLED",
+        "helper_log": {
+          "regex": "OTEL_SDK_DISABLED"
+        },
         "resource": {
           "service.name": "parity-svc"
         }
@@ -1729,7 +1732,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "skip:C5-no-api",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -1954,7 +1957,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C7b",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -3059,7 +3062,10 @@
         "scenario": "root"
       },
       "expect": {
-        "warning": "OTEL_TRACES_SAMPLER"
+        "warning": "OTEL_TRACES_SAMPLER",
+        "helper_log": {
+          "regex": "OTEL_TRACES_SAMPLER"
+        }
       },
       "status": {
         "go": "pass",
@@ -3111,7 +3117,10 @@
       },
       "expect": {
         "sampled": true,
-        "warning": "OTEL_TRACES_SAMPLER"
+        "warning": "OTEL_TRACES_SAMPLER",
+        "helper_log": {
+          "regex": "OTEL_TRACES_SAMPLER"
+        }
       },
       "status": {
         "go": "pass",
@@ -3802,7 +3811,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "skip:C5-no-api",
+        "dotnet": "xfail:C11",
         "nodejs": "pass"
       }
     },
@@ -4578,7 +4587,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C12",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -5083,7 +5092,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C8",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -5824,16 +5833,16 @@
       },
       "expect": {
         "error": {
-          "regex": "(sample_ratio|sampleRatio).*1\\.5"
+          "regex": "(sample_ratio|sampleRatio|TelemetryOptions\\.SampleRatio).*1\\.5"
         }
       },
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "skip:C5-no-api",
+        "dotnet": "pass",
         "nodejs": "pass"
       },
-      "note": "R8: the error names the option in each language's spelling (Go/Python sample_ratio, Node sampleRatio) and the value (A20 fix round, 2026-10-30)."
+      "note": "R8: the error names the option in each language's spelling (Go/Python sample_ratio, Node sampleRatio) and the value (A20 fix round, 2026-10-30). .NET: TelemetryOptions.SampleRatio (C5 fix round, 2026-11-10)."
     },
     {
       "id": "propagation.env_mixed_case",
@@ -6038,12 +6047,14 @@
         "insecure": true
       },
       "expect": {
-        "error": "insecure"
+        "error": {
+          "regex": "insecure|TelemetryOptions\\.Insecure"
+        }
       },
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "skip:C5-no-api",
+        "dotnet": "xfail:C7a",
         "nodejs": "pass"
       }
     },
@@ -6204,7 +6215,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C8",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -6355,7 +6366,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C7a",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -6390,7 +6401,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C7a",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -6532,7 +6543,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "skip:C5-no-api",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -6561,7 +6572,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C7a",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -6607,13 +6618,13 @@
       },
       "expect": {
         "error": {
-          "regex": "(otel_endpoint|otelEndpoint|WithEndpoint)"
+          "regex": "(otel_endpoint|otelEndpoint|WithEndpoint|TelemetryOptions\\.OtelCollectorEndpoint)"
         }
       },
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C7a",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -6645,7 +6656,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C7a",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -6696,7 +6707,7 @@
         "error": {
           "all": [
             {
-              "regex": "(otel_endpoint|otelEndpoint|WithEndpoint)"
+              "regex": "(otel_endpoint|otelEndpoint|WithEndpoint|TelemetryOptions\\.OtelCollectorEndpoint)"
             },
             {
               "regex": "<unparseable URL>"
@@ -6710,7 +6721,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C7a",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -6765,7 +6776,7 @@
         "error": {
           "all": [
             {
-              "regex": "(otel_endpoint|otelEndpoint|WithEndpoint)"
+              "regex": "(otel_endpoint|otelEndpoint|WithEndpoint|TelemetryOptions\\.OtelCollectorEndpoint)"
             },
             {
               "not_contains": "parity-secret"
@@ -6776,7 +6787,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C7a",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -6828,7 +6839,7 @@
         "error": {
           "all": [
             {
-              "regex": "(otel_endpoint|otelEndpoint|WithEndpoint)"
+              "regex": "(otel_endpoint|otelEndpoint|WithEndpoint|TelemetryOptions\\.OtelCollectorEndpoint)"
             }
           ]
         }
@@ -6836,7 +6847,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C7a",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -6888,7 +6899,7 @@
         "error": {
           "all": [
             {
-              "regex": "(otel_endpoint|otelEndpoint|WithEndpoint)"
+              "regex": "(otel_endpoint|otelEndpoint|WithEndpoint|TelemetryOptions\\.OtelCollectorEndpoint)"
             }
           ]
         }
@@ -6896,7 +6907,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C7a",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -6989,7 +7000,7 @@
         "error": {
           "all": [
             {
-              "regex": "(otel_endpoint|otelEndpoint|WithEndpoint)"
+              "regex": "(otel_endpoint|otelEndpoint|WithEndpoint|TelemetryOptions\\.OtelCollectorEndpoint)"
             }
           ]
         }
@@ -6997,7 +7008,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C7a",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -7049,7 +7060,7 @@
         "error": {
           "all": [
             {
-              "regex": "(otel_endpoint|otelEndpoint|WithEndpoint)"
+              "regex": "(otel_endpoint|otelEndpoint|WithEndpoint|TelemetryOptions\\.OtelCollectorEndpoint)"
             }
           ]
         }
@@ -7057,7 +7068,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C7a",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -7109,7 +7120,7 @@
         "error": {
           "all": [
             {
-              "regex": "(otel_endpoint|otelEndpoint|WithEndpoint)"
+              "regex": "(otel_endpoint|otelEndpoint|WithEndpoint|TelemetryOptions\\.OtelCollectorEndpoint)"
             }
           ]
         }
@@ -7277,7 +7288,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "skip:C5-no-api",
+        "dotnet": "xfail:C7a",
         "nodejs": "pass"
       }
     },
@@ -7409,7 +7420,7 @@
       },
       "expect": {
         "error": {
-          "regex": "(otel_endpoint|otelEndpoint|WithEndpoint)"
+          "regex": "(otel_endpoint|otelEndpoint|WithEndpoint|TelemetryOptions\\.OtelCollectorEndpoint)"
         }
       },
       "status": {
@@ -7497,7 +7508,7 @@
       },
       "expect": {
         "error": {
-          "regex": "(otel_endpoint|otelEndpoint|WithEndpoint)"
+          "regex": "(otel_endpoint|otelEndpoint|WithEndpoint|TelemetryOptions\\.OtelCollectorEndpoint)"
         }
       },
       "status": {
@@ -7643,13 +7654,13 @@
       },
       "expect": {
         "error": {
-          "regex": "(traces_endpoint|tracesEndpoint|WithTracesEndpoint)"
+          "regex": "(traces_endpoint|tracesEndpoint|WithTracesEndpoint|TelemetryOptions\\.TracesEndpoint)"
         }
       },
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "skip:C5-no-api",
+        "dotnet": "xfail:C7a",
         "nodejs": "pass"
       }
     },
@@ -8047,7 +8058,7 @@
       "status": {
         "go": "skip:go-sdk-logs-env-values",
         "python": "pass",
-        "dotnet": "xfail:C8",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -8116,7 +8127,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "skip:C5-no-api",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -8155,7 +8166,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "skip:C5-no-api",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -8456,7 +8467,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C8",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -8603,7 +8614,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "skip:C5-no-api",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -8628,7 +8639,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "skip:C5-no-api",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -8653,7 +8664,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "skip:C5-no-api",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -8698,7 +8709,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C8",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -9005,7 +9016,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C8",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -9424,7 +9435,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "skip:C5-no-api",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -9453,7 +9464,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C5",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -9502,7 +9513,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C9",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -9560,7 +9571,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C5",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -9617,7 +9628,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C9",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -9681,7 +9692,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C8",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -9719,7 +9730,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C8",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -9850,7 +9861,7 @@
           "not_contains": "parity-code-path"
         },
         "log": {
-          "regex": "endpoint path is ignored by the gRPC exporter[^\\n]*(WithEndpoint|otel_endpoint|otelEndpoint)|(WithEndpoint|otel_endpoint|otelEndpoint)[^\\n]*endpoint path is ignored by the gRPC exporter"
+          "regex": "endpoint path is ignored by the gRPC exporter[^\\n]*(WithEndpoint|otel_endpoint|otelEndpoint|TelemetryOptions\\.OtelCollectorEndpoint)|(WithEndpoint|otel_endpoint|otelEndpoint|TelemetryOptions\\.OtelCollectorEndpoint)[^\\n]*endpoint path is ignored by the gRPC exporter"
         }
       },
       "status": {
@@ -9935,7 +9946,10 @@
       "code": {},
       "expect": {
         "prometheus_metrics_port": 9100,
-        "warning": "OTEL_EXPORTER_PROMETHEUS_PORT"
+        "warning": "OTEL_EXPORTER_PROMETHEUS_PORT",
+        "helper_log": {
+          "regex": "OTEL_EXPORTER_PROMETHEUS_PORT"
+        }
       },
       "status": {
         "go": "pass",
@@ -10208,7 +10222,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C8",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -10246,7 +10260,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C8",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -10287,7 +10301,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C8",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -10417,7 +10431,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C12",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },

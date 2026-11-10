@@ -50,8 +50,8 @@ services.AddOtelHelper(opts =>
 ```
 
 After registration, available via DI:
-- `ActivitySource` — for creating manual spans (name = ServiceName)
-- `Meter` — for creating custom metrics (name = ServiceName)
+- `ActivitySource` — for creating manual spans (name = ServiceName; keyed service, inject with `[FromKeyedServices(OtelHelperKeys.Instrumentation)]`)
+- `Meter` — for creating custom metrics (name = ServiceName; keyed, same key)
 
 ### 2. Create spans in APIs (child of request)
 

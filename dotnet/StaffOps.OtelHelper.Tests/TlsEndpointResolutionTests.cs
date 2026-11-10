@@ -4,7 +4,7 @@ using Xunit;
 namespace StaffOps.OtelHelper.Tests;
 
 /// <summary>
-/// Tests for TLS endpoint resolution in TelemetryOptionsPostConfigure.
+/// Tests for TLS endpoint resolution in TelemetryResolver.
 /// Validates that the OTLP endpoint URI scheme is correctly resolved for TLS support:
 /// - Explicit https:// scheme is preserved (TLS enabled).
 /// - Explicit http:// scheme is preserved (plaintext).
@@ -29,12 +29,8 @@ public class TlsEndpointResolutionTests : IDisposable
         Environment.SetEnvironmentVariable(TelemetryOptions.InsecureEnvVar, _savedInsecure);
     }
 
-    private static TelemetryOptions PostConfigure()
-    {
-        var opts = new TelemetryOptions();
-        new TelemetryOptionsPostConfigure().PostConfigure(null, opts);
-        return opts;
-    }
+    private static ResolvedTelemetry PostConfigure(Action<TelemetryOptions>? configure = null)
+        => TestDiagnostics.ResolveQuiet(configure);
 
     [Fact]
     public void HttpsScheme_Preserved_When_Explicit()
@@ -131,8 +127,7 @@ public class TlsEndpointResolutionTests : IDisposable
         Environment.SetEnvironmentVariable(TelemetryOptions.CollectorEndpointEnvVar, "https://env-gateway:4317");
         Environment.SetEnvironmentVariable(TelemetryOptions.InsecureEnvVar, null);
 
-        var opts = new TelemetryOptions { OtelCollectorEndpoint = "https://my-custom-gw:4317" };
-        new TelemetryOptionsPostConfigure().PostConfigure(null, opts);
+        var opts = PostConfigure(o => o.OtelCollectorEndpoint = "https://my-custom-gw:4317");
 
         Assert.Equal("https://my-custom-gw:4317", opts.OtelCollectorEndpoint);
     }
@@ -169,7 +164,7 @@ public class TlsEndpointResolutionTests : IDisposable
         // but INSECURE env var is read inside).
         Environment.SetEnvironmentVariable(TelemetryOptions.InsecureEnvVar, null);
 
-        var result = TelemetryOptionsPostConfigure.ResolveEndpoint("collector:4317");
+        var result = TelemetryResolver.ResolveEndpoint("collector:4317");
         Assert.Equal("https://collector:4317", result);
     }
 
@@ -178,7 +173,7 @@ public class TlsEndpointResolutionTests : IDisposable
     {
         Environment.SetEnvironmentVariable(TelemetryOptions.InsecureEnvVar, null);
 
-        var result = TelemetryOptionsPostConfigure.ResolveEndpoint("collector");
+        var result = TelemetryResolver.ResolveEndpoint("collector");
         Assert.Equal("https://collector:4317", result);
     }
 
@@ -187,7 +182,40 @@ public class TlsEndpointResolutionTests : IDisposable
     {
         Environment.SetEnvironmentVariable(TelemetryOptions.InsecureEnvVar, null);
 
-        var result = TelemetryOptionsPostConfigure.ResolveEndpoint("http://collector:4317");
+        var result = TelemetryResolver.ResolveEndpoint("http://collector:4317");
         Assert.Equal("http://collector:4317", result);
+    }
+
+    // --- N10 and the code Insecure option ---
+
+    [Theory]
+    [InlineData(null, "https://gw:4317")]
+    [InlineData(true, "http://gw:4317")]
+    [InlineData(false, "https://gw:4317")]
+    public void Schemeless_Code_Endpoint_Is_Resolved_Not_A_Scheme(bool? insecure, string expected)
+    {
+        Environment.SetEnvironmentVariable(TelemetryOptions.InsecureEnvVar, "true");
+        var opts = PostConfigure(o =>
+        {
+            o.OtelCollectorEndpoint = "gw:4317";
+            o.Insecure = insecure ?? (bool?)null;
+        });
+        // Code Insecure beats the environment; unset, the environment (true) applies.
+        Assert.Equal(insecure is null ? "http://gw:4317" : expected, opts.OtelCollectorEndpoint);
+    }
+
+    [Fact]
+    public void Http_Code_Endpoint_Is_Used_As_Written()
+    {
+        var opts = PostConfigure(o => o.OtelCollectorEndpoint = "https://gw.example.com/otlp");
+        Assert.Equal("https://gw.example.com/otlp", opts.OtelCollectorEndpoint);
+    }
+
+    [Fact]
+    public void Code_Insecure_Applies_To_Schemeless_Env_Endpoint()
+    {
+        Environment.SetEnvironmentVariable(TelemetryOptions.CollectorEndpointEnvVar, "gw:4317");
+        Environment.SetEnvironmentVariable(TelemetryOptions.InsecureEnvVar, null);
+        Assert.Equal("http://gw:4317", PostConfigure(o => o.Insecure = true).OtelCollectorEndpoint);
     }
 }

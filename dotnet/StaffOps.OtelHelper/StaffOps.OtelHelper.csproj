@@ -13,6 +13,7 @@
 
   <ItemGroup>
     <InternalsVisibleTo Include="StaffOps.OtelHelper.Tests" />
+    <InternalsVisibleTo Include="StaffOps.OtelHelper.ParityDriver" />
   </ItemGroup>
 
   <ItemGroup>

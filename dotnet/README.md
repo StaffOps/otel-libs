@@ -40,8 +40,8 @@ services.AddOtelHelper(opts =>
 ```
 
 After registration, available via DI:
-- `ActivitySource` — for creating manual spans
-- `Meter` — for creating custom metrics
+- `ActivitySource` — for creating manual spans (keyed: `[FromKeyedServices(OtelHelperKeys.Instrumentation)]`)
+- `Meter` — for creating custom metrics (keyed: `[FromKeyedServices(OtelHelperKeys.Instrumentation)]`)
 - `ActivitySourceExtensions.StartRootActivity()` — for independent traces in workers
 
 ---
@@ -69,7 +69,7 @@ After registration, available via DI:
 
 | Variable | Description | Default |
 |---|---|---|
-| `OTEL_HELPER_EXTRA_INSTRUMENTATION` | **No effect.** Read into `TelemetryOptions.ExtraInstrumentation` but nothing in core uses it since SQL/AWS moved to opt-in subpackages. Use the subpackages below. | `SQL` |
+| `OTEL_HELPER_EXTRA_INSTRUMENTATION` | **No effect.** Nothing in core uses it since SQL/AWS moved to opt-in subpackages (the code option `TelemetryOptions.ExtraInstrumentation` is `[Obsolete]`). Use the subpackages below. | `SQL` |
 | `OTEL_HELPER_SAMPLE_RATIO` | Head sampling ratio, clamped to 0.0–1.0. Below 1.0 → a bare `TraceIdRatioBasedSampler` (not parent-based). Ignored when `OTEL_TRACES_SAMPLER` is set. | `1.0` |
 
 > Debug mode (`OTEL_HELPER_DEBUG_LEVEL=true`) does **not** enable extra instrumentations; it sets the Debug log level and marks entry spans — spans with no in-process parent, which includes spans that continue a remote trace — with a `debug=true` attribute, and prepends `debug=true` to the tracestate they propagate (see HOW-TO §13). Combine the Collector's `debug=true` policy with an environment allow-list and a rate limit (design D11).
@@ -208,21 +208,28 @@ Exemplars enabled (`ExemplarFilterType.TraceBased`) — metric → trace correla
 
 | Property | Type | Env Var | Default |
 |---|---|---|---|
-| `ServiceName` | string | `SERVICE_NAME` / `OTEL_SERVICE_NAME` | `my-service` |
-| `Environment` | DeploymentEnvironment | `ENVIRONMENT` | `LOCAL` |
-| `OtelCollectorEndpoint` | string | `OTEL_EXPORTER_OTLP_ENDPOINT` | `""` (no OTLP export) |
-| `DebugLevel` | bool | `OTEL_HELPER_DEBUG_LEVEL` | `false` |
-| `ExportTimeoutMs` | int | — | `10000` (10s) |
-| `ExtraInstrumentation` | string | `OTEL_HELPER_EXTRA_INSTRUMENTATION` | `SQL` (no effect — use subpackages) |
-| `Sampler` | Sampler | — | `AlwaysOnSampler` |
+| `ServiceName` | string? | `SERVICE_NAME` / `OTEL_SERVICE_NAME` | `my-service` |
+| `Environment` | string? (`DeploymentEnvironments.*`) | `ENVIRONMENT` | `LOCAL` |
+| `OtelCollectorEndpoint` | string? | `OTEL_EXPORTER_OTLP_ENDPOINT` | none (no OTLP export) |
+| `DebugLevel` | bool? | `OTEL_HELPER_DEBUG_LEVEL` | `false` |
+| `ExportTimeoutMs` | int? | — | `10000` (10s) |
+| `ExtraInstrumentation` | string?, `[Obsolete]` | `OTEL_HELPER_EXTRA_INSTRUMENTATION` | none (no effect — use subpackages) |
+| `Sampler` | Sampler? | — | `AlwaysOnSampler` |
 | `MinimumLogLevel` | LogLevel? | — | `null` (auto per environment) |
 | `ResourceAttributes` | Dictionary<string, object> | — | empty |
 | `AdditionalActivitySources` | List\<string\> | — | empty |
+| `TracesEndpoint`, `MetricsEndpoint`, `LogsEndpoint` | string? | — | none (per-signal endpoint, used as written) |
+| `Insecure` | bool? | `OTEL_EXPORTER_OTLP_INSECURE` | `false` (schemeless endpoint → `https://`) |
+| `Compression` | string? (`gzip`/`none`) | `OTEL_EXPORTER_OTLP_COMPRESSION` | `none` |
+| `SampleRatio` | double? | — | none (`ParentBased(TraceIdRatioBased(ratio))` when set) |
+| `HealthPaths` | List\<string\>? | — | `/ping`, `/health`, `/healthz`, `/ready` |
+| `AdditionalMeters` | List\<string\> | — | empty |
+| `ForwardSdkDiagnostics` | bool | — | `true` (SDK warnings on stderr, redacted) |
 
 > `ServiceName` resolves: `SERVICE_NAME` > `OTEL_SERVICE_NAME` > `"my-service"`.
 > `MinimumLogLevel` when null: LOCAL=Debug, DEV/HML=Information, PRD=Warning. Use `GetDefaultLogLevel()` to query.
 > `Sampler` default is AlwaysOnSampler — override only if you have a specific reason.
-> Env vars are applied via `IPostConfigureOptions` — consumer overrides take priority.
+> Options hold only what code sets (`null` = not set); a value set in code (also one bound from `IConfiguration`) wins over the env var. The full 0.3 option list and the breaking changes: `CHANGELOG.md`, .NET migration guide.
 
 ---
 
@@ -362,10 +369,12 @@ StaffOps.OtelHelper.sln
 │   ├── MetricsSetup.cs                 # Metrics with exemplars
 │   ├── LoggingSetup.cs                 # Logging via OpenTelemetry SDK
 │   ├── Models/
-│   │   ├── DeploymentEnvironment.cs    # Environment enum
-│   │   ├── TelemetryOptions.cs         # Configuration POCO
-│   │   ├── TelemetryOptionsPostConfigure.cs  # Env var resolution
-│   │   └── TelemetryOptionsValidator.cs      # Startup validation
+│   │   ├── DeploymentEnvironments.cs   # Environment name constants
+│   │   ├── TelemetryOptions.cs         # Code options (nullable)
+│   │   └── TelemetryOptionsValidator.cs      # Code-value validation at start
+│   ├── Resolution/                     # Env + code resolution (ResolvedTelemetry)
+│   ├── Diagnostics/                    # otelhelper: stderr sink, SDK EventSource forwarding
+│   ├── Exporters/                      # OTLP exporter options and the helper HttpClient
 ├── StaffOps.OtelHelper.{AWS,Redis,Sql,Profiling}/  # Opt-in subpackages
 ├── StaffOps.OtelHelper.Tests/          # Unit tests (xUnit)
 └── example/                            # Sample apps
