@@ -2,6 +2,8 @@
 
 > **Owner order 2026-11-05.** Phase C pauses after C3 (C1–C3 and C-patch done). It resumes with C4 **after the soak** (`specs/soak-simulation/`); the remaining contract backlog, the Node.js follow-ups and the soak run first. C8's redirect release blocker stays.
 
+> **Owner order 2026-11-09 (replaces the order above).** Phase C resumes now, at C4, and runs through C19 and the tag `dotnet/v0.3.0-rc.1` **before** the soak. The soak follows, and C0 (`net10.0` only) stays after the soak, so a contract defect the soak finds still reaches .NET before the retarget. A13 docs and the 0.3.0 finals come last.
+
 **Status**: Reviewed r3 (2026-11-04; C1 closed after the C1c confirmations). Spec: [requirements](requirements.md) ·
 [design](design.md). Each task: implement + tests in Docker (C2/C3 run the
 existing suite with `docker run --rm -v "$PWD/dotnet:/src:ro"

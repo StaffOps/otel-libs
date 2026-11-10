@@ -93,6 +93,8 @@ validated, so the docs describe validated behavior — never a target. Not optio
 
 > **Owner order 2026-11-05.** Work order from here: (1) the Deferred contract rows above (Go exporter response body, gRPC endpoint path warning, Prometheus exporter variables), Go + Python first, Node.js with them; (2) the Node.js follow-ups; (3) the soak (`specs/soak-simulation/`, S1–S10); (4) Phase C resumes at C4; A13 docs last.
 
+> **Owner order 2026-11-09 (replaces items 3 and 4 above; items 1 and 2 are done).** Phase C resumes at C4 and runs through `dotnet/v0.3.0-rc.1` first; then the soak (S1–S10); then C0; A13 docs and the 0.3.0 finals last.
+
 ## Phase C backlog — .NET (validated 2026-10-27)
 
 > **Added 2026-11-04:** Phase C is specified in
