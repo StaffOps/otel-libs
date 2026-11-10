@@ -292,8 +292,11 @@ All telemetry goes through the Collector. The SDK does NOT export directly to ba
 
 ### Run unit tests
 
+From `dotnet/`, with the repository root mounted (the parity runner reads
+`parity/cases.json`):
+
 ```bash
-docker run --rm -v "$(pwd):/src" -w /src mcr.microsoft.com/dotnet/sdk:8.0 dotnet test StaffOps.OtelHelper.Tests
+docker run --rm -v "$(git rev-parse --show-toplevel):/src" -w /src/dotnet mcr.microsoft.com/dotnet/sdk:8.0 dotnet test StaffOps.OtelHelper.Tests
 ```
 
 Coverage: see [TESTS.md](TESTS.md) for the full list.

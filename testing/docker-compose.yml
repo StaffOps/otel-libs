@@ -3,13 +3,15 @@
 #   docker compose -f testing/docker-compose.yml run --rm go-tests
 #   docker compose -f testing/docker-compose.yml run --rm python-tests
 #   PY_VERSION=3.10 PY_DEPS=lower docker compose -f testing/docker-compose.yml run --rm python-tests
+#   docker compose -f testing/docker-compose.yml run --rm dotnet-tests
 #   NODE_VERSION=22.15.0 docker compose -f testing/docker-compose.yml run --rm node-tests
 #     (also starts sql-postgres and sql-mysql for @staffops/otel-helper-sql and
 #      redis-test for @staffops/otel-helper-redis; stop them afterwards with
 #      `docker compose -f testing/docker-compose.yml stop sql-postgres sql-mysql redis-test`)
 #   testing/e2e/smoke.sh
 #
-# Each suite has its own receiver (fakeotlp-go / fakeotlp-py / fakeotlp-node)
+# Each suite has its own receiver (fakeotlp-go / fakeotlp-py / fakeotlp-dotnet / fakeotlp-node;
+# dotnet-tests shares fakeotlp-dotnet's)
 # and shares its network namespace, so the suites can run concurrently without seeing each
 # other's requests. Two runs of the SAME suite at once need separate projects
 # (`docker compose -p <name> ...`). The receiver binds only the case addresses
@@ -36,7 +38,7 @@ x-fakeotlp-env: &fakeotlp-env
   FAKEOTLP_CA: /fakeotlp/ca.pem
   PARITY_REQUIRE_FAKEOTLP: "1"
   # Parity release gate (parity/README.md): `testing/verify.sh --release` sets 1;
-  # empty (the default) skips the gate tests in go-tests, python-tests and node-tests.
+  # empty (the default) skips the gate tests in go-tests, python-tests, node-tests and dotnet-tests.
   PARITY_RELEASE: ${PARITY_RELEASE:-}
 
 services:
@@ -47,6 +49,10 @@ services:
   fakeotlp-py:
     <<: *fakeotlp
     volumes: [fakeotlp-py-out:/out]
+
+  fakeotlp-dotnet:
+    <<: *fakeotlp
+    volumes: [fakeotlp-dotnet-out:/out]
 
   fakeotlp-node:
     <<: *fakeotlp
@@ -123,6 +129,41 @@ services:
         pip install -q -c ci/$${PY_DEPS}.txt -e '.[dev,all]'
         pip list 2>/dev/null | grep -E '^opentelemetry-(sdk|instrumentation) '
         python -m pytest tests/ -p no:cacheprovider -q --cov=staffops_otel_helper --cov=otel_helper --cov-report=term --cov-fail-under=90
+
+  dotnet-tests:
+    # sdk:8.0 until C0 (net8.0-only on this branch, specs/dotnet-otel-helper D-NET12).
+    image: mcr.microsoft.com/dotnet/sdk:8.0
+    network_mode: "service:fakeotlp-dotnet"
+    depends_on:
+      fakeotlp-dotnet:
+        condition: service_healthy
+    environment:
+      <<: *fakeotlp-env
+      PARITY_CASES: /src/parity/cases.json
+      PARITY_TASKS: /src/specs/dotnet-otel-helper/tasks.md
+      DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+      DOTNET_NOLOGO: "1"
+      # vstest kills the test host ~100 ms after the last test, before coverlet
+      # writes its hit files (dotnet/TESTS.md).
+      VSTEST_TESTHOST_SHUTDOWN_TIMEOUT: "10000"
+    volumes:
+      - ..:/src:ro
+      - fakeotlp-dotnet-out:/fakeotlp:ro
+      - nuget-cache:/root/.nuget/packages
+    # A container-local copy: bin/obj from another platform never reach the build,
+    # and the repository stays read-only. Parity children run instrumented
+    # assemblies from the test output folder, so coverlet merges their hits.
+    command:
+      - sh
+      - -ec
+      - |
+        mkdir -p /work && cd /src/dotnet
+        tar --exclude=bin --exclude=obj --exclude=coverage -cf - . | tar -xf - -C /work
+        cd /work
+        dotnet test StaffOps.OtelHelper.Tests -c Release \
+          /p:CollectCoverage=true /p:CoverletOutputFormat=cobertura /p:CoverletOutput=./coverage/ \
+          /p:Threshold=90 /p:ThresholdType=line /p:ThresholdStat=total \
+          /p:Exclude="[xunit*]*%2c[StaffOps.OtelHelper.ParityDriver]*"
 
   # Databases for @staffops/otel-helper-sql (Node task B10a), used only by
   # node-tests. Throwaway credentials; data on tmpfs (no volume is created).
@@ -301,9 +342,11 @@ services:
 volumes:
   fakeotlp-go-out:
   fakeotlp-py-out:
+  fakeotlp-dotnet-out:
   fakeotlp-node-out:
   go-mod-cache:
   go-build-cache:
   pip-cache:
   npm-cache:
+  nuget-cache:
   e2e-certs:

@@ -120,7 +120,10 @@ release. `PARITY_RELEASE=1` enables `TestParityNoTaskSkipsAtRelease` (Go) and
 `test_no_task_skips_at_release` (Python), which fail while any remain; the
 release task (A11) runs them. For Node the same variable enables
 `release gate: no nodejs case still skipped pending a task`, which fails while
-any `nodejs` status starts with `skip:B` (B14). *Wired 2026-11-04 (B14):*
+any `nodejs` status starts with `skip:B` (B14). For .NET the same variable
+enables `Release_gate_no_dotnet_case_still_xfail_or_skipped_pending_a_task`,
+which fails while any `dotnet` status is `xfail:*`, `skip:phase-c` or
+`skip:C<n>-…` (DN11; C4; CI sets it on `dotnet/v*` tags). *Wired 2026-11-04 (B14):*
 CI sets `PARITY_RELEASE=1` on release tags — `go-test` and `python-test` on
 `v*`, `node-test` on `nodejs/v*` — and `testing/verify.sh --release` sets it
 locally (the compose test services pass it through).
@@ -132,6 +135,7 @@ docker compose -f testing/docker-compose.yml run --rm go-tests
 docker compose -f testing/docker-compose.yml run --rm python-tests
 PY_VERSION=3.10 PY_DEPS=lower docker compose -f testing/docker-compose.yml run --rm python-tests
 NODE_VERSION=26 docker compose -f testing/docker-compose.yml run --rm node-tests
+docker compose -f testing/docker-compose.yml run --rm dotnet-tests
 
 # one case
 docker compose -f testing/docker-compose.yml run --rm go-tests go test -run 'TestParity/export.grpc_plaintext' -v .
@@ -147,12 +151,15 @@ Without `FAKEOTLP_HOST`, cases that need the receiver skip locally. With
 IPv6 and `{receiver_tls}` cases when those addresses are missing.
 
 Each case runs in its own process (Go re-executes the test binary, Python runs
-`tests/parity_driver.py`, Node runs `nodejs/test/parity/driver.cjs`): OTel and SDK state is set-once per process — e.g. the OTel globals, and
+`tests/parity_driver.py`, Node runs `nodejs/test/parity/driver.cjs`, .NET runs
+`StaffOps.OtelHelper.ParityDriver`): OTel and SDK state is set-once per process — e.g. the OTel globals, and
 Python's SDK log module, which parses `OTEL_RESOURCE_ATTRIBUTES` when first imported. Coverage
 from those processes is merged into each suite's gate (Go: `PARITY_GOCOVERDIR`
 + `go tool covdata`; Python: `PARITY_COVERAGE_DATA`, combined by pytest-cov;
 Node: children inherit `NODE_V8_COVERAGE` and exit with `process.exit()`, and
-the runner runs inside the core package's `npm test`, so c8 merges them).
+the runner runs inside the core package's `npm test`, so c8 merges them; .NET:
+the driver runs coverlet's instrumented assemblies from the test output folder
+and always exits normally).
 
 ## Node.js runner
 
@@ -223,6 +230,93 @@ fails on Node 22/24.
   state is inherited, so `instance_ids_distinct` is close to trivially true
   under `cluster`; the cases still check that each worker generates (or keeps
   from the env) its id and warns per worker.
+
+## .NET runner
+
+`dotnet/StaffOps.OtelHelper.Tests/ParityTests.cs` (design D-NET12; task C4,
+2026-11-09): the xUnit runner, with `ParityHarness.cs` holding the schema,
+placeholders, child execution and matcher (the `harness.cjs` rules), and the
+console project `dotnet/StaffOps.OtelHelper.ParityDriver` as the per-case
+child (`dotnet StaffOps.OtelHelper.ParityDriver.dll <case.json>`).
+
+```bash
+docker compose -f testing/docker-compose.yml run --rm dotnet-tests
+# a few cases (the theory still lists them by id)
+docker compose -f testing/docker-compose.yml run --rm -e PARITY_ONLY=export.grpc_plaintext,svc.code_beats_env dotnet-tests
+```
+
+- **Execution.** `ParityTests.Case` is one theory row per non-skipped case.
+  The first row runs every selected case once for the class: non-export cases
+  in parallel (at most `min(8, 2 × CPUs)` children), then, one at a time,
+  cases that bind a fixed listener port and the export cases. The parent kills
+  a child after 120 s; the driver gives export cases 75 s (others 15 s) to shut
+  down and answers within 110 s in any case. `PARITY_ONLY` (comma-separated
+  ids) narrows both the theory rows and the run; `PARITY_RESULTS=<path>` writes
+  every outcome, snapshot included, as JSON (used to record statuses).
+- **Coverage.** The test project references the driver, so the driver runs
+  from the test output folder with the assemblies coverlet instrumented; it
+  always exits 0 (`Environment.Exit`, after writing the snapshot), and
+  coverlet merges the child hits into the gate. The driver itself is excluded
+  (`/p:Exclude="[xunit*]*%2c[StaffOps.OtelHelper.ParityDriver]*"`).
+- **Stdout is the snapshot.** The driver keeps the real stdout for one JSON
+  object and points `Console.Out` at stderr; `console` is the child's stderr.
+  A stdout that is not one JSON value fails the case as a driver crash.
+- **Statuses.** `dotnet` only. A `skip:C<n>-…` must name a task row of
+  `specs/dotnet-otel-helper/tasks.md` that is not ✅; any other skip must be a
+  D-NET15 difference (`skip:no-prefork-model`, `skip:no-detector-variable`,
+  `skip:no-upstream-rpc-metrics`, `skip:no-upstream-dotnet-prom-*`,
+  `skip:no-upstream-dotnet-attribute-limit`,
+  `skip:no-upstream-dotnet-grpc-tls-files`,
+  `skip:no-upstream-dotnet-http-body-size`, exact; the `prom-*` family by
+  pattern, e.g. `skip:no-upstream-dotnet-prom-mounted-handler`). `PARITY_RELEASE=1` fails while an
+  `xfail:*`, `skip:phase-c` or `skip:C<n>-…` remains (DN11; CI sets it on
+  `dotnet/v*` tags). Without
+  `FAKEOTLP_HOST` and `PARITY_REQUIRE_FAKEOTLP`, receiver cases are reported
+  as passed with a "not run" line (xUnit 2 has no runtime skip).
+- **Environment.** As the other runners, plus the keys the .NET host maps into
+  `IConfiguration` (which OTel .NET reads): every key matching
+  `^(DOTNET_|ASPNETCORE_)?(OTEL_|SERVICE_NAME$|ENVIRONMENT$)` (any case) and
+  `Logging__*` is removed before the case env is applied.
+- **`helper_log`, `diagnostics`, `console`.** The 0.2 helper has no
+  diagnostics channel (task C5 adds it), so `helper_log` and `diagnostics` are
+  empty. The OpenTelemetry SDK `EventSource` events at Warning and above (an
+  `EventListener` in the driver) go to `sdk_events`, which no matcher reads,
+  and are not printed: `console` and `log` hold only what the process really
+  writes. C5 forwards them through the helper's sink.
+- **Adapter seams.** Setup is `AddOtelHelper(…)` on
+  `Host.CreateApplicationBuilder()` (Kestrel `WebApplication` for
+  `http_server` and `grpc_server`).
+  - Logging: `builder.Logging.ClearProviders()` runs before `AddOtelHelper`,
+    so only what the helper installs logs (no host console provider; C13).
+  - Scope `parity`: traces through `AdditionalActivitySources`; metrics through
+    `ConfigureOpenTelemetryMeterProvider(b => b.AddMeter("parity"))`, because
+    0.2 has no meter option. When C11 adds `AdditionalMeters`, the driver uses
+    `options.AdditionalMeters.Add("parity")` instead.
+  - An in-memory span processor captures spans; `resource` is
+    `TracerProvider.GetResource()`.
+  - `metric_exporters`, the interval and the port come from the resolved
+    `IOptions<TelemetryOptions>` (the SDK has no public getter for a reader's
+    interval); `log_level` is the installed `LoggerFilterOptions.MinLevel`;
+    `metric_exporters` is `[]` when metrics are disabled or `OTEL_SDK_DISABLED`
+    is true in `IConfiguration` (read as the SDK does; the providers expose no
+    public flag).
+  - `prometheus_metrics_host` and `http_opt_in_metrics` are omitted: 0.2 has
+    neither setting (it binds the IPv4-only `+` prefix, whatever the
+    environment says; tasks C12 and C11).
+  - The 0.2 helper has no mounted `/metrics` handler, so `scrape` comes from the
+    helper's own listener: the driver sets `OTEL_HELPER_METRICS_PORT` to a free
+    port only when the case sets no port (env or code) and scrapes the resolved
+    port (a resolved `0` is an adapter error); `scrape_status` is `0` when
+    nothing listens.
+  - `grpc_server` sets
+    `OTEL_DOTNET_EXPERIMENTAL_ASPNETCORE_ENABLE_GRPC_INSTRUMENTATION=true`
+    (O7 (b)) and serves raw-byte methods (no protoc). Requests to the test
+    servers go over plain sockets: the helper instruments `HttpClient`.
+- **`code` keys.** Mapped to `TelemetryOptions`; a key without a 0.2 member
+  (`traces_endpoint`, `insecure`, `compression`, `sample_ratio`,
+  `health_paths`) is an adapter error, so those cases are `skip:C5-no-api`.
+  `http_opt_in_metrics` is accepted without effect (no member until C11).
+- **`fork`.** Never spawned (`skip:no-prefork-model`).
 
 ### Rules the fixture cannot express (A30, 2026-11-08)
 

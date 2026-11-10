@@ -18,7 +18,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -39,7 +39,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C6",
         "nodejs": "pass"
       }
     },
@@ -59,7 +59,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -81,7 +81,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -102,7 +102,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C6",
         "nodejs": "pass"
       }
     },
@@ -123,7 +123,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -144,7 +144,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C6",
         "nodejs": "pass"
       },
       "note": "The :<exe> suffix is SDK-version dependent (R5): Python 1.42 has none."
@@ -166,7 +166,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C6",
         "nodejs": "pass"
       }
     },
@@ -189,7 +189,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -212,7 +212,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -233,7 +233,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C6",
         "nodejs": "pass"
       }
     },
@@ -255,7 +255,7 @@
       "status": {
         "go": "skip:no-prefork-model",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "skip:no-prefork-model",
         "nodejs": "pass"
       }
     },
@@ -280,7 +280,7 @@
       "status": {
         "go": "skip:no-prefork-model",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "skip:no-prefork-model",
         "nodejs": "pass"
       }
     },
@@ -301,7 +301,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -324,7 +324,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C6",
         "nodejs": "pass"
       }
     },
@@ -345,7 +345,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C6",
         "nodejs": "pass"
       }
     },
@@ -367,7 +367,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C6",
         "nodejs": "pass"
       }
     },
@@ -390,7 +390,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -410,7 +410,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C6",
         "nodejs": "pass"
       }
     },
@@ -429,7 +429,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -447,7 +447,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C6",
         "nodejs": "pass"
       }
     },
@@ -466,7 +466,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C6",
         "nodejs": "pass"
       }
     },
@@ -496,7 +496,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C7a",
         "nodejs": "pass"
       }
     },
@@ -517,7 +517,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -541,7 +541,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C9",
         "nodejs": "pass"
       }
     },
@@ -563,7 +563,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C9",
         "nodejs": "pass"
       }
     },
@@ -585,7 +585,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -610,7 +610,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C9",
         "nodejs": "pass"
       }
     },
@@ -634,7 +634,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C9",
         "nodejs": "pass"
       }
     },
@@ -659,7 +659,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C9",
         "nodejs": "pass"
       }
     },
@@ -681,7 +681,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -699,7 +699,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -718,7 +718,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -738,7 +738,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C9",
         "nodejs": "pass"
       }
     },
@@ -761,7 +761,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C9",
         "nodejs": "pass"
       }
     },
@@ -779,7 +779,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C16",
         "nodejs": "pass"
       }
     },
@@ -798,7 +798,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C16",
         "nodejs": "pass"
       }
     },
@@ -817,7 +817,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C16",
         "nodejs": "pass"
       }
     },
@@ -836,7 +836,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C16",
         "nodejs": "pass"
       }
     },
@@ -855,7 +855,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C16",
         "nodejs": "pass"
       }
     },
@@ -875,7 +875,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C16",
         "nodejs": "pass"
       }
     },
@@ -909,7 +909,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C8",
         "nodejs": "pass"
       }
     },
@@ -951,7 +951,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C7a",
         "nodejs": "pass"
       }
     },
@@ -984,7 +984,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C8",
         "nodejs": "pass"
       }
     },
@@ -1004,7 +1004,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C8",
         "nodejs": "pass"
       }
     },
@@ -1024,7 +1024,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C7a",
         "nodejs": "pass"
       }
     },
@@ -1044,7 +1044,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C7a",
         "nodejs": "pass"
       }
     },
@@ -1064,7 +1064,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C7a",
         "nodejs": "pass"
       }
     },
@@ -1085,7 +1085,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C7a",
         "nodejs": "pass"
       }
     },
@@ -1118,7 +1118,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -1141,7 +1141,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C9",
         "nodejs": "pass"
       }
     },
@@ -1179,7 +1179,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -1214,7 +1214,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -1250,7 +1250,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -1290,7 +1290,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -1330,7 +1330,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C7b",
         "nodejs": "pass"
       }
     },
@@ -1369,7 +1369,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C7b",
         "nodejs": "pass"
       }
     },
@@ -1404,7 +1404,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -1440,7 +1440,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C7b",
         "nodejs": "pass"
       }
     },
@@ -1480,7 +1480,7 @@
       "status": {
         "go": "skip:no-upstream-go-http-raw-path",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C7b",
         "nodejs": "pass"
       }
     },
@@ -1517,7 +1517,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -1556,7 +1556,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C7b",
         "nodejs": "pass"
       }
     },
@@ -1592,7 +1592,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -1632,7 +1632,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -1660,7 +1660,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -1700,7 +1700,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -1729,7 +1729,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "skip:C5-no-api",
         "nodejs": "pass"
       }
     },
@@ -1765,7 +1765,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -1801,7 +1801,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -1841,7 +1841,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -1877,7 +1877,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -1917,7 +1917,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C7b",
         "nodejs": "pass"
       }
     },
@@ -1954,7 +1954,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C7b",
         "nodejs": "pass"
       }
     },
@@ -1987,7 +1987,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C7b",
         "nodejs": "pass"
       }
     },
@@ -2018,7 +2018,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C7b",
         "nodejs": "pass"
       }
     },
@@ -2051,7 +2051,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C7b",
         "nodejs": "pass"
       }
     },
@@ -2085,7 +2085,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C7b",
         "nodejs": "pass"
       }
     },
@@ -2117,7 +2117,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C7b",
         "nodejs": "pass"
       }
     },
@@ -2155,7 +2155,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -2196,7 +2196,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -2232,7 +2232,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -2259,7 +2259,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -2299,7 +2299,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -2328,7 +2328,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C8",
         "nodejs": "pass"
       }
     },
@@ -2357,7 +2357,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C8",
         "nodejs": "pass"
       }
     },
@@ -2387,7 +2387,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -2423,7 +2423,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -2456,7 +2456,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C8",
         "nodejs": "pass"
       }
     },
@@ -2484,7 +2484,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C8",
         "nodejs": "pass"
       }
     },
@@ -2524,7 +2524,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C8",
         "nodejs": "pass"
       }
     },
@@ -2556,7 +2556,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C8",
         "nodejs": "pass"
       },
       "note": "Asserted via the grpc-timeout header (gRPC only; HTTP timeouts stay in A3 unit tests). Python: the SDK parses *_TIMEOUT as seconds while the spec says milliseconds (design D1.e); A3 adds the helper ms\u2192s shim. Go: the SDK applies the env since A3 (G10: the helper passes no timeout unless set in code). Bound is lte 600, not 500: grpc encodes the remaining deadline and can round it up (501m observed with timeout=0.5 s passed by the helper); 600 still separates ms (500) from a seconds misread (500000) and the 10 s default (10000)."
@@ -2582,7 +2582,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C9",
         "nodejs": "pass"
       }
     },
@@ -2607,7 +2607,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C9",
         "nodejs": "pass"
       }
     },
@@ -2632,7 +2632,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -2659,7 +2659,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C9",
         "nodejs": "pass"
       }
     },
@@ -2687,7 +2687,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C9",
         "nodejs": "pass"
       }
     },
@@ -2712,7 +2712,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C9",
         "nodejs": "pass"
       }
     },
@@ -2739,7 +2739,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C9",
         "nodejs": "pass"
       }
     },
@@ -2767,7 +2767,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C9",
         "nodejs": "pass"
       }
     },
@@ -2792,7 +2792,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C9",
         "nodejs": "pass"
       }
     },
@@ -2822,7 +2822,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -2843,7 +2843,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -2864,7 +2864,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -2885,7 +2885,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C10",
         "nodejs": "pass"
       }
     },
@@ -2906,7 +2906,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C10",
         "nodejs": "pass"
       }
     },
@@ -2927,7 +2927,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -2949,7 +2949,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C10",
         "nodejs": "pass"
       }
     },
@@ -2971,7 +2971,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -2994,7 +2994,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -3017,7 +3017,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -3042,7 +3042,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -3064,7 +3064,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C10",
         "nodejs": "pass"
       }
     },
@@ -3091,7 +3091,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C10",
         "nodejs": "pass"
       }
     },
@@ -3116,7 +3116,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C10",
         "nodejs": "pass"
       }
     },
@@ -3140,7 +3140,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -3164,7 +3164,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -3190,7 +3190,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -3215,7 +3215,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -3240,7 +3240,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -3261,7 +3261,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -3282,7 +3282,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C10",
         "nodejs": "pass"
       }
     },
@@ -3308,7 +3308,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -3332,7 +3332,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -3358,7 +3358,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C11",
         "nodejs": "pass"
       }
     },
@@ -3382,7 +3382,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -3406,7 +3406,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C11",
         "nodejs": "pass"
       }
     },
@@ -3432,7 +3432,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C11",
         "nodejs": "pass"
       }
     },
@@ -3457,7 +3457,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -3480,7 +3480,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -3516,7 +3516,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -3692,7 +3692,7 @@
       "status": {
         "go": "skip:no-upstream-go-otelhttp-active-requests",
         "python": "pass",
-        "dotnet": "xfail:C11",
+        "dotnet": "pass",
         "nodejs": "skip:no-upstream-node-http-opt-in-metrics"
       }
     },
@@ -3748,7 +3748,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C11",
+        "dotnet": "skip:no-upstream-dotnet-http-body-size",
         "nodejs": "pass"
       }
     },
@@ -3772,7 +3772,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -3802,7 +3802,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "skip:phase-c",
+        "dotnet": "skip:C5-no-api",
         "nodejs": "pass"
       }
     },
@@ -3828,7 +3828,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C11",
         "nodejs": "pass"
       }
     },
@@ -3850,7 +3850,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C11",
         "nodejs": "pass"
       }
     },
@@ -3871,7 +3871,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -3892,7 +3892,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C11",
         "nodejs": "pass"
       }
     },
@@ -3914,7 +3914,7 @@
       "status": {
         "go": "pass",
         "python": "skip:no-upstream-rpc-metrics",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "skip:no-upstream-rpc-metrics",
         "nodejs": "skip:no-upstream-rpc-metrics"
       }
     },
@@ -3935,7 +3935,7 @@
       "status": {
         "go": "pass",
         "python": "skip:no-upstream-rpc-metrics",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "skip:no-upstream-rpc-metrics",
         "nodejs": "skip:no-upstream-rpc-metrics"
       },
       "note": "otelgrpc v0.56 stream interceptors recorded no RPC duration metric; the v0.72 stats handler (A2) counts Watch in rpc.server.call.duration."
@@ -3957,7 +3957,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -3981,7 +3981,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -4005,7 +4005,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C11",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -4049,7 +4049,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C13",
         "nodejs": "pass"
       }
     },
@@ -4072,7 +4072,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C13",
         "nodejs": "pass"
       }
     },
@@ -4095,7 +4095,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C13",
         "nodejs": "pass"
       }
     },
@@ -4125,7 +4125,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -4146,7 +4146,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "skip:no-upstream-dotnet-prom-mounted-handler",
         "nodejs": "pass"
       }
     },
@@ -4167,7 +4167,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "skip:no-upstream-dotnet-prom-mounted-handler",
         "nodejs": "pass"
       }
     },
@@ -4199,7 +4199,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -4227,7 +4227,7 @@
       "status": {
         "go": "pass",
         "python": "skip:no-upstream-python-prom-scope-labels",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "pass",
         "nodejs": "pass",
         "python@sdk>=1.43": "pass"
       }
@@ -4257,7 +4257,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -4286,7 +4286,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C12",
         "nodejs": "pass"
       }
     },
@@ -4315,7 +4315,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -4344,7 +4344,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C12",
         "nodejs": "pass"
       }
     },
@@ -4376,7 +4376,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -4405,7 +4405,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C12",
         "nodejs": "pass"
       }
     },
@@ -4426,7 +4426,7 @@
       "status": {
         "go": "skip:no-upstream-go-otlptranslator-tokens",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -4447,7 +4447,7 @@
       "status": {
         "go": "skip:no-upstream-go-otlptranslator-tokens",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -4468,7 +4468,7 @@
       "status": {
         "go": "skip:no-upstream-go-otlptranslator-tokens",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C12",
         "nodejs": "pass"
       }
     },
@@ -4497,7 +4497,7 @@
       "status": {
         "go": "pass",
         "python": "skip:no-upstream-python-case-preserving-names",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C12",
         "nodejs": "pass"
       }
     },
@@ -4534,7 +4534,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C12",
         "nodejs": "pass"
       }
     },
@@ -4556,7 +4556,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C12",
         "nodejs": "pass"
       }
     },
@@ -4578,7 +4578,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C12",
         "nodejs": "pass"
       }
     },
@@ -4600,7 +4600,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C12",
         "nodejs": "pass"
       }
     },
@@ -4621,7 +4621,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -4657,7 +4657,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "skip:no-upstream-dotnet-prom-listener",
         "nodejs": "pass"
       }
     },
@@ -4691,7 +4691,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "skip:no-upstream-dotnet-prom-listener",
         "nodejs": "pass"
       }
     },
@@ -4736,7 +4736,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C8",
         "nodejs": "pass"
       }
     },
@@ -4760,7 +4760,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C10",
         "nodejs": "pass"
       }
     },
@@ -4790,7 +4790,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -4828,7 +4828,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C8",
         "nodejs": "pass"
       }
     },
@@ -4865,7 +4865,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C8",
         "nodejs": "pass"
       }
     },
@@ -4903,7 +4903,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C8",
         "nodejs": "pass"
       }
     },
@@ -4933,7 +4933,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -4964,7 +4964,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C8",
         "nodejs": "pass"
       }
     },
@@ -4994,7 +4994,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C8",
         "nodejs": "pass"
       }
     },
@@ -5035,7 +5035,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C8",
         "nodejs": "pass"
       }
     },
@@ -5083,7 +5083,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C8",
         "nodejs": "pass"
       }
     },
@@ -5113,7 +5113,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C7b",
         "nodejs": "pass"
       }
     },
@@ -5140,7 +5140,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C7b",
         "nodejs": "pass"
       }
     },
@@ -5181,7 +5181,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C7b",
         "nodejs": "pass"
       }
     },
@@ -5202,7 +5202,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C6",
         "nodejs": "pass"
       }
     },
@@ -5228,7 +5228,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C6",
         "nodejs": "pass"
       }
     },
@@ -5255,7 +5255,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C6",
         "nodejs": "pass"
       }
     },
@@ -5277,7 +5277,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -5301,7 +5301,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C6",
         "nodejs": "pass"
       }
     },
@@ -5327,7 +5327,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C6",
         "nodejs": "pass"
       }
     },
@@ -5353,7 +5353,7 @@
       "status": {
         "go": "skip:no-upstream-go-resource-env-merge",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C6",
         "nodejs": "pass"
       }
     },
@@ -5379,7 +5379,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C6",
         "nodejs": "pass"
       }
     },
@@ -5403,7 +5403,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -5431,7 +5431,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C6",
         "nodejs": "pass"
       }
     },
@@ -5459,7 +5459,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -5486,7 +5486,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C6",
         "nodejs": "pass"
       }
     },
@@ -5512,7 +5512,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -5535,7 +5535,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C6",
         "nodejs": "pass"
       }
     },
@@ -5558,7 +5558,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C6",
         "nodejs": "pass"
       }
     },
@@ -5583,7 +5583,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C6",
         "nodejs": "pass"
       }
     },
@@ -5606,7 +5606,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C6",
         "nodejs": "pass"
       }
     },
@@ -5635,7 +5635,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C6",
         "nodejs": "pass"
       }
     },
@@ -5666,7 +5666,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C6",
         "nodejs": "pass"
       }
     },
@@ -5704,7 +5704,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C6",
         "nodejs": "pass"
       }
     },
@@ -5729,7 +5729,7 @@
       "status": {
         "go": "skip:no-upstream-go-resource-env-merge",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C6",
         "nodejs": "pass"
       }
     },
@@ -5753,7 +5753,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C6",
         "nodejs": "pass"
       }
     },
@@ -5786,7 +5786,7 @@
       "status": {
         "go": "skip:no-detector-variable",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "skip:no-detector-variable",
         "nodejs": "pass"
       }
     },
@@ -5808,7 +5808,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "pass",
         "nodejs": "skip:no-upstream-resource-proto-key"
       }
     },
@@ -5830,7 +5830,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "skip:C5-no-api",
         "nodejs": "pass"
       },
       "note": "R8: the error names the option in each language's spelling (Go/Python sample_ratio, Node sampleRatio) and the value (A20 fix round, 2026-10-30)."
@@ -5857,7 +5857,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -5883,7 +5883,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -5906,7 +5906,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C10",
         "nodejs": "pass"
       }
     },
@@ -5930,7 +5930,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C10",
         "nodejs": "pass"
       }
     },
@@ -5957,7 +5957,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C10",
         "nodejs": "pass"
       }
     },
@@ -5983,7 +5983,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C10",
         "nodejs": "pass"
       }
     },
@@ -6021,7 +6021,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C7b",
         "nodejs": "pass"
       }
     },
@@ -6043,7 +6043,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "skip:C5-no-api",
         "nodejs": "pass"
       }
     },
@@ -6070,7 +6070,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -6098,7 +6098,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C7b",
         "nodejs": "pass"
       }
     },
@@ -6133,7 +6133,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C7b",
         "nodejs": "pass"
       }
     },
@@ -6168,7 +6168,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -6204,7 +6204,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C8",
         "nodejs": "pass"
       }
     },
@@ -6251,7 +6251,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C8",
         "nodejs": "pass"
       }
     },
@@ -6291,7 +6291,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C8",
         "nodejs": "pass"
       }
     },
@@ -6320,7 +6320,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C8",
         "nodejs": "pass"
       }
     },
@@ -6355,7 +6355,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C7a",
         "nodejs": "pass"
       }
     },
@@ -6390,7 +6390,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C7a",
         "nodejs": "pass"
       }
     },
@@ -6410,7 +6410,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C7a",
         "nodejs": "pass"
       }
     },
@@ -6430,7 +6430,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C7a",
         "nodejs": "pass"
       }
     },
@@ -6463,7 +6463,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C7a",
         "nodejs": "pass"
       }
     },
@@ -6484,7 +6484,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C7a",
         "nodejs": "pass"
       }
     },
@@ -6508,7 +6508,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -6532,7 +6532,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "skip:C5-no-api",
         "nodejs": "pass"
       }
     },
@@ -6561,7 +6561,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C7a",
         "nodejs": "pass"
       }
     },
@@ -6590,7 +6590,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C7a",
         "nodejs": "pass"
       }
     },
@@ -6613,7 +6613,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C7a",
         "nodejs": "pass"
       }
     },
@@ -6645,7 +6645,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C7a",
         "nodejs": "pass"
       }
     },
@@ -6677,7 +6677,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C7a",
         "nodejs": "pass"
       }
     },
@@ -6710,7 +6710,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C7a",
         "nodejs": "pass"
       }
     },
@@ -6746,7 +6746,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C7a",
         "nodejs": "pass"
       }
     },
@@ -6776,7 +6776,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C7a",
         "nodejs": "pass"
       }
     },
@@ -6809,7 +6809,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C7a",
         "nodejs": "pass"
       }
     },
@@ -6836,7 +6836,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C7a",
         "nodejs": "pass"
       }
     },
@@ -6869,7 +6869,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C7a",
         "nodejs": "pass"
       }
     },
@@ -6896,7 +6896,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C7a",
         "nodejs": "pass"
       }
     },
@@ -6916,7 +6916,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C7a",
         "nodejs": "pass"
       }
     },
@@ -6937,7 +6937,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C7a",
         "nodejs": "pass"
       }
     },
@@ -6970,7 +6970,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C7a",
         "nodejs": "pass"
       }
     },
@@ -6997,7 +6997,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C7a",
         "nodejs": "pass"
       }
     },
@@ -7030,7 +7030,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C7a",
         "nodejs": "pass"
       }
     },
@@ -7057,7 +7057,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C7a",
         "nodejs": "pass"
       }
     },
@@ -7090,7 +7090,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C7a",
         "nodejs": "pass"
       }
     },
@@ -7117,7 +7117,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C7a",
         "nodejs": "pass"
       }
     },
@@ -7149,7 +7149,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C7a",
         "nodejs": "pass"
       }
     },
@@ -7181,7 +7181,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C7a",
         "nodejs": "pass"
       }
     },
@@ -7207,7 +7207,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C7a",
         "nodejs": "pass"
       }
     },
@@ -7243,7 +7243,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C7a",
         "nodejs": "pass"
       }
     },
@@ -7277,7 +7277,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "skip:C5-no-api",
         "nodejs": "pass"
       }
     },
@@ -7300,7 +7300,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C7a",
         "nodejs": "pass"
       }
     },
@@ -7324,7 +7324,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C7a",
         "nodejs": "pass"
       }
     },
@@ -7359,7 +7359,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C7a",
         "nodejs": "pass"
       }
     },
@@ -7392,7 +7392,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C7a",
         "nodejs": "pass"
       }
     },
@@ -7415,7 +7415,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C7a",
         "nodejs": "pass"
       }
     },
@@ -7447,7 +7447,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C7a",
         "nodejs": "pass"
       }
     },
@@ -7480,7 +7480,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C7a",
         "nodejs": "pass"
       }
     },
@@ -7503,7 +7503,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C7a",
         "nodejs": "pass"
       }
     },
@@ -7526,7 +7526,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C7a",
         "nodejs": "pass"
       }
     },
@@ -7558,7 +7558,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C7a",
         "nodejs": "pass"
       }
     },
@@ -7591,7 +7591,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C7a",
         "nodejs": "pass"
       }
     },
@@ -7625,7 +7625,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C7a",
         "nodejs": "pass"
       }
     },
@@ -7649,7 +7649,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "skip:C5-no-api",
         "nodejs": "pass"
       }
     },
@@ -7682,7 +7682,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C7a",
         "nodejs": "pass"
       }
     },
@@ -7715,7 +7715,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C7a",
         "nodejs": "pass"
       }
     },
@@ -7748,7 +7748,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C7a",
         "nodejs": "pass"
       }
     },
@@ -7786,7 +7786,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C7a",
         "nodejs": "pass"
       }
     },
@@ -7819,7 +7819,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C7a",
         "nodejs": "pass"
       }
     },
@@ -7859,7 +7859,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C7b",
         "nodejs": "pass"
       }
     },
@@ -7899,7 +7899,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C7b",
         "nodejs": "pass"
       }
     },
@@ -7939,7 +7939,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C7b",
         "nodejs": "pass"
       }
     },
@@ -7979,7 +7979,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C7b",
         "nodejs": "pass"
       }
     },
@@ -8020,7 +8020,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C7a",
         "nodejs": "pass"
       }
     },
@@ -8047,7 +8047,7 @@
       "status": {
         "go": "skip:go-sdk-logs-env-values",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C8",
         "nodejs": "pass"
       }
     },
@@ -8078,7 +8078,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C8",
         "nodejs": "pass"
       }
     },
@@ -8116,7 +8116,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "skip:C5-no-api",
         "nodejs": "pass"
       }
     },
@@ -8155,7 +8155,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "skip:C5-no-api",
         "nodejs": "pass"
       }
     },
@@ -8195,7 +8195,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C8",
         "nodejs": "pass"
       }
     },
@@ -8235,7 +8235,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C8",
         "nodejs": "pass"
       }
     },
@@ -8275,7 +8275,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C8",
         "nodejs": "pass"
       }
     },
@@ -8304,7 +8304,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C8",
         "nodejs": "pass"
       },
       "note": "gte lowered 300\u2192100 (2026-10-28): 212 ms observed under load; 100 still separates the 1 ms clamp from the 500 ms fallback."
@@ -8334,7 +8334,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C8",
         "nodejs": "pass"
       },
       "note": "gte lowered 300\u2192100 (2026-10-28): 212 ms observed under load; 100 still separates the 1 ms clamp from the 500 ms fallback."
@@ -8373,7 +8373,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C8",
         "nodejs": "pass"
       }
     },
@@ -8410,7 +8410,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C8",
         "nodejs": "pass"
       }
     },
@@ -8456,7 +8456,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C8",
         "nodejs": "pass"
       }
     },
@@ -8484,7 +8484,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C7b",
         "nodejs": "pass"
       }
     },
@@ -8512,7 +8512,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C7b",
         "nodejs": "pass"
       }
     },
@@ -8542,7 +8542,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C7b",
         "nodejs": "pass"
       }
     },
@@ -8578,7 +8578,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C7b",
         "nodejs": "pass"
       }
     },
@@ -8603,7 +8603,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "skip:C5-no-api",
         "nodejs": "pass"
       }
     },
@@ -8628,7 +8628,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "skip:C5-no-api",
         "nodejs": "pass"
       }
     },
@@ -8653,7 +8653,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "skip:C5-no-api",
         "nodejs": "pass"
       }
     },
@@ -8698,7 +8698,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C8",
         "nodejs": "pass"
       }
     },
@@ -8740,7 +8740,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C8",
         "nodejs": "pass"
       }
     },
@@ -8788,7 +8788,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C8",
         "nodejs": "pass"
       }
     },
@@ -8837,7 +8837,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C8",
         "nodejs": "pass"
       }
     },
@@ -8885,7 +8885,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C8",
         "nodejs": "pass"
       }
     },
@@ -8940,7 +8940,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C8",
         "nodejs": "pass"
       }
     },
@@ -8983,7 +8983,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C8",
         "nodejs": "pass"
       }
     },
@@ -9005,7 +9005,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C8",
         "nodejs": "pass"
       }
     },
@@ -9058,7 +9058,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C8",
         "nodejs": "pass"
       }
     },
@@ -9098,7 +9098,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C8",
         "nodejs": "pass"
       }
     },
@@ -9137,7 +9137,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C8",
         "nodejs": "pass"
       }
     },
@@ -9167,7 +9167,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C8",
         "nodejs": "pass"
       }
     },
@@ -9201,7 +9201,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C8",
         "nodejs": "pass"
       }
     },
@@ -9241,7 +9241,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C8",
         "nodejs": "pass"
       }
     },
@@ -9281,7 +9281,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C8",
         "nodejs": "pass"
       }
     },
@@ -9306,7 +9306,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C9",
         "nodejs": "pass"
       }
     },
@@ -9332,7 +9332,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C9",
         "nodejs": "pass"
       }
     },
@@ -9355,7 +9355,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -9379,7 +9379,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C9",
         "nodejs": "pass"
       }
     },
@@ -9403,7 +9403,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C9",
         "nodejs": "pass"
       }
     },
@@ -9424,7 +9424,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "skip:C5-no-api",
         "nodejs": "pass"
       }
     },
@@ -9453,7 +9453,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C5",
         "nodejs": "pass"
       }
     },
@@ -9477,7 +9477,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C9",
         "nodejs": "pass"
       }
     },
@@ -9502,7 +9502,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C9",
         "nodejs": "pass"
       }
     },
@@ -9531,7 +9531,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C9",
         "nodejs": "pass"
       }
     },
@@ -9560,7 +9560,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C5",
         "nodejs": "pass"
       }
     },
@@ -9590,7 +9590,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -9617,7 +9617,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "xfail:C9",
         "nodejs": "pass"
       }
     },
@@ -9639,7 +9639,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:phase-c",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -9895,7 +9895,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C7b",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -9987,7 +9987,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C12",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -10166,7 +10166,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C12",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -10366,7 +10366,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C7b",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },

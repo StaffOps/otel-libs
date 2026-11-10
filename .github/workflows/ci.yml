@@ -118,6 +118,9 @@ jobs:
       # coverlet.msbuild writes its hit files (total drops, gate fails); give
       # the host 10 s to exit (dotnet/TESTS.md).
       VSTEST_TESTHOST_SHUTDOWN_TIMEOUT: '10000'
+      # Parity release gate (parity/README.md, DN11): no xfail or skip:C<n> left; runs on a
+      # dotnet/v* release tag only.
+      PARITY_RELEASE: ${{ startsWith(github.ref, 'refs/tags/dotnet/v') && '1' || '' }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -125,6 +128,7 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: ${{ matrix.dotnet }}
+      - uses: ./.github/actions/fakeotlp
       - run: dotnet restore StaffOps.OtelHelper.Tests/StaffOps.OtelHelper.Tests.csproj
       - run: >
           dotnet test StaffOps.OtelHelper.Tests
@@ -136,7 +140,11 @@ jobs:
           /p:Threshold=90
           /p:ThresholdType=line
           /p:ThresholdStat=total
-          /p:Exclude="[xunit*]*"
+          /p:Exclude="[xunit*]*%2c[StaffOps.OtelHelper.ParityDriver]*"
+      - name: fakeotlp logs
+        if: failure()
+        run: docker logs fakeotlp || true
+        working-directory: .
       - uses: actions/upload-artifact@v4
         if: always()
         with:

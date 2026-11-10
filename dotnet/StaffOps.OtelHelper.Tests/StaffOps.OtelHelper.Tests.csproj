@@ -26,5 +26,7 @@
     <ProjectReference Include="..\StaffOps.OtelHelper.Redis\StaffOps.OtelHelper.Redis.csproj" />
     <ProjectReference Include="..\StaffOps.OtelHelper.Sql\StaffOps.OtelHelper.Sql.csproj" />
     <ProjectReference Include="..\StaffOps.OtelHelper.Profiling\StaffOps.OtelHelper.Profiling.csproj" />
+    <!-- Spawned per parity case from this output folder (ParityTests, design D-NET12). -->
+    <ProjectReference Include="..\StaffOps.OtelHelper.ParityDriver\StaffOps.OtelHelper.ParityDriver.csproj" />
   </ItemGroup>
 </Project>

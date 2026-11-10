@@ -10,7 +10,7 @@ not linked from the "Shipped (historical" item of specs/README.md), in one of
 these forms:
   "### R1 — ...", "### SR4 — ..."          (heading, levels 2-4)
   "- **G3** ...", "- **RT2 Guard** ..."    (bold bullet)
-with a prefix R, G, P, SR, RT or JS. A requirement's text runs to the next
+with a prefix R, G, P, SR, RT, JS or DN. A requirement's text runs to the next
 definition or heading; it is a SHALL requirement when that text contains
 "SHALL".
 
@@ -21,6 +21,7 @@ Citations (word-bounded id, T-D4):
   * Node.js tests: nodejs/**/test/**/*.{cjs,mjs,js,ts} and
     nodejs/**/*.test.{cjs,mjs,js,ts} (e.g. nodejs/ci/version.test.mjs;
     node_modules excluded)
+  * .NET tests: dotnet/**/*.Tests/**/*.cs (bin/ and obj/ excluded)
 
 Agent tooling directories (.claude/, holding worktree copies of the repo) and
 .git/ are never searched.
@@ -33,7 +34,9 @@ In the test files (the Go, Python and tools test globs above) only lines from
 the first test definition on count: "func Test"/"func Fuzz" in Go, "def test_"
 (sync or async) or a test class ("class Test...", "class ...Test") in Python;
 in Node.js files (.cjs/.mjs/.js/.ts) a "test(", "it(", "describe(" or "suite("
-call (also with .skip/.only/.todo) or a "t.test(" subtest.
+call (also with .skip/.only/.todo) or a "t.test(" subtest; in C# files a
+"[Fact]" or "[Theory]" attribute (also "[Xunit.Fact]", "[Trait(...), Fact]"),
+together with the "///" doc-comment and attribute lines directly above it.
 A file-header comment or module docstring that names an id is a claim, not an
 asserting test, and is ignored; a test file with no test definition cites
 nothing. Cite an id in the test function, its docstring or its class.
@@ -56,7 +59,7 @@ from pathlib import Path
 
 from speclib import REPO_ROOT, active_spec_dirs, rel
 
-ID_PATTERN = r"(?:SR|RT|JS|R|G|P)\d+"
+ID_PATTERN = r"(?:SR|RT|JS|DN|R|G|P)\d+"
 DEF_HEADING_RE = re.compile(rf"^#{{2,4}}\s+({ID_PATTERN})\b")
 DEF_BULLET_RE = re.compile(rf"^\s*[-*]\s+\*\*({ID_PATTERN})\b")
 HEADING_RE = re.compile(r"^#{1,6}\s")
@@ -68,6 +71,10 @@ TEST_START_RE = re.compile(
 # Node.js test files only (node:test / mocha-style starts).
 NODE_TEST_START_RE = re.compile(
     r"^\s*(?:(?:test|it|describe|suite)(?:\.(?:skip|only|todo))?|t\.test)\s*\(")
+# C# test files only (xUnit attributes).
+CSHARP_TEST_START_RE = re.compile(r"^\s*\[\s*(?:[^\]]*,\s*)?(?:Xunit\.)?(?:Fact|Theory)(?:Attribute)?\b")
+# The doc-comment / attribute block directly above a C# test attribute belongs to the test.
+CSHARP_PREFIX_RE = re.compile(r"^\s*(?:///|\[)")
 TEXT_SUFFIXES = {".go", ".py", ".sh", ".yaml", ".yml", ".md", ".json", ".txt"}
 NODE_TEST_SUFFIXES = {".cjs", ".mjs", ".js", ".ts"}
 
@@ -121,7 +128,7 @@ def parse_requirements(root: Path) -> dict[str, Requirement]:
 
 # Never searched for citations: agent worktrees (.claude/worktrees/ holds
 # copies of the repo, whose tests would cite ids twice), VCS data, packages.
-SKIPPED_DIRS = {".claude", ".git", "node_modules", "vendor"}
+SKIPPED_DIRS = {".claude", ".git", "node_modules", "vendor", "bin", "obj"}
 
 
 def _skipped(root: Path, path: Path) -> bool:
@@ -134,6 +141,7 @@ def test_files(root: Path) -> set[Path]:
     files |= set((root / "python" / "tests").rglob("*.py"))
     files |= set((root / "tools" / "tests").rglob("*.py"))
     files |= node_test_files(root / "nodejs")
+    files |= csharp_test_files(root / "dotnet")
     return files
 
 
@@ -151,6 +159,18 @@ def node_test_files(nodejs: Path) -> set[Path]:
     return found
 
 
+def csharp_test_files(dotnet: Path) -> set[Path]:
+    """dotnet/**/*.Tests/**/*.cs; SKIPPED_DIRS (bin/, obj/) never descended into."""
+    found: set[Path] = set()
+    for dirpath, dirnames, filenames in os.walk(dotnet):
+        dirnames[:] = [d for d in dirnames if d not in SKIPPED_DIRS]
+        here = Path(dirpath)
+        in_test_project = any(part.endswith(".Tests") for part in here.relative_to(dotnet).parts)
+        if in_test_project:
+            found.update(here / f for f in filenames if f.endswith(".cs"))
+    return found
+
+
 def citation_files(root: Path) -> list[Path]:
     files = test_files(root)
     e2e = root / "testing" / "e2e"
@@ -159,15 +179,18 @@ def citation_files(root: Path) -> list[Path]:
     return sorted(files)
 
 
-def first_test_line(lines: list[str], node: bool = False) -> int | None:
+def first_test_line(lines: list[str], node: bool = False, csharp: bool = False) -> int | None:
     """Index of the first test definition, or None when the file has none.
 
-    node=True uses the Node.js markers (test(, it(, describe(, …) instead of
-    the Go/Python ones.
+    node=True uses the Node.js markers (test(, it(, describe(, …) and
+    csharp=True the xUnit attributes instead of the Go/Python ones.
     """
-    rx = NODE_TEST_START_RE if node else TEST_START_RE
+    rx = CSHARP_TEST_START_RE if csharp else NODE_TEST_START_RE if node else TEST_START_RE
     for i, line in enumerate(lines):
         if rx.match(line):
+            if csharp:
+                while i > 0 and CSHARP_PREFIX_RE.match(lines[i - 1]):
+                    i -= 1
             return i
     return None
 
@@ -184,7 +207,8 @@ def collect_citations(root: Path, reqs: dict[str, Requirement]) -> None:
             continue
         start = 0
         if path in tests:
-            first = first_test_line(lines, node=path.suffix in NODE_TEST_SUFFIXES)
+            first = first_test_line(lines, node=path.suffix in NODE_TEST_SUFFIXES,
+                                    csharp=path.suffix == ".cs")
             if first is None:
                 continue
             start = first

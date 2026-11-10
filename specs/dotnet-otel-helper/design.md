@@ -677,6 +677,12 @@ services).
 > prefix from the resolved host; `PrometheusEnvVars_HaveNoEffect_HelperPortServed`
 > is rewritten in C12. Cases `metrics.port_prometheus_*` and
 > `metrics.listener_prometheus_host_loopback` are `xfail:C12`.
+> *Note 2026-11-09 (C4 fix round):* `metrics.listener_prometheus_host_loopback`
+> passes on 0.2 (the IPv4-only `+` prefix also answers on 127.0.0.1), so C4
+> records it `pass`; C12 adds a .NET negative control proving the listener
+> binds the resolved host (a connect from a non-loopback address is refused
+> with `OTEL_EXPORTER_PROMETHEUS_HOST=127.0.0.1`, as
+> `testing/e2e/dotnet-prom-scrape.sh` scrapes from another container).
 
 ### D-NET12 — Parity runner: xUnit theory over the fixture, one process per case
 **Choice**: a test class `ParityTests` in the test project finds
@@ -823,6 +829,8 @@ failure is upstream.
 | (no case) URL query redaction text and scope (.NET 8 vs .NET 9+ runtime) | README gap row | O3 | C14c, C-patch notes |
 | (no case) gRPC failures counted as HTTP 200 in `http.server.request.duration`; no RPC metrics | README gap row | upstream | C11 |
 | (no case) gRPC span names `pkg.Svc/Method` *(amended 2026-11-08, A30: cases `grpc.server_span_name_semconv` and `grpc.client_span_name_semconv` now cover it)* | README row: same as Go | upstream | C11 |
+| `metrics.scrape_inactive_exporter_none`, `metrics.scrape_inactive_sdk_disabled` *(added 2026-11-09, C4 fix round; coordinator decision)* | `skip:no-upstream-dotnet-prom-mounted-handler` | they assert a mounted `/metrics` handler's status (200 while Prometheus is deliberately inactive); .NET serves the upstream listener only and D-NET11 rejects a mounted handler | C4 |
+| `http.opt_in_metrics_scrape_disabled_pattern_wins` *(added 2026-11-09, C4 fix round)* | `skip:no-upstream-dotnet-http-body-size` | it drops a body-size instrument .NET does not have, so it passes trivially | C4 |
 | `http.opt_in_metrics_scrape_body_size_on`, `http.opt_in_metrics_scrape_code_on` *(added 2026-11-08, A30)*: ASP.NET Core and `System.Net.Http` have no HTTP body-size instrument (Microsoft Learn built-in metrics pages read 2026-11-08), so the opt-in switch brings back active requests and connection metrics only | `skip:no-upstream-dotnet-http-body-size` | upstream | C11 |
 
 `skip:dotnet-sdk-logs-env-values` (r1 candidate) is not needed: the SDK

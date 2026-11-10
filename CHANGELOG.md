@@ -855,6 +855,15 @@ Phase C work on this branch (no .NET release yet; the first will be
   unit tests (`PrometheusListenerTests`, no network needed); suite 183/183,
   line coverage 96.31%.
   The `release` skill has a .NET SDK-bump checklist.
+- **.NET: parity runner (task C4, design D-NET12, DN11).** The .NET suite now
+  runs every case of `parity/cases.json` in its own process
+  (`StaffOps.OtelHelper.ParityDriver`, not packed) against the shared fake
+  OTLP receiver, with strict xfail and the release gate; compose service
+  `dotnet-tests`, `testing/verify.sh` step `dotnet`, CI `dotnet-test` with the
+  receiver. The fixture now records the 0.2 behavior of .NET: 91 `pass`, 252
+  `xfail:C<n>`, 13 `skip:C5-no-api`, 12 known-difference skips. No library
+  change; suite 571/571 on SDK 8 and on SDK 10 (roll-forward), line coverage
+  98.77%.
 
 ### Breaking — telemetry output changes (dashboards/alerts)
 

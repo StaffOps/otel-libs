@@ -341,6 +341,38 @@ class TraceTest(Tree):
         write(self.root, "python/tests/test_y.py", "it('JS94 is not a Python test start')\n")
         self.assertEqual(self.reqs()["JS94"].citations, [])
 
+    def test_csharp_ids_and_test_files(self) -> None:
+        write(self.root, "specs/gamma/requirements.md", """\
+            ### DN91 — Cited inside an xUnit test
+            The helper SHALL a.
+            ### DN92 — Header only
+            The helper SHALL b.
+            ### DN93 — Build output
+            The helper SHALL c.
+            ### DN94 — Not a test project
+            The helper SHALL d.
+            """)
+        write(self.root, "dotnet/My.Tests/ATests.cs",
+              "// DN92: a file header is a claim, not a test.\n"
+              "public class ATests\n{\n    [Fact]\n    public void Cited() { } // DN91\n}\n")
+        write(self.root, "dotnet/My.Tests/bin/Release/net8.0/Generated.cs", "[Fact]\n// DN93\n")
+        write(self.root, "dotnet/My.Tests/obj/Generated.cs", "[Fact]\n// DN93\n")
+        write(self.root, "dotnet/My.Lib/B.cs", "[Fact]\n// DN94\n")
+        reqs = self.reqs()
+        self.assertEqual(reqs["DN91"].citations, ["dotnet/My.Tests/ATests.cs:5"])
+        self.assertEqual(reqs["DN92"].citations, [])
+        self.assertEqual(reqs["DN93"].citations, [])
+        self.assertEqual(reqs["DN94"].citations, [])
+        for line in ("    [Fact]", "    [Theory]", "[Fact(Skip = \"x\")]", "[Xunit.Fact]", "[ Fact]",
+                     "[Trait(\"k\", \"v\"), Fact]", "[FactAttribute]"):
+            self.assertEqual(trace_tool.first_test_line(["// DN91", line], csharp=True), 1, line)
+        self.assertIsNone(trace_tool.first_test_line(["// [Fact]", "[Facts]", "[InlineData(1)]"], csharp=True))
+        # The doc comment and attributes directly above the first test attribute count.
+        block = ["// header DN92", "    /// <summary>DN91 contract.</summary>", "    [Trait(\"a\", \"b\")]", "    [Fact]"]
+        self.assertEqual(trace_tool.first_test_line(block, csharp=True), 1)
+        write(self.root, "dotnet/My.Tests/CTests.cs", "\n".join(block) + "\n    public void X() { }\n")
+        self.assertIn("dotnet/My.Tests/CTests.cs:2", self.reqs()["DN91"].citations)
+
     def test_ci_test_files_count_and_claude_worktrees_are_skipped(self) -> None:
         write(self.root, "specs/gamma/requirements.md", """\
             ### JS95 — Cited by a *.test.mjs outside a test directory

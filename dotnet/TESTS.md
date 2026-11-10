@@ -1,9 +1,12 @@
 # Tests — StaffOps.OtelHelper (.NET)
 
-183 unit tests (xUnit), 0 failed, 0 warnings.
+571 tests (xUnit) with the parity runner, 0 failed, 0 warnings (compose `dotnet-tests` on `sdk:8.0`, and on `sdk:10.0` with `DOTNET_ROLL_FORWARD=Major`, 2026-11-09).
+
+From `dotnet/`; the repository root is mounted because the parity runner reads
+`parity/cases.json` (and `specs/dotnet-otel-helper/tasks.md`) from it:
 
 ```bash
-docker run --rm -v "$(pwd):/src" -w /src mcr.microsoft.com/dotnet/sdk:8.0 dotnet test StaffOps.OtelHelper.Tests
+docker run --rm -v "$(git rev-parse --show-toplevel):/src" -w /src/dotnet mcr.microsoft.com/dotnet/sdk:8.0 dotnet test StaffOps.OtelHelper.Tests
 ```
 
 Every project builds with warnings as errors (`Directory.Build.props`), so a
@@ -16,11 +19,11 @@ With coverage and the 90% gate, as CI runs it, on a container-local copy (the
 source mount stays read-only):
 
 ```bash
-docker run --rm -e VSTEST_TESTHOST_SHUTDOWN_TIMEOUT=10000 -v "$PWD:/src:ro" mcr.microsoft.com/dotnet/sdk:8.0 sh -c '
-  mkdir /w && cd /src && tar --exclude=bin --exclude=obj --exclude=coverage -cf - . | tar -xf - -C /w
-  cd /w && dotnet test StaffOps.OtelHelper.Tests -c Release \
+docker run --rm -e VSTEST_TESTHOST_SHUTDOWN_TIMEOUT=10000 -v "$(git rev-parse --show-toplevel):/src:ro" mcr.microsoft.com/dotnet/sdk:8.0 sh -c '
+  mkdir /w && cd /src && tar --exclude=bin --exclude=obj --exclude=coverage --exclude=node_modules -cf - dotnet parity specs | tar -xf - -C /w
+  cd /w/dotnet && dotnet test StaffOps.OtelHelper.Tests -c Release \
     /p:CollectCoverage=true /p:CoverletOutputFormat=cobertura /p:CoverletOutput=./coverage/ \
-    /p:Threshold=90 /p:ThresholdType=line /p:ThresholdStat=total /p:Exclude="[xunit*]*"'
+    /p:Threshold=90 /p:ThresholdType=line /p:ThresholdStat=total /p:Exclude="[xunit*]*%2c[StaffOps.OtelHelper.ParityDriver]*"'
 ```
 
 `VSTEST_TESTHOST_SHUTDOWN_TIMEOUT=10000` is required for a stable number:
@@ -31,6 +34,25 @@ the same variable. Long-term option: `coverlet.collector` (a data collector
 inside vstest's own shutdown sequence) instead of `coverlet.msbuild`; it needs
 a different threshold step, because the collector has no `Threshold`
 property.
+
+---
+
+## ParityTests (shared fixture)
+
+`ParityTests` runs every case of `parity/cases.json` in its own process
+(`StaffOps.OtelHelper.ParityDriver`), against the fake OTLP receiver, with the
+`dotnet` status of each case (strict xfail); `ParityHarnessTests` cover the
+matcher and the schema. Rules, environment variables and adapter seams:
+[`parity/README.md`](../parity/README.md#net-runner). Run it with the receiver:
+
+```bash
+docker compose -f testing/docker-compose.yml run --rm dotnet-tests
+```
+
+Without the receiver (the plain `dotnet test` above), every case with a
+`{receiver…}` placeholder, and every export case, is reported as passed with a
+"not run" line. Without the repository root mounted, `Fixture_is_found` fails
+with "parity/cases.json not found; mount the repo root or set PARITY_CASES".
 
 ---
 

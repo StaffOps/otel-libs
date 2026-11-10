@@ -9,14 +9,15 @@
 #                                     # in EVERY step run: scope with --only (e.g. --release --only node)
 #   testing/verify.sh --list          # step names
 #
-# Steps: go, go-ext, py-3.10-lower, py-3.13-lower, py-3.13-latest, node, e2e,
+# Steps: go, go-ext, py-3.10-lower, py-3.13-lower, py-3.13-latest, node, dotnet, e2e,
 # dotnet-scrape, mkdocs, spec-lint, trace, index, tools-tests. `node` runs the Node.js
 # workspace, parity runner included, on node:${NODE_VERSION:-24}-slim (CI
-# covers 22.15.0/22/24/26).
+# covers 22.15.0/22/24/26). `dotnet` runs the .NET suite with the parity runner
+# and the coverage gate on sdk:8.0 (until C0).
 #
 # Disk safety: this script never prunes, never runs `compose down -v` and never
 # removes volumes or images. At exit it stops only the compose services it
-# started itself (fakeotlp-go, fakeotlp-py, fakeotlp-node, collector: the ones
+# started itself (fakeotlp-go, fakeotlp-py, fakeotlp-dotnet, fakeotlp-node, collector: the ones
 # not running when it began). The e2e step is testing/e2e/smoke.sh, which
 # applies the same rule to the Collector; dotnet-scrape removes only the
 # network and container it created.
@@ -28,17 +29,17 @@ compose=(docker compose -f "$root/testing/docker-compose.yml")
 MKDOCS_IMAGE="squidfunk/mkdocs-material:9.5.39"
 TOOLS_IMAGE="python:3.12-slim"
 
-ALL_STEPS=(go go-ext py-3.10-lower py-3.13-lower py-3.13-latest node e2e dotnet-scrape mkdocs spec-lint trace index tools-tests)
+ALL_STEPS=(go go-ext py-3.10-lower py-3.13-lower py-3.13-latest node dotnet e2e dotnet-scrape mkdocs spec-lint trace index tools-tests)
 QUICK_SKIP=" e2e dotnet-scrape py-3.10-lower py-3.13-lower "
 
-usage() { sed -n '2,22p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,23p' "$0" | sed 's/^# \{0,1\}//'; }
 
 quick=0
 only=()
 while [ $# -gt 0 ]; do
   case "$1" in
     --quick) quick=1 ;;
-    # The go, py-* and node steps then fail while a parity case is still
+    # The go, py-* , node and dotnet steps then fail while a parity case is still
     # skipped pending a task (CI does the same on release tags).
     --release) export PARITY_RELEASE=1 ;;
     --only)
@@ -59,7 +60,7 @@ done
 # The collector is under the e2e profile; `ps` lists it only with --profile.
 running_services() {
   "${compose[@]}" --profile e2e ps --status running --services 2>/dev/null \
-    | grep -E '^(fakeotlp-go|fakeotlp-py|fakeotlp-node|collector)$' || true
+    | grep -E '^(fakeotlp-go|fakeotlp-py|fakeotlp-dotnet|fakeotlp-node|collector)$' || true
 }
 preexisting=" $(running_services | tr '\n' ' ') "
 cleanup() {
@@ -103,6 +104,12 @@ step_node() {
     node --check /smoke/smoke.cjs
 }
 
+step_dotnet() {
+  # A stale otel-libs/fakeotlp:local would keep old receiver behavior.
+  "${compose[@]}" build fakeotlp-dotnet || return 1
+  "${compose[@]}" run --rm dotnet-tests
+}
+
 step_e2e() { "$root/testing/e2e/smoke.sh"; }
 
 # .NET Prometheus fallback scraped from another container (design D-NET11).
@@ -136,6 +143,7 @@ run_step() {
     py-3.13-lower) step_python 3.13 lower ;;
     py-3.13-latest) step_python 3.13 latest ;;
     node) step_node ;;
+    dotnet) step_dotnet ;;
     e2e) step_e2e ;;
     dotnet-scrape) step_dotnet_scrape ;;
     mkdocs) step_mkdocs ;;
