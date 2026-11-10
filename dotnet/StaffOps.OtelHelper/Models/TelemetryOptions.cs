@@ -119,7 +119,11 @@ namespace StaffOps.OtelHelper
         [Obsolete("ExtraInstrumentation has no effect: add the opt-in packages (StaffOps.OtelHelper.Sql, .AWS, .Redis) instead.")]
         public string? ExtraInstrumentation { get; set; }
 
-        /// <summary>OTLP export timeout in milliseconds, in [1, 86 400 000]. Not set: 10 000.</summary>
+        /// <summary>
+        /// OTLP export timeout in milliseconds, in [1, 86 400 000]: the export deadline of every signal
+        /// (exporter, HTTP client, batch processors and periodic reader). Not set:
+        /// <c>OTEL_EXPORTER_OTLP_&lt;SIGNAL&gt;_TIMEOUT</c>, else <c>OTEL_EXPORTER_OTLP_TIMEOUT</c>, else 10 000.
+        /// </summary>
         public int? ExportTimeoutMs { get; set; }
 
         /// <summary>
@@ -209,7 +213,8 @@ namespace StaffOps.OtelHelper
         public bool? Insecure { get; set; }
 
         /// <summary>
-        /// OTLP compression: <c>gzip</c> or <c>none</c>. Not set: <c>OTEL_EXPORTER_OTLP_COMPRESSION</c>.
+        /// OTLP compression of every signal: <c>gzip</c> or <c>none</c>. Not set:
+        /// <c>OTEL_EXPORTER_OTLP_&lt;SIGNAL&gt;_COMPRESSION</c>, else <c>OTEL_EXPORTER_OTLP_COMPRESSION</c>, else <c>gzip</c>.
         /// </summary>
         public string? Compression { get; set; }
 

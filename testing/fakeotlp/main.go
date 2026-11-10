@@ -10,6 +10,10 @@
 // grpc-timeout, x-parity-* headers). ADMIN serves GET /requests (JSON) and
 // DELETE /requests (reset). Payloads are drained, never decoded.
 //
+// An OTLP/HTTP request whose path starts with /parity-redirect-<letter>/ (a=301,
+// b=302, c=307, d=308) is answered with that status and Location http://<host>/redirected/<rest>?token=
+// parity-redirect-token (contract task A31: clients must not follow it).
+//
 // A request carrying the header x-parity-echo-error is answered with an error
 // that echoes its x-parity-* headers, as a collector or proxy echoing the
 // request would (contract task A29: SDK error text must not carry a response
@@ -194,6 +198,13 @@ func handler(g *grpc.Server, isTLS bool) http.Handler {
 		b, _ := io.ReadAll(http.MaxBytesReader(w, r.Body, maxBody))
 		add(rec{Addr: addr, Proto: "http", TLS: isTLS, Host: r.Host, Port: port, Path: r.URL.Path, RawPath: r.URL.EscapedPath(), Bytes: len(b),
 			Encoding: r.Header.Get("Content-Encoding"), Headers: parityHeaders(r.Header)})
+		if code, rest, ok := redirectPath(r.URL.Path); ok {
+			// The client must not follow it (contract task A31): the target path is
+			// recorded like any request, so a followed redirect is visible.
+			w.Header().Set("Location", "http://"+r.Host+"/redirected"+rest+"?token="+redirectToken)
+			w.WriteHeader(code)
+			return
+		}
 		if mode := r.Header.Get(echoErrorHeader); mode != "" {
 			ph := parityHeaders(r.Header)
 			if mode == "token" {
@@ -218,6 +229,27 @@ func handler(g *grpc.Server, isTLS bool) http.Handler {
 		w.Header().Set("Content-Type", "application/x-protobuf")
 		w.WriteHeader(http.StatusOK) // empty body == empty Export*ServiceResponse
 	})
+}
+
+// redirectToken is the credential-like marker of the redirect Location: a case
+// asserts it is never logged.
+const redirectToken = "parity-redirect-token"
+
+// redirectCodes maps the letter of "/parity-redirect-<letter>/" to its status;
+// letters, not digits, so the request path never holds the status a case
+// asserts in the client's diagnostic (contract task A31).
+var redirectCodes = map[string]int{"a": 301, "b": 302, "c": 307, "d": 308}
+
+// redirectPath recognizes "/parity-redirect-<letter>/<rest>" (contract task
+// A31): such an OTLP/HTTP request is answered with that status and a Location
+// on the same receiver ("/redirected/<rest>?token=…").
+func redirectPath(path string) (code int, rest string, ok bool) {
+	const prefix = "/parity-redirect-"
+	if !strings.HasPrefix(path, prefix) || len(path) < len(prefix)+2 || path[len(prefix)+1] != '/' {
+		return 0, "", false
+	}
+	code, ok = redirectCodes[path[len(prefix):len(prefix)+1]]
+	return code, path[len(prefix)+1:], ok
 }
 
 // maxBody caps a recorded HTTP payload; OTLP test batches are a few KB.

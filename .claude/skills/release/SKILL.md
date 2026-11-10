@@ -359,6 +359,12 @@ task C3, 1.15.x → 1.20.x):
   (the `UseOtlpExporter()` marker the SDK's `EnsureNoUseOtlpExporterRegistrations`
   checks; `MetricsSetup.UseOtlpExporterRegistrationType`, C5): the canary test
   `UseOtlpExporter_Registration_Type_Still_Exists` fails if a bump renames it.
+- **SDK fields read by reflection (tests only).** `ExporterSettingsTests.Timeout_Bounds_…`
+  and the batch-size tests read the export timeout and batch size of
+  `BatchExportProcessor<T>` and `PeriodicExportingMetricReader` through
+  `IntMember` (any int field or property whose name contains `timeout` /
+  `batch`, task C8). If they fail after a bump, the SDK renamed or added such
+  members: update `IntMember`, not the assertion.
 - **Breaking entries.** Re-read each package's CHANGELOG at its tag (core
   `core-<v>`, Prometheus `coreunstable-<v>`, contrib `Instrumentation.<X>-<v>`)
   and walk every **Breaking** line with a before/after measurement.

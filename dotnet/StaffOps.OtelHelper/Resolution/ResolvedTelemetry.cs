@@ -53,19 +53,21 @@ namespace StaffOps.OtelHelper
 
         public required bool DebugLevel { get; init; }
 
+        /// <summary>The generic export timeout (code &gt; <c>OTEL_EXPORTER_OTLP_TIMEOUT</c> &gt; 10 000 ms); each signal's own is in <see cref="ExportSettings"/>.</summary>
         public required int ExportTimeoutMs { get; init; }
 
-        /// <summary><c>gzip</c> or <c>none</c>.</summary>
+        /// <summary>The generic compression, <c>gzip</c> or <c>none</c> (code &gt; <c>OTEL_EXPORTER_OTLP_COMPRESSION</c> &gt; <c>gzip</c>); each signal's own is in <see cref="ExportSettings"/>.</summary>
         public required string Compression { get; init; }
 
-        /// <summary>The generic <c>OTEL_EXPORTER_OTLP_HEADERS</c> value (process environment); never logged.</summary>
-        public string? Headers { get; init; }
+        /// <summary>The exporter settings of each signal with an OTLP target (timeout, compression, headers, TLS; task C8).</summary>
+        public IReadOnlyDictionary<string, SignalExportSettings> ExportSettings { get; init; } = new Dictionary<string, SignalExportSettings>();
 
-        public string? CertificatePath { get; init; }
+        /// <summary>The raw values of the OTLP header variables set at resolution (masked in forwarded SDK text); never logged.</summary>
+        public IReadOnlyList<string> HeaderTexts { get; init; } = Array.Empty<string>();
 
-        public string? ClientCertificatePath { get; init; }
-
-        public string? ClientKeyPath { get; init; }
+        /// <summary>The exporter settings of <paramref name="signal"/>; the defaults when it has none.</summary>
+        internal SignalExportSettings Export(string signal)
+            => ExportSettings.TryGetValue(signal, out var settings) ? settings : SignalExportSettings.Default;
 
         /// <summary>The sampler the helper sets; null leaves the SDK's <c>OTEL_TRACES_SAMPLER</c> handling in place.</summary>
         public Sampler? Sampler { get; init; }

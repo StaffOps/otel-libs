@@ -156,8 +156,8 @@ public class ResolverCoreFixRoundTests : IDisposable
         var headers = HelperHttpClientFactory.ParseHeaders(
             "x-a=ok%0D%0AInjected: parity-value,x-%0Ab=1,x-c=2,broken-parity-secret,=x", diagnostics.Sink);
         Assert.Equal(new[] { "x-c=2" }, headers.Select(h => $"{h.Key}={h.Value}"));
-        Assert.Contains(diagnostics.Lines, l => l.Contains("control character was skipped") && l.Contains("key=x-a"));
-        Assert.Single(diagnostics.Lines, l => l.Contains("malformed OTEL_EXPORTER_OTLP_HEADERS item was skipped"));
+        Assert.Contains(diagnostics.Lines, l => l.Contains("not printable ASCII") && l.Contains("item #1"));
+        Assert.Equal(3, diagnostics.Lines.Count(l => l.Contains("malformed OTEL_EXPORTER_OTLP_HEADERS item was skipped")));
         Assert.DoesNotContain("parity-value", diagnostics.Text);
         Assert.DoesNotContain("parity-secret", diagnostics.Text);
         Assert.DoesNotContain("\n\n", diagnostics.Text);
@@ -220,7 +220,13 @@ public class ResolverCoreFixRoundTests : IDisposable
     [InlineData("OTEL_EXPORTER_OTLP_ENDPOINT", true)]
     [InlineData("OTEL_EXPORTER_OTLP_PROTOCOL", true)]
     [InlineData("OTEL_EXPORTER_OTLP_COMPRESSION", true)]
-    [InlineData("OTEL_EXPORTER_OTLP_TIMEOUT", false)]
+    [InlineData("OTEL_EXPORTER_OTLP_TIMEOUT", true)]
+    [InlineData("OTEL_EXPORTER_OTLP_TRACES_TIMEOUT", true)]
+    [InlineData("OTEL_EXPORTER_OTLP_METRICS_COMPRESSION", true)]
+    [InlineData("OTEL_EXPORTER_OTLP_LOGS_ENDPOINT", true)]
+    [InlineData("OTEL_EXPORTER_OTLP_TRACES_PROTOCOL", true)]
+    [InlineData("OTEL_EXPORTER_OTLP_TRACES_HEADERS", false)]
+    [InlineData("OTEL_EXPORTER_OTLP_SPANS_TIMEOUT", false)]
     [InlineData("OTEL_EXPORTER_OTLP_HEADERS", false)]
     [InlineData("OTEL_EXPORTER_OTLP_CERTIFICATE", false)]
     [InlineData("OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE", false)]
@@ -517,13 +523,13 @@ public class ResolverCoreFixRoundTests : IDisposable
     [Fact]
     public void Header_Name_Rejected_By_The_Client_Is_Warned_By_Name()
     {
-        Environment.SetEnvironmentVariable("OTEL_EXPORTER_OTLP_HEADERS", "bad key=v-secret,x-ok=1");
+        Environment.SetEnvironmentVariable("OTEL_EXPORTER_OTLP_HEADERS", "content-type=v-secret,x-ok=1");
         var diagnostics = new TestDiagnostics();
         var resolved = diagnostics.Resolve(o => o.OtelCollectorEndpoint = "http://127.0.0.1:1");
         using var client = OtlpExporters.OptionsFor("traces", resolved, diagnostics.Sink)!.HttpClientFactory!();
         Assert.True(client.DefaultRequestHeaders.Contains("x-ok"));
         var line = Assert.Single(diagnostics.Lines, l => l.Contains("rejected by the HTTP client"));
-        Assert.Contains("key=\"bad key\"", line);
+        Assert.Contains("key=content-type", line);
         Assert.DoesNotContain("v-secret", diagnostics.Text);
     }
 
@@ -683,7 +689,11 @@ public class ResolverCoreFixRoundTests : IDisposable
                     HttpListenerContext context;
                     try { context = await listener.GetContextAsync(); } catch { return; }
                     using var buffer = new MemoryStream();
-                    await context.Request.InputStream.CopyToAsync(buffer);
+                    // gzip is the default compression since task C8.
+                    var body = context.Request.Headers["Content-Encoding"] == "gzip"
+                        ? new System.IO.Compression.GZipStream(context.Request.InputStream, System.IO.Compression.CompressionMode.Decompress)
+                        : context.Request.InputStream;
+                    await body.CopyToAsync(buffer);
                     if (context.Request.Url!.AbsolutePath.EndsWith("/v1/metrics", StringComparison.Ordinal))
                     {
                         bodies.Enqueue(buffer.ToArray());
@@ -962,12 +972,13 @@ public class ResolverCoreFixRoundTests : IDisposable
         {
             var services = new ServiceCollection();
             services.AddSingleton<IOtelHelperDiagnostics>(new TestDiagnostics().Sink);
-            services.AddOtelHelper(o => { o.OtelCollectorEndpoint = "http://127.0.0.1:1"; o.PrometheusMetricsPort = 0; });
+            services.AddOtelHelper(o => { o.OtelCollectorEndpoint = "http://127.0.0.1:1"; o.PrometheusMetricsPort = 0; o.ExportTimeoutMs = 4321; });
             services.Configure<MetricReaderOptions>(o => o.TemporalityPreference = MetricReaderTemporalityPreference.LowMemory);
             using var sp = services.BuildServiceProvider();
             var named = sp.GetRequiredService<IOptionsMonitor<MetricReaderOptions>>().Get(MetricsSetup.HistogramPathName);
             Assert.Equal(MetricReaderTemporalityPreference.LowMemory, named.TemporalityPreference);
-            Assert.Equal(2345, named.PeriodicExportingMetricReaderOptions.ExportTimeoutMilliseconds);
+            // The export deadline of metrics (task C8, A18): OTEL_METRIC_EXPORT_TIMEOUT is not honored.
+            Assert.Equal(4321, named.PeriodicExportingMetricReaderOptions.ExportTimeoutMilliseconds);
             Assert.Equal(TelemetryOptions.DefaultExportIntervalMs, named.PeriodicExportingMetricReaderOptions.ExportIntervalMilliseconds);
         }
         finally

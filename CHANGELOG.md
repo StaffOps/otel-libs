@@ -776,6 +776,25 @@ emitted telemetry.
    removed with a warning. A generic value that all three per-signal options
    shadow is not checked (it is never used), as in Go and Python.
 
+12. **Exporter settings are the helper's** (task C8, ADR-013). The export
+   timeout of every signal is `TelemetryOptions.ExportTimeoutMs`, else
+   `OTEL_EXPORTER_OTLP_<SIGNAL>_TIMEOUT`, else `OTEL_EXPORTER_OTLP_TIMEOUT`,
+   else 10 000 ms; it also bounds the batch processors and the periodic
+   reader, so an application `Configure<BatchExportActivityProcessorOptions>`
+   or `Configure<MetricReaderOptions>` export timeout no longer applies to the
+   helper's exporters (their queue size, delay and batch size still do).
+   `TelemetryOptions.Compression` unset now means `gzip`, not `none`.
+   *Fix round 1:* the same holds for `Configure<LogRecordExportProcessorOptions>`
+   (`BatchExportProcessorOptions.ExporterTimeoutMilliseconds`). Each of the three
+   options, when set while its variable (`OTEL_BSP_EXPORT_TIMEOUT`,
+   `OTEL_BLRP_EXPORT_TIMEOUT`, `OTEL_METRIC_EXPORT_TIMEOUT`) is unset, warns once
+   naming the option and pointing to `TelemetryOptions.ExportTimeoutMs`. With
+   `OTEL_EXPORTER_OTLP_METRICS_DEFAULT_HISTOGRAM_AGGREGATION`, the helper sets the
+   named reader's timeout last, so a `Configure<MetricReaderOptions>("StaffOps.OtelHelper.OtlpMetrics", …)`
+   cannot change it. On Windows the client certificate's key is imported into the
+   user key store for the life of the certificate (SChannel cannot use an
+   ephemeral key); on Linux it stays ephemeral.
+
 **Telemetry part.** Each row: before (0.2.x) → after, and what to check in
 dashboards and alerts.
 
@@ -1103,6 +1122,44 @@ dashboards and alerts.
    and warned once per variable, naming only the variable (0.2.x: dropped
    silently). Still to come: the per-signal variables of task C8.
 
+17. **Exporter settings follow the 0.3 contract** (task C8, contract A18,
+   R2, R8, G10). Before (0.2.x) → after:
+
+   | Input | 0.2.x | 0.3 (this branch) |
+   |---|---|---|
+   | `OTEL_EXPORTER_OTLP_HEADERS` | parsed by the SDK: the whole value unescaped before the split; an item without `=` or a duplicate key throws and the provider build fails | parsed by the helper: a malformed item (no `=`, a key outside `[A-Za-z0-9._-]`, an encoded key) skipped and warned by position; a value decoded as a whole, or kept literally on an invalid escape or non-UTF-8 bytes (warned); a value outside printable ASCII skipped; the last of a key wins |
+   | `OTEL_EXPORTER_OTLP_<SIGNAL>_HEADERS` | not read | replaces the generic headers for that signal (no merge); with no valid item the generic ones apply |
+   | gRPC header key ending in `-bin` | sent as written | value sent base64 (gRPC binary metadata: `abc` → `YWJj`) |
+   | `OTEL_EXPORTER_OTLP[_<SIGNAL>]_TIMEOUT` | fixed 10 s: `ExportTimeoutMs` masked the variable | decimal milliseconds (`^[0-9]+(\.[0-9]+)?$`), clamped to [1, 86 400 000]; `0`, signs, exponents, a bare dot warn and the next level applies; the deadline of the exporter, `HttpClient.Timeout`, the batch processors and the periodic reader; gRPC sends `grpc-timeout` |
+   | `OTEL_BSP_EXPORT_TIMEOUT`, `OTEL_BLRP_EXPORT_TIMEOUT`, `OTEL_METRIC_EXPORT_TIMEOUT` | read by the SDK (default 30 s) | not honored, one warning each pointing to `OTEL_EXPORTER_OTLP_TIMEOUT` |
+   | compression | none sent (the helper set none; 1.15 had no compression) | `gzip` by default; `OTEL_EXPORTER_OTLP_<SIGNAL>_COMPRESSION` read; an unknown value warns and the next level applies |
+   | TLS files | the generic CA and client pair, read by the SDK; no per-signal variables; nothing said on a plaintext target | per-signal, then generic, read and validated by the helper; an unreadable file or a CA with no PEM certificate warns and the next level applies (then the system roots); an incomplete or rejected client pair warns and server authentication is used; on `http://` (or schemeless with INSECURE) the files are ignored with one warning naming them |
+   | batch size above queue size | lowered to the queue size silently by the SDK | lowered, one warning naming both variables |
+   | value-length limit `0` | attribute values sent empty | still sent empty (no public override in the .NET exporter), now warned naming the variable |
+   | `3xx` answer from the endpoint | redirect followed (1.15 client) | not followed: that export is dropped and one ERROR names the signal and the status code |
+
+   Check: the Collector (or a proxy in front of it) must accept
+   `Content-Encoding: gzip` (the OTLP receivers do); an endpoint that
+   redirects must be replaced by its final URL; dashboards on attribute
+   lengths are unaffected. *Update of row 16:* the per-signal `_HEADERS`,
+   `_TIMEOUT`, `_COMPRESSION` and TLS-file variables listed there as task C8
+   are read now.
+   *Fix round 1 (2026-11-10):* the 0.2.x TLS cell, made precise against
+   OpenTelemetry .NET 1.15.3 (`OtlpExporterOptions.cs`, `ApplyMtlsConfiguration`,
+   added in 1.15.0): the SDK read the generic `OTEL_EXPORTER_OTLP_CERTIFICATE`,
+   `_CLIENT_CERTIFICATE` and `_CLIENT_KEY` only on modern .NET (`#if NET`), and
+   applied them only through its default client — an app that registered
+   `IHttpClientFactory` (`services.AddHttpClient()`) got no CA and no client
+   certificate. Since C8 the helper's own client applies them in every case.
+   Also: a fractional timeout (`250.5`) is rounded to whole milliseconds (Go
+   keeps the fraction); gRPC sends the configured deadline as `grpc-timeout`,
+   not the time left on an SDK retry; a TLS file over 1 MiB (or a device) is
+   "cannot be read"; the plaintext warning is one line per set of variables,
+   naming every signal (`signals=traces,metrics,logs`). **Redirects (owner
+   decision 2026-11-10):** the contract now refuses redirects in every
+   language (task A31); until A31, Go and Python follow 307/308 and Node.js
+   fails the export without a helper line.
+
 ### Collector / platform prerequisites (before rolling 0.3.0 out)
 
 Owned outside this repo (design D11); each item blocks the rollout, not the rc:
@@ -1333,6 +1390,75 @@ Phase C work on this branch (no .NET release yet; the first will be
   `_schemeless_`); the C7b group (55 cases) passes in full. Fixture: 239
   `pass`, 119 `xfail:C<n>`, 12 known-difference skips. Suite 1062/1062 on `sdk:8.0`
   and SDK 10.0.403 roll-forward, line coverage 98.45%.
+
+- **.NET: exporter settings (task C8, contract A18, R2, R8, G10, ADR-013).**
+  The helper resolves `OTEL_EXPORTER_OTLP[_<SIGNAL>]_HEADERS`, `_TIMEOUT`,
+  `_COMPRESSION`, `_CERTIFICATE`, `_CLIENT_KEY` and `_CLIENT_CERTIFICATE` per
+  signal (per-signal, then generic, then the default) and hands each exporter
+  the result on its own `HttpClient`; `OtlpExporterOptions.Headers` stays
+  empty. Headers follow the contract grammar (keys `[A-Za-z0-9._-]+`, not
+  decoded; values decoded as a whole or kept literally; non-printable-ASCII
+  values skipped; last key wins; warnings by item position, never a value); a
+  per-signal value replaces the generic one; a gRPC `-bin` value is sent
+  base64. The timeout is decimal milliseconds, clamped to [1, 86 400 000],
+  invalid values warn and fall back; it is the deadline of the exporter, the
+  client (`HttpClient.Timeout`), the batch span and log processors and the
+  periodic reader, and gRPC sends it as `grpc-timeout`. `OTEL_BSP_EXPORT_TIMEOUT`,
+  `OTEL_BLRP_EXPORT_TIMEOUT` and `OTEL_METRIC_EXPORT_TIMEOUT` are not honored
+  and warn. Compression defaults to `gzip`. TLS files are read and validated
+  by the helper (a CA with no PEM certificate, an unreadable file, an
+  incomplete or rejected client pair: warned by variable, next level or
+  server authentication); on a plaintext target they are ignored with one
+  warning naming them. A batch size above the queue size
+  (`OTEL_BSP_*`, `OTEL_BLRP_*`) warns naming both variables and the queue size
+  is used. A value-length limit of 0 is warned; the .NET OTLP exporter has no
+  public override and still sends those values empty (D-NET15 skip
+  `no-upstream-dotnet-attribute-limit`).
+  **Release blocker closed:** a `3xx` answer is no longer dropped silently —
+  the helper client never follows a redirect and writes one ERROR per signal
+  and status code (`the OTLP endpoint for traces answered HTTP 307 (a
+  redirect); redirects are not followed …`, never the `Location` value);
+  tests per signal against a local listener answering 301, 302, 307 and 308.
+  Parity: the 37 remaining `xfail:C8` cases pass, the two value-length cases
+  are `skip:no-upstream-dotnet-attribute-limit`, and a new case
+  `tls.certificate_readable_with_plaintext_warns` (a readable CA on a
+  plaintext target: the plaintext warning, not an unreadable-file one) passes
+  in every language. Fixture: 371 cases; .NET 277 `pass`, 80 `xfail:C<n>`, 14
+  known-difference skips. Suite 1143/1143 on `sdk:8.0` (line coverage 98.5%,
+  branch 96.64%) and SDK 10.0.403 roll-forward (98.55%).
+- **.NET: C8 fix round 1 (2026-11-10).** Owner decision: OTLP redirects are
+  refused in every language (contract D1 row "OTLP export redirects", task
+  A31). New cases `export.http_redirect_refused_warned` (.NET `pass`; Go,
+  Python, Node.js `xfail:A31`; the fake receiver answers
+  `/parity-redirect-<letter>/…` with a 3xx status and a `Location` holding a
+  token) and `export.headers_bin_short_value_unpadded` (a 2-byte `-bin`
+  value: Go, Python and .NET send `YWI`; Node's grpc-js sends `YWI=` and takes
+  the D-JS14 skip `skip:no-upstream-node-bin-padding`, task A32). App-set export
+  timeouts warn naming the option; the histogram path applies the deadline
+  last; TLS files are read with a 1 MiB bound; the plaintext TLS warning names
+  every signal; the SDK-text drop rule covers the per-signal OTLP keys; the
+  batch clamp names the options when the values came from code; the client
+  key is ephemeral on Linux. Found and left to task C12:
+  `MeterProvider.ForceFlush()` returns `false` because of the pull-only
+  Prometheus reader, even when the OTLP export succeeded.
+  Fixture: 373 cases; .NET 279 `pass`, 80 `xfail:C<n>`, 14 known-difference
+  skips. Suite 1155/1155 on `sdk:8.0` (line coverage 98.58%) and SDK 10.0.403
+  roll-forward (98.53%).
+- **.NET: C8 fix round 2 (2026-11-10).** `export.http_redirect_refused_warned`
+  now matches the contract wording (fragment `redirects are not followed`
+  with `signal=` and `status=` per signal; the receiver prefix is
+  `/parity-redirect-c/`, letters a–d for 301/302/307/308, so the path holds no
+  status) and a followed redirect fails `received`. The contract row is
+  amended: one shared wording, both protocols (gRPC on an HTTP/2 3xx), once
+  per process (once per container in .NET), and Node.js does not follow
+  redirects (its exporter fails a 3xx), so for Node.js task A31 is only the
+  helper line. `export.headers_bin_short_value_unpadded` keeps the exact
+  unpadded `YWI` for Go, Python and .NET; Node's padded form is the D-JS14
+  skip `skip:no-upstream-node-bin-padding` (task A32 closed as a recorded
+  difference). An application timeout on the histogram path's named
+  reader options is warned when the deadline replaces it. Measured for task
+  C12: `MeterProvider.Shutdown()` also returns `false` with the always-registered
+  Prometheus reader.
 
 ### Breaking — telemetry output changes (dashboards/alerts)
 

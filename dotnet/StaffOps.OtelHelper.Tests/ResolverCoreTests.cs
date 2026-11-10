@@ -73,7 +73,7 @@ public class ResolverCoreTests : IDisposable
         var configuration = Config(
             ("OTEL_EXPORTER_OTLP_ENDPOINT", "http://config-collector:4317"),
             ("OTEL_EXPORTER_OTLP_TIMEOUT", "4321"),
-            ("OTEL_EXPORTER_OTLP_COMPRESSION", "gzip"),
+            ("OTEL_EXPORTER_OTLP_COMPRESSION", "none"),
             ("OTEL_EXPORTER_OTLP_HEADERS", "x-config=1"),
             ("OTEL_EXPORTER_OTLP_CERTIFICATE", "/config/ca.pem"));
 
@@ -82,10 +82,11 @@ public class ResolverCoreTests : IDisposable
         {
             var resolved = provider.GetRequiredService<ResolvedTelemetry>();
             Assert.Equal("http://env-collector:4318", resolved.OtelCollectorEndpoint);
-            Assert.Equal(TelemetryOptions.DefaultExportTimeoutMs, resolved.ExportTimeoutMs);
-            Assert.Equal(TelemetryOptions.CompressionNone, resolved.Compression);
-            Assert.Null(resolved.Headers);
-            Assert.Null(resolved.CertificatePath);
+            // The environment timeout is the helper's (task C8); the IConfiguration 4321 is not read.
+            Assert.Equal(1234, resolved.ExportTimeoutMs);
+            Assert.Equal(TelemetryOptions.CompressionGzip, resolved.Compression);
+            Assert.Empty(resolved.HeaderTexts);
+            Assert.All(resolved.ExportSettings.Values, e => Assert.Empty(e.Headers));
 
             // The SDK constructor reads the environment (timeout 1234); the helper overwrites it.
             Assert.Equal(1234, new OtlpExporterOptions().TimeoutMilliseconds);
@@ -95,7 +96,7 @@ public class ResolverCoreTests : IDisposable
                 Assert.Equal(new Uri($"http://env-collector:4318/v1/{signal}"), options.Endpoint);
                 Assert.Equal(OtlpExportProtocol.HttpProtobuf, options.Protocol);
                 Assert.Equal(resolved.ExportTimeoutMs, options.TimeoutMilliseconds);
-                Assert.Equal(OtlpExportCompression.None, options.Compression);
+                Assert.Equal(OtlpExportCompression.GZip, options.Compression);
                 Assert.Equal(string.Empty, options.Headers);
                 using var client = options.HttpClientFactory!();
                 Assert.False(client.DefaultRequestHeaders.Contains("x-config"));
@@ -148,11 +149,11 @@ public class ResolverCoreTests : IDisposable
     }
 
     [Fact]
-    public void Invalid_Env_Compression_Warns_And_Uses_None()
+    public void Invalid_Env_Compression_Warns_And_Uses_Gzip()
     {
         Environment.SetEnvironmentVariable("OTEL_EXPORTER_OTLP_COMPRESSION", "zstd");
         var diagnostics = new TestDiagnostics();
-        Assert.Equal(TelemetryOptions.CompressionNone, diagnostics.Resolve().Compression);
+        Assert.Equal(TelemetryOptions.CompressionGzip, diagnostics.Resolve(o => o.OtelCollectorEndpoint = "http://collector:4317").Compression);
         Assert.Contains(diagnostics.Lines, l => l.Contains("invalid OTEL_EXPORTER_OTLP_COMPRESSION") && l.Contains("value=zstd"));
     }
 
@@ -367,8 +368,9 @@ public class ResolverCoreTests : IDisposable
             {
             }
 
-            Assert.Contains(bad.Lines, l => l.Contains("cannot read the OTLP CA certificate file") && l.Contains("variable=OTEL_EXPORTER_OTLP_CERTIFICATE"));
-            Assert.Contains(bad.Lines, l => l.Contains("cannot load the OTLP client certificate"));
+            Assert.Contains(bad.Lines, l => l.Contains("a TLS file cannot be read") && l.Contains("variable=OTEL_EXPORTER_OTLP_CERTIFICATE"));
+            Assert.Contains(bad.Lines, l => l.Contains("a TLS file cannot be read") && l.Contains("variable=OTEL_EXPORTER_OTLP_CLIENT_KEY"));
+            Assert.Contains(bad.Lines, l => l.Contains("must both be set and readable") && l.Contains("variable=OTEL_EXPORTER_OTLP_CLIENT_CERTIFICATE"));
             Assert.DoesNotContain(dir.FullName, bad.Text);
         }
         finally

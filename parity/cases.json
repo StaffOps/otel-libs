@@ -984,7 +984,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C8",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -1004,7 +1004,46 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C8",
+        "dotnet": "pass",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "tls.certificate_readable_with_plaintext_warns",
+      "kind": "resolve",
+      "requirement": "R2",
+      "note": "Variant of tls.certificate_with_plaintext_warns with a readable CA (added 2026-11-10, .NET task C8): the warning must be the plaintext one (files ignored on a plaintext target), not an unreadable-file warning. Tightened 2026-11-10 (C8 fix round 1): no unreadable-file wording at all.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "http://collector:4317",
+        "OTEL_EXPORTER_OTLP_CERTIFICATE": "{receiver_ca}"
+      },
+      "code": {},
+      "expect": {
+        "helper_log": {
+          "all": [
+            {
+              "regex": "OTEL_EXPORTER_OTLP_CERTIFICATE"
+            },
+            {
+              "regex": "plaintext"
+            },
+            {
+              "not_contains": "cannot be read"
+            },
+            {
+              "not_contains": "unreadable"
+            },
+            {
+              "not_contains": "not readable"
+            }
+          ]
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -2331,7 +2370,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C8",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -2360,7 +2399,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C8",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -2459,7 +2498,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C8",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -2487,7 +2526,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C8",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -2527,7 +2566,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C8",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -2559,7 +2598,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C8",
+        "dotnet": "pass",
         "nodejs": "pass"
       },
       "note": "Asserted via the grpc-timeout header (gRPC only; HTTP timeouts stay in A3 unit tests). Python: the SDK parses *_TIMEOUT as seconds while the spec says milliseconds (design D1.e); A3 adds the helper ms\u2192s shim. Go: the SDK applies the env since A3 (G10: the helper passes no timeout unless set in code). Bound is lte 600, not 500: grpc encodes the remaining deadline and can round it up (501m observed with timeout=0.5 s passed by the helper); 600 still separates ms (500) from a seconds misread (500000) and the 10 s default (10000)."
@@ -4745,7 +4784,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C8",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -4837,7 +4876,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C8",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -4874,7 +4913,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C8",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -4912,7 +4951,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C8",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -4973,7 +5012,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C8",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -5003,7 +5042,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C8",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -5044,7 +5083,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C8",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -6310,7 +6349,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C8",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -6350,7 +6389,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C8",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -6379,7 +6418,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C8",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -8137,7 +8176,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C8",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -8254,7 +8293,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C8",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -8294,7 +8333,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C8",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -8334,7 +8373,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C8",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -8363,7 +8402,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C8",
+        "dotnet": "pass",
         "nodejs": "pass"
       },
       "note": "gte lowered 300\u2192100 (2026-10-28): 212 ms observed under load; 100 still separates the 1 ms clamp from the 500 ms fallback."
@@ -8393,7 +8432,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C8",
+        "dotnet": "pass",
         "nodejs": "pass"
       },
       "note": "gte lowered 300\u2192100 (2026-10-28): 212 ms observed under load; 100 still separates the 1 ms clamp from the 500 ms fallback."
@@ -8432,7 +8471,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C8",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -8469,7 +8508,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C8",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -8799,7 +8838,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C8",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -8847,7 +8886,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C8",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -8896,7 +8935,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C8",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -8944,7 +8983,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C8",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -8999,7 +9038,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C8",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -9042,7 +9081,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C8",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -9117,7 +9156,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C8",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -9157,8 +9196,101 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C8",
+        "dotnet": "pass",
         "nodejs": "pass"
+      }
+    },
+    {
+      "id": "export.headers_bin_short_value_unpadded",
+      "kind": "export",
+      "requirement": "R8",
+      "note": "Added 2026-11-10 (.NET C8 fix round 1): twin of export.headers_bin_key_sent_as_bytes with a 2-byte value, pinning unpadded base64 for -bin metadata ('ab' arrives as 'YWI', as grpc-go sends it). Measured 2026-11-10: Go, Python and .NET send 'YWI'; Node's grpc-js sends the padded 'YWI=' and the helper cannot change it (gRPC over HTTP/2: implementations should emit unpadded values and must accept both), so Node takes the D-JS14 skip no-upstream-node-bin-padding (task A32, closed as a recorded difference; round 3).",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "http://{receiver}:4317",
+        "OTEL_EXPORTER_OTLP_HEADERS": "x-parity-bin=ab,x-parity-a=1"
+      },
+      "code": {},
+      "expect": {
+        "received": {
+          "traces": {
+            "headers": {
+              "x-parity-a": "1",
+              "x-parity-bin": "YWI"
+            }
+          },
+          "metrics": {
+            "headers": {
+              "x-parity-a": "1",
+              "x-parity-bin": "YWI"
+            }
+          },
+          "logs": {
+            "headers": {
+              "x-parity-a": "1",
+              "x-parity-bin": "YWI"
+            }
+          }
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "pass",
+        "nodejs": "skip:no-upstream-node-bin-padding"
+      }
+    },
+    {
+      "id": "export.http_redirect_refused_warned",
+      "kind": "export",
+      "requirement": "R2/R8",
+      "note": "Owner decision 2026-11-10 (contract D1 row 'OTLP export redirects', task A31): a 3xx on an OTLP export is a failed export, never followed; the helper diagnostic carries the contract fragment 'redirects are not followed' with signal= and status= on the same line, never the Location (which carries a token here). The receiver answers /parity-redirect-c/* with 307 (letters a-d = 301, 302, 307, 308, so the path holds no status digits) and Location http://<host>/redirected/<rest>?token=parity-redirect-token. 'received' requires EVERY record of a signal to be on /parity-redirect-c/, so a followed redirect (a second record on /redirected/v1/<signal>, classified as the same signal) fails the case. Fix round 2, 2026-11-10.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "http://{receiver}:4318/parity-redirect-c",
+        "OTEL_EXPORTER_OTLP_PROTOCOL": "http/protobuf"
+      },
+      "code": {},
+      "expect": {
+        "received": {
+          "traces": {
+            "proto": "http",
+            "path": "/parity-redirect-c/v1/traces"
+          },
+          "metrics": {
+            "proto": "http",
+            "path": "/parity-redirect-c/v1/metrics"
+          },
+          "logs": {
+            "proto": "http",
+            "path": "/parity-redirect-c/v1/logs"
+          }
+        },
+        "helper_log": {
+          "all": [
+            {
+              "regex": "redirects are not followed[^\\n]*signal=traces[^\\n]*status=307"
+            },
+            {
+              "regex": "redirects are not followed[^\\n]*signal=metrics[^\\n]*status=307"
+            },
+            {
+              "regex": "redirects are not followed[^\\n]*signal=logs[^\\n]*status=307"
+            },
+            {
+              "not_contains": "parity-redirect-token"
+            }
+          ]
+        },
+        "log": {
+          "not_contains": "parity-redirect-token"
+        }
+      },
+      "status": {
+        "go": "xfail:A31",
+        "python": "xfail:A31",
+        "dotnet": "pass",
+        "nodejs": "xfail:A31"
       }
     },
     {
@@ -9196,7 +9328,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C8",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -9226,7 +9358,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C8",
+        "dotnet": "skip:no-upstream-dotnet-attribute-limit",
         "nodejs": "pass"
       }
     },
@@ -9260,7 +9392,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C8",
+        "dotnet": "skip:no-upstream-dotnet-attribute-limit",
         "nodejs": "pass"
       }
     },
@@ -9300,7 +9432,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C8",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -9340,7 +9472,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C8",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },

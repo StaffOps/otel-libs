@@ -34,6 +34,18 @@ namespace StaffOps.OtelHelper
 
             var generic = ResolveGenericEndpoint(code, protocol);
 
+            // Exporter settings of every signal with a target (task C8, A18), then the A18 rows that
+            // do not depend on a target.
+            var exportSettings = new Dictionary<string, SignalExportSettings>(StringComparer.Ordinal);
+            foreach (var (signal, target) in targets)
+            {
+                exportSettings[signal] = ExportSettingsResolver.Resolve(signal, target, code, diagnostics);
+            }
+
+            ExportSettingsResolver.WarnPlaintextTlsFiles(targets.Select(t => (t.Key, t.Value)), diagnostics);
+            ExportSettingsResolver.WarnIgnoredTimeouts(diagnostics);
+            ExportSettingsResolver.WarnZeroValueLength(diagnostics);
+
             var identity = ResolveIdentity(code, diagnostics);
             var environment = identity.Environment;
             var debug = code.DebugLevel ?? EnvTrue(TelemetryOptions.DebugLevelEnvVar);
@@ -59,12 +71,10 @@ namespace StaffOps.OtelHelper
                 SignalTargets = targets,
                 OtlpProtocol = protocol,
                 DebugLevel = debug,
-                ExportTimeoutMs = code.ExportTimeoutMs ?? TelemetryOptions.DefaultExportTimeoutMs,
-                Compression = ResolveCompression(code, diagnostics),
-                Headers = NonBlank(Env("OTEL_EXPORTER_OTLP_HEADERS")),
-                CertificatePath = NonBlank(Env("OTEL_EXPORTER_OTLP_CERTIFICATE")),
-                ClientCertificatePath = NonBlank(Env("OTEL_EXPORTER_OTLP_CLIENT_CERTIFICATE")),
-                ClientKeyPath = NonBlank(Env("OTEL_EXPORTER_OTLP_CLIENT_KEY")),
+                ExportTimeoutMs = ExportSettingsResolver.ResolveTimeout("", code, null),
+                Compression = ExportSettingsResolver.ResolveCompression("", code, null),
+                ExportSettings = exportSettings,
+                HeaderTexts = HeaderVariables.Select(Env).Where(v => !string.IsNullOrEmpty(v)).Select(v => v!).ToArray(),
                 Sampler = ResolveSampler(code),
                 MinimumLogLevel = code.MinimumLogLevel ?? TelemetryOptions.GetDefaultLogLevel(environment, debug),
                 ResourceAttributes = new Dictionary<string, object>(code.ResourceAttributes ?? new Dictionary<string, object>()),
@@ -89,6 +99,12 @@ namespace StaffOps.OtelHelper
         internal const string EnvironmentKey = "deployment.environment.name";
         internal const string ServiceInstanceIdKey = "service.instance.id";
         internal const string ResourceAttributesEnvVar = "OTEL_RESOURCE_ATTRIBUTES";
+
+        /// <summary>The generic and per-signal OTLP header variables (their raw values are masked in forwarded SDK text).</summary>
+        internal static readonly string[] HeaderVariables =
+        {
+            "OTEL_EXPORTER_OTLP_HEADERS", "OTEL_EXPORTER_OTLP_TRACES_HEADERS", "OTEL_EXPORTER_OTLP_METRICS_HEADERS", "OTEL_EXPORTER_OTLP_LOGS_HEADERS",
+        };
 
         /// <summary><c>telemetry.sdk.*</c> keys: they always come from the SDK (contract row "telemetry.sdk.* and the resource schema URL", A16).</summary>
         internal static readonly string[] TelemetrySdkKeys = { "telemetry.sdk.name", "telemetry.sdk.language", "telemetry.sdk.version" };
@@ -505,30 +521,6 @@ namespace StaffOps.OtelHelper
                 ? "http/json is not supported by the .NET OTLP exporter; ignored (port inference, else grpc)"
                 : "unsupported OTLP protocol, ignored (port inference, else grpc); valid values: grpc, http/protobuf");
             return null;
-        }
-
-        private static string ResolveCompression(TelemetryOptions code, IOtelHelperDiagnostics diagnostics)
-        {
-            if (NonBlank(code.Compression) is { } fromCode)
-            {
-                return fromCode.Trim().ToLowerInvariant();
-            }
-
-            var fromEnv = NonBlank(Env(TelemetryOptions.CompressionEnvVar));
-            if (fromEnv is null)
-            {
-                return TelemetryOptions.CompressionNone;
-            }
-
-            var normalized = fromEnv.Trim().ToLowerInvariant();
-            if (TelemetryOptions.ValidCompressions.Contains(normalized))
-            {
-                return normalized;
-            }
-
-            WarnInvalidEnv(diagnostics, TelemetryOptions.CompressionEnvVar, fromEnv,
-                "unsupported compression, using none; valid values: gzip, none");
-            return TelemetryOptions.CompressionNone;
         }
 
         // ── sampler ────────────────────────────────────────────────────────

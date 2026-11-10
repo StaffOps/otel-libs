@@ -1,6 +1,6 @@
 # Tests — StaffOps.OtelHelper (.NET)
 
-1038 tests (xUnit) with the parity runner, 0 failed, 0 warnings (compose `dotnet-tests` on `sdk:8.0`, and on `sdk:10.0` with `DOTNET_ROLL_FORWARD=Major`, 2026-11-10, task C7a fix round 1); coverlet total `| Total | 98.5% | 96.34% | 99.33% |` (line, branch, method) on both. The total varies by about ±0.1 point between runs; the cause was not investigated.
+1155 tests (xUnit) with the parity runner, 0 failed, 0 warnings (compose `dotnet-tests` on `sdk:8.0`, and on `sdk:10.0` (10.0.403) with `DOTNET_ROLL_FORWARD=Major`, 2026-11-10, task C8 fix round 1); coverlet total `| Total | 98.58% | 96.67% | 99.4% |` (line, branch, method) on `sdk:8.0`, `| Total | 98.53% | 96.6% | 99.4% |` on SDK 10. The total varies by about ±0.1 point between runs; the cause was not investigated.
 
 From `dotnet/`; the repository root is mounted because the parity runner reads
 `parity/cases.json` (and `specs/dotnet-otel-helper/tasks.md`) from it:
@@ -395,7 +395,7 @@ secrets, response bodies dropped by payload position, noise rules), the
 as code (DN4), keyed `ActivitySource`/`Meter` (DN5), env-warns / code-fails
 validation naming the option, `OTEL_SDK_DISABLED` from `IConfiguration`, the
 config-file warnings, the metric temporality, header parsing (malformed and
-control-character items skipped, warned by name), TLS files and a custom root
+control-character items skipped; warned by position since task C8), TLS files and a custom root
 with an intermediate, client disposal, the SDK `User-Agent`, the drop-all view
 when no metric exporter is active, and an invalid code value reported once
 when a provider is built before start.
@@ -456,3 +456,28 @@ are masked.
 Endpoint warnings use Go's wording (`<why>; ignored`, the variable as an
 attribute); the other environment warnings keep the .NET form
 `invalid <VAR>: …` (task C5).
+
+## Exporter settings (task C8)
+
+`ExporterSettingsTests` (`[Collection("EnvVarTests")]`; contract A18, R2, R8,
+G10; ADR-013) — each rule was checked to fail its test when the rule is
+removed (mutation run, 2026-11-10):
+
+| Area | Tests |
+|---|---|
+| Headers | `Header_Grammar` × 17 (key set, keys not decoded, whole-value literal on an invalid escape or non-UTF-8 bytes, non-ASCII and control characters skipped, trim after decoding, last key wins, empty items), `Header_Warnings_Name_The_Variable_And_The_Position_Never_A_Value`, `Per_Signal_Headers_Replace_The_Generic_Ones_And_An_Unusable_Per_Signal_Value_Falls_Back`, `Bin_Header_Values_Are_Base64_On_Grpc_Only` × 3, `Content_Header_Rejected_By_The_Client_Is_Warned_By_Key` |
+| Timeout | `Timeout_Grammar` × 18 (decimal grammar, 0, sign, exponent, bare dot, hex, clamps at 1 and 86 400 000), `Per_Signal_Timeout_Falls_Back_To_The_Generic_One_And_Code_Wins`, `Timeout_Bounds_The_Exporter_The_Client_The_Batch_Processors_And_The_Reader` (also the three ignored `*_EXPORT_TIMEOUT` warnings), `A_Hanging_Collector_Ends_The_Export_At_The_Deadline`, `Grpc_Timeout_Header_Encoding` × 6, `Handler_Sends_Grpc_Timeout_On_Grpc_Only_And_Forwards_Send_And_SendAsync` |
+| Compression | `Compression_Defaults_To_Gzip_Per_Signal_With_Fallback_And_Code_Wins` |
+| TLS files | `Plaintext_Target_Ignores_The_Tls_Files_With_One_Warning_Naming_Them`, `Ca_Per_Signal_Unreadable_Or_Not_Pem_Falls_Back_To_Generic_Then_The_System_Roots`, `Client_Pair_Incomplete_Or_Rejected_Uses_Server_Authentication_And_A_Good_Pair_Is_Presented`; `ResolverCoreTests.Tls_Files_From_The_Environment_Are_Loaded_Or_Warned` |
+| Client duties | `One_Client_Per_Exporter_Instance_With_The_Sdk_Response_Bound_And_No_Redirects`, `A_Redirect_Is_Refused_And_Reported_Naming_The_Signal_And_The_Status` × 12 (traces, metrics, logs × 301, 302, 307, 308 on a local `HttpListener`: one ERROR naming signal and status, the `Location` never requested nor printed) |
+| Fix round 1 | `Application_Set_Export_Timeouts_Are_Warned_Naming_The_Option`, `Untouched_Sdk_Options_Or_A_Set_Variable_Give_No_Option_Warning`, `Histogram_Path_Deadline_Beats_A_Later_Named_Configure`, `Oversized_Or_Device_Tls_Files_Are_Refused_As_Unreadable`; `ResolverCoreFixRoundTests.Only_The_Resolved_Otlp_Keys_Are_Dropped` (per-signal keys) |
+| Batch size, value length | `Batch_Size_Above_The_Queue_Size_Warns_Naming_Both` × 6, `Batch_Size_Above_The_Queue_Size_In_The_Options_Is_Clamped`, `Env_Batch_Size_Above_The_Queue_Size_Builds_And_The_Processors_Use_The_Queue_Size`, `Zero_Value_Length_Limit_Warns_Naming_Only_That_Variable` × 5 |
+
+The wire side is the parity fixture: every C8 case runs through the helper
+client on both protocols (`export.*headers*`, `export.*timeout*` via the
+receiver's `grpc-timeout`, `export.*compression*`, and the gRPC TLS cases on
+the receiver's TLS port 14317 — `export.grpc_certificate_*`,
+`export.grpc_client_*` — so gRPC TLS through the helper handler is measured,
+no `skip:no-upstream-dotnet-grpc-tls-files` is needed). The processor and
+reader timeouts are read from SDK internals by reflection (test only).
+

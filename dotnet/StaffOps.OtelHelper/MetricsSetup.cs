@@ -201,6 +201,25 @@ namespace StaffOps.OtelHelper.Metrics
                     opts.PeriodicExportingMetricReaderOptions.ExportIntervalMilliseconds = HistogramPathActive(resolved)
                         ? (int)Math.Min(resolved.ExportIntervalMs, int.MaxValue)
                         : int.MaxValue;
+                    WarnIgnoredReaderTimeout(defaults, sp.GetService<IOtelHelperDiagnostics>());
+                })
+                // Last, so an application Configure of the named options cannot replace the deadline (A18).
+                .PostConfigure<IServiceProvider>((opts, sp) =>
+                {
+                    if (ResolvedAccess.TryGet(sp, out var resolved))
+                    {
+                        // The Configure above copied the default-named value: anything else came from an
+                        // application Configure of the named options, which the deadline replaces (warned).
+                        var defaults = sp.GetRequiredService<IOptionsMonitor<MetricReaderOptions>>().Get(Options.DefaultName);
+                        if (opts.PeriodicExportingMetricReaderOptions.ExportTimeoutMilliseconds != defaults.PeriodicExportingMetricReaderOptions.ExportTimeoutMilliseconds)
+                        {
+                            ExportSettingsResolver.WarnIgnoredOptionTimeout(
+                                $"MetricReaderOptions(\"{HistogramPathName}\").PeriodicExportingMetricReaderOptions.ExportTimeoutMilliseconds", "",
+                                () => true, sp.GetService<IOtelHelperDiagnostics>());
+                        }
+
+                        opts.PeriodicExportingMetricReaderOptions.ExportTimeoutMilliseconds = OtlpExporters.TimeoutFor("metrics", resolved);
+                    }
                 });
         }
 
@@ -338,15 +357,23 @@ namespace StaffOps.OtelHelper.Metrics
         internal static PeriodicExportingMetricReader CreateOtlpReader(IServiceProvider sp, ResolvedTelemetry resolved, OtlpExporterOptions otlp)
         {
             var readerOptions = sp.GetRequiredService<IOptionsMonitor<MetricReaderOptions>>().Get(Options.DefaultName);
+            WarnIgnoredReaderTimeout(readerOptions, sp.GetService<IOtelHelperDiagnostics>());
             var interval = (int)Math.Min(resolved.ExportIntervalMs, int.MaxValue);
+            // The export deadline of metrics (A18): OTEL_METRIC_EXPORT_TIMEOUT is not honored.
             return new PeriodicExportingMetricReader(
                 new OtlpMetricExporter(otlp),
                 interval,
-                readerOptions.PeriodicExportingMetricReaderOptions.ExportTimeoutMilliseconds ?? 30_000)
+                OtlpExporters.TimeoutFor("metrics", resolved))
             {
                 TemporalityPreference = readerOptions.TemporalityPreference,
             };
         }
+
+        /// <summary>The default-named reader options' export timeout is not used (A18 deadline): warned once naming the option.</summary>
+        internal static void WarnIgnoredReaderTimeout(MetricReaderOptions defaults, IOtelHelperDiagnostics? diagnostics)
+            => ExportSettingsResolver.WarnIgnoredOptionTimeout(
+                "MetricReaderOptions.PeriodicExportingMetricReaderOptions.ExportTimeoutMilliseconds", "OTEL_METRIC_EXPORT_TIMEOUT",
+                () => defaults.PeriodicExportingMetricReaderOptions.ExportTimeoutMilliseconds is not null, diagnostics);
 
         /// <summary>
         /// Prefix the Prometheus listener binds: every IPv4 address (the managed

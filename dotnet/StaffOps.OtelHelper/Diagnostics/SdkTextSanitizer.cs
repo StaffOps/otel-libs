@@ -28,12 +28,9 @@ namespace StaffOps.OtelHelper.Diagnostics
 
         // The constructor's parse warnings for the rows the resolver resolves and warns about.
         private static readonly Regex HelperOwnedConfigurationWarning = new(
-            @"^Configuration key 'OTEL_EXPORTER_OTLP_(?:ENDPOINT|PROTOCOL|COMPRESSION)' has an invalid value", RegexOptions.CultureInvariant, RegexTimeout);
+            @"^Configuration key 'OTEL_EXPORTER_OTLP_(?:(?:TRACES|METRICS|LOGS)_)?(?:ENDPOINT|PROTOCOL|COMPRESSION|TIMEOUT)' has an invalid value", RegexOptions.CultureInvariant, RegexTimeout);
 
-        private static readonly string[] HeaderVariables =
-        {
-            "OTEL_EXPORTER_OTLP_HEADERS", "OTEL_EXPORTER_OTLP_TRACES_HEADERS", "OTEL_EXPORTER_OTLP_METRICS_HEADERS", "OTEL_EXPORTER_OTLP_LOGS_HEADERS",
-        };
+        private static readonly string[] HeaderVariables = TelemetryResolver.HeaderVariables;
 
         private static readonly string[] EndpointVariables =
         {

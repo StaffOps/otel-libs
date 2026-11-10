@@ -69,15 +69,28 @@ namespace StaffOps.OtelHelper.Logging
             var diagnostics = sp.GetRequiredService<IOtelHelperDiagnostics>();
             if (OtlpExporters.OptionsFor("logs", resolved, diagnostics, sp.GetRequiredService<ExporterClients>()) is { } otlp)
             {
-                var batch = sp.GetRequiredService<IOptionsMonitor<LogRecordExportProcessorOptions>>()
-                    .Get(Options.DefaultName).BatchExportProcessorOptions;
-                builder.AddProcessor(new BatchLogRecordExportProcessor(
-                    new OtlpLogExporter(otlp),
-                    batch.MaxQueueSize,
-                    batch.ScheduledDelayMilliseconds,
-                    batch.ExporterTimeoutMilliseconds,
-                    batch.MaxExportBatchSize));
+                builder.AddProcessor(CreateOtlpProcessor(sp, resolved, otlp, diagnostics));
             }
+        }
+
+        /// <summary>
+        /// The OTLP batch processor: queue size and delay from the SDK's options, the export deadline
+        /// of logs (A18: <c>OTEL_BLRP_EXPORT_TIMEOUT</c> is not honored) and the batch size clamped to
+        /// the queue size (A18: the SDK constructor would throw).
+        /// </summary>
+        internal static BatchLogRecordExportProcessor CreateOtlpProcessor(IServiceProvider sp, ResolvedTelemetry resolved, OtlpExporterOptions otlp, IOtelHelperDiagnostics diagnostics)
+        {
+            var batch = sp.GetRequiredService<IOptionsMonitor<LogRecordExportProcessorOptions>>()
+                .Get(Options.DefaultName).BatchExportProcessorOptions;
+            ExportSettingsResolver.WarnIgnoredOptionTimeout(
+                "LogRecordExportProcessorOptions.BatchExportProcessorOptions.ExporterTimeoutMilliseconds", "OTEL_BLRP_EXPORT_TIMEOUT",
+                () => batch.ExporterTimeoutMilliseconds != new BatchExportLogRecordProcessorOptions().ExporterTimeoutMilliseconds, diagnostics);
+            return new BatchLogRecordExportProcessor(
+                new OtlpLogExporter(otlp),
+                batch.MaxQueueSize,
+                batch.ScheduledDelayMilliseconds,
+                OtlpExporters.TimeoutFor("logs", resolved),
+                ExportSettingsResolver.ClampBatchSize("OTEL_BLRP", "BatchExportLogRecordProcessorOptions", batch.MaxQueueSize, batch.MaxExportBatchSize, diagnostics));
         }
     }
 }

@@ -197,9 +197,16 @@ How the 0.2.x helper treats the standard variables. Some are read by the .NET SD
 |---|---|---|
 | `OTEL_EXPORTER_OTLP_PROTOCOL` | Read by the helper: `grpc` or `http/protobuf` (ASCII case-insensitive). Unset → `http/protobuf` when the port of the endpoint a signal uses is `4318` (compared numerically; logged once at INFO), else `grpc`. `http/json` and unknown values are warned and ignored (0.2.x: `http/json` failed validation). | port inference |
 | `OTEL_EXPORTER_OTLP_INSECURE` | Read by the helper, schemeless endpoints only (see TLS above). | _(unset)_ |
-| `OTEL_EXPORTER_OTLP_HEADERS` | Additional headers (e.g., auth); read by the SDK. | empty |
-| `OTEL_EXPORTER_OTLP_TIMEOUT` | **Not honored** in 0.2.x: the helper always passes `TelemetryOptions.ExportTimeoutMs` (default 10000 ms), which overrides it. | `10000` |
-| `OTEL_EXPORTER_OTLP_<SIGNAL>_*` | Not used in 0.2.x. 0.3 (this branch, task C7a): `_ENDPOINT` (used as written, no `/v1/<signal>`), `_PROTOCOL` and `_INSECURE` are read by the helper and beat the generic variable for that signal; `_HEADERS`, `_TIMEOUT`, `_COMPRESSION` and the per-signal TLS files are not read yet (task C8). | — |
+| `OTEL_EXPORTER_OTLP_HEADERS` | Additional headers (e.g., auth), `key=value,…`. 0.3 (this branch, task C8): parsed by the helper and sent on its own HTTP client (0.2.x: by the SDK, a malformed item failed start). Keys `[A-Za-z0-9._-]+`, not percent-decoded; values percent-decoded as a whole (an invalid escape or non-UTF-8 bytes keep the whole value literally, warned); a value outside printable ASCII is skipped; the last of a key wins. Warnings name the variable and the item position, never a value. A gRPC key ending in `-bin` is sent base64. | empty |
+| `OTEL_EXPORTER_OTLP_TIMEOUT` | 0.3 (this branch, task C8): export timeout in decimal milliseconds (`^[0-9]+(\.[0-9]+)?$`), clamped to [1, 86 400 000] with a warning; `0`, a sign, an exponent or a bare dot warn and the default applies. It is the deadline of the exporter, the HTTP client, the batch processors and the periodic reader; gRPC sends it as `grpc-timeout`. `TelemetryOptions.ExportTimeoutMs` wins. 0.2.x: not honored (fixed 10 s). | `10000` |
+| `OTEL_EXPORTER_OTLP_COMPRESSION` | `gzip` or `none` (ASCII case-insensitive); anything else warns and the default applies. 0.3 (this branch, task C8): default `gzip` (0.2.x: none). | `gzip` |
+| `OTEL_EXPORTER_OTLP_CERTIFICATE`, `_CLIENT_KEY`, `_CLIENT_CERTIFICATE` | TLS files of an `https://` (or schemeless, secure) endpoint, read and validated by the helper (task C8): an unreadable file or a CA with no PEM certificate warns and the next level applies, then the system roots; the client key and certificate are one pair, and an incomplete or rejected pair warns and server authentication is used. On a plaintext endpoint the files are ignored with one warning naming them and the signals. A file over 1 MiB (or a device) is "cannot be read". Warnings name the variables, never a path or content. | _(unset)_ |
+| `OTEL_BSP_EXPORT_TIMEOUT`, `OTEL_BLRP_EXPORT_TIMEOUT`, `OTEL_METRIC_EXPORT_TIMEOUT` | Not honored (task C8): the OTLP export timeout is the deadline of every signal; set, each warns once. | — |
+| `OTEL_BSP_MAX_EXPORT_BATCH_SIZE` / `OTEL_BLRP_MAX_EXPORT_BATCH_SIZE` | Read by the SDK; above `OTEL_BSP_MAX_QUEUE_SIZE` / `OTEL_BLRP_MAX_QUEUE_SIZE` (defaults 512 / 2048) the queue size is used and one warning names both variables. | `512` |
+| `OTEL_ATTRIBUTE_VALUE_LENGTH_LIMIT` (and `OTEL_SPAN_…`, `OTEL_LOGRECORD_…`) | Read by the OTLP exporter. A `0` is warned (contract: invalid), but the .NET exporter has no public override and still sends those values empty: unset it or use a positive limit. | no limit |
+| `OTEL_EXPORTER_OTLP_<SIGNAL>_*` | Not used in 0.2.x. 0.3 (this branch): `_ENDPOINT` (used as written, no `/v1/<signal>`), `_PROTOCOL` and `_INSECURE` (task C7a), and `_HEADERS`, `_TIMEOUT`, `_COMPRESSION`, `_CERTIFICATE`, `_CLIENT_KEY`, `_CLIENT_CERTIFICATE` (task C8) are read by the helper and beat the generic variable for that signal; a per-signal `_HEADERS` replaces the generic headers (no merge). | — |
+
+> **Redirects are refused** (0.3, this branch, task C8). The helper's OTLP client never follows a `3xx`: that export is dropped and one ERROR names the signal and the status code (`otelhelper: ERROR the OTLP endpoint for traces answered HTTP 307 (a redirect); redirects are not followed, … signal=traces status=307`), never the `Location` value. 0.2.x followed redirects. Configure the final endpoint URL.
 
 ---
 
@@ -267,7 +274,7 @@ Exemplars enabled (`ExemplarFilterType.TraceBased`) — metric → trace correla
 | `Environment` | string? (`DeploymentEnvironments.*` or any value) | `OTEL_RESOURCE_ATTRIBUTES` / `ENVIRONMENT` | none (attribute absent + warning) |
 | `OtelCollectorEndpoint` | string? | `OTEL_EXPORTER_OTLP_ENDPOINT` | none (no OTLP export) |
 | `DebugLevel` | bool? | `OTEL_HELPER_DEBUG_LEVEL` | `false` |
-| `ExportTimeoutMs` | int? | — | `10000` (10s) |
+| `ExportTimeoutMs` | int? (in [1, 86 400 000]) | `OTEL_EXPORTER_OTLP_<SIGNAL>_TIMEOUT` / `OTEL_EXPORTER_OTLP_TIMEOUT` | `10000` (10s); the deadline of every signal |
 | `ExtraInstrumentation` | string?, `[Obsolete]` | `OTEL_HELPER_EXTRA_INSTRUMENTATION` | none (no effect — use subpackages) |
 | `Sampler` | Sampler? | — | `AlwaysOnSampler` |
 | `MinimumLogLevel` | LogLevel? | — | `null` (auto per environment) |
@@ -275,7 +282,7 @@ Exemplars enabled (`ExemplarFilterType.TraceBased`) — metric → trace correla
 | `AdditionalActivitySources` | List\<string\> | — | empty |
 | `TracesEndpoint`, `MetricsEndpoint`, `LogsEndpoint` | string? | `OTEL_EXPORTER_OTLP_<SIGNAL>_ENDPOINT` | none (per-signal endpoint, used as written; schemeless allowed) |
 | `Insecure` | bool? | `OTEL_EXPORTER_OTLP_<SIGNAL>_INSECURE` / `OTEL_EXPORTER_OTLP_INSECURE` | `false` (schemeless endpoint → `https://`) |
-| `Compression` | string? (`gzip`/`none`) | `OTEL_EXPORTER_OTLP_COMPRESSION` | `none` |
+| `Compression` | string? (`gzip`/`none`) | `OTEL_EXPORTER_OTLP_<SIGNAL>_COMPRESSION` / `OTEL_EXPORTER_OTLP_COMPRESSION` | `gzip` (0.2.x: `none`) |
 | `SampleRatio` | double? | — | none (`ParentBased(TraceIdRatioBased(ratio))` when set) |
 | `HealthPaths` | List\<string\>? | — | `/ping`, `/health`, `/healthz`, `/ready` |
 | `AdditionalMeters` | List\<string\> | — | empty |

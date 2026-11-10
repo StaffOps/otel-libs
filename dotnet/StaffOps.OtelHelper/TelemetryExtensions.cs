@@ -88,7 +88,7 @@ namespace StaffOps.OtelHelper
                 // after them and sees their shutdown. Secrets: the code endpoints (factory) plus the
                 // header values captured now (A29: the union of setup-time and current values).
                 var lease = sp.GetRequiredService<SdkDiagnosticsForwarder.Lease>();
-                lease.Secrets = lease.Secrets.Concat(SdkTextSanitizer.HeaderSecrets(resolved.Headers)).ToArray();
+                lease.Secrets = lease.Secrets.Concat(resolved.HeaderTexts.SelectMany(SdkTextSanitizer.HeaderSecrets)).ToArray();
                 if (!resolved.IsSignalEnabled("metrics") || resolved.ResolvedMetricExporters().Count == 0)
                 {
                     lease.QuietMeters = new[] { resolved.ServiceName }.Concat(resolved.AdditionalMeters).ToArray();

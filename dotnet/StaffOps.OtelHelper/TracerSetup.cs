@@ -88,15 +88,28 @@ namespace StaffOps.OtelHelper.Tracing
             var diagnostics = sp.GetRequiredService<IOtelHelperDiagnostics>();
             if (OtlpExporters.OptionsFor("traces", resolved, diagnostics, sp.GetRequiredService<ExporterClients>()) is { } otlp)
             {
-                var batch = sp.GetRequiredService<Microsoft.Extensions.Options.IOptionsMonitor<BatchExportActivityProcessorOptions>>()
-                    .Get(Microsoft.Extensions.Options.Options.DefaultName);
-                builder.AddProcessor(new BatchActivityExportProcessor(
-                    new OtlpTraceExporter(otlp),
-                    batch.MaxQueueSize,
-                    batch.ScheduledDelayMilliseconds,
-                    batch.ExporterTimeoutMilliseconds,
-                    batch.MaxExportBatchSize));
+                builder.AddProcessor(CreateOtlpProcessor(sp, resolved, otlp, diagnostics));
             }
+        }
+
+        /// <summary>
+        /// The OTLP batch processor: queue size and delay from the SDK's options, the export deadline
+        /// of traces (A18: <c>OTEL_BSP_EXPORT_TIMEOUT</c> is not honored) and the batch size clamped to
+        /// the queue size (A18: the SDK constructor would throw).
+        /// </summary>
+        internal static BatchActivityExportProcessor CreateOtlpProcessor(IServiceProvider sp, ResolvedTelemetry resolved, OtlpExporterOptions otlp, IOtelHelperDiagnostics diagnostics)
+        {
+            var batch = sp.GetRequiredService<Microsoft.Extensions.Options.IOptionsMonitor<BatchExportActivityProcessorOptions>>()
+                .Get(Microsoft.Extensions.Options.Options.DefaultName);
+            ExportSettingsResolver.WarnIgnoredOptionTimeout(
+                nameof(BatchExportActivityProcessorOptions) + "." + nameof(BatchExportActivityProcessorOptions.ExporterTimeoutMilliseconds), "OTEL_BSP_EXPORT_TIMEOUT",
+                () => batch.ExporterTimeoutMilliseconds != new BatchExportActivityProcessorOptions().ExporterTimeoutMilliseconds, diagnostics);
+            return new BatchActivityExportProcessor(
+                new OtlpTraceExporter(otlp),
+                batch.MaxQueueSize,
+                batch.ScheduledDelayMilliseconds,
+                OtlpExporters.TimeoutFor("traces", resolved),
+                ExportSettingsResolver.ClampBatchSize("OTEL_BSP", nameof(BatchExportActivityProcessorOptions), batch.MaxQueueSize, batch.MaxExportBatchSize, diagnostics));
         }
 
         private static HashSet<string> HealthPathSet(ResolvedTelemetry resolved)

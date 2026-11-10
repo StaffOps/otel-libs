@@ -252,7 +252,8 @@ public class DiagnosticsTests
     [Theory]
     [InlineData("OpenTelemetry-Exporter-Prometheus-HttpListener", "Canceled to export metrics: 'System.Threading.Tasks.TaskCanceledException: x'", true)]
     [InlineData("OpenTelemetry-Exporter-Prometheus-HttpListener", "Canceled to export metrics: 'System.Exception: x'", false)]
-    [InlineData("OpenTelemetry-Exporter-OpenTelemetryProtocol", "Configuration key 'OTEL_EXPORTER_OTLP_TIMEOUT' has an invalid value: '+1'", false)]
+    [InlineData("OpenTelemetry-Exporter-OpenTelemetryProtocol", "Configuration key 'OTEL_EXPORTER_OTLP_TIMEOUT' has an invalid value: '+1'", true)] // helper-owned since C8
+    [InlineData("OpenTelemetry-Exporter-OpenTelemetryProtocol", "Configuration key 'OTEL_EXPORTER_OTLP_HEADERS' has an invalid value: 'x'", false)]
     [InlineData("OpenTelemetry-Exporter-OpenTelemetryProtocol", "Configuration key 'OTEL_EXPORTER_OTLP_PROTOCOL' has an invalid value: 'x'", true)]
     [InlineData("OpenTelemetry-Sdk", "Configuration key 'OTEL_SDK_DISABLED' has an invalid value: 'maybe'", false)]
     [InlineData("OpenTelemetry-Exporter-OpenTelemetryProtocol", "HTTP request to http://c failed", false)]

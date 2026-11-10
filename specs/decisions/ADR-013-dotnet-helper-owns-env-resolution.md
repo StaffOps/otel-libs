@@ -171,6 +171,15 @@ Rows that stay with the SDK, and where it reads them:
 > second reader, and the doubling — and the doubling warning prints only when
 > the helper itself has an OTLP target.*)
 
+> **Added 2026-11-10 (task C8).** The exporter rows are the helper's now: headers, timeout,
+> compression and TLS files per signal; the resolved timeout is passed to the exporter, the
+> client, the batch processors and the periodic reader, so `OTEL_METRIC_EXPORT_TIMEOUT` (and
+> `OTEL_BSP_EXPORT_TIMEOUT`, `OTEL_BLRP_EXPORT_TIMEOUT`) are no longer honored — they warn
+> (contract row "Export deadline"); this supersedes "stays there" in the C5 notes above. The
+> client is a `SocketsHttpHandler` wrapped by a handler that forwards `Send` and `SendAsync`,
+> adds `grpc-timeout` on gRPC (the .NET exporter sends none) and reports a `3xx` as an ERROR
+> per signal and status. Compression defaults to `GZip`, as decided above.
+
 **Exception to ADR-001's fixture rule — the exemplar filter.** The helper
 parses `OTEL_METRICS_EXEMPLAR_FILTER` (`always_on`, `always_off`,
 `trace_based`; default `trace_based`) and always calls `SetExemplarFilter`,

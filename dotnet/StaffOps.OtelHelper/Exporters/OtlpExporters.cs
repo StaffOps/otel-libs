@@ -31,34 +31,40 @@ namespace StaffOps.OtelHelper.Exporters
                 return null;
             }
 
+            var settings = resolved.Export(signal);
+            var grpc = target.Protocol != TelemetryOptions.ProtocolHttpProtobuf;
             var options = new OtlpExporterOptions
             {
                 Endpoint = endpoint,
-                Protocol = target.Protocol == TelemetryOptions.ProtocolHttpProtobuf ? OtlpExportProtocol.HttpProtobuf : OtlpExportProtocol.Grpc,
-                TimeoutMilliseconds = resolved.ExportTimeoutMs,
-                Compression = resolved.Compression == TelemetryOptions.CompressionGzip ? OtlpExportCompression.GZip : OtlpExportCompression.None,
+                Protocol = grpc ? OtlpExportProtocol.Grpc : OtlpExportProtocol.HttpProtobuf,
+                TimeoutMilliseconds = settings.TimeoutMs,
+                Compression = settings.Compression == TelemetryOptions.CompressionGzip ? OtlpExportCompression.GZip : OtlpExportCompression.None,
                 // Headers travel on the helper's HttpClient; the SDK parser never sees them (ADR-013).
                 Headers = string.Empty,
             };
-            var factory = new HelperHttpClientFactory(resolved, options.MaxResponseSizeBytes, diagnostics, endpoint.Scheme == Uri.UriSchemeHttps);
+            var factory = new HelperHttpClientFactory(signal, settings, grpc, options.MaxResponseSizeBytes, diagnostics);
             clients?.Add(factory);
             options.HttpClientFactory = factory.Create;
             return options;
         }
+
+        /// <summary>The export deadline of <paramref name="signal"/>, passed to its batch processor or reader too (contract row "Export deadline", A18).</summary>
+        internal static int TimeoutFor(string signal, ResolvedTelemetry resolved) => resolved.Export(signal).TimeoutMs;
     }
 
     /// <summary>
-    /// The helper's <c>HttpClientFactory</c> for one exporter (ADR-013 client duties):
-    /// one long-lived client on a <see cref="SocketsHttpHandler"/> (HTTP/protobuf calls the
-    /// synchronous <c>Send</c>, gRPC <c>SendAsync</c>; the handler serves both), no redirects,
-    /// the response buffer bounded like the SDK's own client, the export timeout, and the
-    /// generic <c>OTEL_EXPORTER_OTLP_HEADERS</c> and certificate files from the process
-    /// environment. Skeleton of task C5: the contract header parser, per-signal inputs and
-    /// the TLS-file validation are task C8.
+    /// The helper's <c>HttpClientFactory</c> for one exporter (ADR-013 client duties): one
+    /// long-lived client per exporter instance, on a <see cref="SocketsHttpHandler"/> wrapped by
+    /// <see cref="HelperExportHandler"/> (HTTP/protobuf calls the synchronous <c>Send</c>, gRPC
+    /// <c>SendAsync</c>; both are forwarded), no redirects (refused loudly), the response buffer
+    /// bounded like the SDK's own client, the signal's export timeout, its contract headers
+    /// (gRPC <c>-bin</c> values base64) and its validated TLS material.
     /// </summary>
     internal sealed class HelperHttpClientFactory : IDisposable
     {
-        private readonly ResolvedTelemetry _resolved;
+        private readonly string _signal;
+        private readonly SignalExportSettings _settings;
+        private readonly bool _grpc;
         private readonly int _maxResponseBytes;
         private readonly IOtelHelperDiagnostics _diagnostics;
         private readonly object _gate = new();
@@ -66,16 +72,20 @@ namespace StaffOps.OtelHelper.Exporters
         private X509Certificate2Collection? _roots;
         private X509Certificate2? _clientCertificate;
         private bool _disposed;
-        private readonly bool _tls;
 
-        /// <param name="resolved">The resolved settings.</param>
+        /// <summary>The transport of the built client (tests: redirects, TLS).</summary>
+        internal SocketsHttpHandler? Transport { get; private set; }
+
+        /// <param name="signal">The signal, named in diagnostics.</param>
+        /// <param name="settings">The signal's resolved exporter settings.</param>
+        /// <param name="grpc">Whether the exporter speaks gRPC (<c>grpc-timeout</c>, base64 <c>-bin</c> values).</param>
         /// <param name="maxResponseBytes">The response buffer bound (the SDK's <c>MaxResponseSizeBytes</c>).</param>
         /// <param name="diagnostics">The diagnostics sink.</param>
-        /// <param name="tls">Whether the target uses TLS: the certificate files are read only then (a plaintext target never loads them; the plaintext-drop warning is task C8).</param>
-        internal HelperHttpClientFactory(ResolvedTelemetry resolved, int maxResponseBytes, IOtelHelperDiagnostics diagnostics, bool tls = true)
+        internal HelperHttpClientFactory(string signal, SignalExportSettings settings, bool grpc, int maxResponseBytes, IOtelHelperDiagnostics diagnostics)
         {
-            _tls = tls;
-            _resolved = resolved;
+            _signal = signal;
+            _settings = settings;
+            _grpc = grpc;
             _maxResponseBytes = maxResponseBytes;
             _diagnostics = diagnostics;
         }
@@ -112,135 +122,72 @@ namespace StaffOps.OtelHelper.Exporters
 
         private HttpClient Build()
         {
-            var handler = new SocketsHttpHandler
+            var sockets = new SocketsHttpHandler
             {
                 AllowAutoRedirect = false,
                 PooledConnectionLifetime = TimeSpan.FromMinutes(5),
             };
-            if (_tls)
+            if (_settings.Tls is { } tls)
             {
-                ConfigureTls(handler);
+                ConfigureTls(sockets, tls);
             }
 
+            Transport = sockets;
+
+            var handler = new HelperExportHandler(sockets, _signal, _grpc ? _settings.TimeoutMs : null, _diagnostics);
             var client = new HttpClient(handler, disposeHandler: true)
             {
-                Timeout = TimeSpan.FromMilliseconds(_resolved.ExportTimeoutMs),
+                Timeout = TimeSpan.FromMilliseconds(_settings.TimeoutMs),
             };
             if (_maxResponseBytes > 0)
             {
                 client.MaxResponseContentBufferSize = _maxResponseBytes;
             }
 
-            foreach (var (key, value) in ParseHeaders(_resolved.Headers, _diagnostics))
+            foreach (var (key, value) in _settings.Headers)
             {
-                if (!client.DefaultRequestHeaders.TryAddWithoutValidation(key, value))
+                // gRPC binary metadata travels base64 (unpadded, as grpc-go); HTTP sends the value as is.
+                var wire = _grpc && key.EndsWith("-bin", StringComparison.Ordinal)
+                    ? Convert.ToBase64String(System.Text.Encoding.ASCII.GetBytes(value)).TrimEnd('=')
+                    : value;
+                if (!client.DefaultRequestHeaders.TryAddWithoutValidation(key, wire))
                 {
-                    // An invalid header name (or a content header); the value is never echoed.
-                    _diagnostics.ReportOnce("rejected:OTEL_EXPORTER_OTLP_HEADERS:" + key, DiagnosticLevel.Warn,
-                        "an OTEL_EXPORTER_OTLP_HEADERS item was rejected by the HTTP client and skipped",
-                        ("variable", "OTEL_EXPORTER_OTLP_HEADERS"), ("key", key));
+                    // A content header (e.g. content-type); the value is never echoed.
+                    _diagnostics.ReportOnce("rejected-header:" + _signal + ":" + key, DiagnosticLevel.Warn,
+                        "an OTLP header item was rejected by the HTTP client (a content header) and skipped",
+                        ("signal", _signal), ("key", key));
                 }
             }
 
             return client;
         }
 
-        /// <summary>
-        /// <c>k=v,k2=v2</c>: items without <c>=</c> or with an empty key are skipped, keys and
-        /// values are trimmed and percent-decoded (an invalid escape is kept as written), the last
-        /// value of a key wins (case-insensitive).
-        /// Never fails and never logs a value.
-        /// </summary>
+        /// <summary>Parses a headers text with the contract grammar (<see cref="ExportSettingsResolver.ParseHeaders"/>).</summary>
         internal static IReadOnlyList<(string Key, string Value)> ParseHeaders(string? raw, IOtelHelperDiagnostics? diagnostics = null)
+            => ExportSettingsResolver.ParseHeaders(raw, diagnostics);
+
+        private void ConfigureTls(SocketsHttpHandler handler, TlsMaterial tls)
         {
-            const string variable = "OTEL_EXPORTER_OTLP_HEADERS";
-            var result = new List<(string Key, string Value)>();
-            if (string.IsNullOrWhiteSpace(raw))
+            if (tls.CaPem is { } caPem)
             {
-                return result;
-            }
-
-            foreach (var item in raw.Split(','))
-            {
-                if (item.Trim().Length == 0)
-                {
-                    continue;
-                }
-
-                // Uri.UnescapeDataString keeps an invalid escape ("%zz") as written; it never throws here.
-                var eq = item.IndexOf('=');
-                var key = eq > 0 ? Uri.UnescapeDataString(item[..eq].Trim()) : "";
-                var value = eq > 0 ? Uri.UnescapeDataString(item[(eq + 1)..].Trim()) : "";
-                if (key.Length == 0)
-                {
-                    // Name only: a malformed item may hold a secret.
-                    diagnostics?.ReportOnce("malformed:" + variable, DiagnosticLevel.Warn,
-                        $"a malformed {variable} item was skipped (expected key=value)", ("variable", variable));
-                    continue;
-                }
-
-                if (key.Any(IsControl) || value.Any(IsControl))
-                {
-                    // A decoded CR/LF would inject a header line; the value is never echoed.
-                    diagnostics?.ReportOnce("control:" + variable + ":" + key, DiagnosticLevel.Warn,
-                        $"a {variable} item with a control character was skipped", ("variable", variable), ("key", key));
-                    continue;
-                }
-
-                result.RemoveAll(h => h.Key.Equals(key, StringComparison.OrdinalIgnoreCase));
-                result.Add((key, value));
-            }
-
-            return result;
-        }
-
-        private static bool IsControl(char c) => c < 0x20 || c == 0x7f;
-
-        private void ConfigureTls(SocketsHttpHandler handler)
-        {
-            var ca = LoadCertificates(_resolved.CertificatePath, "OTEL_EXPORTER_OTLP_CERTIFICATE");
-            _roots = ca;
-            if (ca is { Count: > 0 })
-            {
+                var ca = new X509Certificate2Collection();
+                ca.ImportFromPem(caPem);
+                _roots = ca;
                 handler.SslOptions.RemoteCertificateValidationCallback = (_, certificate, presented, errors) =>
                     ValidateWithCustomRoot(certificate, errors, ca, presented);
             }
 
-            if (_resolved.ClientCertificatePath is { } certPath && _resolved.ClientKeyPath is { } keyPath)
+            if (tls.ClientCertificatePem is { } certPem && tls.ClientKeyPem is { } keyPem)
             {
-                try
-                {
-                    var pair = X509Certificate2.CreateFromPemFile(certPath, keyPath);
-                    _clientCertificate = pair;
-                    handler.SslOptions.ClientCertificates = new X509CertificateCollection { pair };
-                }
-                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Security.Cryptography.CryptographicException or ArgumentException)
-                {
-                    _diagnostics.ReportOnce("unreadable:OTEL_EXPORTER_OTLP_CLIENT_CERTIFICATE", DiagnosticLevel.Warn,
-                        "cannot load the OTLP client certificate and key; exporting without a client certificate",
-                        ("variable", "OTEL_EXPORTER_OTLP_CLIENT_CERTIFICATE"));
-                }
-            }
-        }
-
-        private X509Certificate2Collection? LoadCertificates(string? path, string variable)
-        {
-            if (path is null)
-            {
-                return null;
-            }
-
-            try
-            {
-                var collection = new X509Certificate2Collection();
-                collection.ImportFromPemFile(path);
-                return collection;
-            }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or System.Security.Cryptography.CryptographicException or ArgumentException)
-            {
-                _diagnostics.ReportOnce("unreadable:" + variable, DiagnosticLevel.Warn,
-                    "cannot read the OTLP CA certificate file; using the system trust store", ("variable", variable));
-                return null;
+                // Validated by the resolver; re-imported from PKCS#12 so SslStream can use the key. Linux:
+                // an ephemeral key, never written anywhere. Windows (SChannel) cannot use an ephemeral key
+                // for client authentication, so there the key goes to the user key store for the life of
+                // the certificate (removed on dispose); macOS has no ephemeral key set.
+                using var ephemeral = X509Certificate2.CreateFromPem(certPem, keyPem);
+                var flags = OperatingSystem.IsLinux() ? X509KeyStorageFlags.EphemeralKeySet : X509KeyStorageFlags.DefaultKeySet;
+                var pair = new X509Certificate2(ephemeral.Export(X509ContentType.Pkcs12), (string?)null, flags);
+                _clientCertificate = pair;
+                handler.SslOptions.ClientCertificates = new X509CertificateCollection { pair };
             }
         }
 
@@ -292,6 +239,18 @@ namespace StaffOps.OtelHelper.Exporters
                 lock (_factories)
                 {
                     return _factories.Count;
+                }
+            }
+        }
+
+        /// <summary>The helper factories registered so far (tests).</summary>
+        internal IReadOnlyList<HelperHttpClientFactory> HelperFactories
+        {
+            get
+            {
+                lock (_factories)
+                {
+                    return _factories.OfType<HelperHttpClientFactory>().ToList();
                 }
             }
         }

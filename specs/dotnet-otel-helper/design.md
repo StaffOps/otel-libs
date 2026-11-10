@@ -1014,6 +1014,8 @@ failure is upstream.
 | `http.opt_in_metrics_scrape_disabled_pattern_wins` *(added 2026-11-09, C4 fix round)* | `skip:no-upstream-dotnet-http-body-size` | it drops a body-size instrument .NET does not have, so it passes trivially | C4 |
 | `http.opt_in_metrics_scrape_body_size_on`, `http.opt_in_metrics_scrape_code_on` *(added 2026-11-08, A30)*: ASP.NET Core and `System.Net.Http` have no HTTP body-size instrument (Microsoft Learn built-in metrics pages read 2026-11-08), so the opt-in switch brings back active requests and connection metrics only | `skip:no-upstream-dotnet-http-body-size` | upstream | C11 |
 
+> **Added 2026-11-10 (task C8).** The two value-length cases take `skip:no-upstream-dotnet-attribute-limit`: OpenTelemetry .NET 1.20.1 has no public override (the exporter builds its `SdkLimitOptions` from the environment); the helper warns once per variable set to 0. The gRPC TLS-file cases pass through the helper handler (measured on the receiver's TLS port), so `skip:no-upstream-dotnet-grpc-tls-files` is not used.
+
 `skip:dotnet-sdk-logs-env-values` (r1 candidate) is not needed: the SDK
 throws on malformed headers but echoes no value (measured, C1 dev H4).
 

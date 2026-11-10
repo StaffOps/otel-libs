@@ -436,6 +436,10 @@ When you use placeholders in logs, values are extracted as **separate attributes
 | `OTEL_METRIC_EXPORT_INTERVAL` | OTLP metric export interval (ms) | `30000` | Manual |
 | `OTEL_TRACES_SAMPLER` | Standard OTel sampler config — takes priority over `OTEL_HELPER_SAMPLE_RATIO` when set | _(unset)_ | Manual |
 | `OTEL_EXPORTER_OTLP_PROTOCOL` | OTLP wire protocol: `grpc` or `http/protobuf` | port-based inference | Manual |
+| `OTEL_EXPORTER_OTLP_HEADERS` | Headers on every export, `key=value,…` (auth); `OTEL_EXPORTER_OTLP_<SIGNAL>_HEADERS` replaces them for one signal (§19) | empty | Helm Chart (secret) |
+| `OTEL_EXPORTER_OTLP_TIMEOUT` | Export deadline in milliseconds, per signal with `_<SIGNAL>_TIMEOUT` (§19) | `10000` | Manual |
+| `OTEL_EXPORTER_OTLP_COMPRESSION` | `gzip` or `none`, per signal with `_<SIGNAL>_COMPRESSION` (§19) | `gzip` | Manual |
+| `OTEL_EXPORTER_OTLP_CERTIFICATE`, `_CLIENT_KEY`, `_CLIENT_CERTIFICATE` | TLS files (CA, client pair), per signal too (§17) | system roots, no client certificate | Helm Chart |
 
 ### Configuration Priority
 
@@ -694,6 +698,31 @@ The same contradiction between `TelemetryOptions.Insecure` and a code URL
 fails host start (`TelemetryOptions.Insecure = true contradicts the https://
 scheme of TelemetryOptions.OtelCollectorEndpoint; …`).
 
+### TLS files (0.3, this branch, task C8)
+
+`OTEL_EXPORTER_OTLP_CERTIFICATE` (CA), `OTEL_EXPORTER_OTLP_CLIENT_KEY` and
+`OTEL_EXPORTER_OTLP_CLIENT_CERTIFICATE` (the client pair, PEM; the key
+unencrypted) are read by the helper, each per signal first
+(`OTEL_EXPORTER_OTLP_TRACES_CERTIFICATE`, …), then generic. On both protocols
+the files go to the helper's own HTTP client:
+
+| Situation | What happens |
+|---|---|
+| a file cannot be read | `otelhelper: WARN a TLS file cannot be read and is ignored variable=OTEL_EXPORTER_OTLP_TRACES_CERTIFICATE using="the generic variable"`, then the next level (for the CA, finally the system roots) |
+| a CA file with no PEM certificate (`/dev/null`) | `… holds no PEM certificate and is ignored …`, the next level |
+| only the key or only the certificate resolves | warned naming the variable(s); server authentication with the resolved CA |
+| the pair does not load (mismatch, bad PEM, encrypted key) | warned naming both variables; server authentication |
+| the endpoint is plaintext (`http://`, or schemeless + `INSECURE=true`) | the files are not read; one warning names them and every signal they are ignored for: `TLS files are set but the endpoint is plaintext …; they are ignored for these signals … variable=OTEL_EXPORTER_OTLP_CERTIFICATE signals=traces,metrics,logs` |
+| a file larger than 1 MiB, or a device (`/dev/zero`) | refused as "cannot be read" (the read is bounded) |
+| a named pipe (FIFO) with no writer | the read waits for a writer: host start blocks. Point the variables at regular files (an operator error, not detected) |
+
+Warnings never print a path or file content. Setup never fails on a TLS file.
+
+The client key: on Linux it stays an ephemeral key, never written anywhere. On
+Windows, SChannel cannot use an ephemeral key for client authentication, so
+the key is imported into the user key store for the life of the certificate
+(removed when the exporter is disposed); the process needs a user profile.
+
 ### Endpoint values the helper rejects or rewrites (0.3, this branch)
 
 | Value | What happens |
@@ -757,3 +786,86 @@ makes only that signal `http/protobuf`). The port is compared as a number
 `/v1/traces`, `/v1/metrics`, `/v1/logs` are appended to the endpoint automatically when `http/protobuf` is selected — do not include them in `OTEL_EXPORTER_OTLP_ENDPOINT`. A per-signal endpoint (`OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`, `TelemetryOptions.TracesEndpoint`, …) is used as written. 0.3 (this branch) keeps the path of the generic endpoint (`https://gw.example.com/otlp` → `https://gw.example.com/otlp/v1/traces`); 0.2.x dropped it.
 
 For local development with a plaintext collector, set `OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317` (there is no default endpoint: unset means no OTLP export).
+
+---
+
+## 19. OTLP Headers, Timeout, Compression and Redirects (0.3, this branch)
+
+Task C8: the helper resolves these per signal — code, then
+`OTEL_EXPORTER_OTLP_<SIGNAL>_*`, then `OTEL_EXPORTER_OTLP_*`, then the
+default — and gives each exporter its own HTTP client.
+
+```bash
+OTEL_EXPORTER_OTLP_ENDPOINT=https://otel-gateway.example.com:4317
+OTEL_EXPORTER_OTLP_HEADERS="authorization=Bearer%20<token>,x-tenant=checkout"
+OTEL_EXPORTER_OTLP_LOGS_HEADERS="authorization=Bearer%20<logs-token>"   # logs: replaces the generic headers
+OTEL_EXPORTER_OTLP_TIMEOUT=5000                                       # ms
+OTEL_EXPORTER_OTLP_TRACES_COMPRESSION=none                            # default gzip
+```
+
+```csharp
+services.AddOtelHelper(opts =>
+{
+    opts.ExportTimeoutMs = 5_000;   // every signal; in [1, 86 400 000], else start fails
+    opts.Compression = "gzip";      // every signal
+});
+```
+
+**Headers.** `key=value` items separated by `,`. A key is letters, digits,
+`.`, `_` and `-` (it is not percent-decoded); a value is percent-decoded
+(`%20` is a space, `%2C` a comma) and trimmed. An item without `=` or with
+another key is skipped; a value with an invalid escape (`a%zz`), or whose
+bytes are not UTF-8 (`%FF`), is sent as written; a value that decodes to
+anything outside printable ASCII (`%C3%A9`, `a%0D%0Ab`) is skipped. Each case
+warns once naming the variable and the item position (`item="item #2"`), never
+the value. For a key that appears twice the last one wins. On gRPC a key
+ending in `-bin` is binary metadata: its value is sent base64. A
+per-signal variable with at least one valid item replaces the generic one for
+that signal.
+
+**Timeout.** Decimal milliseconds (`500`, `250.5`; a fraction is rounded to
+whole milliseconds, where Go keeps it); `0`, `+5`, `1e3`, `.5`,
+`5.` are invalid: warned, and the next level applies (per-signal → generic →
+10 000). Values above 24 h are clamped to 86 400 000, below 1 ms to 1, with a
+warning. The value is the signal's export deadline: the exporter, the HTTP
+client (`HttpClient.Timeout`), the batch span or log processor and the
+periodic metric reader all use it, and gRPC exports carry it as
+`grpc-timeout`. `OTEL_BSP_EXPORT_TIMEOUT`, `OTEL_BLRP_EXPORT_TIMEOUT` and
+`OTEL_METRIC_EXPORT_TIMEOUT` are not honored (one warning each), and an
+application `Configure<BatchExportActivityProcessorOptions>`,
+`Configure<LogRecordExportProcessorOptions>` or `Configure<MetricReaderOptions>`
+export timeout does not apply to the helper's exporters: set while its variable
+is unset, each warns once naming the option. With
+`OTEL_EXPORTER_OTLP_METRICS_DEFAULT_HISTOGRAM_AGGREGATION`, a timeout set on the named
+options `"StaffOps.OtelHelper.OtlpMetrics"` after `AddOtelHelper` is replaced and warned;
+one registered before `AddOtelHelper` is overwritten by the helper's copy without a warning. `grpc-timeout` carries the
+configured deadline of each request, not the time left on an SDK retry.
+
+**Compression.** `gzip` (default) or `none`, any ASCII case. Another value
+(`deflate`, `zstd`) warns and the next level applies.
+
+**Batch size.** `OTEL_BSP_MAX_EXPORT_BATCH_SIZE` above `OTEL_BSP_MAX_QUEUE_SIZE`
+(likewise `OTEL_BLRP_*`; defaults 512 / 2048) warns once naming both and the
+queue size is used.
+
+**Redirects.** The helper's client never follows a redirect. An endpoint
+that answers `3xx` loses that export, and the helper writes one ERROR per
+signal and status code, without the `Location` value:
+
+```text
+otelhelper: ERROR the OTLP endpoint for traces answered HTTP 307 (a redirect); redirects are not followed, so these traces are not exported: configure the final endpoint URL signal=traces status=307
+```
+
+Configure the URL the redirect points to. (0.2.x followed redirects.)
+
+**Response size.** Responses are buffered up to the SDK's
+`MaxResponseSizeBytes`, as the SDK's own client does.
+
+**Not covered: a value-length limit of `0`.**
+`OTEL_ATTRIBUTE_VALUE_LENGTH_LIMIT=0` (or the `SPAN_`/`LOGRECORD_` variant)
+is invalid by the contract, and the helper warns, but the .NET OTLP exporter
+reads it itself and sends those attribute values empty; there is no public
+API to override it. Unset it or use a positive limit. (Hiding the variable
+while the exporter is built, as the Python helper does, would need
+`Environment.SetEnvironmentVariable`, which the .NET helper never calls.)
+
