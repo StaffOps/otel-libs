@@ -9979,7 +9979,7 @@
       },
       "status": {
         "go": "pass",
-        "python": "xfail:A34",
+        "python": "pass",
         "dotnet": "pass",
         "nodejs": "pass"
       }

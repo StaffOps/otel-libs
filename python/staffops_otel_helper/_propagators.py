@@ -91,8 +91,9 @@ def build_propagator():  # noqa: ANN201 - CompositePropagator
     names the effective list as ``using`` (design D1 row "Propagator diagnostics", A20).
     """
     from opentelemetry.baggage.propagation import W3CBaggagePropagator
-    from opentelemetry.propagators.composite import CompositePropagator
     from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
+
+    from staffops_otel_helper._composite import HelperCompositePropagator
 
     raw = os.environ.get(ENV_PROPAGATORS, "")
     tokens = list(_DEFAULT)
@@ -109,4 +110,5 @@ def build_propagator():  # noqa: ANN201 - CompositePropagator
             _log.warning('[OtelHelper] "none" combined with other propagators; propagation disabled: '
                          "variable=%s value=%r using=none.", ENV_PROPAGATORS, _truncate(raw))
     factories = {"tracecontext": TraceContextTextMapPropagator, "baggage": W3CBaggagePropagator}
-    return CompositePropagator([factories[t]() for t in tokens])
+    # Never returns None from extract, also for "none" (no members; task A34).
+    return HelperCompositePropagator([factories[t]() for t in tokens])

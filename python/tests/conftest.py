@@ -18,6 +18,12 @@ from opentelemetry.sdk._logs import LoggingHandler
 from staffops_otel_helper import _diag, _sdk_log_mask
 from staffops_otel_helper.setup import reset_telemetry
 
+# After the helper: it must import opentelemetry.propagate first (import_propagate_safely).
+from opentelemetry.baggage.propagation import W3CBaggagePropagator
+from opentelemetry.propagate import set_global_textmap
+from opentelemetry.propagators.composite import CompositePropagator
+from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
+
 ALL_ENV_VARS = [
     "SERVICE_NAME",
     "OTEL_SERVICE_NAME",
@@ -59,6 +65,10 @@ def _reset_otel_globals():
 
     _logs_mod._LOGGER_PROVIDER_SET_ONCE = Once()
     _logs_mod._LOGGER_PROVIDER = None
+
+    # The API default (W3C TraceContext + Baggage): a test's OTEL_PROPAGATORS=none
+    # propagator must not leak into the next test.
+    set_global_textmap(CompositePropagator([TraceContextTextMapPropagator(), W3CBaggagePropagator()]))
 
 
 def _shutdown_stray_prometheus_readers():

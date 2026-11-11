@@ -3038,6 +3038,31 @@ Unsupported instrumentation versions, task A10 (P18):
 
 ### Fixed
 
+- **Python: `OTEL_PROPAGATORS=none` failed every server request (task A34,
+  owner decision 2026-11-10 to fix ahead of the queue).** The helper installed
+  an empty `CompositePropagator`, whose `extract()` returns the `context`
+  argument, `None` when the caller passes none. The ASGI (FastAPI)
+  instrumentation attached that `None` and the SDK then raised
+  `AttributeError: 'NoneType' object has no attribute 'get'`, so every request
+  answered 500, with or without headers, also with `OTEL_TRACES_EXPORTER=none`
+  and with traces disabled through `OTEL_HELPER_DISABLED_SIGNALS=traces`
+  (measured on the unfixed code). `OTEL_SDK_DISABLED=true` installs no
+  instrumentation and is believed unaffected (not measured). The helper's
+  propagator (`HelperCompositePropagator`) now always returns a `Context` from
+  `extract()`: the passed one, or a fresh empty `Context` when none is given.
+  Under `none` a server starts a new trace, inbound `traceparent` and `baggage`
+  are ignored, and nothing is injected. Callers that pass `extract(carrier)`
+  as a span parent (Celery/Kafka consumers, gRPC servers, custom code) now
+  start a new root under `none` instead of continuing the current context.
+  `tracecontext`-only, `baggage`-only and lists with skipped tokens were not
+  affected. WSGI servers attach the extracted context the same way and are
+  covered by the same fix (inferred; no WSGI test, Flask is not a test
+  dependency). **Affected release: `0.3.0rc3`** (earlier release candidates
+  not checked). Workaround on `0.3.0rc3`: leave `OTEL_PROPAGATORS` unset or set
+  `tracecontext` / `baggage` instead of `none`. Tests:
+  `tests/test_a34_propagators_none.py`; the test suite's global textmap is now
+  reset around each test. Parity case
+  `propagation.none_server_ignores_inbound_traceparent` passes for Python.
 - **Python: a client key without a client certificate (or the reverse, or an
   unreadable one) aborted the process** in grpc's C core
   (`grpc_tls_certificate_distributor.cc` CHECK, SIGABRT). The helper now
