@@ -92,10 +92,8 @@ public class SubpackageExtensionsTests
         // Verify fluent API returns same instance
         Assert.Same(services, result);
 
-        // Verify that ConfigureOpenTelemetryTracerProvider was registered
-        // (the Redis instrumentation internally calls ConfigureServices during
-        // provider build, which is a known limitation — we verify the registration
-        // itself completed without error)
+        // Registration only; building the provider with the DI multiplexer is covered by
+        // RedisTests (task C14b fixed the 0.2.x NotSupportedException at provider build).
         Assert.Contains(services, sd =>
             sd.ServiceType == typeof(IConnectionMultiplexer));
     }

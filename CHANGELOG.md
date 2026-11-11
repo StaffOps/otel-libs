@@ -854,6 +854,21 @@ emitted telemetry.
    helper's signal switches (keeping them is harmless: no duplicate span).
    No new package dependency; the application brings its driver.
 
+16. **`AddOtelHelperRedis()` without arguments works** (task C14b, C1 dev B1).
+   0.2.x threw `NotSupportedException` when the tracer provider was built, so
+   only `AddOtelHelperRedis(connection)` worked (the 0.2.1 workaround). It now
+   instruments the `IConnectionMultiplexer` registered in the service
+   collection (registered before or after the call), and building the tracer
+   provider fails with `InvalidOperationException` when none is registered.
+   Both overloads throw `ArgumentNullException` for a null argument. Keep the
+   explicit overload if the multiplexer is not in DI. *Fix round 1:* the
+   no-argument overload instruments the last registered unkeyed multiplexer;
+   keyed or several multiplexers need the explicit overload once per
+   multiplexer; the fail-fast also fires with traces off, and is skipped by a
+   container without `IServiceProviderIsService`; a factory registration
+   connects at start. Registering the same multiplexer twice still gives one
+   span per command (two drain threads): call once per multiplexer.
+
 **Telemetry part.** Each row: before (0.2.x) → after, and what to check in
 dashboards and alerts.
 
@@ -1398,6 +1413,27 @@ dashboards and alerts.
    instrument no longer drops it (the helper's view adds its own stream; use
    `OTEL_HELPER_DISABLED_METRICS`), and pools are merged (no pool label,
    unlike the semantic conventions).
+
+25. **Redis spans** (task C14b, contract A26, R10; design O8 (b), D-NET15).
+   `OpenTelemetry.Instrumentation.StackExchangeRedis` 1.15.1-beta.1 →
+   1.20.1-beta.1 (task C3); measured on 1.20.1-beta.1 with StackExchange.Redis
+   2.6.122; the 0.2.x column is upstream's behavior as documented, not
+   measured on 1.15.1-beta.1. Before (0.2.x) → after:
+
+   | Input | 0.2.x | 0.3 (this branch) |
+   |---|---|---|
+   | `AddOtelHelperRedis()` (multiplexer from DI) | provider build threw, no Redis span | spans for the registered multiplexer (API item 16) |
+   | default span keys | legacy only (`db.system=redis`, `db.statement` = the command) | also `db.system.name=redis`, `db.operation.name` (the command, `SET`) and `db.query.text` (from `db.statement`), added by the helper (owner decision O8 (b), 2026-11-11; R10 as Go and the SQL drivers); `db.namespace` only with `database/dup` or `database` in the process environment |
+   | `OTEL_SEMCONV_STABILITY_OPT_IN=database` | the instrumentation's new keys only | the same: no `db.system`, `db.statement`, `db.redis.database_index` (the helper removes them if the instrumentation wrote them), `db.query.text` sanitized |
+   | `SetVerboseDatabaseStatements` | the key or the Lua script in `db.statement` (`SET orders:42`) | the command and one `?` (`SET ?`, `EVAL ?`); also `db.query.text` |
+   | failed command | not marked ERROR (no status, `error.type` or `exception` event) | unchanged (upstream; README gap row): error ratios read 0% for .NET Redis |
+   | `CreateBatch` commands | no span | unchanged: StackExchange.Redis does not profile batches |
+   | `exception` event from an `Enrich` callback | message and stack trace on the span | only `exception.type`; the detail in the `StaffOps.OtelHelper.Database` log record (ADR-014) |
+
+   Check: span queries on `db_system_name="redis"` and `db_operation_name`
+   now see .NET Redis spans by default; Redis error counts cannot come from
+   .NET Redis span status (count in the application); span names are the
+   command (`SET`), a transaction is one `EXEC` span, batches none.
 
 ### Collector / platform prerequisites (before rolling 0.3.0 out)
 
@@ -2062,6 +2098,43 @@ Phase C work on this branch (no .NET release yet; the first will be
   rewrites under it, and calls the logger after releasing it (a blocking log
   sink no longer stalls other span ends); the `in_span` parity input is a
   fixed, non-recording span context in the four drivers.
+
+- **.NET: Redis package (task C14b, contract A26, R10; design O8 (b), DN9,
+  D-NET15; implemented 2026-11-11, awaiting review).** `AddOtelHelperRedis()`
+  uses upstream's DI-resolving `AddRedisInstrumentation()` (0.2.x called
+  `AddRedisInstrumentation(connection)` inside a deferred callback and the
+  provider build threw `NotSupportedException`, C1 dev B1) and a check-only
+  callback that fails the build with `InvalidOperationException` when no
+  `IConnectionMultiplexer` is registered (`IServiceProviderIsService`,
+  nothing created). The core sanitizer (`Tracing/DbSpanRules.cs`) treats the
+  `OpenTelemetry.Instrumentation.StackExchangeRedis` source as a database
+  source: status, ADR-014 exception-event and connection-string rules, and
+  `RedisStatement` — a `db.statement` / `db.query.text` with more than the
+  command (`SetVerboseDatabaseStatements` appends the key or the Lua script)
+  becomes the command and one `?`; no semantic-convention key is derived
+  (O8 (c); reversed to (b) in fix round 1, below). Measured on compose `redis-test` (`redis:7.4.12-alpine`): failed
+  commands whose error text quotes data (WRONGTYPE, Lua `error_reply` with an
+  argument, a Lua runtime error over a literal, an unknown command with an
+  argument, a wrong `AUTH`) leave no text on the span — no status, no
+  description, no `exception` event — so .NET has no Redis exception detail
+  to move to a log (input for the A36 Redis scope question). Span names: the
+  command; a transaction is one `EXEC` span. Tests: `RedisTests`,
+  `RedisIntegrationTests` (compose `dotnet-tests` now starts `redis-test`,
+  `REDIS_TEST_URL`, `REDIS_TEST_REQUIRE=1`; CI's `dotnet-test` runs them
+  against a `redis` service since fix round 1); 7 mutants each fail a test. README gap rows
+  for failed commands and `database/dup`, HOW-TO §14 Redis subsection.
+  Migration guide: API item 16, telemetry item 25. No parity case.
+  Fix round 1 (2026-11-11, owner decision O8 (b) reversing (c)): Redis spans
+  follow the R10 key rule — `db.system.name=redis`, `db.operation.name` and
+  `db.query.text` added by default, `db.system` / `db.statement` removed with
+  `database`, no key overwritten; the system-key switch is exhaustive (an
+  unknown source gets no key). CI `dotnet-test` gets a `redis` service, so
+  the integration tests run there; new tests for the stable mode, batches
+  (no span, pinned), a double registration and keyed / several
+  multiplexers. HOW-TO §14 gains examples (Redis and SQL spans, the
+  correlated record on OTLP and stdout, an application-side Redis error
+  counter, the fail-fast message) and an "Exceptions: traces vs logs"
+  subsection with Grafana trace-to-logs settings (not tested).
 
 ### Breaking — telemetry output changes (dashboards/alerts)
 

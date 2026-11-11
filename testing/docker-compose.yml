@@ -4,8 +4,9 @@
 #   docker compose -f testing/docker-compose.yml run --rm python-tests
 #   PY_VERSION=3.10 PY_DEPS=lower docker compose -f testing/docker-compose.yml run --rm python-tests
 #   docker compose -f testing/docker-compose.yml run --rm dotnet-tests
-#     (also starts sql-postgres and sql-mysql for StaffOps.OtelHelper.Sql; stop them afterwards
-#      with `docker compose -f testing/docker-compose.yml stop sql-postgres sql-mysql`)
+#     (also starts sql-postgres and sql-mysql for StaffOps.OtelHelper.Sql, and redis-test for
+#      StaffOps.OtelHelper.Redis; stop them afterwards with
+#      `docker compose -f testing/docker-compose.yml stop sql-postgres sql-mysql redis-test`)
 #   NODE_VERSION=22.15.0 docker compose -f testing/docker-compose.yml run --rm node-tests
 #     (also starts sql-postgres and sql-mysql for @staffops/otel-helper-sql and
 #      redis-test for @staffops/otel-helper-redis; stop them afterwards with
@@ -143,6 +144,8 @@ services:
         condition: service_healthy
       sql-mysql:
         condition: service_healthy
+      redis-test:
+        condition: service_healthy
     environment:
       <<: *fakeotlp-env
       PARITY_CASES: /src/parity/cases.json
@@ -153,6 +156,10 @@ services:
       SQL_TEST_POSTGRES: postgres://otel:otel-test-only@sql-postgres:5432/otel_test
       SQL_TEST_MYSQL: mysql://otel:otel-test-only@sql-mysql:3306/otel_test
       SQL_TEST_REQUIRE: ${SQL_TEST_REQUIRE:-1}
+      # StaffOps.OtelHelper.Redis integration tests (task C14b; the python-tests URL, throwaway
+      # password). REQUIRE (default 1): a missing URL fails instead of skipping.
+      REDIS_TEST_URL: redis://default:otel-test-only@redis-test:6379/0
+      REDIS_TEST_REQUIRE: ${REDIS_TEST_REQUIRE:-1}
       DOTNET_CLI_TELEMETRY_OPTOUT: "1"
       DOTNET_NOLOGO: "1"
       # vstest kills the test host ~100 ms after the last test, before coverlet

@@ -1,5 +1,9 @@
 # Tests — StaffOps.OtelHelper (.NET)
 
+1877 tests (xUnit) with the parity runner, 0 failed, 0 skipped, 0 warnings (compose `dotnet-tests` on `sdk:8.0` with `sql-postgres`, `sql-mysql` and `redis-test`, and on `sdk:10.0` (10.0.403) with `DOTNET_ROLL_FORWARD=Major` on the same network, 2026-11-11, task C14b fix round 1); coverlet total `| Total | 98.59% | 96.88% | 99.41% |` (line, branch, method) on `sdk:8.0`, `| Total | 98.56% | 96.84% | 99.41% |` on SDK 10; `StaffOps.OtelHelper.Redis` 100% / 100% / 100% on both. The C14b line below is the previous run.
+
+1864 tests (xUnit) with the parity runner, 0 failed, 0 skipped, 0 warnings (compose `dotnet-tests` on `sdk:8.0` with `sql-postgres`, `sql-mysql` and `redis-test`, and on `sdk:10.0` (10.0.403) with `DOTNET_ROLL_FORWARD=Major` on the same network, 2026-11-11, task C14b); coverlet total `| Total | 98.62% | 96.84% | 99.41% |` (line, branch, method) on `sdk:8.0`, `| Total | 98.56% | 96.8% | 99.41% |` on SDK 10; `StaffOps.OtelHelper.Redis` 100% / 100% / 100% on both. The C14a round-4 line below is the previous run.
+
 1840 tests (xUnit) with the parity runner, 0 failed, 0 skipped, 0 warnings (compose `dotnet-tests` on `sdk:8.0` with `sql-postgres` and `sql-mysql`, and on `sdk:10.0` (10.0.403) with `DOTNET_ROLL_FORWARD=Major` on the same network, 2026-11-11, task C14a round 4); coverlet total `| Total | 98.52% | 96.81% | 99.41% |` on `sdk:8.0`, `| Total | 98.49% | 96.77% | 99.41% |` on SDK 10. Go, Python and Node.js re-run green (Node.js on the second run: the first timed out in the unrelated cluster test `D4 A24 an env-provided id …`, 20 s deadline). The round-3 line below is the previous run.
 
 1840 tests (xUnit) with the parity runner, 0 failed, 0 skipped, 0 warnings (compose `dotnet-tests` on `sdk:8.0` with `sql-postgres` and `sql-mysql`, and on `sdk:10.0` (10.0.403) with `DOTNET_ROLL_FORWARD=Major` on the same network, 2026-11-11, task C14a round 3); coverlet total `| Total | 98.54% | 96.81% | 99.41% |` (line, branch, method) on both. Go, Python (1546 passed, 3 xfailed, 97.43%) and Node.js suites re-run green with the new parity case. The round-2 line below is the previous run.
@@ -754,12 +758,13 @@ parameter removal, the meter views, the helper's drop rules inside the view,
 the env read) each fail a test. Writing a tag only when it changes has no
 observable effect to test (an equivalent mutant by construction).
 
-Quick run without the databases (fakeotlp only; the two integration tests skip):
+Quick run without the databases and Redis (fakeotlp only; the SQL and Redis integration tests skip):
 
 ```bash
 docker compose -f testing/docker-compose.yml up -d --wait fakeotlp-dotnet
 docker compose -f testing/docker-compose.yml run --rm --no-deps \
-  -e SQL_TEST_POSTGRES= -e SQL_TEST_MYSQL= -e SQL_TEST_REQUIRE=0 dotnet-tests
+  -e SQL_TEST_POSTGRES= -e SQL_TEST_MYSQL= -e SQL_TEST_REQUIRE=0 \
+  -e REDIS_TEST_URL= -e REDIS_TEST_REQUIRE=0 dotnet-tests
 docker compose -f testing/docker-compose.yml stop fakeotlp-dotnet
 ```
 
@@ -810,3 +815,46 @@ replaces the 50-round barrier test: the first pass blocks in the logger (inside
 span and the end of another failed DB span must finish within 10 s; then one
 record for the late span, one for the other, events intact. With the logger
 called under the lock (the round-3 code) it times out.
+
+## Redis (task C14b)
+
+Contract A26, R10; design O8 (b) (reversed from (c) on 2026-11-11), DN9, D-NET15; ADR-014. No parity case (no
+database fixture kind). Both classes are in `[Collection("EnvVarTests")]`
+(a test source named after the instrumentation; the dup-mode test sets
+`OTEL_SEMCONV_STABILITY_OPT_IN`).
+
+| Area | Tests |
+|---|---|
+| `AddOtelHelperRedis()` (C1 dev B1) | `FromDI_Builds_The_Tracer_Provider_And_Instruments_The_Registered_Multiplexer` (0.2.x threw `NotSupportedException`; the mock's `RegisterProfiler` is called once), `FromDI_Multiplexer_Registered_After_The_Call_Is_Instrumented`, `FromDI_Without_A_Multiplexer_Fails_When_The_Provider_Is_Built`, `FromDI_Without_A_Multiplexer_Fails_Also_With_Traces_Off`, `FromDI_Keyed_Only_Multiplexer_Fails_Like_A_Missing_One`, `FromDI_Instruments_Only_The_Last_Registered_Multiplexer`, `Registering_The_Same_Multiplexer_Twice_Instruments_It_Twice` (two `RegisterProfiler` calls), `Explicit_Connection_Is_Instrumented_Without_A_Registration`, `Null_Arguments_Are_Refused_At_The_Call` |
+| Statement rule (`RedisTests`) | `Redis_Statement_Keeps_The_Command_And_One_Placeholder` × 11 (key, channel, Lua script, `CONFIG GET maxmemory` → `CONFIG ?`, newline and tab separators, trailing and leading whitespace, empty), `Redis_Verbose_Statement_And_Query_Text_Lose_The_Key`, `Redis_Default_Statement_Is_Unchanged` |
+| Key rule on the Redis source (O8 (b), fix round 1) | `Redis_Default_Mode_Adds_The_New_Keys_Next_To_The_Legacy_Ones`, `Redis_Stable_Mode_Keeps_Only_The_New_Keys`, `Redis_Keys_The_Instrumentation_Wrote_Are_Kept` × 2, `Redis_Operation_Falls_Back_To_The_Span_Name_But_Not_The_Unnamed_Fallback`, `Redis_Span_Without_A_System_Key_Gets_None`, `An_Unknown_Source_Never_Gets_A_System_Key` (exhaustive switch) |
+| Other rules on the Redis source | `Redis_Failed_Status_Loses_Its_Description`, `Redis_Exception_Event_Keeps_Only_The_Type_And_The_Detail_Goes_To_A_Correlated_Log` |
+| Real server (`RedisIntegrationTests`) | `Default_Spans_Get_The_New_Keys_Next_To_The_Legacy_Ones`, `Verbose_Statements_Keep_The_Command_And_One_Placeholder`, `Database_Dup_Opt_In_Adds_The_New_Keys_From_The_Process_Environment`, `Stable_Opt_In_Keeps_Only_The_New_Keys` (`database` and `DATABASE`; both read by the instrumentation), `Registering_The_Same_Multiplexer_Twice_Gives_One_Span_Per_Command`, `Batch_Commands_Produce_No_Span` (only the following `UNLINK`): StackExchange.Redis 2.6.122 on `redis-test` through `AddOtelHelper` + `AddOtelHelperRedis()`; WRONGTYPE, a Lua `error_reply` quoting `ARGV[1]`, a Lua runtime error over a literal, an unknown command with an argument, a transaction and a wrong `AUTH` password; span names `SET`, `HSET`, `LPUSH`, `EVAL` × 2, `C14BNOSUCHCMD`, `EXEC` (no `MULTI`), `UNLINK`, `AUTH`; every span `Unset`, no `error.type`, no `exception` event, no `StaffOps.OtelHelper.Database` record; no key, value, argument, literal or password in any attribute, event, name or status |
+
+The integration tests need `REDIS_TEST_URL` (`redis://user:password@host:port/db`,
+the Python suite's variable); compose `dotnet-tests` sets it and
+`REDIS_TEST_REQUIRE=1`, so a missing server fails the run. Without the variable
+they are skipped; CI's `dotnet-test` job sets both against its `redis`
+service (fix round 1). For a quick run without Redis, use the "Quick run"
+recipe in the C14a section above (`-e REDIS_TEST_URL= -e REDIS_TEST_REQUIRE=0`):
+the integration tests skip. Stop the server afterwards:
+`docker compose -f testing/docker-compose.yml stop redis-test`.
+
+Mutation check (2026-11-11, scripted, one mutant per run on a fresh copy,
+filter `FullyQualifiedName~Redis`, 26 tests): 7 mutants, each fails at least
+one test — the Redis source left out of `IsDbSource` (5 tests, the verbose and
+dup integration tests among them), the semantic-convention rule applied to
+Redis (3), the statement rule removed (3), the 0.2.x DI overload restored (6),
+the registration check removed (1), the rest of the statement kept (9), a
+leading-whitespace statement kept (1).
+
+*Fix round 1 (2026-11-11, O8 (b)):* 12 more mutants on the filter
+`FullyQualifiedName~Redis|FullyQualifiedName~DbSpanSanitizer` (128 tests),
+each fails a test: Redis left out of the system-key switch (6), an unknown
+source mapped to `mysql` (1, after `ApplySemconvKeys` became testable
+directly), no `db.operation.name` (5), an existing one overwritten (2), no
+Redis `db.query.text` (4), the unnamed fallback used as the operation (1),
+the span name not used (1), `?` taken as the operation (1), the O8 (c) early
+return restored (6), the 0.2.x DI overload (12), the registration check
+removed (3), the statement kept (8).
+

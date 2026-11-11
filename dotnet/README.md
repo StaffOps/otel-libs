@@ -414,6 +414,31 @@ Redis with explicit connection:
 services.AddOtelHelperRedis(connectionMultiplexer);
 ```
 
+### Redis
+
+`AddOtelHelperRedis()` (task C14b) instruments StackExchange.Redis through
+`OpenTelemetry.Instrumentation.StackExchangeRedis` 1.20.1-beta.1 (verified with
+StackExchange.Redis 2.6.122 on `redis:7.4.12-alpine`). Examples of the spans and
+of counting failures: `HOW-TO.md` §14 "Redis".
+
+| Item | .NET |
+|---|---|
+| `AddOtelHelperRedis()` | instruments the **last** registered unkeyed `IConnectionMultiplexer` (registered before or after the call); 0.2.x threw `NotSupportedException` at provider build |
+| no multiplexer registered | building the tracer provider fails with `InvalidOperationException`, also with traces off; the check is skipped by a container without `IServiceProviderIsService` |
+| keyed or several multiplexers | `AddOtelHelperRedis(connection)` once per multiplexer (a keyed-only registration is not found) |
+| the same multiplexer twice | two registrations and two drain threads, still one span per command (the client keeps the last profiler); call once per multiplexer |
+| factory registration | the factory runs when the tracer provider is built: the app connects to Redis at start |
+| Span name | the command (`SET`, `HGET`; `EVAL` for a prepared `LuaScript`); a transaction is one `EXEC` span; `CreateBatch` commands give **no span** (StackExchange.Redis does not profile batches) |
+| Keys, `OTEL_SEMCONV_STABILITY_OPT_IN` unset | `db.system=redis`, `db.system.name=redis`, `db.statement`, `db.operation.name`, `db.query.text`, `db.redis.database_index`, `server.address` / `server.port` (owner decision O8 (b), 2026-11-11: the helper adds `db.system.name`, `db.operation.name`, `db.query.text`) |
+| Keys, `database/dup` | the same plus `db.namespace` (written by the instrumentation) |
+| Keys, `database` | `db.system.name`, `db.operation.name`, `db.query.text`, `db.namespace`, `server.*`; no `db.system`, `db.statement` or `db.redis.database_index` |
+| Statement (`db.statement`, `db.query.text`) | the command plus one `?` when anything follows (`SET ?`); values and `AUTH` arguments never; subcommands not kept (`CONFIG GET x` → `CONFIG ?`); `SetVerboseDatabaseStatements` makes upstream add the key or the Lua script, which the helper removes again |
+| Failed command | **not** marked ERROR: no status, `error.type` or `exception` event (spans are built from the client's profiler after the command, without its result); error ratios and the service graph read 0% for .NET Redis — count failures in the application |
+| `exception` event from an `Enrich` callback | keeps only `exception.type`; the detail goes to the `StaffOps.OtelHelper.Database` log record (ADR-014) |
+
+Tests: `TESTS.md` "Redis (task C14b)" (the integration tests need compose
+`redis-test`). Gaps: root `README.md`, "Known emitted-telemetry gaps" (.NET Redis rows).
+
 ### Sql (databases)
 
 `AddOtelHelperSql()` (task C14a) instruments three drivers; the application brings

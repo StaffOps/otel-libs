@@ -126,6 +126,10 @@ jobs:
       SQL_TEST_POSTGRES: postgres://otel:otel-test-only@localhost:5432/otel_test
       SQL_TEST_MYSQL: mysql://otel:otel-test-only@localhost:3306/otel_test
       SQL_TEST_REQUIRE: '1'
+      # StaffOps.OtelHelper.Redis integration tests (task C14b): the redis service below with the
+      # throwaway password of testing/docker-compose.yml; a missing server fails the run.
+      REDIS_TEST_URL: redis://default:otel-test-only@localhost:6379/0
+      REDIS_TEST_REQUIRE: '1'
     services:
       postgres:
         image: postgres:17.11-alpine
@@ -148,10 +152,24 @@ jobs:
         options: >-
           --health-cmd "mysql -h 127.0.0.1 -uotel -potel-test-only -e 'SELECT 1' otel_test"
           --health-interval 2s --health-timeout 3s --health-retries 60 --health-start-period 10s
+      # Redis for the C14b real-server tests (testing/docker-compose.yml redis-test).
+      redis:
+        image: redis:7.4.12-alpine
+        # A service container takes no command: the throwaway password is set
+        # by the "Redis password" step. The check passes before and after it.
+        ports: ['6379:6379']
+        options: >-
+          --health-cmd "redis-cli ping | grep -qE 'PONG|NOAUTH'"
+          --health-interval 1s --health-timeout 2s --health-retries 60
     steps:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
+      - name: Redis password (throwaway, as testing/docker-compose.yml)
+        working-directory: .
+        run: |
+          docker exec "${{ job.services.redis.id }}" redis-cli CONFIG SET requirepass otel-test-only
+          docker exec "${{ job.services.redis.id }}" redis-cli -a otel-test-only --no-auth-warning ping | grep -q PONG
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: ${{ matrix.dotnet }}

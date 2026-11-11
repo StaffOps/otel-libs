@@ -586,6 +586,8 @@ An instrument of your own meter with one of these names is kept, and
 
 When an exception occurs in HTTP requests (inbound/outbound) or SQL queries, the lib automatically records a **span event** with `exception.type`, `exception.message`, and `exception.stacktrace`.
 
+0.3 (this branch): database client spans (SqlClient, Npgsql, MySqlConnector, Redis) keep only `exception.type`; the message and stack trace go to a correlated log record — see [Exceptions: traces vs logs](#exceptions-traces-vs-logs) (§14, ADR-014).
+
 ### Framework Logs Filtered
 
 In non-debug environments (DEV, HML, PRD), logs from `Microsoft.*` and `System.Net.Http.*` are only exported if `Error` or `Critical`.
@@ -879,6 +881,58 @@ then dropped):
 {"time":"2026-11-11T12:00:00.000Z","level":"WARN","msg":"order failed","logger":"Orders","trace_id":"4bf92f3577b34da6a3ce929d0e0e4736","span_id":"00f067aa0ba902b7","order":"o1"}
 ```
 
+**Examples** (measured with Npgsql 10.0.3 on `postgres:17.11-alpine`, task C14b
+fix round; host and user are placeholders). See also
+[Exceptions: traces vs logs](#exceptions-traces-vs-logs).
+
+A successful query:
+
+```csharp
+await using var cmd = new NpgsqlCommand(
+    "SELECT id FROM (VALUES (42, 'a@example.com')) t(id, email) WHERE email = 'a@example.com'", conn);
+await cmd.ExecuteScalarAsync();
+```
+
+```text
+span "postgresql"  kind=Client  status=Unset
+  db.system.name=postgresql  db.system=postgresql (helper)  db.namespace=otel_test
+  db.query.text=SELECT id FROM (VALUES (?, ?)) t(id, email) WHERE email = ?
+  server.address=<db-host>  db.npgsql.data_source=Host=<db-host>;Username=<user>;Database=otel_test
+```
+
+A failed query, and its correlated record (same `trace_id`, the span's `span_id`):
+
+```csharp
+await using var bad = new NpgsqlCommand("SELECT CAST('not-a-number' AS integer)", conn);
+await bad.ExecuteScalarAsync();   // PostgresException 22P02
+```
+
+```text
+span "postgresql"  status=Error (no description)  trace_id=97a4954c208df7560900fc0bd8aaded4  span_id=60f430f8062d0f02
+  db.query.text=SELECT CAST(? AS integer)
+  error.type=22P02  db.response.status_code=22P02
+  event "exception" [exception.type=Npgsql.PostgresException]          <- no message, no stack trace
+
+log record (OTLP)  category=StaffOps.OtelHelper.Database  severity=Error
+  trace_id=97a4954c208df7560900fc0bd8aaded4  span_id=60f430f8062d0f02
+  body=22P02: invalid input syntax for type integer: "not-a-number"\n\nPOSITION: 13
+  exception.type=Npgsql.PostgresException
+  exception.message=22P02: invalid input syntax for type integer: "not-a-number" ...
+  exception.stacktrace=Npgsql.PostgresException (0x80004005): 22P02: ... at Npgsql.Internal.NpgsqlConnector.ReadMessageLong(...) ...
+```
+
+The same record on the stdout fallback (no OTLP endpoint), one line, stack trace
+cut here (measured in a second run; its ids replaced by the span's above, so the
+join is visible; on the stdout path they are fields of the line):
+
+```json
+{"time":"2026-11-11T18:06:08.187Z","level":"ERROR","msg":"22P02: invalid input syntax for type integer: \"not-a-number\"\n\nPOSITION: 13","logger":"StaffOps.OtelHelper.Database","trace_id":"97a4954c208df7560900fc0bd8aaded4","span_id":"60f430f8062d0f02","exception.type":"Npgsql.PostgresException","exception.message":"22P02: invalid input syntax for type integer: \"not-a-number\"\n\nPOSITION: 13","exception.stacktrace":"Npgsql.PostgresException (0x80004005): 22P02: invalid input syntax for type integer: \"not-a-number\"\n\nPOSITION: 13\n   at Npgsql.Internal.NpgsqlConnector.ReadMessageLong(…"}
+```
+
+A helper WARN you can hit next to these (measured, no Collector at the
+endpoint): `otelhelper: WARN sdk OpenTelemetry-Exporter-OpenTelemetryProtocol: Transient HTTP error occurred when communicating with http://127.0.0.1:4317/opentelemetry.proto.collector.logs.v1.LogsService/Export. Exception: System.Net.Http.HttpRequestException: Connection refused (127.0.0.1:4317) …`
+on standard error — the records are lost while the Collector is unreachable.
+
 
 
 **Semantic conventions on metrics.** The drivers' metrics keep the keys each
@@ -917,6 +971,268 @@ the helper's traces off: `OTEL_TRACES_EXPORTER=none` drops only the helper's
 exporter (your exporters on the same provider still get spans), while
 `OTEL_HELPER_DISABLED_SIGNALS=traces` makes the sampler record nothing, which
 silences your exporters too.
+
+### Redis: semantic conventions and failed commands
+
+Measured with `OpenTelemetry.Instrumentation.StackExchangeRedis` 1.20.1-beta.1,
+StackExchange.Redis 2.6.122 and `redis:7.4.12-alpine` (task C14b and its fix
+round; host names and ids below are placeholders or test values).
+
+**Registration.** Two overloads:
+
+```csharp
+// 1. The multiplexer from DI (resolved when the tracer provider is built):
+builder.Services.AddSingleton<IConnectionMultiplexer>(
+    _ => ConnectionMultiplexer.Connect(builder.Configuration.GetConnectionString("redis")!));
+builder.Services.AddOtelHelper();
+builder.Services.AddOtelHelperRedis();
+
+// 2. An explicit multiplexer (not in DI, keyed, or one of several):
+builder.Services.AddOtelHelperRedis(cacheMultiplexer);
+builder.Services.AddOtelHelperRedis(sessionMultiplexer);
+```
+
+| Case | Behavior |
+|---|---|
+| no-argument overload | instruments the **last** registered unkeyed `IConnectionMultiplexer` (what `GetService` returns); the registration may come before or after the call. 0.2.x threw `NotSupportedException` here |
+| several multiplexers, or a keyed-only one | use the explicit overload, **once per multiplexer**; a keyed-only registration is not found by the no-argument overload |
+| a factory registration (`AddSingleton(_ => ConnectionMultiplexer.Connect(...))`) | the factory runs when the tracer provider is built, so the app connects to Redis at start |
+| no multiplexer registered | building the tracer provider (host start) fails with `InvalidOperationException` (below), **also with traces off** (`OTEL_TRACES_EXPORTER=none`, `OTEL_SDK_DISABLED`): the check runs whenever the provider is built |
+| a container without `IServiceProviderIsService` | the check is skipped; with no multiplexer upstream instruments nothing, silently |
+| the same multiplexer registered twice (`AddOtelHelperRedis()` and `AddOtelHelperRedis(mux)`) | two upstream registrations and two drain threads; the client keeps the last profiler, so each command still gives one span (measured). Call once per multiplexer |
+
+The fail-fast message (measured):
+
+```text
+System.InvalidOperationException: AddOtelHelperRedis(): no IConnectionMultiplexer is registered in the service collection (a keyed-only registration is not found; pass it explicitly); register one or call AddOtelHelperRedis(connection). The check runs whenever the tracer provider is built, also with traces off
+```
+
+**Keys per `OTEL_SEMCONV_STABILITY_OPT_IN`** (owner decision O8 (b), 2026-11-11:
+Redis follows the same rule as the SQL drivers and Go; "helper" marks a key the
+helper adds, the others come from the instrumentation; a key the instrumentation
+wrote is never overwritten):
+
+| Attribute | unset (default) | `database/dup` | `database` |
+|---|---|---|---|
+| `db.system` | `redis` | `redis` | — |
+| `db.system.name` | `redis` (helper) | `redis` | `redis` |
+| `db.statement` | `SET` | `SET` | — |
+| `db.operation.name` | `SET` (helper) | `SET` | `SET` |
+| `db.query.text` | `SET` (helper, from `db.statement`) | `SET` | `SET` |
+| `db.redis.database_index` | `0` | `0` | — |
+| `db.namespace` | — (not derived; Go and Python write none) | `0` | `0` |
+| `server.address`, `server.port` | yes | yes | yes |
+
+The instrumentation reads the variable from the **process environment** only
+(an `appsettings.json` or other `IConfiguration` key has no effect; `DATABASE`
+is read like `database`, measured). The helper applies the contract rule too
+(tokens trimmed and ASCII-folded, read when the tracer provider is built): if the
+instrumentation still wrote legacy keys in the `database` mode, the helper
+removes them (`db.system`, `db.statement`, and `db.redis.database_index`, which
+has no current key) and keeps `db.query.text`. `db.namespace` comes only from the
+instrumentation (`database/dup` or `database`); the default column has none.
+
+**Statement shape.** `db.statement` / `db.query.text` is the command, plus one
+`?` when anything follows it. Values and `AUTH` arguments are never present.
+Subcommands are not kept: a statement `CONFIG GET maxmemory` becomes
+`CONFIG ?` and `db.operation.name` is `CONFIG` (the rule, unit-tested; a live
+`CONFIG` call was not measured — without verbose the instrumentation writes the
+command only, `CONFIG`). `SetVerboseDatabaseStatements` (upstream option,
+off by default) makes the instrumentation append the key or the whole Lua script;
+the helper's sanitizer removes them again, so the option adds nothing on .NET:
+
+| Command | upstream, verbose off | upstream, verbose on | after the helper |
+|---|---|---|---|
+| `SET orders:42 <value>` | `SET` | `SET orders:42` | `SET ?` |
+| `PUBLISH <channel> <message>` | `PUBLISH` | `PUBLISH <channel>` | `PUBLISH ?` |
+| `EVAL "local x = '<literal>' …"` | `EVAL` | `EVAL local x = '<literal>' …` | `EVAL ?` |
+| `AUTH default <password>` | `AUTH` | `AUTH` | `AUTH` |
+| `MSET k1 v1 k2 v2`, multi-key `UNLINK` | `MSET` | `MSET` | `MSET` |
+
+Python writes one `?` per argument (`SET ? ?`), Go no statement at all.
+
+**Span names.** The command as StackExchange.Redis formats it: `SET`, `HGET`,
+`LPUSH`; `EVAL` for `ScriptEvaluate` and for a prepared `LuaScript`; the command
+string given to `Execute` (`AUTH`). A transaction (`CreateTransaction`) is one
+`EXEC` span: no `MULTI` span and no span per queued command. A batch
+(`CreateBatch`) gives **no span**: StackExchange.Redis attaches the profiling
+session in `ConnectionMultiplexer.PrepareToPushMessageToBridge`, and
+`RedisBatch.Execute` enqueues on the connection directly (2.6.122 source), so
+batched commands are never profiled (pinned by
+`RedisIntegrationTests.Batch_Commands_Produce_No_Span`).
+
+**Example: a successful command.**
+
+```csharp
+await db.StringSetAsync("orders:42", orderJson);
+var id = await db.HashGetAsync("orders:index", "42");
+```
+
+```text
+span "SET"   kind=Client  status=Unset
+  db.system=redis  db.system.name=redis  db.operation.name=SET
+  db.statement=SET  db.query.text=SET  db.redis.database_index=0
+  server.address=<redis-host>  server.port=6379
+span "HGET"  kind=Client  status=Unset
+  db.system=redis  db.system.name=redis  db.operation.name=HGET
+  db.statement=HGET  db.query.text=HGET  db.redis.database_index=0
+  server.address=<redis-host>  server.port=6379
+```
+
+With `SetVerboseDatabaseStatements = true` the same calls give
+`db.statement=SET ?`, `db.query.text=SET ?` (and `HGET ?`); with
+`OTEL_SEMCONV_STABILITY_OPT_IN=database` the `SET` span carries
+`db.system.name`, `db.operation.name`, `db.namespace=0`, `db.query.text`,
+`server.*` only.
+
+**Failed commands are not marked ERROR.** The instrumentation builds each span
+from StackExchange.Redis's profiler after the command completed; the profiled
+command carries no result, so the span gets no status, no `error.type`, no
+`db.response.status_code` and no `exception` event, whatever the server
+answered. Measured with WRONGTYPE, a Lua `redis.error_reply`, a Lua runtime
+error, an unknown command and a wrong `AUTH` password: every span `Unset`, and
+the error text (which quotes keys, arguments or script literals) reaches no span
+field. **Dashboard impact:** error ratios and the Tempo service graph read 0%
+errors for .NET Redis calls, and tail-sampling on `status = error` keeps none of
+them; Go, Python and Node.js mark them ERROR (contract A26). Count Redis
+failures from the application:
+
+```csharp
+// The span around the call is the one to mark; the Redis span stays Unset.
+private static readonly Counter<long> RedisErrors =
+    new Meter("Orders").CreateCounter<long>("orders.redis.errors");
+
+try
+{
+    await db.ListLeftPushAsync(key, item);
+}
+catch (RedisServerException e)
+{
+    Activity.Current?.SetStatus(ActivityStatusCode.Error);
+    Activity.Current?.SetTag("error.type", e.GetType().FullName);
+    RedisErrors.Add(1, new KeyValuePair<string, object?>("error.type", e.GetType().FullName));
+    logger.LogError("redis command failed: {error_type}", e.GetType().Name);
+    throw;
+}
+```
+
+What the failure looks like (measured, the stdout fallback without an OTLP
+endpoint; the log line carries the `trace_id` and `span_id` of the current span,
+the request's, so the trace is one click away):
+
+```text
+span "LPUSH"  kind=Client  status=Unset  (no error.type, no exception event)
+  db.system=redis  db.system.name=redis  db.operation.name=LPUSH  db.statement=LPUSH ...
+```
+
+```json
+{"time":"2026-11-11T18:06:07.980Z","level":"ERROR","msg":"redis command failed: RedisServerException","logger":"Orders","trace_id":"f3ed775ef0ae42e6d0299669b551eb5f","span_id":"190253fbfc8f7659","error_type":"RedisServerException"}
+```
+
+Do not log `e.Message` blindly: Redis error text can quote keys and arguments
+(`ERR unknown command 'X', with args beginning with: '<arg>'`).
+
+**`exception` events (ADR-014).** Upstream adds none. If an `Enrich` callback
+adds one (`activity.AddException(e)`), the helper treats it as it does the SQL
+drivers': the event keeps only `exception.type`, and the message and stack trace
+go to one ERROR log record of category `StaffOps.OtelHelper.Database` with the
+span's `trace_id` / `span_id` ([Exceptions: traces vs logs](#exceptions-traces-vs-logs)).
+A failed status an `Enrich` callback sets keeps `ERROR` and loses its
+description.
+
+```csharp
+builder.Services.Configure<OpenTelemetry.Instrumentation.StackExchangeRedis.StackExchangeRedisInstrumentationOptions>(o =>
+    o.Enrich = (activity, context) => activity.AddException(new InvalidOperationException("cart <id> expired")));
+```
+
+```text
+span "GET"  event "exception" [exception.type=System.InvalidOperationException]   <- type only
+log record  category=StaffOps.OtelHelper.Database  severity=Error  trace_id/span_id = the span's
+  body="cart <id> expired"  exception.type=System.InvalidOperationException
+  exception.message="cart <id> expired"  exception.stacktrace=...
+```
+
+The same record shape as the SQL example above, with `exception.type` of your
+event (the rule is unit-tested in
+`RedisTests.Redis_Exception_Event_Keeps_Only_The_Type_And_The_Detail_Goes_To_A_Correlated_Log`;
+this snippet itself was not run).
+
+**Polling.** Spans appear when the profiler is drained: every 100 ms while
+commands arrive, backing off to `FlushInterval` (default 10 s):
+
+```csharp
+builder.Services.Configure<OpenTelemetry.Instrumentation.StackExchangeRedis.StackExchangeRedisInstrumentationOptions>(
+    o => o.FlushInterval = TimeSpan.FromSeconds(1));
+```
+
+The connection string (and its `password=`) never reaches a span.
+
+### Exceptions: traces vs logs
+
+The helper's rule for exceptions whose text can carry data
+([ADR-014](../specs/decisions/ADR-014-exception-detail-in-correlated-logs.md);
+today the database clients — SqlClient, Npgsql, MySqlConnector, and Redis when
+an `Enrich` callback adds an event):
+
+1. **The span keeps the type**: status `ERROR` (no description), `error.type`,
+   `db.response.status_code`, and an `exception` event with only
+   `exception.type`. That is enough to identify and count failures (span
+   metrics, error ratio, tail sampling on `status = error`).
+2. **The detail goes to the log**: one ERROR record, category
+   `StaffOps.OtelHelper.Database`, body = the message, attributes
+   `exception.type`, `exception.message`, `exception.stacktrace`.
+3. **The two are joined by `trace_id` / `span_id`**: the record carries the
+   failed span's ids (OTLP trace context, or the `trace_id` / `span_id` fields of
+   the stdout line), so the span leads to its log and back.
+
+Treat logs as possibly holding data values (retention, access control). Logs
+off, or an app level above Error, means the detail is kept nowhere.
+
+**Following a failed span to its log in Grafana** (**not tested** in this
+repository; adapt the data source UIDs and label names):
+
+```yaml
+# Tempo data source: trace to logs (provisioning). OTLP-ingested logs: Loki keeps
+# trace_id / span_id as structured metadata, not in the line, so a line filter
+# (filterByTraceID / filterBySpanID) finds nothing; query the metadata instead.
+apiVersion: 1
+datasources:
+  - name: Tempo
+    type: tempo
+    uid: tempo
+    jsonData:
+      tracesToLogsV2:
+        datasourceUid: loki
+        spanStartTimeShift: "-5m"
+        spanEndTimeShift: "5m"
+        tags: [{ key: "service.name", value: "service_name" }]
+        customQuery: true
+        # $$ escapes the env-var expansion of provisioning files; in the UI type a single $.
+        query: '{$${__tags}} | trace_id="$${__trace.traceId}" | span_id="$${__span.spanId}"'
+        # stdout fallback lines (JSON in the line, scraped by an agent) instead:
+        # query: '{$${__tags}} | json | trace_id="$${__trace.traceId}" | span_id="$${__span.spanId}"'
+  # Loki data source: a derived field that turns trace_id into a Tempo link
+  - name: Loki
+    type: loki
+    uid: loki
+    jsonData:
+      derivedFields:
+        - name: trace_id
+          matcherType: label          # OTLP logs: trace_id as structured metadata
+          matcherRegex: trace_id
+          datasourceUid: tempo
+          url: "$${__value.raw}"
+        - name: trace_id_json
+          matcherRegex: '"trace_id":"(\w+)"'   # stdout fallback lines (JSON)
+          datasourceUid: tempo
+          url: "$${__value.raw}"
+```
+
+From the span in Tempo, "Logs for this span" opens Loki filtered by its trace
+and span id; from the record in Loki, the `trace_id` link opens the trace. A
+LogQL query for the records of one trace (stdout fallback):
+`{service_name="orders-api"} | json | logger="StaffOps.OtelHelper.Database" | trace_id="<trace_id>"`.
+Examples of both records: SQL above, Redis in the previous subsection.
 
 
 ### Profiling Prerequisites

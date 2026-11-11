@@ -27,21 +27,41 @@ namespace StaffOps.OtelHelper.Tracing
     /// writes them with <c>OTEL_DOTNET_EXPERIMENTAL_SQLCLIENT_ENABLE_TRACE_DB_QUERY_PARAMETERS</c>).</item>
     /// <item><b>Semantic-convention keys</b> (R10, as Go): <c>db.system.name</c> and the legacy
     /// <c>db.system</c> both by default, the new keys only when <c>OTEL_SEMCONV_STABILITY_OPT_IN</c>
-    /// holds <c>database</c> without <c>database/dup</c>; a MySqlConnector <c>db.statement</c> also
+    /// holds <c>database</c> without <c>database/dup</c>; a MySqlConnector or Redis <c>db.statement</c> also
     /// gives <c>db.query.text</c>. Spans only: the drivers' metrics keep the keys each driver writes.</item>
     /// </list>
-    /// The <c>exception</c> event keeps the error text (accepted residual, contract A25).
+    /// The <c>exception</c> event keeps only <c>exception.type</c>; the detail goes to a correlated log
+    /// record (ADR-014, <see cref="DbExceptionEvents"/>).
+    /// <para>
+    /// Redis (task C14b, contract A26): the StackExchange.Redis spans
+    /// (<see cref="StackExchangeRedisSource"/>) are database client spans too. Their
+    /// <c>db.statement</c> / <c>db.query.text</c> is the command only by default; with
+    /// <c>SetVerboseDatabaseStatements</c> upstream appends the key or the Lua script (measured on
+    /// <c>redis:7.4.12-alpine</c>; e.g. <c>SET orders:42</c>, <c>EVAL local x = '...' return x</c>), so a
+    /// statement with more than the command becomes the command and one <c>?</c>
+    /// (<see cref="RedisStatement"/>; Python writes one <c>?</c> per argument, Go no statement). The
+    /// status, exception-event, connection-string and parameter rules apply as for the SQL drivers
+    /// (upstream sets no status and adds no exception event; an application <c>Enrich</c> may). The
+    /// semantic-convention keys follow the same R10 rule (owner decision O8 (b), reversed from (c)
+    /// on 2026-11-11): <c>db.system.name=redis</c>, <c>db.operation.name</c> (the command) and
+    /// <c>db.query.text</c> (from the sanitized <c>db.statement</c>) are added by default; the stable
+    /// mode removes <c>db.system</c>, <c>db.statement</c> and <c>db.redis.database_index</c>. A key the instrumentation wrote is kept;
+    /// <c>db.namespace</c> is not derived (Go and Python write none).
+    /// </para>
     /// </summary>
     internal static class DbSpanRules
     {
         internal const string SqlClientSource = "OpenTelemetry.Instrumentation.SqlClient";
         internal const string NpgsqlSource = "Npgsql";
         internal const string MySqlConnectorSource = "MySqlConnector";
+
+        /// <summary>The source of <c>OpenTelemetry.Instrumentation.StackExchangeRedis</c> (its assembly name; verified at 1.20.1-beta.1).</summary>
+        internal const string StackExchangeRedisSource = "OpenTelemetry.Instrumentation.StackExchangeRedis";
         internal const string Redacted = "REDACTED";
 
         /// <summary>Whether <paramref name="sourceName"/> is a database client source these rules cover.</summary>
         internal static bool IsDbSource(string sourceName)
-            => sourceName is SqlClientSource or NpgsqlSource or MySqlConnectorSource;
+            => sourceName is SqlClientSource or NpgsqlSource or MySqlConnectorSource or StackExchangeRedisSource;
 
         /// <summary>
         /// Whether the legacy keys (<c>db.system</c>, <c>db.statement</c>) are emitted: yes unless
@@ -124,6 +144,17 @@ namespace StaffOps.OtelHelper.Tracing
                 Set(activity, "db.npgsql.data_source", RedactConnectionString(dataSource));
             }
 
+            if (source == StackExchangeRedisSource)
+            {
+                foreach (var key in RedisStatementKeys)
+                {
+                    if (activity.GetTagItem(key) is string statement)
+                    {
+                        Set(activity, key, RedisStatement(statement));
+                    }
+                }
+            }
+
             ApplySemconvKeys(activity, source, legacyKeys);
         }
 
@@ -132,17 +163,24 @@ namespace StaffOps.OtelHelper.Tracing
         /// <c>systemAttributes</c>): <c>db.system.name</c> and the legacy <c>db.system</c> (v1.26
         /// values: SqlClient <c>microsoft.sql_server</c> / <c>mssql</c>, Npgsql and MySqlConnector
         /// <c>postgresql</c>, <c>mysql</c>), on every span of the source that carries one of the two;
-        /// a MySqlConnector <c>db.statement</c> also gives <c>db.query.text</c> (both sanitized). In the
+        /// a MySqlConnector or Redis <c>db.statement</c> also gives <c>db.query.text</c> (both sanitized). In the
         /// stable mode the legacy <c>db.system</c> and <c>db.statement</c> are removed.
         /// </summary>
-        private static void ApplySemconvKeys(Activity activity, string source, bool legacyKeys)
+        internal static void ApplySemconvKeys(Activity activity, string source, bool legacyKeys)
         {
             var (name, legacy) = source switch
             {
                 SqlClientSource => ("microsoft.sql_server", "mssql"),
                 NpgsqlSource => ("postgresql", "postgresql"),
-                _ => ("mysql", "mysql"),
+                MySqlConnectorSource => ("mysql", "mysql"),
+                StackExchangeRedisSource => ("redis", "redis"),
+                _ => ((string?)null, (string?)null),
             };
+            if (name is null || legacy is null)
+            {
+                return;
+            }
+
             var hasName = activity.GetTagItem("db.system.name") is not null;
             var hasLegacy = activity.GetTagItem("db.system") is not null;
             if (hasName || hasLegacy)
@@ -182,7 +220,19 @@ namespace StaffOps.OtelHelper.Tracing
                 }
             }
 
-            if (source == MySqlConnectorSource && activity.GetTagItem("db.statement") is string statement)
+            // The legacy Redis index has no current key (db.namespace is not derived): stable mode drops it.
+            if (source == StackExchangeRedisSource && !legacyKeys && activity.GetTagItem("db.redis.database_index") is not null)
+            {
+                activity.SetTag("db.redis.database_index", null);
+            }
+
+            if (source == StackExchangeRedisSource && activity.GetTagItem("db.operation.name") is null
+                && RedisOperation(activity) is { } operation)
+            {
+                activity.SetTag("db.operation.name", operation);
+            }
+
+            if (source is MySqlConnectorSource or StackExchangeRedisSource && activity.GetTagItem("db.statement") is string statement)
             {
                 if (activity.GetTagItem("db.query.text") is null)
                 {
@@ -195,6 +245,37 @@ namespace StaffOps.OtelHelper.Tracing
                 }
             }
         }
+
+        /// <summary>The span name the Redis instrumentation gives a command without a name (never an operation).</summary>
+        internal const string RedisUnnamedSpan = StackExchangeRedisSource + ".Execute";
+
+        /// <summary>
+        /// The command of a Redis span as the client provides it: the first token of
+        /// <c>db.statement</c> (or <c>db.query.text</c>), else the span name unless it is the
+        /// instrumentation's unnamed fallback; null when none is known.
+        /// </summary>
+        internal static string? RedisOperation(Activity activity)
+        {
+            foreach (var key in RedisStatementKeys)
+            {
+                if (activity.GetTagItem(key) is string text)
+                {
+                    var command = RedisStatement(text);
+                    var space = command.IndexOf(' ');
+                    var token = space < 0 ? command : command[..space];
+                    if (token.Length > 0 && token != "?")
+                    {
+                        return token;
+                    }
+                }
+            }
+
+            var name = activity.DisplayName;
+            return string.IsNullOrWhiteSpace(name) || name == RedisUnnamedSpan ? null : name;
+        }
+
+        /// <summary>The Redis statement keys, legacy and current.</summary>
+        private static readonly string[] RedisStatementKeys = { "db.statement", "db.query.text" };
 
         /// <summary>MySqlConnector 2.6 legacy keys and their current names.</summary>
         private static readonly (string Legacy, string New)[] MySqlLegacyKeys =
@@ -241,6 +322,41 @@ namespace StaffOps.OtelHelper.Tracing
             {
                 Set(activity, key, DbQuerySanitizer.Sanitize(text, dialect));
             }
+        }
+
+        /// <summary>
+        /// A StackExchange.Redis statement without its arguments: the command (the text up to the first
+        /// whitespace) and one <c>?</c> when anything follows it (<c>SET orders:42</c> → <c>SET ?</c>,
+        /// <c>EVAL return redis.call('GET', KEYS[1])</c> → <c>EVAL ?</c>); a bare command unchanged,
+        /// trailing whitespace dropped, a text starting with whitespace <c>?</c>.
+        /// </summary>
+        internal static string RedisStatement(string text)
+        {
+            var end = 0;
+            while (end < text.Length && !char.IsWhiteSpace(text[end]))
+            {
+                end++;
+            }
+
+            if (end == text.Length)
+            {
+                return text;
+            }
+
+            if (end == 0)
+            {
+                return "?";
+            }
+
+            for (var i = end; i < text.Length; i++)
+            {
+                if (!char.IsWhiteSpace(text[i]))
+                {
+                    return string.Concat(text.AsSpan(0, end), " ?");
+                }
+            }
+
+            return text[..end];
         }
 
         /// <summary>
