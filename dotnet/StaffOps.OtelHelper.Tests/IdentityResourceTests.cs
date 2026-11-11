@@ -18,6 +18,7 @@ namespace StaffOps.OtelHelper.Tests;
 /// <c>telemetry.sdk.*</c> rules.
 /// </summary>
 [Collection("EnvVarTests")]
+[ResetGlobalPropagation]
 public class IdentityResourceTests : IDisposable
 {
     private static readonly string[] TouchedEnvVars =

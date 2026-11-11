@@ -2927,7 +2927,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C10",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -2948,7 +2948,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C10",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -2991,7 +2991,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C10",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -3109,7 +3109,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C10",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -3136,7 +3136,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C10",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -3164,7 +3164,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C10",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -3330,7 +3330,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C10",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -3406,7 +3406,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C11",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -4808,7 +4808,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C10",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -6002,7 +6002,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C10",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -6026,7 +6026,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C10",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -6053,7 +6053,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C10",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -6079,7 +6079,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C10",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -9925,6 +9925,134 @@
         "python": "pass",
         "dotnet": "pass",
         "nodejs": "pass"
+      }
+    },
+    {
+      "id": "propagation.default_server_continues_inbound_traceparent",
+      "kind": "http_server",
+      "requirement": "R8/D1 propagators row",
+      "note": "C10 fix round 1 (2026-11-10): control for server_continues_inbound; with the default propagators the server span continues the inbound trace.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc"
+      },
+      "code": {},
+      "input": {
+        "requests": [
+          "/work"
+        ],
+        "traceparent": "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01"
+      },
+      "expect": {
+        "server_spans": 1,
+        "server_continues_inbound": true
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "pass",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "propagation.none_server_ignores_inbound_traceparent",
+      "kind": "http_server",
+      "requirement": "R8/D1 propagators row",
+      "note": "C10 fix round 1 (2026-11-10): OTEL_PROPAGATORS=none also stops extraction; the server span starts a new trace (trust boundary). Fix round 2: allow_server_error lets the driver report Python's 500 (task A34) instead of an adapter error; response_statuses [200] keeps the case failing on it, so the xfail stays real (with only server_spans the 500 passed).",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_PROPAGATORS": "none"
+      },
+      "code": {},
+      "input": {
+        "requests": [
+          "/work"
+        ],
+        "traceparent": "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01",
+        "allow_server_error": true
+      },
+      "expect": {
+        "server_spans": 1,
+        "server_continues_inbound": false,
+        "response_statuses": [
+          200
+        ]
+      },
+      "status": {
+        "go": "pass",
+        "python": "xfail:A34",
+        "dotnet": "pass",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "propagation.baggage_only_server_ignores_inbound_traceparent",
+      "kind": "http_server",
+      "requirement": "R8/D1 propagators row",
+      "note": "C10 fix round 1 (2026-11-10): without tracecontext the inbound traceparent is not extracted; the server span starts a new trace.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_PROPAGATORS": "baggage"
+      },
+      "code": {},
+      "input": {
+        "requests": [
+          "/work"
+        ],
+        "traceparent": "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01"
+      },
+      "expect": {
+        "server_spans": 1,
+        "server_continues_inbound": false
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "pass",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "propagation.tracecontext_only_drops_baggage",
+      "kind": "propagation",
+      "requirement": "R8/D1 propagators row",
+      "note": "C10 fix round 1 (2026-11-10): OTEL_PROPAGATORS=tracecontext injects no baggage header (.NET's runtime HttpClient path is unit-tested, parity/README.md).",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_PROPAGATORS": "tracecontext"
+      },
+      "code": {},
+      "expect": {
+        "headers": [
+          "traceparent"
+        ]
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "pass",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "propagation.traces_disabled_root_no_traceparent",
+      "kind": "propagation",
+      "requirement": "D1 Signal on/off: propagation of a disabled signal",
+      "note": "C10 fix round 1 (2026-11-10): traces disabled (OTEL_HELPER_DISABLED_SIGNALS) is a no-op tracer: a root carries no trace context, baggage still propagates. OTEL_TRACES_EXPORTER=none keeps an SDK provider instead (export.traces_exporter_none).",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_HELPER_DISABLED_SIGNALS": "traces"
+      },
+      "code": {},
+      "expect": {
+        "headers": [
+          "baggage"
+        ]
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "pass",
+        "nodejs": "xfail:A35"
       }
     },
     {

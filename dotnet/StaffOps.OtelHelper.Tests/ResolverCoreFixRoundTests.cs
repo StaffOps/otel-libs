@@ -18,6 +18,7 @@ namespace StaffOps.OtelHelper.Tests;
 
 /// <summary>Task C5 fix round (2026-11-10): the review findings, one test each.</summary>
 [Collection("EnvVarTests")]
+[ResetGlobalPropagation]
 public class ResolverCoreFixRoundTests : IDisposable
 {
     private static readonly string[] TouchedEnvVars =

@@ -377,6 +377,15 @@ task C3, 1.15.x → 1.20.x):
   `ExemplarFilter` (snapshot field `exemplar_filter`, C9 fix round 1); after a
   rename the two `metrics.exemplar_filter_*` cases report an adapter error that
   lists the provider's exemplar members.
+- **Runtime bump (.NET 8 → 10, and each runtime or `System.Diagnostics.DiagnosticSource`
+  change).** `StartRootActivity` writes `Activity._previousActiveActivity` by
+  reflection (task C10, N3); `SamplerPropagatorDebugTests.StartRootActivity_Restores_The_Previous_Activity_When_Disposed`
+  is its canary (a missing field only warns once through the fallback sink).
+  The helper's `HelperRuntimePropagator` delegates to
+  `DistributedContextPropagator.CreateDefaultPropagator()` and matches its type;
+  re-run `Web_Host_Extracts_And_Injects_Only_The_Configured_Context` and
+  `The_Helper_Runtime_Propagator_Wins_In_Every_Host_Registration_Order` (the web
+  host's `TryAddSingleton` of the runtime propagator, measured in C10).
 - **Breaking entries.** Re-read each package's CHANGELOG at its tag (core
   `core-<v>`, Prometheus `coreunstable-<v>`, contrib `Instrumentation.<X>-<v>`)
   and walk every **Breaking** line with a before/after measurement.

@@ -14,6 +14,7 @@ namespace StaffOps.OtelHelper.Tests;
 /// Env var tests use [Collection("EnvVarTests")] to prevent parallel execution.
 /// </summary>
 [Collection("EnvVarTests")]
+[ResetGlobalPropagation]
 public class ProfilingTests : IDisposable
 {
     private readonly List<string> _envVarsToClean = new();

@@ -10,6 +10,7 @@ namespace StaffOps.OtelHelper.Tests;
 /// or query holds @"), and the SDK EventSource forwarding.
 /// </summary>
 [Collection("EnvVarTests")]
+[ResetGlobalPropagation]
 public class DiagnosticsTests
 {
     // ── record format ───────────────────────────────────────────────────

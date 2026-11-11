@@ -82,6 +82,9 @@ namespace StaffOps.OtelHelper.Diagnostics
             /// <summary>Meters whose "not subscribed" SDK warnings are noise for this provider (the helper's own, while helper metrics are off).</summary>
             internal volatile IReadOnlyList<string> QuietMeters = Array.Empty<string>();
 
+            /// <summary>Traces or the SDK disabled: an "invalid context" injection line is expected (C10 fix round 2).</summary>
+            internal volatile bool InvalidContextExpected;
+
             /// <summary>Set when the host starts stopping: the Prometheus listener's cancel is expected from then on.</summary>
             internal volatile bool Stopping;
 
@@ -183,11 +186,13 @@ namespace StaffOps.OtelHelper.Diagnostics
             IEnumerable<string> secrets;
             IReadOnlyCollection<string> quiet = Array.Empty<string>();
             bool stopping;
+            bool invalidContextExpected;
             if (_sink is { } own)
             {
                 sink = own;
                 secrets = _codeSecrets;
                 stopping = true;
+                invalidContextExpected = false;
             }
             else
             {
@@ -207,6 +212,7 @@ namespace StaffOps.OtelHelper.Diagnostics
                 secrets = leases.SelectMany(l => l.Secrets).ToArray();
                 quiet = target.QuietMeters.ToArray();
                 stopping = leases.Any(l => l.Stopping) || leases.All(l => !l.HasLifetime);
+                invalidContextExpected = target.InvalidContextExpected;
             }
 
             var level = eventData.Level is EventLevel.Critical or EventLevel.Error ? DiagnosticLevel.Error : DiagnosticLevel.Warn;
@@ -227,7 +233,7 @@ namespace StaffOps.OtelHelper.Diagnostics
                 }
 
                 if (!SdkTextSanitizer.IsQuietMeterNotice(eventData.EventName, payload, quiet)
-                    && Format(source, eventData.EventName, eventData.Message, payload, secrets, stopping) is { } text)
+                    && Format(source, eventData.EventName, eventData.Message, payload, secrets, stopping, invalidContextExpected) is { } text)
                 {
                     sink.ReportSdk(level, source, text, SdkTextSanitizer.OnceKey(source, text));
                 }
@@ -243,11 +249,11 @@ namespace StaffOps.OtelHelper.Diagnostics
         /// payload position), then masked and redacted, and only then cut — an echoed value is
         /// never cut before its secrets are removed.
         /// </summary>
-        internal static string? Format(string source, string? eventName, string? message, object?[] payload, IEnumerable<string> secrets, bool stopping = true)
+        internal static string? Format(string source, string? eventName, string? message, object?[] payload, IEnumerable<string> secrets, bool stopping = true, bool invalidContextExpected = false)
         {
             var forms = SdkTextSanitizer.Forms(SdkTextSanitizer.ConfiguredSecrets().Concat(secrets));
             var text = Render(source, eventName, message, payload, forms, out var bodyHandled);
-            return SdkTextSanitizer.IsNoise(source, text, stopping) ? null : SdkTextSanitizer.SanitizeWithForms(text, forms, bodyHandled);
+            return SdkTextSanitizer.IsNoise(source, text, stopping, invalidContextExpected) ? null : SdkTextSanitizer.SanitizeWithForms(text, forms, bodyHandled);
         }
 
         /// <summary>

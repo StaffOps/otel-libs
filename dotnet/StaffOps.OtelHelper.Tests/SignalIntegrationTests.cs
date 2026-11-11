@@ -19,6 +19,7 @@ namespace StaffOps.OtelHelper.Tests;
 /// Uses [Collection("EnvVarTests")] to prevent parallel execution that would cause env var conflicts.
 /// </summary>
 [Collection("EnvVarTests")]
+[ResetGlobalPropagation]
 public class SignalIntegrationTests : IDisposable
 {
     private readonly List<string> _envVarsToClean = new();

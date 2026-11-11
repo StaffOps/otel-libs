@@ -8,6 +8,7 @@ using Xunit;
 namespace StaffOps.OtelHelper.Tests;
 
 [Collection("EnvVarTests")]
+[ResetGlobalPropagation]
 public class TelemetryPipelineTests
 {
     private static ResolvedTelemetry CreateResolved(Action<TelemetryOptions>? configure = null)
@@ -322,63 +323,6 @@ public class TelemetryPipelineTests
         }
     }
 
-    // --- DebugTraceStateProcessor ---
-
-    [Fact]
-    public void DebugMode_Sets_TraceState_And_Attribute_On_Root_Span()
-    {
-        var source = new ActivitySource("test-debug");
-        var listener = new ActivityListener
-        {
-            ShouldListenTo = _ => true,
-            Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllDataAndRecorded
-        };
-        ActivitySource.AddActivityListener(listener);
-
-        try
-        {
-            var processor = new StaffOps.OtelHelper.Tracing.DebugTraceStateProcessor();
-            using var root = source.StartActivity("root");
-            Assert.NotNull(root);
-            processor.OnStart(root!);
-
-            Assert.Contains("debug=true", root.TraceStateString);
-            Assert.Equal("true", root.GetTagItem("debug")?.ToString());
-        }
-        finally
-        {
-            listener.Dispose();
-        }
-    }
-
-    [Fact]
-    public void DebugMode_Does_Not_Set_On_Child_Span()
-    {
-        var source = new ActivitySource("test-debug-child");
-        var listener = new ActivityListener
-        {
-            ShouldListenTo = _ => true,
-            Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllDataAndRecorded
-        };
-        ActivitySource.AddActivityListener(listener);
-
-        try
-        {
-            var processor = new StaffOps.OtelHelper.Tracing.DebugTraceStateProcessor();
-            using var parent = source.StartActivity("parent");
-            using var child = source.StartActivity("child");
-            Assert.NotNull(child);
-            processor.OnStart(child!);
-
-            // Child has a parent, so processor should not set debug
-            Assert.Null(child.GetTagItem("debug"));
-        }
-        finally
-        {
-            listener.Dispose();
-        }
-    }
-
     // --- OTEL_HELPER_SAMPLE_RATIO ---
 
     [Fact]
@@ -388,7 +332,8 @@ public class TelemetryPipelineTests
         try
         {
             var opts = CreateResolved(o => { o.ServiceName = "test"; });
-            Assert.IsType<OpenTelemetry.Trace.TraceIdRatioBasedSampler>(opts.Sampler);
+            Assert.IsType<OpenTelemetry.Trace.ParentBasedSampler>(opts.Sampler);
+            Assert.Equal("parentbased_traceidratio", opts.SamplerName);
         }
         finally
         {
@@ -397,20 +342,21 @@ public class TelemetryPipelineTests
     }
 
     [Fact]
-    public void SampleRatio_Default_Keeps_AlwaysOn()
+    public void SampleRatio_Default_Is_ParentBased_AlwaysOn()
     {
         var opts = CreateResolved(o => { o.ServiceName = "test"; });
-        Assert.IsType<OpenTelemetry.Trace.AlwaysOnSampler>(opts.Sampler);
+        Assert.IsType<OpenTelemetry.Trace.ParentBasedSampler>(opts.Sampler);
+        Assert.Equal("parentbased_always_on", opts.SamplerName);
     }
 
     [Fact]
-    public void SampleRatio_Invalid_EnvVar_Keeps_AlwaysOn()
+    public void SampleRatio_Invalid_EnvVar_Keeps_The_Default()
     {
         System.Environment.SetEnvironmentVariable("OTEL_HELPER_SAMPLE_RATIO", "not_a_number");
         try
         {
             var opts = CreateResolved(o => { o.ServiceName = "test"; });
-            Assert.IsType<OpenTelemetry.Trace.AlwaysOnSampler>(opts.Sampler);
+            Assert.Equal("parentbased_always_on", opts.SamplerName);
         }
         finally
         {

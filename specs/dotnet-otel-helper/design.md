@@ -182,6 +182,11 @@ the C4 runner records.
 | Debug: `debug=true` attribute on spans with no or a remote parent; no tracestate | attribute **and** tracestate `debug=true` prepended when `Activity.Parent == null` (`Tracing/DebugTraceStateProcessor.cs:17-23`): remote parents give `debug=true,debug=true` (measured, C1 dev P6, N2); in-process children started from an explicit `ActivityContext` (Redis, `RedisProfilerEntryToActivityConverter.cs:155-160`) also have `Parent == null` and are over-marked | `debug.*` (5) |
 | `StartRootActivity` restores context | clears `Activity.Current`, never restores (`ActivitySourceExtensions.cs:16`; measured, N3) | no case; unit test in C10 |
 
+> **Note 2026-11-10 (C10).** Implemented as D-NET9 and its note of the same
+> date; the 32 cases of this group pass. Also silent before and warned now: an
+> invalid `OTEL_HELPER_SAMPLE_RATIO`, and `OTEL_TRACES_SAMPLER`, `_ARG` or
+> `OTEL_PROPAGATORS` set only in `IConfiguration` (not read, ADR-013).
+
 ### HTTP/gRPC instrumentation and health — R7, R10, D5, A22, N1 (19 cases → C11)
 
 | Contract | .NET today | Cases |
@@ -791,6 +796,81 @@ and Node replace globals. **When wrong**: an app sets its own default
 propagator before `AddOtelHelper`. **Reversal action**: skip the propagator
 when it is not the SDK default and warn. **Alternatives**: let the SDK read
 the sampler variable (rejected: no ParentBased default, no named warning).
+
+> **Note 2026-11-10 (C10, implemented, awaiting review).** (1) The sampler is
+> set also when traces are off: with `OTEL_TRACES_EXPORTER=none` an ASP.NET Core
+> app passes the inbound trace id and sampled flag to its `HttpClient` call,
+> while an `AlwaysOffSampler` would forward `00` and make every ParentBased
+> service downstream drop the trace (test
+> `Traces_Off_Server_Passes_The_Inbound_Trace_On`); the off path keeps the
+> resolved sampler. (2) A second process-wide setting carries context on
+> .NET: `HttpClient` writes `traceparent`/`tracestate` with the runtime's
+> `DistributedContextPropagator.Current`, whatever the OpenTelemetry default
+> propagator is. When the resolved list has no `tracecontext` the helper sets
+> it to `DistributedContextPropagator.CreateNoOutputPropagator()` (measured:
+> nothing written; for `baggage` the HTTP instrumentation still writes the
+> `baggage` header, because the default propagator is not a
+> `TraceContextPropagator`), and restores the runtime default when a later
+> container's list has `tracecontext` again. **When wrong**: the application
+> set its own runtime propagator — the helper keeps it and warns once. A
+> `SocketsHttpHandler` takes the runtime propagator when it is created.
+> (3) Inbound extraction is not changed: ASP.NET Core takes its
+> `DistributedContextPropagator` from the container at host build, so with
+> `none` a server span still continues an inbound `traceparent` (Go and Python
+> start a new trace). No parity case asserts extraction; the owner decides
+> whether the helper should replace the host's registration. (4) A lone
+> `tracecontext` installs the SDK `TraceContextPropagator` itself (a composite
+> of one gives the same headers, measured). (5) The debug processor is
+> `DebugMarkerProcessor`; `StartRootActivity` restores the previous activity
+> by setting the runtime's `_previousActiveActivity` (the field `Activity.Stop`
+> makes current again), checked on .NET 8 and 10; a missing field warns once.
+>
+> **Note 2026-11-10 (C10 fix round 1; supersedes (2) and (3) of the note
+> above).** The runtime path follows `OTEL_PROPAGATORS` in both directions.
+> `Tracing/HelperRuntimePropagator.cs` is a `DistributedContextPropagator` that
+> delegates to the runtime default and drops what is not listed
+> (`tracecontext` → `traceparent`/`tracestate`, `baggage` → `baggage` and
+> `Correlation-Context`, `none` → nothing), for injection and extraction alike;
+> with the default list it is the runtime default unchanged. It is set as
+> `DistributedContextPropagator.Current` (for `HttpClient`) at resolution, and
+> `AddOtelHelper` replaces the container's `DistributedContextPropagator`
+> service (ASP.NET Core extracts with it) with one whose settings are the
+> container's resolved values. Measured: `WebApplication.CreateBuilder`
+> registers the runtime default (`TryAddSingleton` of the current instance)
+> before the application's services, `HostBuilder.ConfigureWebHostDefaults`
+> when its own `ConfigureServices` runs, so before or after; the replacement
+> wins in all three orders (test). Not replaced: a service the application
+> registered itself, or a `Current` it set (one warning when the settings are
+> not the default). Traces disabled or the SDK disabled: propagation is a no-op
+> tracer's — the sampler is `ParentBased(root: AlwaysOff)`, and both the
+> runtime propagator and the OpenTelemetry propagator inject the remote parent
+> of the local root (`Activity.ParentId`, flags kept) or nothing for a trace
+> started here; under the disabled SDK a non-recording listener on
+> `Microsoft.AspNetCore` (parent present → `PropagationData`, root → `None`)
+> lets the host continue an inbound trace without logging. The three global
+> writes happen under one lock; the last container resolved wins and nothing is
+> restored on dispose.
+>
+> **Note 2026-11-10 (C10 fix round 2).** (1) `PropagatorSetup.Register` (in
+> `AddOtelHelper`) already sets `DistributedContextPropagator.Current` to the
+> helper's global instance with the `OTEL_PROPAGATORS` token settings
+> (environment only): a `SocketsHttpHandler` takes `Current` when it is created,
+> so an `HttpClient` created before the host starts follows the list; the
+> pass-through part is added at resolution, and the handler reads the settings
+> per request. A `Current` the application sets after `AddOtelHelper` is kept
+> for later handlers and warned at resolution (as one set before). (2) A
+> `DistributedContextPropagator` service the application registered is kept
+> and, when the settings are not the default, warned at resolution (ASP.NET
+> Core extracts with it). (3) Pass-through uses only a local root with
+> `HasRemoteParent`: an activity started with `SetParentId(string)` or a local
+> explicit context is "started here" (measured: `SetParentId` leaves
+> `HasRemoteParent` false). (4) The continuation listener is process-wide:
+> under the disabled SDK with `tracecontext`, ASP.NET Core creates a
+> propagation-only activity for every request with a `traceparent`, in every
+> host of the process, until its container is disposed. (5) With traces or the
+> SDK disabled, the API's "Failed to inject activity context … 'Invalid
+> context'" event is noise (`SdkTextSanitizer.IsInvalidContextInjection`,
+> lease flag `InvalidContextExpected`).
 
 ### D-NET10 — Logging: helper JSON-line provider as the stdout fallback
 **Choice**: when no logs exporter is active (no endpoint, or

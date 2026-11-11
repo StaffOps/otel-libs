@@ -4,7 +4,8 @@ Observability library for .NET 8+ applications. Abstracts OpenTelemetry SDK conf
 
 > **Version note.** This page documents the shipped **0.2.x** .NET behavior,
 > except where a row says "0.3 (this branch)": the identity and resource rules
-> (task C6) already follow the 0.3 contract here.
+> (task C6) and the sampler, propagators and debug marker (task C10) already
+> follow the 0.3 contract here.
 > The `0.3.0` config contract (standard `OTEL_*` variables winning, no
 > `LOCAL`/`my-service` defaults, ParentBased sampler, per-signal OTLP
 > variables, the shared health-path list) ships in **Go and Python first**;
@@ -66,7 +67,7 @@ After registration, available via DI:
 
 | Variable | Description | Default |
 |---|---|---|
-| `OTEL_HELPER_DEBUG_LEVEL` | Debug mode: forces Debug log level, all instrumentations, attribute debug=true (`true`/`false`) | `false` |
+| `OTEL_HELPER_DEBUG_LEVEL` | Debug mode: forces Debug log level and sets the attribute `debug=true` on entry spans (`true`/`false`) | `false` |
 | `OTEL_HELPER_METRICS_PORT` | Prometheus `/metrics` port when no OTLP endpoint is configured | `9464` |
 
 ### Extra Instrumentation
@@ -74,9 +75,9 @@ After registration, available via DI:
 | Variable | Description | Default |
 |---|---|---|
 | `OTEL_HELPER_EXTRA_INSTRUMENTATION` | **No effect.** Nothing in core uses it since SQL/AWS moved to opt-in subpackages (the code option `TelemetryOptions.ExtraInstrumentation` is `[Obsolete]`). Use the subpackages below. | `SQL` |
-| `OTEL_HELPER_SAMPLE_RATIO` | Head sampling ratio, clamped to 0.0–1.0. Below 1.0 → a bare `TraceIdRatioBasedSampler` (not parent-based). Ignored when `OTEL_TRACES_SAMPLER` is set. | `1.0` |
+| `OTEL_HELPER_SAMPLE_RATIO` | Deprecated alias (0.3, this branch, task C10): a plain decimal in [0, 1] gives `parentbased_traceidratio`; anything else (`2`, `-1`, `abc`, `1e0`) warns `sample ratio is not a number in [0, 1]` and the default applies — not clamped. Ignored while `OTEL_TRACES_SAMPLER` is set or a sampler or ratio is set in code. 0.2.x: clamped, a bare `TraceIdRatioBasedSampler`, invalid values ignored silently. | _(unset)_ |
 
-> Debug mode (`OTEL_HELPER_DEBUG_LEVEL=true`) does **not** enable extra instrumentations; it sets the Debug log level and marks entry spans — spans with no in-process parent, which includes spans that continue a remote trace — with a `debug=true` attribute, and prepends `debug=true` to the tracestate they propagate (see HOW-TO §13). Combine the Collector's `debug=true` policy with an environment allow-list and a rate limit (design D11).
+> Debug mode (`OTEL_HELPER_DEBUG_LEVEL=true`) does **not** enable extra instrumentations; it sets the Debug log level and marks entry spans — spans with no parent or a remote one (`ParentSpanId == default` or `HasRemoteParent`) — with a `debug=true` attribute (see HOW-TO §13). An in-process child started from an explicit context (the Redis instrumentation does this) is not an entry span and is not marked. 0.3 (this branch, task C10, ADR-006): the tracestate is no longer touched; 0.2.x prepended `debug=true` to it, which gave `debug=true,debug=true` under a remote parent. Combine the Collector's `debug=true` policy with an environment allow-list and a rate limit (design D11).
 
 > ⚠️ **`OTEL_HELPER_DEBUG_LEVEL=true` in production causes cost explosion and backend saturation.** Use only for targeted troubleshooting.
 
@@ -193,14 +194,14 @@ How the 0.2.x helper treats the standard variables. Some are read by the .NET SD
 
 | Variable | Description | Default |
 |---|---|---|
-| `OTEL_TRACES_SAMPLER` | Read by the SDK — only when `TelemetryOptions.Sampler` is left at its default. Unset → the helper's `AlwaysOnSampler` (not parent-based). | _(unset)_ |
-| `OTEL_TRACES_SAMPLER_ARG` | Sampler argument (SDK). | empty |
+| `OTEL_TRACES_SAMPLER` | 0.3 (this branch, task C10): parsed by the helper, which always sets the sampler. The six spec names `always_on`, `always_off`, `traceidratio`, `parentbased_always_on`, `parentbased_always_off`, `parentbased_traceidratio`, ASCII case-insensitive (a non-ASCII spelling, such as U+0130 `İ` for `I`, is unknown); `jaeger_remote`, `parentbased_jaeger_remote`, `xray` and unknown names warn and the default applies. `TelemetryOptions.Sampler` and `SampleRatio` win. Process environment only: a value only in `IConfiguration` (`appsettings.json`) warns once and is not read. 0.2.x: read by the SDK only when no code sampler was set and the variable was in the process environment (an `IConfiguration`-only value was ignored silently); unknown names warned by the SDK only. | `parentbased_always_on` |
+| `OTEL_TRACES_SAMPLER_ARG` | Ratio of `traceidratio` and `parentbased_traceidratio`: a plain decimal in [0, 1]; anything else warns and 1.0 is used. Ignored for the other samplers. Process environment only (an `IConfiguration`-only value warns once). | `1.0` |
 
 #### Context Propagation
 
 | Variable | Description | Default |
 |---|---|---|
-| `OTEL_PROPAGATORS` | **Not read** by the .NET SDK or this helper; W3C TraceContext + Baggage are always used. | `tracecontext,baggage` (fixed) |
+| `OTEL_PROPAGATORS` | 0.3 (this branch, task C10): read by the helper per token — `tracecontext`, `baggage`, `none` (ASCII case-insensitive, empty tokens and duplicates dropped). `b3`, `b3multi`, `jaeger`, `xray`, `ottrace` warn `propagator not supported by the .NET helper, ignored`, other tokens `unknown propagator, ignored`, one line per token naming the effective list (`using=`); nothing supported left → the default; `none` disables propagation and wins over other tokens (warned when combined). Installed process-wide also under `OTEL_SDK_DISABLED=true`, in both directions: the OpenTelemetry propagator, the runtime propagator `HttpClient` injects with (`DistributedContextPropagator.Current`) and the one ASP.NET Core extracts with all carry only the listed tokens — with `none` or `baggage` an inbound `traceparent` starts a new trace and nothing or only `baggage` is sent on; with `tracecontext` no `baggage` is sent (HOW-TO §13). The default list behaves as 0.2.x. A runtime propagator the application set is kept, with one warning. Process environment only (an `IConfiguration`-only value warns once). 0.2.x: not read; W3C TraceContext + Baggage always. | `tracecontext,baggage` |
 
 #### OTLP Exporter
 
@@ -225,10 +226,10 @@ How the 0.2.x helper treats the standard variables. Some are read by the .NET SD
 
 | Environment | Trace Sampling | Log Level |
 |---|---|---|
-| `LOCAL` | 100% (AlwaysOn) | Debug |
-| `DEV` | 100% (AlwaysOn) | Information |
-| `HML` | 100% (AlwaysOn) | Information |
-| `PRD` | 100% (AlwaysOn) | Warning |
+| `LOCAL` | 100% of roots (`parentbased_always_on`) | Debug |
+| `DEV` | 100% of roots (`parentbased_always_on`) | Information |
+| `HML` | 100% of roots (`parentbased_always_on`) | Information |
+| `PRD` | 100% of roots (`parentbased_always_on`) | Warning |
 
 > The SDK sends 100% of traces to the Collector in all environments. **Tail-based sampling is the Collector's responsibility** (Agent → Gateway), which decides what to keep based on errors, latency, and configured rate per environment.
 
@@ -247,7 +248,7 @@ How the 0.2.x helper treats the standard variables. Some are read by the .NET SD
 | AWS SDK | S3, SQS, DynamoDB calls, etc. — only with the `StaffOps.OtelHelper.AWS` subpackage (`AddOtelHelperAws()`) |
 | Custom Sources | Spans created via `ActivitySource(serviceName)` |
 
-Sampler: `AlwaysOnSampler` in all environments (configurable via `opts.Sampler`). It ignores the parent's sampled flag; Go/Python 0.3 use `parentbased_always_on` (ADR-002), .NET follows in Phase C. Tail-based sampling is done in the Collector.
+Sampler (0.3, this branch, task C10): `parentbased_always_on` in all environments (ADR-002, as Go, Python and Node.js): roots are sampled, a span with a parent follows the parent's sampled flag, so an unsampled caller stays unsampled. Configurable with `opts.Sampler`, `opts.SampleRatio` or `OTEL_TRACES_SAMPLER`. The sampler is set also when traces are off (`OTEL_TRACES_EXPORTER=none`, a disabled signal): the instrumentations stay registered, and `HttpClient` passes the inbound trace and its sampled flag on. 0.2.x: a bare `AlwaysOnSampler`, which ignored the parent's flag. Tail-based sampling is done in the Collector.
 
 > Paths `/ping`, `/health`, `/healthz`, `/ready` (exact match, case-insensitive) are filtered automatically on ASP.NET Core server spans and HttpClient client spans — they do not generate trace spans. Go/Python 0.3 use a longer list (`/readyz`, `/live`, `/livez`, `/metrics` too) and keep these requests in the HTTP metrics; .NET adopts that in Phase C.
 
@@ -288,14 +289,14 @@ Exemplars enabled (`ExemplarFilterType.TraceBased`) — metric → trace correla
 | `DebugLevel` | bool? | `OTEL_HELPER_DEBUG_LEVEL` | `false` |
 | `ExportTimeoutMs` | int? (in [1, 86 400 000]) | `OTEL_EXPORTER_OTLP_<SIGNAL>_TIMEOUT` / `OTEL_EXPORTER_OTLP_TIMEOUT` | `10000` (10s); the deadline of every signal |
 | `ExtraInstrumentation` | string?, `[Obsolete]` | `OTEL_HELPER_EXTRA_INSTRUMENTATION` | none (no effect — use subpackages) |
-| `Sampler` | Sampler? | — | `AlwaysOnSampler` |
+| `Sampler` | Sampler? | `OTEL_TRACES_SAMPLER` / `_ARG` | `ParentBasedSampler(AlwaysOnSampler)` (0.2.x: `AlwaysOnSampler`) |
 | `MinimumLogLevel` | LogLevel? | — | `null` (auto per environment) |
 | `ResourceAttributes` | Dictionary<string, object> | — | empty |
 | `AdditionalActivitySources` | List\<string\> | — | empty |
 | `TracesEndpoint`, `MetricsEndpoint`, `LogsEndpoint` | string? | `OTEL_EXPORTER_OTLP_<SIGNAL>_ENDPOINT` | none (per-signal endpoint, used as written; schemeless allowed) |
 | `Insecure` | bool? | `OTEL_EXPORTER_OTLP_<SIGNAL>_INSECURE` / `OTEL_EXPORTER_OTLP_INSECURE` | `false` (schemeless endpoint → `https://`) |
 | `Compression` | string? (`gzip`/`none`) | `OTEL_EXPORTER_OTLP_<SIGNAL>_COMPRESSION` / `OTEL_EXPORTER_OTLP_COMPRESSION` | `gzip` (0.2.x: `none`) |
-| `SampleRatio` | double? | — | none (`ParentBased(TraceIdRatioBased(ratio))` when set) |
+| `SampleRatio` | double? (in [0, 1]) | `OTEL_HELPER_SAMPLE_RATIO` (deprecated) | none (`ParentBased(TraceIdRatioBased(ratio))` when set, 1.0 included) |
 | `HealthPaths` | List\<string\>? | — | `/ping`, `/health`, `/healthz`, `/ready` |
 | `AdditionalMeters` | List\<string\> | — | empty |
 | `ForwardSdkDiagnostics` | bool | — | `true` (SDK warnings on stderr, redacted) |
@@ -311,7 +312,7 @@ Exemplars enabled (`ExemplarFilterType.TraceBased`) — metric → trace correla
 > A blank code `ServiceName` or `Environment` (`""`, whitespace) fails host start; leave it `null` for "not set".
 > Identity and `OTEL_RESOURCE_ATTRIBUTES` warnings are written once per service provider (one diagnostics sink per container), not once per process as in Go and Python.
 > `MinimumLogLevel` when null: LOCAL=Debug, DEV/HML=Information, PRD=Warning, unset or any other value=Information; the name is matched ignoring ASCII case (`prd` = `PRD`). Use `GetDefaultLogLevel()` to query.
-> `Sampler` default is AlwaysOnSampler — override only if you have a specific reason.
+> `Sampler` default is `ParentBasedSampler(AlwaysOnSampler)` — override only if you have a specific reason. Precedence: `Sampler` > `SampleRatio` > `OTEL_TRACES_SAMPLER` > `OTEL_HELPER_SAMPLE_RATIO` > default.
 > Options hold only what code sets (`null` = not set); a value set in code (also one bound from `IConfiguration`) wins over the env var. The full 0.3 option list and the breaking changes: `CHANGELOG.md`, .NET migration guide.
 
 ---
@@ -450,7 +451,8 @@ StaffOps.OtelHelper.sln
 │   ├── ActivitySourceExtensions.cs     # StartRootActivity() for workers
 │   ├── TracerSetup.cs                  # Tracing + health filter + sampler
 │   ├── Tracing/
-│   │   └── DebugTraceStateProcessor.cs # Injects tracestate debug=true for tail sampling
+│   │   ├── DebugMarkerProcessor.cs     # debug=true attribute on entry spans
+│   │   └── PropagatorSetup.cs          # OTEL_PROPAGATORS: OTel default + runtime HttpClient propagator
 │   ├── MetricsSetup.cs                 # Metrics with exemplars
 │   ├── LoggingSetup.cs                 # Logging via OpenTelemetry SDK
 │   ├── Models/

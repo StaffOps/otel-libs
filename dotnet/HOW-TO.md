@@ -283,7 +283,7 @@ while (!ct.IsCancellationRequested)
 }
 ```
 
-> `StartRootActivity` clears the previous context and creates a root span (new traceId). Use whenever you want an independent trace per iteration.
+> `StartRootActivity` ignores the current activity and creates a root span (new traceId). Use whenever you want an independent trace per iteration. 0.3 (this branch, task C10): while the root runs it is `Activity.Current`; when it is disposed, the activity that was current before the call is current again (0.2.x left `Activity.Current` null). When no activity is created (no listener, or the sampler drops it) the call returns `null` and leaves `Activity.Current` as it was.
 
 ---
 
@@ -437,9 +437,9 @@ When you use placeholders in logs, values are extracted as **separate attributes
 | `OTEL_RESOURCE_ATTRIBUTES` | `key=value,…` resource attributes (helper-parsed: percent-decoded, ASCII-trimmed, bad items skipped and warned by position); `deployment.environment.name` here wins over `ENVIRONMENT` | — | Helm Chart |
 | `ENVIRONMENT` | Deprecated alias of `deployment.environment.name` (controls log level; known names canonicalized, others as written) | none: attribute absent + warning | Helm Chart |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | Collector endpoint; unset → no OTLP export, Prometheus `/metrics` fallback | _(unset)_ | Helm Chart |
-| `OTEL_HELPER_DEBUG_LEVEL` | Debug mode: Debug log level + `debug=true` attribute on entry spans (no in-process parent, which includes spans continuing a remote trace) and `debug=true` prepended to the propagated tracestate (the Collector's debug policy keeps those traces) | `false` | Manual |
+| `OTEL_HELPER_DEBUG_LEVEL` | Debug mode: Debug log level + `debug=true` attribute on entry spans (no parent, or a remote one); the tracestate is not touched (0.2.x prepended `debug=true` to it) | `false` | Manual |
 | `OTEL_HELPER_EXTRA_INSTRUMENTATION` | No effect in core (use the subpackages, §14) | `SQL` | — |
-| `OTEL_HELPER_SAMPLE_RATIO` | Head sampling ratio (clamped 0.0–1.0; bare `TraceIdRatioBased`). 1.0 = AlwaysOn | `1.0` | Helm Chart |
+| `OTEL_HELPER_SAMPLE_RATIO` | Deprecated: a plain decimal in [0, 1] → `parentbased_traceidratio`; anything else warns and is ignored (not clamped); read only while `OTEL_TRACES_SAMPLER` is unset (§13) | _(unset)_ | Helm Chart |
 | `OTEL_HELPER_METRICS_PORT` | Standalone Prometheus `/metrics` listener port (`0` disables it) | `9464` | Helm Chart |
 | `OTEL_METRICS_EXPORTER` | Metric exporter(s): `otlp`, `prometheus`, `console`, a list such as `otlp,prometheus`, or `none` (`logging` = warned alias of `console`) | legacy inference | Manual |
 | `OTEL_TRACES_EXPORTER`, `OTEL_LOGS_EXPORTER` | `otlp`, `console`, `none` (§15 "Choosing exporters per signal") | `otlp` | Manual |
@@ -447,7 +447,8 @@ When you use placeholders in logs, values are extracted as **separate attributes
 | `OTEL_METRICS_EXEMPLAR_FILTER` | `always_on`, `always_off`, `trace_based` (§7) | `trace_based` | Manual |
 | `OTEL_SDK_DISABLED` | `true` turns telemetry off (propagators kept, one INFO line); not `true`/`false` → warning, `false` | `false` | Manual |
 | `OTEL_HELPER_DISABLED_SIGNALS` | Deprecated: signals to disable; a set `OTEL_<SIGNAL>_EXPORTER` wins | _(unset)_ | Manual |
-| `OTEL_TRACES_SAMPLER` | Standard OTel sampler config — takes priority over `OTEL_HELPER_SAMPLE_RATIO` when set | _(unset)_ | Manual |
+| `OTEL_TRACES_SAMPLER`, `OTEL_TRACES_SAMPLER_ARG` | Standard OTel sampler (the six spec names) and its ratio, parsed by the helper; takes priority over `OTEL_HELPER_SAMPLE_RATIO`; unknown names warn (§13) | `parentbased_always_on` | Manual |
+| `OTEL_PROPAGATORS` | `tracecontext`, `baggage`, `none`; other tokens warn and are skipped; kept under `OTEL_SDK_DISABLED` (§13) | `tracecontext,baggage` | Manual |
 | `OTEL_EXPORTER_OTLP_PROTOCOL` | OTLP wire protocol: `grpc` or `http/protobuf` | port-based inference | Manual |
 | `OTEL_EXPORTER_OTLP_HEADERS` | Headers on every export, `key=value,…` (auth); `OTEL_EXPORTER_OTLP_<SIGNAL>_HEADERS` replaces them for one signal (§19) | empty | Helm Chart (secret) |
 | `OTEL_EXPORTER_OTLP_TIMEOUT` | Export deadline in milliseconds, per signal with `_<SIGNAL>_TIMEOUT` (§19) | `10000` | Manual |
@@ -510,11 +511,53 @@ If you need to see **all** traces from a service:
 OTEL_HELPER_DEBUG_LEVEL=true
 ```
 
-When active, the lib marks every **entry span** — a span with no in-process parent (`Activity.Parent == null`), which includes server spans that continue a remote trace — with the attribute `debug=true`, and prepends `debug=true` to that span's tracestate, so it propagates downstream. A Collector tail-sampling policy on either marker keeps those traces.
+When active, the lib marks every **entry span** — a span with no parent or a remote one (`ParentSpanId == default || HasRemoteParent`), which includes server spans that continue a remote trace — with the attribute `debug=true`. A Collector tail-sampling `string_attribute` policy on it keeps those traces. The marker is never read from an inbound tracestate or baggage, and the tracestate is not written (0.3, this branch, task C10, ADR-006; 0.2.x prepended `debug=true` to it, which gave `debug=true,debug=true` under a remote parent, and also marked in-process children started from an explicit context). Under the default ParentBased sampler an entry span whose remote parent is unsampled is dropped before the marker runs: debug mode cannot force retention of a trace the caller did not sample.
 
 Because a debug service marks every inbound request, not only the traces it starts, the Collector's `debug=true` policy must be combined (`and`) with an environment allow-list and a `rate_limiting` sub-policy ([design D11](https://github.com/StaffOps/otel-libs/blob/main/specs/config-contract-v0.3/design.md#d11--collector--platform-prerequisites-reference-checklist), item 2); otherwise one debug-enabled PRD service can force 100% retention of every trace it touches.
 
 ⚠️ **Do not leave debug enabled in production for long** — generates high volume and increases storage cost.
+
+### The head sampler (0.3, this branch, task C10)
+
+The helper always sets the SDK sampler (ADR-002), also when traces are off, so the SDK never reads `OTEL_TRACES_SAMPLER` itself. Precedence: `opts.Sampler` > `opts.SampleRatio` (`ParentBased(TraceIdRatioBased(ratio))`, 1.0 included) > `OTEL_TRACES_SAMPLER`/`_ARG` > the deprecated `OTEL_HELPER_SAMPLE_RATIO` (read only while `OTEL_TRACES_SAMPLER` is unset) > `parentbased_always_on`.
+
+| Value | Result |
+|---|---|
+| unset | `parentbased_always_on`: roots sampled, children follow the parent's flag |
+| `always_on`, `always_off`, `parentbased_always_off` | as named |
+| `traceidratio`, `parentbased_traceidratio` | ratio from `OTEL_TRACES_SAMPLER_ARG` (plain decimal in [0, 1], else warned and 1.0) |
+| `jaeger_remote`, `parentbased_jaeger_remote`, `xray` | `sampler is unsupported by this helper`, default |
+| anything else (also a non-ASCII spelling) | `unknown sampler (valid: …)`, default |
+| `OTEL_HELPER_SAMPLE_RATIO=0.1` | `parentbased_traceidratio` 0.1; `2` or `abc` → `sample ratio is not a number in [0, 1]`, default (0.2.x clamped and used a bare ratio sampler) |
+
+The sampler variables are read from the process environment only: a value only in `appsettings.json` (`IConfiguration`) is not read and warns once (`… is set only in IConfiguration and is not read`). 0.2.1 already ignored such a value (it checked the process environment before leaving the sampler to the SDK), silently.
+
+With `OTEL_TRACES_EXPORTER=none` the ParentBased sampler stays, as Go and Python keep an SDK provider there: a request that arrives with a sampled `traceparent` is passed on by `HttpClient` with the same trace id and the sampled flag, and a root request starts a sampled trace (measured by `Traces_Off_Server_Passes_The_Inbound_Trace_On`). An `AlwaysOffSampler` there would forward `00` and make every ParentBased service downstream drop the trace.
+
+With traces **disabled** (`OTEL_HELPER_DISABLED_SIGNALS=traces`, `opts.DisabledSignals`) and under `OTEL_SDK_DISABLED=true`, propagation is a no-op tracer's, as in Go and Python: a root request sends no trace context downstream, and an inbound trace context is passed on unchanged — the same `traceparent` (trace id, parent span id and flags) and `tracestate` (measured by `Disabled_Traces_Propagate_As_A_No_Op_Tracer`). The sampler is then `ParentBased(root: AlwaysOff)`, so roots are not sampled. Under `OTEL_SDK_DISABLED=true` the helper adds a small non-recording activity listener so that ASP.NET Core creates a request activity for a request that continues a trace even without logging; roots get none.
+
+### Propagators (0.3, this branch, task C10)
+
+`OTEL_PROPAGATORS` is read per token: `tracecontext`, `baggage`, `none`. Other tokens warn once each and are skipped (`propagator not supported by the .NET helper, ignored` for `b3`, `b3multi`, `jaeger`, `xray`, `ottrace`; `unknown propagator, ignored` otherwise); each line names the effective list as `using=`. `none` disables propagation and wins over other tokens (warned when combined). The list is installed process-wide with `Sdk.SetDefaultTextMapPropagator`, also under `OTEL_SDK_DISABLED=true` (no span context then, baggage still propagates).
+
+.NET carries context in three places, and all three follow the list in both directions: the OpenTelemetry propagator above; the runtime's `DistributedContextPropagator.Current`, with which `HttpClient` writes `traceparent`, `tracestate` and `baggage` on its own; and the `DistributedContextPropagator` service ASP.NET Core extracts inbound context with. The helper sets the first two at resolution and replaces the third in the container (`AddOtelHelper`; the web host adds the runtime default with `TryAddSingleton`, before or after the application's services — both orders are tested). Its propagator delegates to the runtime default and drops what is not listed:
+
+| `OTEL_PROPAGATORS` | Inbound `traceparent` | Inbound `baggage` | Sent on by `HttpClient` |
+|---|---|---|---|
+| unset, `tracecontext,baggage` | continued | kept | `traceparent`, `tracestate`, `baggage` (as 0.2.x) |
+| `tracecontext` | continued | ignored | `traceparent`, `tracestate` |
+| `baggage` | ignored: a new trace | kept | `baggage` |
+| `none` | ignored: a new trace | ignored | nothing |
+
+Notes:
+
+- `AddOtelHelper` already sets `DistributedContextPropagator.Current` (from `OTEL_PROPAGATORS`, which is read from the environment only), so an `HttpClient` created during configuration or before the host starts follows the list too; the traces-disabled and SDK-disabled settings are added when the host starts (the handler reads them per request). An `HttpClient` created before `AddOtelHelper` runs keeps the runtime default.
+- A runtime propagator the application set (`DistributedContextPropagator.Current = …`), before or after `AddOtelHelper`, is kept for handlers created afterwards; one warning when the configuration needs another. A `DistributedContextPropagator` service it registered is kept too, with one warning that ASP.NET Core extracts inbound context with it, not as `OTEL_PROPAGATORS` says.
+- Under `OTEL_SDK_DISABLED=true` with `tracecontext`, the helper's activity listener is process-wide: ASP.NET Core then creates a propagation-only (non-recorded) activity for every request that carries a `traceparent`, in every host of the process, until the container that started it is disposed.
+- With traces or the SDK disabled, only an activity with a **remote** parent (`HasRemoteParent`, as ASP.NET Core and the instrumentations create) passes its inbound context on; an activity an application starts with `SetParentId(string)` or with a local context counts as started here and carries nothing. The SDK's expected "Failed to inject activity context … 'Invalid context'" line is not forwarded then.
+- The settings are process-wide: the last container resolved wins, and nothing is restored when it is disposed.
+- A `SocketsHttpHandler` takes the runtime propagator when it is created: an `HttpClient` created before the host starts keeps the earlier one. `IHttpClientFactory` handlers are created later and follow the setting.
+- Without a host (a bare `ServiceProvider`) the propagators are installed when the helper's settings are first resolved: when a provider is built, or the keyed `ActivitySource`/`Meter` (`OtelHelperKeys.Instrumentation`) is resolved. Under `OTEL_SDK_DISABLED=true` the no-op providers run no helper code, so resolve the keyed `ActivitySource` once, or use a host (it resolves the settings at start).
 
 ---
 

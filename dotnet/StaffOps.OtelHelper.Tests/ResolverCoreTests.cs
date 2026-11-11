@@ -20,6 +20,7 @@ namespace StaffOps.OtelHelper.Tests;
 /// where the SDK reads it.
 /// </summary>
 [Collection("EnvVarTests")]
+[ResetGlobalPropagation]
 public class ResolverCoreTests : IDisposable
 {
     private static readonly string[] TouchedEnvVars =

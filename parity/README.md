@@ -38,7 +38,7 @@ suite runs every case. **`cases.json` is hand-maintained**: edit it directly
 | `export` | — | Setup, emit one span + counter + log, shut down, read the receiver | `received{traces,metrics,logs}` → records `{proto, tls, port, path, raw_path, encoding, headers, timeout_ms}` (`path` decoded, `raw_path` as sent with escapes kept; `timeout_ms` from the gRPC `grpc-timeout` header) |
 | `sampler` | `scenario`: `root`, `remote_sampled`, `remote_unsampled`, `remote_sampled_debug_tracestate`, `remote_sampled_debug_baggage`, `local_child_of_root`, `local_child_of_remote_unsampled` | Start one span | `sampled`, `attributes` |
 | `propagation` | — | Inject inside a span with baggage `parity=1` | `headers` (sorted names) |
-| `http_server` | `requests`, `traceparent`, `child_span` | Serve the requests through the helper's HTTP server instrumentation; optionally the handler starts `handler-child` | `server_spans`, `handler_child_spans`, `requests_counted` (HTTP server duration `_count` from the helper's `/metrics`), `scrape` (that `/metrics` text; added 2026-11-02, Node B7) |
+| `http_server` | `requests`, `traceparent`, `child_span`, `allow_server_error` (fix round 2 of C10, 2026-11-10: without it a 5xx response is an adapter error in every driver, so a failing request cannot satisfy `server_spans: 0` or `requests_counted`) | Serve the requests through the helper's HTTP server instrumentation; optionally the handler starts `handler-child` | `response_statuses` (each request's HTTP status), `server_spans`, `server_continues_inbound` (a SERVER span exists and every SERVER span is in the inbound `traceparent`'s trace; added 2026-11-10, C10 fix round 1), `handler_child_spans`, `requests_counted` (HTTP server duration `_count` from the helper's `/metrics`), `scrape` (that `/metrics` text; added 2026-11-02, Node B7) |
 | `grpc_server` | `method` | One call on an instrumented server (`/parity.v1.Echo/NotFound` answers NOT_FOUND; added 2026-11-02, A22) | `server_spans`, `rpcs_counted`, `call_ok`, `server_span_status` (status code of the first SERVER span: `UNSET`, `ERROR`, `OK`, or `none`; added 2026-11-02, A22), `server_span_name` (name of the first SERVER span, or `none`; added 2026-11-05, A30), `client_span_name` (the same for the first CLIENT span; added 2026-11-08, A30) |
 | `logging` | — | Emit one WARN record through the helper's logger | (common fields) |
 | `metrics_scrape` | — | Increment `parity.requests` and `parity.payload` (unit `By`, by 5; added 2026-11-02, Node B7), record the Gauge `parity.utilization` (unit `1`, 0.5) and add 1 to the UpDownCounter `parity.inflight` (unit `1`; both A21), scrape the helper's `/metrics` | `scrape`, `scrape_status` (HTTP status of the mounted handler: 503 before/after/failed setup, 200 when Prometheus is deliberately inactive — design "Mounted /metrics handler status") |
@@ -253,6 +253,11 @@ docker compose -f testing/docker-compose.yml run --rm -e PARITY_ONLY=export.grpc
   down and answers within 110 s in any case. `PARITY_ONLY` (comma-separated
   ids) narrows both the theory rows and the run; `PARITY_RESULTS=<path>` writes
   every outcome, snapshot included, as JSON (used to record statuses).
+- **`propagation` is the OpenTelemetry propagator only.** The kind injects with
+  `Propagators.DefaultTextMapPropagator`. .NET also writes context through the
+  runtime's `DistributedContextPropagator` (`HttpClient` egress, ASP.NET Core
+  ingress); that path is covered by unit tests, not by the fixture
+  (`SamplerPropagatorDebugTests`, `dotnet/TESTS.md`, task C10, 2026-11-10).
 - **Coverage.** The test project references the driver, so the driver runs
   from the test output folder with the assemblies coverlet instrumented; it
   always exits 0 (`Environment.Exit`, after writing the snapshot), and

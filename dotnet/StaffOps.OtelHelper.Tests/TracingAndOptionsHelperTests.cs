@@ -9,7 +9,7 @@ using Xunit;
 namespace StaffOps.OtelHelper.Tests;
 
 /// <summary>
-/// Tests for tracing helpers (StartRootActivity, DebugTraceStateProcessor) and TelemetryOptions helper methods.
+/// Tests for tracing helpers (StartRootActivity) and TelemetryOptions helper methods; the debug marker is in SamplerPropagatorDebugTests.
 /// </summary>
 public class TracingAndOptionsHelperTests
 {
@@ -58,55 +58,6 @@ public class TracingAndOptionsHelperTests
         Assert.NotNull(traceId1);
         Assert.NotNull(traceId2);
         Assert.NotEqual(traceId1, traceId2);
-    }
-
-    // --- DebugTraceStateProcessor ---
-
-    [Fact]
-    public void DebugMode_Sets_TraceState_And_Attribute_On_Root_Span()
-    {
-        using var source = new ActivitySource("test-debug-root");
-        using var listener = new ActivityListener
-        {
-            ShouldListenTo = _ => true,
-            Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllDataAndRecorded
-        };
-        ActivitySource.AddActivityListener(listener);
-
-        var processor = new DebugTraceStateProcessor();
-        using var root = source.StartActivity("root");
-        Assert.NotNull(root);
-
-        processor.OnStart(root!);
-
-        Assert.Contains("debug=true", root!.TraceStateString);
-        Assert.Equal("true", root.GetTagItem("debug")?.ToString());
-    }
-
-    [Fact]
-    public void DebugMode_Does_Not_Set_On_Child_Span()
-    {
-        using var source = new ActivitySource("test-debug-child");
-        using var listener = new ActivityListener
-        {
-            ShouldListenTo = _ => true,
-            Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllDataAndRecorded
-        };
-        ActivitySource.AddActivityListener(listener);
-
-        var processor = new DebugTraceStateProcessor();
-
-        using var parent = source.StartActivity("parent");
-        using var child = source.StartActivity("child");
-        Assert.NotNull(child);
-
-        processor.OnStart(child!);
-
-        // Child has a parent, so processor should NOT set debug attributes
-        Assert.Null(child!.GetTagItem("debug"));
-        Assert.True(
-            string.IsNullOrEmpty(child.TraceStateString) || !child.TraceStateString.Contains("debug=true"),
-            "Child span should not have debug=true in tracestate");
     }
 
     // --- IsSignalEnabled ---

@@ -555,17 +555,31 @@ internal static class CaseKinds
 
         var appPort = BoundPort(run.Host);
         var headers = traceparent is null ? new Dictionary<string, string>() : new Dictionary<string, string> { ["traceparent"] = traceparent };
+        var statuses = new JsonArray();
+        var serverError = false;
         foreach (var target in requests)
         {
-            await RawHttp.RequestAsync("GET", "127.0.0.1", appPort, target, headers);
+            var (status, _) = await RawHttp.RequestAsync("GET", "127.0.0.1", appPort, target, headers);
+            statuses.Add(status);
+            serverError |= status >= 500;
         }
 
-        snap["server_spans"] = ServerSpans(run.Spans).Count;
+        snap["response_statuses"] = statuses;
+        var servers = ServerSpans(run.Spans);
+        snap["server_spans"] = servers.Count;
+        // A SERVER span exists and every SERVER span is in the inbound traceparent's trace.
+        var inboundTrace = traceparent?.Split('-') is { Length: 4 } parts ? parts[1] : null;
+        snap["server_continues_inbound"] = inboundTrace is not null && servers.Count > 0 && servers.All(a => a.TraceId.ToHexString() == inboundTrace);
         snap["handler_child_spans"] = run.Spans.Ended().Count(a => a.DisplayName == "handler-child");
         var (_, text) = await ScrapeAsync(ListenerPort(run));
         snap["scrape"] = text;
         snap["requests_counted"] = CountIn(text, new Regex("^http_server(_request)?_duration[a-z_]*_count[{ ]"));
         await ShutdownAsync(run);
+        if (serverError && c["input"]?["allow_server_error"]?.GetValue<bool>() != true)
+        {
+            throw new AdapterException("a request answered 5xx (an instrumentation or helper failure, not an expectation); set input.allow_server_error to accept it");
+        }
+
         return snap;
     }
 

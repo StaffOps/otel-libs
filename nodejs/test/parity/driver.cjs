@@ -352,6 +352,13 @@ function spanRecorder() {
 const SPAN_KIND_SERVER = 1;
 const SPAN_KIND_CLIENT = 2;
 const serverSpans = (exporter) => exporter.getFinishedSpans().filter((s) => s.kind === SPAN_KIND_SERVER).length;
+/** A SERVER span exists and every SERVER span is in the inbound traceparent's trace (fixture field server_continues_inbound). */
+function serverContinuesInbound(exporter, traceparent) {
+  const parts = String(traceparent ?? '').split('-');
+  if (parts.length !== 4) return false;
+  const servers = exporter.getFinishedSpans().filter((s) => s.kind === SPAN_KIND_SERVER);
+  return servers.length > 0 && servers.every((s) => s.spanContext().traceId === parts[1]);
+}
 const STATUS_NAMES = ['UNSET', 'OK', 'ERROR'];
 /** Status code of the first SERVER span ("UNSET", "ERROR", "OK"), or "none" (fixture field server_span_status). */
 function serverSpanStatus(exporter) {
@@ -491,17 +498,26 @@ async function kindHttpServer(c) {
   });
   const { port } = server.address();
   const headers = c.input?.traceparent ? { traceparent: c.input.traceparent } : {};
+  const statuses = [];
   try {
-    for (const target of c.input?.requests ?? []) await rawGet(port, target, headers);
+    for (const target of c.input?.requests ?? []) {
+      const reply = await rawGet(port, target, headers);
+      statuses.push(Number(/^HTTP\/1\.[01] (\d{3})/.exec(reply)?.[1] ?? 0));
+    }
   } finally {
     await new Promise((resolve) => server.close(resolve));
   }
+  snap.response_statuses = statuses;
   snap.server_spans = serverSpans(exporter);
+  snap.server_continues_inbound = serverContinuesInbound(exporter, c.input?.traceparent);
   snap.handler_child_spans = exporter.getFinishedSpans().filter((s) => s.name === 'handler-child').length;
   const { text } = await scrape();
   snap.scrape = text;
   snap.requests_counted = countIn(text, /^http_server(_request)?_duration[a-z_]*_count[{ ]/);
   await shutdown();
+  if (statuses.some((s) => s >= 500) && c.input?.allow_server_error !== true) {
+    return { adapter_error: 'a request answered 5xx (an instrumentation or helper failure, not an expectation); set input.allow_server_error to accept it' };
+  }
   return snap;
 }
 

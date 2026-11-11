@@ -22,6 +22,7 @@ namespace StaffOps.OtelHelper.Tests;
 /// Cross-language parity: python/tests/test_otlp_protocol.py and go/otlp_protocol_test.go.
 /// </summary>
 [Collection("EnvVarTests")]
+[ResetGlobalPropagation]
 public class OtlpProtocolTests : IDisposable
 {
     private static readonly string[] ContractEnvVars =

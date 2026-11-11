@@ -50,7 +50,7 @@ internal static class ParityHarness
         ["export"] = new[] { "received" },
         ["sampler"] = new[] { "sampled", "attributes" },
         ["propagation"] = new[] { "headers" },
-        ["http_server"] = new[] { "server_spans", "requests_counted", "handler_child_spans", "scrape" },
+        ["http_server"] = new[] { "server_spans", "server_continues_inbound", "response_statuses", "requests_counted", "handler_child_spans", "scrape" },
         ["grpc_server"] = new[] { "server_spans", "rpcs_counted", "call_ok", "server_span_status", "server_span_name", "client_span_name" },
         ["logging"] = Array.Empty<string>(),
         ["metrics_scrape"] = new[] { "scrape", "scrape_status" },
@@ -61,7 +61,7 @@ internal static class ParityHarness
     private static readonly Dictionary<string, string[]> InputSchema = new(StringComparer.Ordinal)
     {
         ["sampler"] = new[] { "scenario" },
-        ["http_server"] = new[] { "requests", "traceparent", "child_span" },
+        ["http_server"] = new[] { "requests", "traceparent", "child_span", "allow_server_error" },
         ["grpc_server"] = new[] { "method" },
         ["metrics_listener"] = new[] { "requests" },
     };
@@ -238,9 +238,9 @@ internal static class ParityHarness
             {
                 errs.Add($"input.{key} must be a string");
             }
-            else if (key == "child_span" && !(val is JsonValue b && b.TryGetValue<bool>(out _)))
+            else if ((key is "child_span" or "allow_server_error") && !(val is JsonValue b && b.TryGetValue<bool>(out _)))
             {
-                errs.Add("input.child_span must be a boolean");
+                errs.Add($"input.{key} must be a boolean");
             }
         }
 

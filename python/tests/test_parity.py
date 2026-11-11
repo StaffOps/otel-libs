@@ -45,7 +45,7 @@ _SCHEMA = {
     "export": {"received"},
     "sampler": {"sampled", "attributes"},
     "propagation": {"headers"},
-    "http_server": {"server_spans", "requests_counted", "handler_child_spans", "scrape"},
+    "http_server": {"server_spans", "server_continues_inbound", "response_statuses", "requests_counted", "handler_child_spans", "scrape"},
     "grpc_server": {"server_spans", "rpcs_counted", "call_ok", "server_span_status", "server_span_name", "client_span_name"},
     "logging": set(),
     "metrics_scrape": {"scrape", "scrape_status"},
@@ -54,7 +54,7 @@ _SCHEMA = {
 }
 _INPUT_SCHEMA = {
     "sampler": {"scenario"},
-    "http_server": {"requests", "traceparent", "child_span"},
+    "http_server": {"requests", "traceparent", "child_span", "allow_server_error"},
     "grpc_server": {"method"},
     "metrics_listener": {"requests"},
 }
@@ -128,8 +128,8 @@ def validate_case(case: dict) -> list[str]:
             errs.append("input.requests must be a list of strings")
         elif key in ("method", "scenario", "traceparent") and not isinstance(val, str):
             errs.append(f"input.{key} must be a string")
-        elif key == "child_span" and not isinstance(val, bool):
-            errs.append("input.child_span must be a boolean")
+        elif key in ("child_span", "allow_server_error") and not isinstance(val, bool):
+            errs.append(f"input.{key} must be a boolean")
     if kind == "metrics_listener":
         reqs = inp.get("requests")
         if not (isinstance(reqs, list) and reqs and all(isinstance(r, str) and re.fullmatch(r"[A-Z]+ /\S*", r) for r in reqs)):

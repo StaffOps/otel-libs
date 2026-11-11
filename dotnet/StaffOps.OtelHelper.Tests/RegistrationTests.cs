@@ -8,6 +8,7 @@ using Xunit;
 
 namespace StaffOps.OtelHelper.Tests;
 
+[ResetGlobalPropagation]
 public class RegistrationTests
 {
     [Fact]

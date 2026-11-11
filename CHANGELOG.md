@@ -679,6 +679,7 @@ emitted telemetry.
    | `int? ExportIntervalMs` | `long? ExportIntervalMs`, in [1, 2 147 483 647] (`int` assignments still compile) |
    | `int PrometheusMetricsPort = 9464` | `int? PrometheusMetricsPort`, in [0, 65535] |
    | — | new `bool? Insecure`, `string? Compression` (`gzip`/`none`), `List<string>? HealthPaths`, `List<string> AdditionalMeters`, `bool ForwardSdkDiagnostics = true` |
+   | — | new constants `TelemetryOptions.TracesSamplerArgEnvVar` (`OTEL_TRACES_SAMPLER_ARG`) and `TelemetryOptions.PropagatorsEnvVar` (`OTEL_PROPAGATORS`) (task C10) |
    | public `IsSignalEnabled()`, `ResolvedMetricExporters()`, `ResolvedOtlpProtocol()` | removed (they answered from code-only state) |
    | public `TelemetryOptionsValidator` | internal |
 4. **Invalid values: environment warns, code fails at start** (task C5, design
@@ -1208,6 +1209,31 @@ dashboards and alerts.
    debugging aid: its multi-line output is not the contract's JSON log line
    (the stdout log fallback is task C13).
 
+19. **Sampler, propagators and the debug marker follow the 0.3 contract**
+   (task C10, contract R6, R8, R9, A20; ADR-002, ADR-006). Before (0.2.x) →
+   after:
+
+   | Input | 0.2.x | 0.3 (this branch) |
+   |---|---|---|
+   | No sampler configured | bare `AlwaysOnSampler`: a span under an unsampled remote parent was sampled | `parentbased_always_on` (ADR-002): roots sampled, children follow the parent's flag |
+   | `OTEL_TRACES_SAMPLER` / `_ARG` | read by the SDK, only when no code sampler was set and the variable was in the process environment (the helper checked the environment first, so a value only in `IConfiguration` was already ignored, silently); an unknown name was warned by the SDK only | parsed by the helper from the process environment, which always sets the sampler; the six spec names (ASCII case-insensitive); unsupported and unknown names, and an argument that is not a plain decimal in [0, 1], warn naming the variable; an `IConfiguration`-only value is still not read and now warns once |
+   | `OTEL_HELPER_SAMPLE_RATIO` | clamped to [0, 1]; below 1.0 a bare `TraceIdRatioBasedSampler`; garbage ignored silently | `parentbased_traceidratio` for a plain decimal in [0, 1]; anything else warns `sample ratio is not a number in [0, 1]` and the default applies (not clamped) |
+   | `OTEL_PROPAGATORS` | not read: W3C TraceContext + Baggage always | read per token: `tracecontext`, `baggage`, `none`; other tokens warned and skipped; installed also under `OTEL_SDK_DISABLED=true`, in both directions: the OpenTelemetry propagator, the runtime propagator `HttpClient` injects with (`DistributedContextPropagator.Current`) and the one ASP.NET Core extracts with (replaced in the container) all carry only the configured tokens — `none` and `baggage` start a new trace for an inbound `traceparent`, `tracecontext` sends no `baggage`; the default list behaves as 0.2.x |
+   | `OTEL_HELPER_DEBUG_LEVEL=true` | attribute `debug=true` **and** `debug=true` prepended to the tracestate on spans with `Activity.Parent == null`: `debug=true,debug=true` under a remote parent, and in-process children started from an explicit context marked too | attribute only, on entry spans (`ParentSpanId == default` or `HasRemoteParent`); the tracestate is not written |
+   | `StartRootActivity` | cleared `Activity.Current`; after the root was disposed it stayed null | the previous `Activity.Current` is current again after the root is disposed; when no activity is created it is left as it was |
+   | Traces disabled (`OTEL_HELPER_DISABLED_SIGNALS`, `DisabledSignals`) or `OTEL_SDK_DISABLED=true` | a root request sent `traceparent …-01` of a new trace downstream; under the disabled SDK an inbound `traceparent` reached `HttpClient` only when logging made ASP.NET Core create a request activity | as Go's and Python's no-op tracer: a root sends no trace context, an inbound one is passed on unchanged (same `traceparent`, flags and `tracestate`); `OTEL_TRACES_EXPORTER=none` keeps the SDK behavior (a root starts a sampled trace) |
+
+   Check: a service behind a caller that does not sample (`traceparent …-00`)
+   now drops those spans instead of exporting them; a Collector policy that
+   matched `debug=true` in the tracestate must match the span attribute
+   (`string_attribute`, as for Go and Python); an app that set
+   `OTEL_TRACES_SAMPLER` only in `appsettings.json` (never applied) now gets
+   a warning — move it to the environment or to `TelemetryOptions.Sampler`;
+   a service with `OTEL_PROPAGATORS=none` no longer joins its callers' traces;
+   an app that registers its own `DistributedContextPropagator` service or
+   sets `DistributedContextPropagator.Current` keeps it (one warning when the
+   configuration needs another).
+
 ### Collector / platform prerequisites (before rolling 0.3.0 out)
 
 Owned outside this repo (design D11); each item blocks the rollout, not the rc:
@@ -1562,6 +1588,81 @@ Phase C work on this branch (no .NET release yet; the first will be
   one `ExemplarFilter` member on `MeterProviderSdk` (an auto-property and its
   backing field count as one). Suite 1255/1255 on `sdk:8.0` and SDK 10.0.403
   roll-forward (line 98.61%).
+- **.NET: sampler, propagators and debug marker (task C10, contract R6, R8,
+  R9, A20; ADR-002, ADR-006; design D-NET9, N2, N3).** The helper parses
+  `OTEL_TRACES_SAMPLER`/`_ARG` and always sets the sampler (default
+  `parentbased_always_on`, also when traces are off), and the deprecated
+  `OTEL_HELPER_SAMPLE_RATIO` builds `parentbased_traceidratio` or warns. An
+  `OTEL_TRACES_SAMPLER`, `_ARG` or `OTEL_PROPAGATORS` set only in
+  `IConfiguration` warns once and is not read. `OTEL_PROPAGATORS` is parsed
+  per token with the A20 diagnostics and installed with
+  `Sdk.SetDefaultTextMapPropagator` when the helper's settings resolve (host
+  start), so also under `OTEL_SDK_DISABLED=true`; without `tracecontext` the
+  runtime's `DistributedContextPropagator.Current` is replaced by its
+  no-output propagator (measured: `HttpClient` then sends neither
+  `traceparent` nor `tracestate`), undone by a later container whose list has
+  `tracecontext`, and an application's own runtime propagator is kept with
+  one warning. Debug mode sets only the `debug=true` attribute, on spans with
+  `ParentSpanId == default` or `HasRemoteParent` (new
+  `Tracing/DebugMarkerProcessor.cs` replaces `DebugTraceStateProcessor.cs`).
+  `StartRootActivity` restores the previous `Activity.Current` when the root
+  stops (the runtime's `_previousActiveActivity` field, set by reflection;
+  checked on .NET 8 and 10). Decision: with traces off the provider keeps the
+  resolved sampler — `Traces_Off_Server_Passes_The_Inbound_Trace_On` shows
+  the inbound trace id and sampled flag reaching the next `HttpClient` call,
+  while an `AlwaysOffSampler` would forward `00`. Parity: the 12 `xfail:C10`
+  cases pass (C10 group: 32 `pass`); the ParentBased default also makes
+  `http.health_child_span_dropped` (C11 group) pass. Fixture: 377 cases; .NET
+  315 `pass`, 48 `xfail:C<n>` (C11 12, C12 26, C13 3, C16 7), 14
+  known-difference skips. Suite 1336/1336 on `sdk:8.0` and SDK 10.0.403
+  roll-forward (line coverage 98.55%); 16 mutants of the new rules each fail
+  a test.
+- **.NET: C10 fix round 1 (2026-11-10).** The runtime propagation path follows
+  `OTEL_PROPAGATORS` in both directions: a helper `DistributedContextPropagator`
+  (delegating to the runtime default, dropping what is not listed) is
+  `DistributedContextPropagator.Current` for `HttpClient` and replaces the
+  container's `DistributedContextPropagator` service ASP.NET Core extracts
+  with (measured: the web host's `TryAddSingleton` runs before the
+  application's services in `WebApplication`, before or after in `HostBuilder`;
+  the replacement wins in all three). With `none` or `baggage` an inbound
+  `traceparent` now starts a new trace; with `tracecontext` no `baggage` is
+  sent on; the default list is unchanged. Traces disabled
+  (`OTEL_HELPER_DISABLED_SIGNALS`, `DisabledSignals`) and `OTEL_SDK_DISABLED`
+  propagate as a no-op tracer: a root sends no trace context, an inbound one is
+  passed on unchanged (sampler `ParentBased(root: AlwaysOff)`; under the
+  disabled SDK a non-recording listener lets ASP.NET Core continue an inbound
+  trace without logging); `OTEL_TRACES_EXPORTER=none` keeps the SDK behavior.
+  New contract row "Propagation with traces off" and parity snapshot field
+  `server_continues_inbound` (`http_server`, all four drivers); five cases
+  `propagation.default_server_continues_inbound_traceparent`,
+  `propagation.none_server_ignores_inbound_traceparent`,
+  `propagation.baggage_only_server_ignores_inbound_traceparent`,
+  `propagation.tracecontext_only_drops_baggage`,
+  `propagation.traces_disabled_root_no_traceparent` — Go and .NET pass all
+  five; Python `xfail:A34` on the `none` server case (with
+  `OTEL_PROPAGATORS=none` the helper's empty propagator returns no context and
+  the ASGI request fails; new contract task A34, before the next Python
+  release candidate; the Python parity driver now records a failed request as
+  a 500 instead of crashing); Node.js `xfail:A35` on the disabled-traces case
+  (a root still injects `traceparent`; new contract task A35). Fixture: 382
+  cases; .NET 320 `pass`, 48 `xfail:C<n>`, 14 skips. Suite 1364/1364 on
+  `sdk:8.0` and SDK 10.0.403 roll-forward (line coverage 98.44%); 9 more
+  mutants each fail a test.
+- **.NET: C10 fix round 2 (2026-11-10).** `AddOtelHelper` already sets
+  `DistributedContextPropagator.Current` (from `OTEL_PROPAGATORS`, environment
+  only), so an `HttpClient` created before the host starts follows the list;
+  the disabled-traces part is added at host start. A `Current` the application
+  sets after `AddOtelHelper` is kept for later handlers and warned; a
+  `DistributedContextPropagator` service the application registered is kept,
+  with a warning that ASP.NET Core extracts with it. Pass-through uses only a
+  remote parent (`HasRemoteParent`). With traces or the SDK disabled the API's
+  expected "Failed to inject activity context … 'Invalid context'" line is
+  not forwarded. Parity drivers (Go, Python, Node.js, .NET): `http_server`
+  records `response_statuses`, and any 5xx is an adapter error unless the case
+  sets `input.allow_server_error` (only
+  `propagation.none_server_ignores_inbound_traceparent`, which also expects
+  `[200]`). Suite 1371/1371 on `sdk:8.0` and SDK 10.0.403 roll-forward (line
+  coverage 98.37%).
 
 ### Breaking — telemetry output changes (dashboards/alerts)
 

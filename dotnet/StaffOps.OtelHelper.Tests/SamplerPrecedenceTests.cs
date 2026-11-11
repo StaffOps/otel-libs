@@ -11,13 +11,11 @@ namespace StaffOps.OtelHelper.Tests;
 /// US-2: OTEL_TRACES_SAMPLER (standard SDK var) must win over OTEL_HELPER_SAMPLE_RATIO.
 /// Cross-language parity: python/tests/test_sampler_precedence.py and the
 /// Test_Sampler_* cases in go/metrics_contract_test.go assert the same rules.
-///
-/// Verified empirically (not just by reading the SDK's source strings) that
-/// OpenTelemetry .NET's TracerProviderBuilder reads OTEL_TRACES_SAMPLER /
-/// OTEL_TRACES_SAMPLER_ARG on its own whenever SetSampler(...) is not called,
-/// and that an explicit SetSampler(...) call still overrides the env var.
+/// Since task C10 the helper parses the variable and always calls SetSampler (D-NET9), so the
+/// SDK never reads it; the resolved sampler is never null.
 /// </summary>
 [Collection("EnvVarTests")]
+[ResetGlobalPropagation]
 public class SamplerPrecedenceTests : IDisposable
 {
     public SamplerPrecedenceTests() => ClearEnv();
@@ -53,7 +51,9 @@ public class SamplerPrecedenceTests : IDisposable
         Environment.SetEnvironmentVariable(TelemetryOptions.SampleRatioEnvVar, "0.25");
         var opts = Resolved();
 
-        Assert.IsType<TraceIdRatioBasedSampler>(opts.Sampler);
+        // C10 (A20): the alias is ParentBased(TraceIdRatioBased), not a bare ratio sampler.
+        Assert.IsType<ParentBasedSampler>(opts.Sampler);
+        Assert.Equal("parentbased_traceidratio", opts.SamplerName);
     }
 
     [Fact]
@@ -62,9 +62,7 @@ public class SamplerPrecedenceTests : IDisposable
         Environment.SetEnvironmentVariable(TelemetryOptions.TracesSamplerEnvVar, "always_off");
         var opts = Resolved();
 
-        // The helper sets no sampler (null)...
-        Assert.Null(opts.Sampler);
-        // ...so the built provider follows the SDK's own env-var reading.
+        Assert.IsType<AlwaysOffSampler>(opts.Sampler);
         Assert.False(BuildAndCheckSampled());
     }
 
@@ -76,7 +74,7 @@ public class SamplerPrecedenceTests : IDisposable
         var opts = Resolved();
 
         // OTEL_HELPER_SAMPLE_RATIO must be ignored entirely when the standard var is set.
-        Assert.Null(opts.Sampler);
+        Assert.IsType<AlwaysOffSampler>(opts.Sampler);
         Assert.False(BuildAndCheckSampled());
     }
 
@@ -113,11 +111,13 @@ public class SamplerPrecedenceTests : IDisposable
     }
 
     [Fact]
-    public void NoEnvNoOverride_DefaultsToAlwaysOn()
+    public void NoEnvNoOverride_DefaultsToParentBasedAlwaysOn()
     {
         var opts = Resolved();
 
-        Assert.IsType<AlwaysOnSampler>(opts.Sampler);
+        // ADR-002 (C10): parentbased_always_on, no longer the 0.2.x bare AlwaysOn.
+        Assert.IsType<ParentBasedSampler>(opts.Sampler);
+        Assert.Equal("parentbased_always_on", opts.SamplerName);
         Assert.True(BuildAndCheckSampled());
     }
 }

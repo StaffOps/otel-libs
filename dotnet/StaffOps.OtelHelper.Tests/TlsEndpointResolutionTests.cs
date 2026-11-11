@@ -12,6 +12,7 @@ namespace StaffOps.OtelHelper.Tests;
 /// - OTEL_EXPORTER_OTLP_INSECURE=true forces http:// for schemeless endpoints.
 /// </summary>
 [Collection("EnvVarTests")]
+[ResetGlobalPropagation]
 public class TlsEndpointResolutionTests : IDisposable
 {
     private readonly string? _savedEndpoint;

@@ -72,6 +72,11 @@ namespace StaffOps.OtelHelper
             services.TryAddSingleton<AppResourceState>();
             services.AddSingleton<IOptionsChangeTokenSource<Microsoft.Extensions.Logging.LoggerFilterOptions>>(sp => sp.GetRequiredService<AppResourceState>());
 
+            // The runtime propagator ASP.NET Core extracts with follows OTEL_PROPAGATORS (D-NET9), and
+            // under OTEL_SDK_DISABLED a listener lets the host continue inbound traces (disposed with the container).
+            PropagatorSetup.Register(services);
+            services.TryAddSingleton<ContinuationListener>();
+
             // The helper's exporter clients, disposed with the container after the providers.
             services.TryAddSingleton<StaffOps.OtelHelper.Exporters.ExporterClients>();
 
@@ -83,6 +88,12 @@ namespace StaffOps.OtelHelper
                     sp.GetRequiredService<IOtelHelperDiagnostics>(),
                     sp.GetService<IConfiguration>());
                 MetricsSetup.WarnHistogramAggregation(sp, resolved, sp.GetService<IConfiguration>(), sp.GetRequiredService<IOtelHelperDiagnostics>());
+                // Process-wide, at resolution, so also under OTEL_SDK_DISABLED (D-NET9).
+                PropagatorSetup.Install(resolved, sp.GetRequiredService<IOtelHelperDiagnostics>(), sp.GetService<PropagatorSetup.ApplicationServiceKept>() is not null);
+                if (resolved.SdkDisabled && resolved.Propagators.Contains("tracecontext"))
+                {
+                    sp.GetRequiredService<ContinuationListener>().Start();
+                }
                 // Every provider takes a lease, also one that does not forward: its secrets are masked
                 // in what another provider forwards. Created before the providers, so it is disposed
                 // after them and sees their shutdown. Secrets: the code endpoints (factory) plus the
@@ -94,6 +105,7 @@ namespace StaffOps.OtelHelper
                     lease.QuietMeters = new[] { resolved.ServiceName }.Concat(resolved.AdditionalMeters).ToArray();
                 }
 
+                lease.InvalidContextExpected = PropagationSettings.From(resolved).PassThroughOnly;
                 lease.Forwards = resolved.ForwardSdkDiagnostics;
 
                 return resolved;

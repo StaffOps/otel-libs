@@ -4,6 +4,7 @@ using Xunit;
 namespace StaffOps.OtelHelper.Tests;
 
 [Collection("EnvVarTests")]
+[ResetGlobalPropagation]
 public class OptionsTests
 {
     private static ResolvedTelemetry CreateResolved(Action<TelemetryOptions>? configure = null)

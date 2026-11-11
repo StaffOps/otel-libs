@@ -69,8 +69,14 @@ namespace StaffOps.OtelHelper
         internal SignalExportSettings Export(string signal)
             => ExportSettings.TryGetValue(signal, out var settings) ? settings : SignalExportSettings.Default;
 
-        /// <summary>The sampler the helper sets; null leaves the SDK's <c>OTEL_TRACES_SAMPLER</c> handling in place.</summary>
-        public Sampler? Sampler { get; init; }
+        /// <summary>The sampler the helper always sets (R6, ADR-002): the SDK never reads <c>OTEL_TRACES_SAMPLER</c> itself.</summary>
+        public required Sampler Sampler { get; init; }
+
+        /// <summary>The name diagnostics print for <see cref="Sampler"/> (a spec name, or <c>TelemetryOptions.Sampler</c>).</summary>
+        public string SamplerName { get; init; } = SamplerResolver.DefaultName;
+
+        /// <summary>The effective <c>OTEL_PROPAGATORS</c> names (R8); empty = propagation disabled.</summary>
+        public IReadOnlyList<string> Propagators { get; init; } = PropagatorResolver.DefaultNames;
 
         public required LogLevel MinimumLogLevel { get; init; }
 

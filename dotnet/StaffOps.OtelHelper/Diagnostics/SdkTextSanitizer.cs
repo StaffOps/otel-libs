@@ -44,13 +44,24 @@ namespace StaffOps.OtelHelper.Diagnostics
         /// Whether an event is known noise: the Prometheus listener's cancel at shutdown, or an
         /// SDK parse warning for an OTLP variable whose value the helper resolves (and warns about) itself.
         /// </summary>
-        internal static bool IsNoise(string source, string text, bool stopping = true)
-            => (stopping && source.StartsWith("OpenTelemetry-Exporter-Prometheus", StringComparison.Ordinal)
+        internal static bool IsNoise(string source, string text, bool stopping = true, bool invalidContextExpected = false)
+            => (invalidContextExpected && IsInvalidContextInjection(source, text))
+                || (stopping && source.StartsWith("OpenTelemetry-Exporter-Prometheus", StringComparison.Ordinal)
                     && text.StartsWith("Canceled to export metrics", StringComparison.Ordinal)
                     && text.Contains("CanceledException", StringComparison.Ordinal))
                 || SafeIsMatch(HelperOwnedConfigurationWarning, text)
                 // A view asked for the drop (the helper's disabled metrics or its "off" view).
                 || text.Contains("will be ignored. Reason: 'View configuration asks to drop this instrument", StringComparison.Ordinal);
+
+        /// <summary>
+        /// The API's "Failed to inject activity context … 'Invalid context'" line: expected with
+        /// traces or the SDK disabled (C10 fix round 2), where a trace started here deliberately carries
+        /// no context (the helper's pass-through propagator hands the inner one an invalid context).
+        /// </summary>
+        internal static bool IsInvalidContextInjection(string source, string text)
+            => source == "OpenTelemetry-Api"
+                && text.StartsWith("Failed to inject activity context", StringComparison.Ordinal)
+                && text.Contains("'Invalid context'", StringComparison.Ordinal);
 
         /// <summary>
         /// The SDK's event 33 (<c>MetricInstrumentIgnored</c>) with the not-subscribed reason, for an

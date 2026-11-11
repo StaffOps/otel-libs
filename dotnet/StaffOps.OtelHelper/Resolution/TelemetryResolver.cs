@@ -57,6 +57,9 @@ namespace StaffOps.OtelHelper
                     "OTEL_SDK_DISABLED=true: telemetry disabled, only propagators installed");
             }
 
+            var sampler = SamplerResolver.Resolve(code, diagnostics, configuration);
+            var propagators = PropagatorResolver.Resolve(diagnostics, configuration);
+
             var hasMetricsEndpoint = targets.ContainsKey("metrics");
             var tracesExporters = ParseExporterEnv(TracesExporterEnvVar, TraceLogExporterNames, diagnostics);
             var logsExporters = ParseExporterEnv(LogsExporterEnvVar, TraceLogExporterNames, diagnostics);
@@ -85,7 +88,9 @@ namespace StaffOps.OtelHelper
                 Compression = ExportSettingsResolver.ResolveCompression("", code, null),
                 ExportSettings = exportSettings,
                 HeaderTexts = HeaderVariables.Select(Env).Where(v => !string.IsNullOrEmpty(v)).Select(v => v!).ToArray(),
-                Sampler = ResolveSampler(code),
+                Sampler = sampler.Sampler,
+                SamplerName = sampler.Name,
+                Propagators = propagators,
                 MinimumLogLevel = code.MinimumLogLevel ?? TelemetryOptions.GetDefaultLogLevel(environment, debug),
                 ResourceAttributes = new Dictionary<string, object>(code.ResourceAttributes ?? new Dictionary<string, object>()),
                 AdditionalActivitySources = code.AdditionalActivitySources.ToArray(),
@@ -534,44 +539,6 @@ namespace StaffOps.OtelHelper
                 ? "http/json is not supported by the .NET OTLP exporter; ignored (port inference, else grpc)"
                 : "unsupported OTLP protocol, ignored (port inference, else grpc); valid values: grpc, http/protobuf");
             return null;
-        }
-
-        // ── sampler ────────────────────────────────────────────────────────
-
-        /// <summary>
-        /// Code <see cref="TelemetryOptions.Sampler"/> &gt; code <see cref="TelemetryOptions.SampleRatio"/>
-        /// (ParentBased) &gt; <c>OTEL_TRACES_SAMPLER</c> (null: the SDK applies it) &gt;
-        /// <c>OTEL_HELPER_SAMPLE_RATIO</c> (the 0.2 rule until task C10) &gt; always on.
-        /// </summary>
-        private static Sampler? ResolveSampler(TelemetryOptions code)
-        {
-            if (code.Sampler is not null)
-            {
-                return code.Sampler;
-            }
-
-            if (code.SampleRatio is { } ratio)
-            {
-                return new ParentBasedSampler(new TraceIdRatioBasedSampler(ratio));
-            }
-
-            if (!string.IsNullOrWhiteSpace(Env(TelemetryOptions.TracesSamplerEnvVar)))
-            {
-                return null;
-            }
-
-            var ratioText = Env(TelemetryOptions.SampleRatioEnvVar);
-            if (!string.IsNullOrWhiteSpace(ratioText)
-                && double.TryParse(ratioText, NumberStyles.Float, CultureInfo.InvariantCulture, out var envRatio))
-            {
-                envRatio = Math.Clamp(envRatio, 0.0, 1.0);
-                if (envRatio < 1.0)
-                {
-                    return new TraceIdRatioBasedSampler(envRatio);
-                }
-            }
-
-            return new AlwaysOnSampler();
         }
 
         // ── metrics ────────────────────────────────────────────────────────

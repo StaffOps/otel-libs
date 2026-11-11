@@ -479,6 +479,7 @@ public class EndpointGrammarTests
 
 /// <summary>Task C7a in the resolver: environment and code inputs, diagnostics through the sink.</summary>
 [Collection("EnvVarTests")]
+[ResetGlobalPropagation]
 public class EndpointResolutionTests : IDisposable
 {
     private static readonly string[] Variables =

@@ -32,7 +32,7 @@ var snapshotSchema = map[string][]string{
 	"export":           {"received"},
 	"sampler":          {"sampled", "attributes"},
 	"propagation":      {"headers"},
-	"http_server":      {"server_spans", "requests_counted", "handler_child_spans", "scrape"},
+	"http_server":      {"server_spans", "server_continues_inbound", "response_statuses", "requests_counted", "handler_child_spans", "scrape"},
 	"grpc_server":      {"server_spans", "rpcs_counted", "call_ok", "server_span_status", "server_span_name", "client_span_name"},
 	"logging":          {},
 	"metrics_scrape":   {"scrape", "scrape_status"},
@@ -45,7 +45,7 @@ var listenerRequestRe = regexp.MustCompile(`^[A-Z]+ /\S*$`)
 
 var inputSchema = map[string][]string{
 	"sampler":          {"scenario"},
-	"http_server":      {"requests", "traceparent", "child_span"},
+	"http_server":      {"requests", "traceparent", "child_span", "allow_server_error"},
 	"grpc_server":      {"method"},
 	"metrics_listener": {"requests"},
 }
@@ -110,9 +110,9 @@ func validateCase(c parityCase) []string {
 			if _, ok := v.(string); !ok {
 				errs = append(errs, fmt.Sprintf("input.%s must be a string", k))
 			}
-		case "child_span":
+		case "child_span", "allow_server_error":
 			if _, ok := v.(bool); !ok {
-				errs = append(errs, "input.child_span must be a boolean")
+				errs = append(errs, fmt.Sprintf("input.%s must be a boolean", k))
 			}
 		}
 	}

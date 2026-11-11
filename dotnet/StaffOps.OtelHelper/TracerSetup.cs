@@ -63,6 +63,12 @@ namespace StaffOps.OtelHelper.Tracing
 
             builder.ConfigureResource(r => ResourceSetup.Apply(r, resolved, sp, "traces"));
 
+            // Always set (R6, ADR-002). OTEL_TRACES_EXPORTER=none keeps the resolved sampler (Go and
+            // Python keep an SDK provider there): an inbound sampled flag reaches what HttpClient sends
+            // on. Traces disabled (DisabledSignals): roots are not sampled and a remote parent's flag is
+            // followed; what is propagated is the no-op tracer's (PropagatorSetup, pass-through only).
+            builder.SetSampler(resolved.IsSignalEnabled("traces") ? resolved.Sampler : new ParentBasedSampler(new AlwaysOffSampler()));
+
             // "Off" (disabled signal, OTEL_TRACES_EXPORTER=none, or OTEL_SDK_DISABLED): instrumentation
             // registered, no source and no exporter (D-NET3, contract row "Signal on/off").
             var exporters = resolved.ResolvedSignalExporters("traces");
@@ -77,14 +83,9 @@ namespace StaffOps.OtelHelper.Tracing
                 builder.AddSource(source);
             }
 
-            if (resolved.Sampler is { } sampler)
-            {
-                builder.SetSampler(sampler);
-            }
-
             if (resolved.DebugLevel)
             {
-                builder.AddProcessor(new DebugTraceStateProcessor());
+                builder.AddProcessor(new DebugMarkerProcessor());
             }
 
             var diagnostics = sp.GetRequiredService<IOtelHelperDiagnostics>();

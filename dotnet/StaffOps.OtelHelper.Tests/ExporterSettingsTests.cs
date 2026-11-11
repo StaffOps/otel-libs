@@ -24,6 +24,7 @@ namespace StaffOps.OtelHelper.Tests;
 /// response bound; deadline), the batch-size clamp and the value-length warning.
 /// </summary>
 [Collection("EnvVarTests")]
+[ResetGlobalPropagation]
 public class ExporterSettingsTests : IDisposable
 {
     private static readonly string[] Suffixes = { "HEADERS", "TIMEOUT", "COMPRESSION", "CERTIFICATE", "CLIENT_CERTIFICATE", "CLIENT_KEY", "ENDPOINT", "PROTOCOL", "INSECURE" };

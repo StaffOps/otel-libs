@@ -29,7 +29,7 @@ const SCHEMA = {
   export: ['received'],
   sampler: ['sampled', 'attributes'],
   propagation: ['headers'],
-  http_server: ['server_spans', 'requests_counted', 'handler_child_spans', 'scrape'],
+  http_server: ['server_spans', 'server_continues_inbound', 'response_statuses', 'requests_counted', 'handler_child_spans', 'scrape'],
   grpc_server: ['server_spans', 'rpcs_counted', 'call_ok', 'server_span_status', 'server_span_name', 'client_span_name'],
   logging: [],
   metrics_scrape: ['scrape', 'scrape_status'],
@@ -38,7 +38,7 @@ const SCHEMA = {
 };
 const INPUT_SCHEMA = {
   sampler: ['scenario'],
-  http_server: ['requests', 'traceparent', 'child_span'],
+  http_server: ['requests', 'traceparent', 'child_span', 'allow_server_error'],
   grpc_server: ['method'],
   metrics_listener: ['requests'],
 };
@@ -106,7 +106,7 @@ function validateCase(c) {
     if (!(INPUT_SCHEMA[c.kind] ?? []).includes(key)) errs.push(`input key ${JSON.stringify(key)} is not valid for kind ${c.kind}`);
     else if (key === 'requests' && !(Array.isArray(val) && val.every((x) => typeof x === 'string'))) errs.push('input.requests must be a list of strings');
     else if (['method', 'scenario', 'traceparent'].includes(key) && typeof val !== 'string') errs.push(`input.${key} must be a string`);
-    else if (key === 'child_span' && typeof val !== 'boolean') errs.push('input.child_span must be a boolean');
+    else if ((key === 'child_span' || key === 'allow_server_error') && typeof val !== 'boolean') errs.push(`input.${key} must be a boolean`);
   }
   if (c.kind === 'metrics_listener') {
     const reqs = c.input?.requests;

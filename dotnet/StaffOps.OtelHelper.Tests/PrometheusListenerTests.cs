@@ -20,6 +20,7 @@ namespace StaffOps.OtelHelper.Tests;
 /// suite runs without a network.
 /// </summary>
 [Collection("EnvVarTests")]
+[ResetGlobalPropagation]
 public class PrometheusListenerTests : IDisposable
 {
     private const string PromHostEnvVar = "OTEL_EXPORTER_PROMETHEUS_HOST";

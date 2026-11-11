@@ -867,6 +867,27 @@ func countSpans(exp *tracetest.InMemoryExporter, match func(tracetest.SpanStub) 
 
 func isServer(s tracetest.SpanStub) bool { return s.SpanKind == trace.SpanKindServer }
 
+// serverContinuesInbound reports whether there is a SERVER span and every
+// SERVER span is in the trace of the inbound traceparent (fixture field
+// server_continues_inbound; false without an inbound traceparent).
+func serverContinuesInbound(exp *tracetest.InMemoryExporter, traceparent string) bool {
+	parts := strings.Split(traceparent, "-")
+	if len(parts) != 4 {
+		return false
+	}
+	n := 0
+	for _, s := range exp.GetSpans() {
+		if !isServer(s) {
+			continue
+		}
+		if s.SpanContext.TraceID().String() != parts[1] {
+			return false
+		}
+		n++
+	}
+	return n > 0
+}
+
 // serverSpanStatus is the status code of the first SERVER span ("UNSET",
 // "ERROR", "OK"), or "none" without one (fixture field server_span_status).
 func serverSpanStatus(exp *tracetest.InMemoryExporter) string {
@@ -944,14 +965,24 @@ func runHTTPServer(t *testing.T, opts []Option, input map[string]any) map[string
 		_, _ = w.Write([]byte("ok"))
 	}), "parity")
 	tp, _ := input["traceparent"].(string)
+	statuses := []any{}
+	serverError := false
 	for _, p := range input["requests"].([]any) {
 		req := httptest.NewRequest(http.MethodGet, p.(string), nil)
 		if tp != "" {
 			req.Header.Set("traceparent", tp)
 		}
-		h.ServeHTTP(httptest.NewRecorder(), req)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		statuses = append(statuses, float64(rec.Code))
+		serverError = serverError || rec.Code >= 500
+	}
+	snap["response_statuses"] = statuses
+	if allow, _ := input["allow_server_error"].(bool); serverError && !allow {
+		return map[string]any{"adapter_error": "a request answered 5xx (an instrumentation or helper failure, not an expectation); set input.allow_server_error to accept it"}
 	}
 	snap["server_spans"] = countSpans(exp, isServer)
+	snap["server_continues_inbound"] = serverContinuesInbound(exp, tp)
 	snap["handler_child_spans"] = countSpans(exp, func(s tracetest.SpanStub) bool { return s.Name == "handler-child" })
 	snap["scrape"] = scrapeText()
 	snap["requests_counted"] = scrapeCount(httpServerCountRe)

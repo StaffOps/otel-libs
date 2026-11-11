@@ -19,6 +19,7 @@ namespace StaffOps.OtelHelper.Tests;
 /// the wire (<c>export.*_exporter_*</c>, <c>metrics.interval_*</c>, <c>config.disabled_signals_*</c>).
 /// </summary>
 [Collection("EnvVarTests")]
+[ResetGlobalPropagation]
 public sealed class SignalsExportersTests : IDisposable
 {
     private static readonly string[] Variables =

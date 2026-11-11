@@ -1,6 +1,6 @@
 # Tests — StaffOps.OtelHelper (.NET)
 
-1255 tests (xUnit) with the parity runner, 0 failed, 0 warnings (compose `dotnet-tests` on `sdk:8.0`, and on `sdk:10.0` (10.0.403) with `DOTNET_ROLL_FORWARD=Major`, 2026-11-10, task C9 fix round 2); coverlet total `| Total | 98.61% | 96.82% | 99.42% |` (line, branch, method) on `sdk:8.0` and on SDK 10. The total varies by about ±0.1 point between runs; the cause was not investigated.
+1371 tests (xUnit) with the parity runner, 0 failed, 0 warnings (compose `dotnet-tests` on `sdk:8.0`, and on `sdk:10.0` (10.0.403) with `DOTNET_ROLL_FORWARD=Major`, 2026-11-10, task C10 fix round 2); coverlet total `| Total | 98.37% | 96.51% | 99.22% |` (line, branch, method) on `sdk:8.0` and on SDK 10. The total varies by about ±0.1 point between runs; the cause was not investigated.
 
 From `dotnet/`; the repository root is mounted because the parity runner reads
 `parity/cases.json` (and `specs/dotnet-otel-helper/tasks.md`) from it:
@@ -137,20 +137,13 @@ Validate defaults and env var resolution.
 | `StartRootActivity_Creates_Root_Span_Without_Parent` | Clears parent, creates root |
 | `StartRootActivity_Generates_New_TraceId_Each_Call` | Each call generates new traceId |
 
-### DebugTraceStateProcessor
-
-| Test | Description |
-|-------|-----------|
-| `DebugMode_Sets_TraceState_And_Attribute_On_Root_Span` | Sets tracestate + attribute debug=true |
-| `DebugMode_Does_Not_Set_On_Child_Span` | Does not set on child spans |
-
 ### OTEL_HELPER_SAMPLE_RATIO
 
 | Test | Description |
 |-------|-----------|
-| `SampleRatio_EnvVar_Sets_TraceIdRatioBasedSampler` | 0.5 → TraceIdRatioBased |
-| `SampleRatio_Default_Keeps_AlwaysOn` | No env var → AlwaysOn |
-| `SampleRatio_Invalid_EnvVar_Keeps_AlwaysOn` | Invalid value → AlwaysOn |
+| `SampleRatio_EnvVar_Sets_TraceIdRatioBasedSampler` | 0.5 → `ParentBased(TraceIdRatioBased)` (task C10; the name is kept) |
+| `SampleRatio_Default_Is_ParentBased_AlwaysOn` | No env var → `parentbased_always_on` |
+| `SampleRatio_Invalid_EnvVar_Keeps_The_Default` | Invalid value → `parentbased_always_on` (warned; see the C10 section) |
 
 ### Double Registration
 
@@ -186,7 +179,7 @@ Validate defaults and env var resolution.
 
 ## TracingAndOptionsHelperTests
 
-Tracing helpers (`StartRootActivity`, `DebugTraceStateProcessor`) and `TelemetryOptions` helper methods, tested directly (not through `AddOtelHelper`).
+Tracing helpers (`StartRootActivity`) and `TelemetryOptions` helper methods, tested directly (not through `AddOtelHelper`). The debug marker tests moved to the C10 section (`SamplerPropagatorDebugTests`).
 
 ### StartRootActivity
 
@@ -194,13 +187,6 @@ Tracing helpers (`StartRootActivity`, `DebugTraceStateProcessor`) and `Telemetry
 |-------|-----------|
 | `StartRootActivity_Creates_Root_Span_Without_Parent` | Clears parent, creates root |
 | `StartRootActivity_Generates_New_TraceId_Each_Call` | Each call generates a new traceId |
-
-### DebugTraceStateProcessor
-
-| Test | Description |
-|-------|-----------|
-| `DebugMode_Sets_TraceState_And_Attribute_On_Root_Span` | Sets tracestate + attribute debug=true |
-| `DebugMode_Does_Not_Set_On_Child_Span` | Does not set on child spans |
 
 ### IsSignalEnabled
 
@@ -341,15 +327,15 @@ OpenMetrics formats, is checked by `testing/e2e/dotnet-prom-scrape.sh`.
 
 ## SamplerPrecedenceTests
 
-`OTEL_TRACES_SAMPLER` (standard SDK var) precedence over `OTEL_HELPER_SAMPLE_RATIO` (US-2). Verified against the real `Sdk.CreateTracerProviderBuilder()` behavior (empirically confirmed, not assumed — see `ANALISE-PROBLEMAS.md` P9). Uses `[Collection("EnvVarTests")]`.
+`OTEL_TRACES_SAMPLER` (standard SDK var) precedence over `OTEL_HELPER_SAMPLE_RATIO` (US-2). Since task C10 the helper parses the variable and always sets the sampler; the SDK never reads it. Uses `[Collection("EnvVarTests")]`.
 
 | Test | Description |
 |-------|-----------|
-| `HelperVarOnly_AppliesRatio` | Only `OTEL_HELPER_SAMPLE_RATIO` set → ratio applied, `TraceIdRatioBasedSampler` |
-| `StandardVarOnly_Wins` | Only `OTEL_TRACES_SAMPLER=always_off` set → span not sampled |
+| `HelperVarOnly_AppliesRatio` | Only `OTEL_HELPER_SAMPLE_RATIO` set → ratio applied, `ParentBasedSampler` (`parentbased_traceidratio`) |
+| `StandardVarOnly_Wins` | Only `OTEL_TRACES_SAMPLER=always_off` set → `AlwaysOffSampler`, span not sampled |
 | `StandardVarBeatsHelperVar` | Both set → standard var wins, helper ratio ignored |
 | `ExplicitRatioBeatsStandardVar` | Explicit `Sampler` in code wins over the standard env var |
-| `NoEnvNoOverride_DefaultsToAlwaysOn` | Neither set → `AlwaysOnSampler`, span sampled |
+| `NoEnvNoOverride_DefaultsToParentBasedAlwaysOn` | Neither set → `ParentBasedSampler(AlwaysOnSampler)` (ADR-002), span sampled |
 
 ## OtlpProtocolTests
 
@@ -508,3 +494,42 @@ The wire side is the parity fixture: `export.{traces,logs}_exporter_{none,consol
 (`pass`) and `deprecation.disabled_signals_standard_var_set_still_warns` the
 deprecation (`xfail:C16`). The driver reads `exemplar_filter` from the built
 `MeterProviderSdk` by reflection (driver only).
+
+---
+
+## Sampler, propagators and debug (task C10)
+
+`SamplerPropagatorDebugTests` (`[Collection("EnvVarTests")]`; contract R6, R8,
+R9, A20; ADR-002, ADR-006; design D-NET9, N2, N3). Each rule was checked to
+fail its test when the rule is removed (16 mutants, 2026-11-10: bare
+`AlwaysOn` default, bare ratio alias, alias clamped, unknown name or argument
+silent, runtime propagator not replaced or not undone, an application
+propagator replaced, `Activity.Parent == null` as the debug test, no restore
+in `StartRootActivity`, sampler set only when traces are on, a single
+propagator wrapped in a composite (caught by the type test only: the wire is
+the same), no install at resolution, `none` not winning, unsupported tokens
+reported as unknown, the `IConfiguration` sampler warning removed). The
+`IConfiguration` propagator warning was not mutation-checked (two mutant forms
+did not compile); `Value_Only_In_IConfiguration_Is_Not_Read_And_Warns_Once`
+covers it. Fix round 1 (2026-11-10): 9 more mutants, each failing a test — the container's propagator not replaced, `Current` not set, no pass-through for disabled traces, no continuation listener, the disabled-traces sampler, no OpenTelemetry pass-through wrapper, extraction ignoring the settings, Activity baggage injected unfiltered (caught after `Runtime_Propagator_Fields_And_Extraction_Follow_The_Settings` gained an injection check).
+
+| Area | Tests |
+|---|---|
+| Sampler names | `Each_Spec_Name_Builds_Its_Sampler` × 9 (the six names, ARG 0 and 1, case and trim, each decided for a root, a sampled and an unsampled remote parent), `Default_Is_ParentBased_Always_On`, `Unknown_Or_Unsupported_Name_Warns_Once_And_Uses_The_Default` × 5 (unknown, U+0130, the three unsupported spec names) |
+| Sampler argument | `Invalid_Sampler_Argument_Warns_And_Uses_One` × 9 (`2`, `-0.5`, `+0.5`, `1e-1`, `0x1`, `NaN`, `.5`, `0,5`, Arabic-Indic digit), `Sampler_Argument_Is_A_Plain_Decimal` × 3, `Argument_Of_A_Non_Ratio_Sampler_Is_Ignored_Silently` |
+| Ratio alias | `Ratio_Alias_Is_ParentBased`, `Invalid_Ratio_Alias_Warns_And_Is_Ignored_Not_Clamped` × 5, `Ratio_Alias_Is_Not_Read_While_The_Standard_Variable_Is_Set`, `Code_Sampler_And_Ratio_Win_Over_Every_Variable_Without_A_Line` |
+| `IConfiguration` only | `Value_Only_In_IConfiguration_Is_Not_Read_And_Warns_Once` × 3 (`OTEL_TRACES_SAMPLER`, `_ARG`, `OTEL_PROPAGATORS`), `Values_In_The_Environment_Seen_Through_IConfiguration_Give_No_Not_Read_Line`, `Sampler_In_IConfiguration_With_A_Code_Sampler_Gives_No_Line`, `The_Sdk_Does_Not_Apply_A_Sampler_Set_Only_In_IConfiguration` (a host with `always_off` in `IConfiguration` still samples) |
+| Propagator parsing | `Propagators_Are_Parsed_Per_Token` × 15 (exact diagnostic lines: per-token "not supported"/"unknown", `none` combined, `using=` the effective list, case, empty tokens, duplicates, U+0130) |
+| Propagator install | `The_Default_TextMap_Propagator_Is_The_Resolved_List` × 4, `A_Lone_TraceContext_Is_The_Sdk_TraceContext_Propagator`, `Propagators_Are_Installed_Under_Sdk_Disabled` × 2, `Hostless_Sdk_Disabled_Installs_Once_The_Helper_Settings_Resolve` |
+| `HttpClient` on the wire | `HttpClient_Sends_Only_The_Configured_Context` × 4 (default, `tracecontext`, `baggage`, `none`; one `traceparent` at most), `HttpClient_Follows_The_List_Under_Sdk_Disabled` × 2 (a root sends nothing, a continued trace its inbound `traceparent`), `The_Runtime_Propagator_Follows_The_Last_Container`, `An_Application_Runtime_Propagator_Is_Kept_And_Warned_When_It_Matters` × 2 (a local `TcpListener` records the request headers) |
+| Web host, both directions (fix round 1) | `Web_Host_Extracts_And_Injects_Only_The_Configured_Context` × 4 (inbound `traceparent …-01` + `baggage: user.id=42`; the server span's trace id and parent, the headers its `HttpClient` call sends, for `none`, `baggage`, `tracecontext` and the default), `The_Helper_Runtime_Propagator_Wins_In_Every_Host_Registration_Order` (`WebApplication`, `HostBuilder` with `AddOtelHelper` before and after `ConfigureWebHostDefaults`), `An_Application_Registered_Runtime_Propagator_Service_Is_Kept` × 2 (warned when the settings are not the default; fix round 2), `Runtime_Propagator_Fields_And_Extraction_Follow_The_Settings` × 4 (fields, extraction, injection of Activity baggage) |
+| Early handlers (fix round 2) | `HttpClient_Created_Before_Build_Follows_The_List` × 3 (`none`, `tracecontext` with Activity baggage, default), `A_Current_Set_By_The_Application_After_AddOtelHelper_Is_Kept_And_Warned`, `Invalid_Context_Injection_Is_Noise_Only_When_Expected` × 2; `Disabled_Traces_Root_With_Default_Logging_Sends_No_Context` also checks that the SDK's "invalid context" line is not forwarded, and `Pass_Through_Injection_Uses_The_Local_Root_Remote_Parent` that a local explicit-context child carries nothing |
+| Disabled traces (fix round 1) | `Disabled_Traces_Propagate_As_A_No_Op_Tracer` × 8 (env and code disabled signals, `OTEL_SDK_DISABLED` without logging providers, `none`: a root sends nothing, a continued trace its inbound `traceparent` and `tracestate` unchanged, `none` starts a sampled trace), `Disabled_Traces_Root_With_Default_Logging_Sends_No_Context`, `Disabled_Traces_Sampler_Does_Not_Sample_Roots` × 2, `Pass_Through_Injection_Uses_The_Local_Root_Remote_Parent` |
+| Traces off | `Traces_Off_Server_Passes_The_Inbound_Trace_On` × 3: an ASP.NET Core app with `OTEL_TRACES_EXPORTER=none` forwards the inbound trace id and flag (`01` → `01`, `00` → `00`); with an `AlwaysOffSampler` it would forward `00` (the rejected alternative) |
+| Debug marker (N2) | `Debug_Marks_A_Root_Without_Touching_The_TraceState`, `Debug_Marks_A_Remote_Parent_Entry_Span_And_Keeps_Its_TraceState_Once`, `Debug_Does_Not_Mark_An_In_Process_Child`, `Debug_Does_Not_Mark_A_Child_Started_From_An_Explicit_Local_Context`, `Debug_Is_Installed_Only_In_Debug_Mode` (also: never from an inbound `debug=true` tracestate) |
+| `StartRootActivity` (N3) | `StartRootActivity_Restores_The_Previous_Activity_When_Disposed`, `StartRootActivity_Without_A_Previous_Activity_Leaves_None`, `StartRootActivity_That_Creates_Nothing_Leaves_The_Current_Activity`, `StartRootActivity_Restore_Needs_The_Runtime_Field` |
+
+The wire side is the parity fixture: the 37 cases of the C10 group (five added in fix round 1, with the `http_server` field `server_continues_inbound`)
+(`sampler.*`, `debug.*`, `propagation.*`, `config.code_sample_ratio_*`) pass.
+The ParentBased default also makes `http.health_child_span_dropped` (C11 group)
+pass: a child of a dropped health span now follows the drop.

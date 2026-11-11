@@ -322,6 +322,17 @@ def _server_spans(exporter) -> int:
     return sum(1 for s in exporter.get_finished_spans() if s.kind == SpanKind.SERVER)
 
 
+def _server_continues_inbound(exporter, traceparent: str | None) -> bool:
+    """A SERVER span exists and every SERVER span is in the inbound traceparent's trace (fixture field)."""
+    from opentelemetry.trace import SpanKind
+
+    parts = (traceparent or "").split("-")
+    if len(parts) != 4:
+        return False
+    servers = [s for s in exporter.get_finished_spans() if s.kind == SpanKind.SERVER]
+    return bool(servers) and all(format(s.context.trace_id, "032x") == parts[1] for s in servers)
+
+
 def _server_span_status(exporter) -> str:
     """Status code of the first SERVER span ("UNSET", "ERROR", "OK"), or "none"."""
     from opentelemetry.trace import SpanKind
@@ -400,14 +411,20 @@ def kind_http_server(case: dict) -> dict:
             trace.get_tracer("parity").start_span("handler-child").end()
         return "ok"
 
-    client = TestClient(app)
-    for path in case["input"]["requests"]:
-        client.get(path, headers=headers)
+    # A request that fails inside the instrumentation is a 500 to the caller, as on a real server,
+    # not a driver crash (strict xfail needs a snapshot; task A34, 2026-11-10).
+    client = TestClient(app, raise_server_exceptions=False)
+    statuses = [client.get(path, headers=headers).status_code for path in case["input"]["requests"]]
+    snap["response_statuses"] = statuses
     snap["server_spans"] = _server_spans(exporter)
+    snap["server_continues_inbound"] = _server_continues_inbound(exporter, case["input"].get("traceparent"))
     snap["handler_child_spans"] = sum(1 for s in exporter.get_finished_spans() if s.name == "handler-child")
     snap["scrape"] = _scrape()
     snap["requests_counted"] = _scrape_count(r"^http_server(_request)?_duration[a-z_]*_count[{ ]")
     _flush_and_shutdown()
+    if any(code >= 500 for code in statuses) and not case["input"].get("allow_server_error"):
+        # Without this, a failing request could satisfy server_spans: 0 or requests_counted.
+        return {"adapter_error": "a request answered 5xx (an instrumentation or helper failure, not an expectation); set input.allow_server_error to accept it"}
     return snap
 
 

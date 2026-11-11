@@ -28,7 +28,7 @@ namespace StaffOps.OtelHelper
         public const string DebugLevelEnvVar = "OTEL_HELPER_DEBUG_LEVEL";
         /// <summary>Environment variable name: Extra instrumentations; it has no effect in .NET.</summary>
         public const string ExtraInstrumentationEnvVar = "OTEL_HELPER_EXTRA_INSTRUMENTATION";
-        /// <summary>Environment variable name: Trace sample ratio in [0, 1], used only when no sampler is set in code and <see cref="TracesSamplerEnvVar"/> is unset.</summary>
+        /// <summary>Environment variable name: Deprecated trace sample ratio, a plain decimal in [0, 1] giving <c>parentbased_traceidratio</c>; read only when no sampler or ratio is set in code and <see cref="TracesSamplerEnvVar"/> is unset; another value is warned and ignored.</summary>
         public const string SampleRatioEnvVar = "OTEL_HELPER_SAMPLE_RATIO";
         /// <summary>Environment variable name: Comma-separated signals to disable (<c>traces</c>, <c>metrics</c>, <c>logs</c>); see <see cref="DisabledSignals"/>.</summary>
         public const string DisabledSignalsEnvVar = "OTEL_HELPER_DISABLED_SIGNALS";
@@ -42,8 +42,12 @@ namespace StaffOps.OtelHelper
         public const string MetricsExporterEnvVar = "OTEL_METRICS_EXPORTER";
         /// <summary>Environment variable name: Standard OpenTelemetry metric export interval in milliseconds; see <see cref="ExportIntervalMs"/>.</summary>
         public const string MetricExportIntervalEnvVar = "OTEL_METRIC_EXPORT_INTERVAL";
-        /// <summary>Environment variable name: Standard OpenTelemetry sampler variable, applied by the SDK when no sampler is set in code.</summary>
+        /// <summary>Environment variable name: Standard OpenTelemetry sampler (the six spec names, ASCII case-insensitive), parsed by the helper when no sampler or ratio is set in code; unset: <c>parentbased_always_on</c>; another value is warned and the default applies.</summary>
         public const string TracesSamplerEnvVar = "OTEL_TRACES_SAMPLER";
+        /// <summary>Environment variable name: Standard OpenTelemetry ratio of <c>traceidratio</c> and <c>parentbased_traceidratio</c>, a plain decimal in [0, 1]; unset: 1.0; another value is warned and 1.0 applies.</summary>
+        public const string TracesSamplerArgEnvVar = "OTEL_TRACES_SAMPLER_ARG";
+        /// <summary>Environment variable name: Standard OpenTelemetry propagator list: <c>tracecontext</c>, <c>baggage</c>, <c>none</c>; other values are warned and skipped; unset: <c>tracecontext,baggage</c>. Installed also under <c>OTEL_SDK_DISABLED=true</c>.</summary>
+        public const string PropagatorsEnvVar = "OTEL_PROPAGATORS";
         /// <summary>Environment variable name: Standard OpenTelemetry OTLP protocol (<c>grpc</c> or <c>http/protobuf</c>); see <see cref="OtlpProtocol"/>.</summary>
         public const string OtlpProtocolEnvVar = "OTEL_EXPORTER_OTLP_PROTOCOL";
         /// <summary>Environment variable name: Standard OpenTelemetry OTLP compression (<c>gzip</c> or <c>none</c>); see <see cref="Compression"/>.</summary>
@@ -111,7 +115,8 @@ namespace StaffOps.OtelHelper
         public string? LogsEndpoint { get; set; }
 
         /// <summary>
-        /// Debug mode: log level Debug and the <c>debug=true</c> marker on root spans.
+        /// Debug mode: log level Debug and the span attribute <c>debug=true</c> on entry spans (no
+        /// parent, or a remote one); the tracestate is not touched.
         /// Not set: <c>OTEL_HELPER_DEBUG_LEVEL</c>.
         /// </summary>
         public bool? DebugLevel { get; set; }
@@ -129,9 +134,10 @@ namespace StaffOps.OtelHelper
 
         /// <summary>
         /// Trace sampler; wins over <see cref="SampleRatio"/> and the environment. Not set:
-        /// <see cref="SampleRatio"/>, else <c>OTEL_TRACES_SAMPLER</c> (applied by the SDK, which
-        /// reads it from <c>IConfiguration</c>), else <c>OTEL_HELPER_SAMPLE_RATIO</c>, else
-        /// <c>AlwaysOnSampler</c>. Tail sampling in the Collector is preferred.
+        /// <see cref="SampleRatio"/>, else <c>OTEL_TRACES_SAMPLER</c>/<c>_ARG</c> (parsed by the
+        /// helper from the process environment; a value only in <c>IConfiguration</c> is warned and
+        /// not read), else <c>OTEL_HELPER_SAMPLE_RATIO</c>, else <c>parentbased_always_on</c>.
+        /// Tail sampling in the Collector is preferred.
         /// </summary>
         public Sampler? Sampler { get; set; }
 

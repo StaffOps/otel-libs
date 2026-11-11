@@ -15,6 +15,7 @@ namespace StaffOps.OtelHelper.Tests;
 /// Each test verifies that the extension returns the same IServiceCollection instance
 /// (fluent API) and that the TracerProvider resolves successfully after registration.
 /// </summary>
+[ResetGlobalPropagation]
 public class SubpackageExtensionsTests
 {
     private static ServiceCollection CreateServicesWithOtelHelper()

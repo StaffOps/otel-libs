@@ -14,6 +14,7 @@ namespace StaffOps.OtelHelper.Tests;
 /// go/metrics_contract_test.go assert the same table.
 /// </summary>
 [Collection("EnvVarTests")]
+[ResetGlobalPropagation]
 public class MetricsContractTests : IDisposable
 {
     private static readonly string[] ContractEnvVars =
