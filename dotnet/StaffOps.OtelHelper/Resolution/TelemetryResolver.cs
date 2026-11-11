@@ -16,8 +16,8 @@ namespace StaffOps.OtelHelper
     /// </summary>
     internal static class TelemetryResolver
     {
-        /// <summary>Health paths whose spans are not recorded when <see cref="TelemetryOptions.HealthPaths"/> is not set.</summary>
-        internal static readonly string[] DefaultHealthPaths = { "/ping", "/health", "/healthz", "/ready" };
+        /// <summary>Health paths whose spans are not recorded when <see cref="TelemetryOptions.HealthPaths"/> is not set (contract D5).</summary>
+        internal static readonly string[] DefaultHealthPaths = Tracing.HealthMatching.DefaultPaths;
 
         internal static ResolvedTelemetry Resolve(TelemetryOptions code, IOtelHelperDiagnostics diagnostics, IConfiguration? configuration = null)
         {
@@ -104,6 +104,7 @@ namespace StaffOps.OtelHelper
                 ExemplarFilter = ResolveExemplarFilter(diagnostics),
                 PrometheusMetricsPort = code.PrometheusMetricsPort ?? ResolveEnvPort(diagnostics),
                 HealthPaths = code.HealthPaths?.ToArray() ?? DefaultHealthPaths,
+                HttpOptInMetrics = code.HttpOptInMetrics ?? ResolveEnvHttpOptInMetrics(diagnostics),
                 SdkDisabled = sdkDisabled,
                 ForwardSdkDiagnostics = code.ForwardSdkDiagnostics,
                 MetricTemporality = ResolveTemporality(configuration, diagnostics, out var temporalityConfigured),
@@ -888,6 +889,28 @@ namespace StaffOps.OtelHelper
                 diagnostics.ReportOnce("unused:TelemetryOptions.ExtraInstrumentation", DiagnosticLevel.Warn,
                     "TelemetryOptions.ExtraInstrumentation has no effect in .NET; add the opt-in packages (StaffOps.OtelHelper.Sql, .AWS, .Redis) instead");
             }
+        }
+
+        /// <summary>
+        /// <c>OTEL_HELPER_HTTP_OPT_IN_METRICS</c> (contract D1 row "HTTP opt-in metrics", A30; grammar
+        /// of row "Boolean env value"): <c>true</c> (ASCII case-insensitive, contract trim set) is true;
+        /// unset or blank is false; anything other than <c>true</c>/<c>false</c> warns and is false.
+        /// Read only when the code option is not set.
+        /// </summary>
+        private static bool ResolveEnvHttpOptInMetrics(IOtelHelperDiagnostics diagnostics)
+        {
+            if (ContractText.NonBlank(Env(TelemetryOptions.HttpOptInMetricsEnvVar)) is not { } raw)
+            {
+                return false;
+            }
+
+            var lower = ContractText.AsciiLower(raw);
+            if (lower is not ("true" or "false"))
+            {
+                WarnInvalidEnv(diagnostics, TelemetryOptions.HttpOptInMetricsEnvVar, raw, "not a boolean (true or false), using false");
+            }
+
+            return lower == "true";
         }
 
         private static void WarnInvalidEnv(IOtelHelperDiagnostics diagnostics, string variable, string value, string why)

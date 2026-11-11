@@ -3454,7 +3454,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C11",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -3480,7 +3480,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C11",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -3584,7 +3584,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C11",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -3605,7 +3605,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C11",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -3627,7 +3627,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C11",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -3650,7 +3650,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C11",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -3686,7 +3686,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C11",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -3850,7 +3850,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C11",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -3876,7 +3876,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C11",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -3898,7 +3898,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C11",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -3940,7 +3940,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C11",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -4076,7 +4076,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C11",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },

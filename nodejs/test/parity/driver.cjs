@@ -558,17 +558,27 @@ async function grpcCall(grpc, target) {
     server.bindAsync('127.0.0.1:0', grpc.ServerCredentials.createInsecure(), (err, p) => (err ? reject(err) : resolve(p)));
   });
   const client = new grpc.Client(`127.0.0.1:${port}`, grpc.credentials.createInsecure());
+  // A health call comes from an uninstrumented client (kubelet, grpc_health_probe): tracing is
+  // suppressed for it, so no client span and no traceparent reach the server and only the
+  // server-side health drop can pass the grpc.health_*_no_span cases (C11 fix round 2, measured:
+  // with the instrumented client they passed on the unsampled parent alone). Other calls keep the
+  // instrumented client, whose CLIENT span the snapshot reports.
+  const { context } = api();
+  const callContext = target.startsWith('/grpc.health.v1.Health/')
+    ? require('@opentelemetry/core').suppressTracing(context.active())
+    : context.active();
   try {
     if (target.endsWith('/Watch')) {
       await new Promise((resolve, reject) => {
-        const call = client.makeServerStreamRequest(target, identity, identity, Buffer.alloc(0));
+        const call = context.with(callContext, () => client.makeServerStreamRequest(target, identity, identity, Buffer.alloc(0)));
         call.on('data', () => {});
         call.on('end', resolve);
         call.on('error', reject);
       });
     } else {
       await new Promise((resolve, reject) => {
-        client.makeUnaryRequest(target, identity, identity, Buffer.alloc(0), (err) => (err ? reject(err) : resolve()));
+        context.with(callContext, () =>
+          client.makeUnaryRequest(target, identity, identity, Buffer.alloc(0), (err) => (err ? reject(err) : resolve())));
       });
     }
   } finally {

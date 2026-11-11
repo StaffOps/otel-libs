@@ -102,7 +102,7 @@ namespace StaffOps.OtelHelper
                 lease.Secrets = lease.Secrets.Concat(resolved.HeaderTexts.SelectMany(SdkTextSanitizer.HeaderSecrets)).ToArray();
                 if (!resolved.IsSignalEnabled("metrics") || resolved.ResolvedMetricExporters().Count == 0)
                 {
-                    lease.QuietMeters = new[] { resolved.ServiceName }.Concat(resolved.AdditionalMeters).ToArray();
+                    lease.QuietMeters = new[] { resolved.ServiceName, resolved.ServiceName + ".*" }.Concat(resolved.AdditionalMeters).ToArray();
                 }
 
                 lease.InvalidContextExpected = PropagationSettings.From(resolved).PassThroughOnly;
@@ -193,6 +193,10 @@ namespace StaffOps.OtelHelper
                     var lease = _services.GetRequiredService<SdkDiagnosticsForwarder.Lease>();
                     lease.HasLifetime = true;
                     lifetime.ApplicationStopping.Register(() => lease.Stopping = true);
+
+                    // O7 (b): gRPC endpoints exist once the pipeline is built, at ApplicationStarted.
+                    lifetime.ApplicationStarted.Register(() => GrpcServerTracingCheck.Run(
+                        _services, _services.GetRequiredService<ResolvedTelemetry>(), _services.GetRequiredService<IOtelHelperDiagnostics>()));
                 }
 
                 return System.Threading.Tasks.Task.CompletedTask;

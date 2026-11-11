@@ -112,7 +112,11 @@ namespace StaffOps.OtelHelper
 
         public required int PrometheusMetricsPort { get; init; }
 
+        /// <summary>The HTTP health paths as configured (code, else the contract default list); matched normalized (<see cref="Tracing.HealthMatching"/>).</summary>
         public required IReadOnlyList<string> HealthPaths { get; init; }
+
+        /// <summary>The HTTP opt-in metrics switch (code &gt; <c>OTEL_HELPER_HTTP_OPT_IN_METRICS</c> &gt; false; A30).</summary>
+        public bool HttpOptInMetrics { get; init; }
 
         /// <summary><c>OTEL_SDK_DISABLED</c> as the SDK reads it (<c>IConfiguration</c>).</summary>
         public required bool SdkDisabled { get; init; }

@@ -611,6 +611,15 @@ A5 validation rulings (2026-10-28):
   `instrument_client()`/transports the user builds later — documented); health
   paths may not contain commas (they would split the upstream list). Client exclusion drops
   the client span and metric (upstream behavior) — documented.
+  *Note 2026-11-10 (.NET C11 fix round 1):* .NET drops the client span and, like Go's
+  `NewHTTPTransport`, sends no context on a health request (the helper's HttpClient filter
+  removes the headers the instrumentation injected and its runtime propagator writes none);
+  it still counts the call in `http.client.request.duration`, because the `System.Net.Http`
+  meter has no path attribute to filter on (README gap row).
+  *Note 2026-11-10 (.NET C11 fix round 2):* only what the propagators wrote is removed (a
+  `traceparent`/`Request-Id` naming the client activity, its `tracestate`); headers the
+  application set and propagated baggage are kept. An unsampled client call (the filter does
+  not run) keeps `traceparent …-00`, which names no exported span.
 - gRPC health matching is the whole service in both languages: method name
   (leading `/` stripped) starts with `grpc.health.v1.Health/` (covers Check,
   Watch and List).

@@ -321,9 +321,9 @@ docker compose -f testing/docker-compose.yml run --rm -e PARITY_ONLY=export.grpc
     `LoggerFilterOptions.MinLevel`; `metric_exporters` is `[]` when metrics are
     disabled or `OTEL_SDK_DISABLED` is true, which the helper reads from
     `IConfiguration` as the SDK does (the providers expose no public flag).
-  - `prometheus_metrics_host` and `http_opt_in_metrics` are omitted: the helper
-    has neither setting yet (it binds the IPv4-only `+` prefix, whatever the
-    environment says; tasks C12 and C11).
+  - `prometheus_metrics_host` is omitted: the helper has no such setting yet
+    (it binds the IPv4-only `+` prefix, whatever the environment says; task
+    C12). `http_opt_in_metrics` is the resolved `HttpOptInMetrics` (since C11).
   - The helper has no mounted `/metrics` handler (D-NET11), so `scrape` comes from the
     helper's own listener: the driver sets `OTEL_HELPER_METRICS_PORT` to a free
     port only when the case sets no port (env or code) and scrapes the resolved
@@ -332,13 +332,42 @@ docker compose -f testing/docker-compose.yml run --rm -e PARITY_ONLY=export.grpc
   - `grpc_server` sets
     `OTEL_DOTNET_EXPERIMENTAL_ASPNETCORE_ENABLE_GRPC_INSTRUMENTATION=true`
     (O7 (b)) and serves raw-byte methods (no protoc). Requests to the test
-    servers go over plain sockets: the helper instruments `HttpClient`.
+    servers go over plain sockets: the helper instruments `HttpClient`. The
+    gRPC client is the instrumented `Grpc.Net.Client` in the same process, so
+    a health call's dropped client span sends an unsampled parent: the
+    `grpc.health_*_no_span` cases pass through the client filter and the
+    ParentBased default together; the server filter alone is covered by
+    `HttpGrpcInstrumentationTests` (an uninstrumented client).
+    *Superseded 2026-11-10 (C11 fix round 1):* `grpc.health.v1.Health/*` calls now
+    come from an **uninstrumented** client (`SuppressInstrumentationScope` and a
+    `SocketsHttpHandler` with no `ActivityHeadersPropagator`: no client span, no
+    `traceparent`), as a kubelet or `grpc_health_probe` call does, so the
+    `grpc.health_*_no_span` cases need the server filter (checked: with the 0.2.x
+    server filter both fail). Other methods keep the instrumented client, whose
+    CLIENT span the snapshot reports. The HTTP counterpart already exists: the
+    `http_server` requests go over a plain socket without `traceparent` unless the
+    case sets one.
+    *Note 2026-11-10 (C11 fix round 2, measured):* with the server-side gRPC health
+    drop neutralized in a scratch copy, Python fails both `grpc.health_*_no_span`
+    cases (strong: its filtered client injects nothing), Node.js passed them on the
+    unsampled parent alone (weak). The Node.js driver now makes `grpc.health.v1.Health/*`
+    calls under `suppressTracing` (`@opentelemetry/core`): no client span, no
+    `traceparent`; re-measured, both cases then fail without the server drop. Go needs
+    no change (its filtered otelgrpc client injects nothing).
+    *Note 2026-11-10 (C11 fix round 1, coordinator decision):* the .NET driver
+    enables `OTEL_DOTNET_EXPERIMENTAL_ASPNETCORE_ENABLE_GRPC_INSTRUMENTATION`, so
+    `grpc.server_span_name_semconv` and `grpc.server_not_found_status_unset` describe
+    a correctly configured app (O7 (b): the app sets the key; the examples do). A
+    default app without the key emits HTTP-shaped server spans (`POST /pkg.Svc/Method`,
+    status from HTTP 200) — documented in `dotnet/README.md` and covered by the unit
+    tests `Without_The_Key_Grpc_Server_Spans_Are_Http_Shaped` and
+    `Mapped_Grpc_Endpoints_Without_The_Key_Warn_Once`.
 - **`code` keys.** Mapped to `TelemetryOptions` members (`CodeMapper`); since
   task C5 every fixture key has one (`traces_endpoint` → `TracesEndpoint`,
   `insecure`, `compression`, `sample_ratio`, `health_paths`,
   `export_interval_ms` as `long`, `environment` as the string), so no case is
   `skip:C5-no-api` any more; a key without a member is an adapter error.
-  `http_opt_in_metrics` is accepted without effect (no member until C11).
+  `http_opt_in_metrics` maps to `HttpOptInMetrics` (since C11).
   .NET errors name the option in its C# spelling (`TelemetryOptions.SampleRatio`),
   which some fixture regexes (`sample_ratio|sampleRatio`, `otel_endpoint|otelEndpoint`,
   the substring `insecure`) do not match yet: those cases stay `xfail:C<n>`.

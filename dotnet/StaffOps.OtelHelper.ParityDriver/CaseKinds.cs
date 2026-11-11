@@ -233,8 +233,9 @@ internal static class CaseKinds
             {
                 snap["exemplar_filter"] = exemplarFilter;
             }
-            // prometheus_metrics_host and http_opt_in_metrics are omitted: the helper has no such
-            // setting yet (it binds IPv4 "+" whatever the environment says); tasks C12 and C11.
+            snap["http_opt_in_metrics"] = r.HttpOptInMetrics;
+            // prometheus_metrics_host is omitted: the helper has no such setting yet (it binds
+            // IPv4 "+" whatever the environment says); task C12.
         }
 
         await ShutdownAsync(run);
@@ -605,7 +606,18 @@ internal static class CaseKinds
         var port = BoundPort(run.Host);
         try
         {
-            using var channel = GrpcChannel.ForAddress($"http://127.0.0.1:{port}");
+            // A health call comes from an uninstrumented client (kubelet, grpc_health_probe): no client
+            // span and no traceparent, so the server filter alone must drop it (C11 fix round 1; Go's
+            // filtered otelgrpc client injects nothing either). Other calls use the instrumented client,
+            // whose CLIENT span the snapshot reports.
+            var health = target.StartsWith("/grpc.health.v1.Health/", StringComparison.Ordinal);
+            using var suppressed = health ? OpenTelemetry.SuppressInstrumentationScope.Begin() : null;
+            using var channel = health
+                ? GrpcChannel.ForAddress($"http://127.0.0.1:{port}", new GrpcChannelOptions
+                {
+                    HttpHandler = new SocketsHttpHandler { ActivityHeadersPropagator = null },
+                })
+                : GrpcChannel.ForAddress($"http://127.0.0.1:{port}");
             await GrpcMethods.InvokeAsync(channel.CreateCallInvoker(), target);
             snap["call_ok"] = true;
         }

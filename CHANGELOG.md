@@ -824,6 +824,24 @@ emitted telemetry.
    `OTEL_DOTNET_EXPERIMENTAL_METRICS_EXEMPLAR_FILTER_HISTOGRAMS` has no effect
    (the helper always sets a filter; 0.2.x did too).
 
+14. **Health paths, HTTP opt-in metrics and meters** (task C11, contract R7,
+   D5, A30; requirement DN5, DN7, N5). `TelemetryOptions.HealthPaths` replaces
+   the default list (an empty list traces every HTTP path); each path must now
+   be ASCII, start with `/` and have no `?`, `#` or `,`, or host start fails
+   naming `TelemetryOptions.HealthPaths item #<n>` (0.2.x had no such option).
+   New `bool? HttpOptInMetrics` (environment `OTEL_HELPER_HTTP_OPT_IN_METRICS`,
+   constant `TelemetryOptions.HttpOptInMetricsEnvVar`); see telemetry row 20.
+   `AdditionalMeters` (added in C5) is now documented with the
+   `<ServiceName>.*` rule: a `Meter` named `<ServiceName>` or
+   `<ServiceName>.<anything>` is exported without listing it (0.2.x exported
+   only a `Meter` named exactly `ServiceName`; other meters needed
+   `ConfigureOpenTelemetryMeterProvider(b => b.AddMeter(…))`, which still works).
+   Apps with gRPC services set
+   `OTEL_DOTNET_EXPERIMENTAL_ASPNETCORE_ENABLE_GRPC_INSTRUMENTATION=true` in
+   their configuration (environment or `appsettings.json`) to get RPC server
+   spans; the helper does not set it and warns once when gRPC endpoints are
+   mapped without it (owner decision O7 (b)).
+
 **Telemetry part.** Each row: before (0.2.x) → after, and what to check in
 dashboards and alerts.
 
@@ -1233,6 +1251,33 @@ dashboards and alerts.
    an app that registers its own `DistributedContextPropagator` service or
    sets `DistributedContextPropagator.Current` keeps it (one warning when the
    configuration needs another).
+
+20. **HTTP and gRPC instrumentation and health** (task C11, contract R7, R10,
+   D5, A22, A30; requirement DN7; design D-NET8). Before (0.2.x) → after:
+
+   | Input | 0.2.x | 0.3 (this branch) |
+   |---|---|---|
+   | Health list | `/ping /health /healthz /ready`, matched against `HttpRequest.Path` case-insensitively, nothing else (no trailing-slash or encoding handling) | the contract list `/health /healthz /ready /readyz /live /livez /ping /metrics`, or `TelemetryOptions.HealthPaths`; the raw request path is cut at `?`/`#`, percent-decoded (a malformed escape keeps the raw path), ASCII-lowercased and stripped of trailing slashes before the exact match: `/Health/`, `/healthz?x=1`, `/%68ealth` and `/HEALTH%2f` get no span; `/users/ping` and `/healthcare` are still traced |
+   | Health requests in metrics | counted in `http.server.request.duration` | unchanged (the framework meter does not see the filter); children of a dropped request are dropped under the ParentBased default (C10) |
+   | HttpClient calls to a health path | client span dropped for the four 0.2.x paths, matched on the escaped `AbsolutePath` | same list and normalization as the server; `/grpc.health.v1.Health/*` too; `http.client.request.duration` still counts them (the `System.Net.Http` meter has no path to filter on) |
+   | gRPC client call | two CLIENT spans: GrpcNetClient's `pkg.Svc/Method` and HttpClient's `POST` under it | one CLIENT span, `pkg.Svc/Method` (`SuppressDownstreamInstrumentation`); the server span is its child; calls to `grpc.health.v1.Health/*` get no client span |
+   | gRPC server call | no gRPC server tracing: HTTP-shaped `POST /pkg.Svc/Method` spans, status from the HTTP status (200 also for a failed RPC); `grpc.health.v1.Health/*` traced | unchanged without the key; with `OTEL_DOTNET_EXPERIMENTAL_ASPNETCORE_ENABLE_GRPC_INSTRUMENTATION=true` in the app configuration, RPC spans `pkg.Svc/Method` with `rpc.system.name`, `rpc.method`, `rpc.response.status_code`, ERROR only for the six A22 codes (upstream); `grpc.health.v1.Health/*` (Check, Watch, List) gets no server span whatever the key and the health list; one warning when gRPC endpoints are mapped without the key |
+   | gRPC calls in metrics | counted in `http.server.request.duration` with `http.response.status_code=200`, also when the RPC fails | unchanged: no RPC metric exists in the .NET instrumentations (`grpc.health_*_counted_in_metrics` stay `skip:no-upstream-rpc-metrics`) |
+   | HTTP opt-in metrics | `http.server.active_requests`, `http.client.active_requests`, `http.client.open_connections`, `http.client.connection.duration`, `http.client.request.time_in_queue` exported by default | dropped unless `OTEL_HELPER_HTTP_OPT_IN_METRICS=true` or `HttpOptInMetrics = true` (one INFO line when on); only the `Microsoft.AspNetCore.Hosting` and `System.Net.Http` instruments, so an app meter's instrument of the same name is kept; `DisabledMetrics` still drops one; .NET has no body-size instrument |
+   | `Meter` named `<ServiceName>.<x>` | not exported | exported (N5) |
+
+   Check: dashboards or alerts on `http_server_active_requests`,
+   `http_client_open_connections`, `http_client_active_requests`,
+   `http_client_connection_duration_seconds` or
+   `http_client_request_time_in_queue_seconds` go empty until the switch is
+   set; spanmetrics and service-graph series of the HttpClient `POST` child of
+   gRPC calls disappear (duplicate `http.client.*` span series, a leaf CLIENT
+   edge); probes on `/live`, `/livez`, `/readyz`, `/metrics` and the
+   trailing-slash and encoded forms no longer produce spans; gRPC server span
+   names, `span_name` and `status_code` change only for apps that set the key
+   (a fleet can show both shapes); a health-path `HttpClient` call made inside
+   a sampled request still sends a `traceparent` with the sampled flag cleared
+   (the filtered activity's), as 0.2.x did.
 
 ### Collector / platform prerequisites (before rolling 0.3.0 out)
 
@@ -1663,6 +1708,79 @@ Phase C work on this branch (no .NET release yet; the first will be
   `propagation.none_server_ignores_inbound_traceparent`, which also expects
   `[200]`). Suite 1371/1371 on `sdk:8.0` and SDK 10.0.403 roll-forward (line
   coverage 98.37%).
+- **.NET: HTTP/gRPC instrumentation and health (task C11, contract R7, R10,
+  D5, A22, A30; requirement DN5, DN7; design D-NET8, N1, N5; implemented
+  2026-11-10, awaiting review).** New `Tracing/HealthMatching.cs`: the
+  contract default list, the D5 normalization (cut at `?`/`#` on the raw
+  target, strict percent-decoding — a malformed escape or non-UTF-8 bytes keep
+  the raw path —, cut again, ASCII lowercase, trailing slashes) and the whole
+  `grpc.health.v1.Health/` service, used by the ASP.NET Core `Filter` (on the
+  raw request target, `IHttpRequestFeature.RawTarget`, since Kestrel keeps
+  `%2F` encoded in `HttpRequest.Path`), the HttpClient
+  `FilterHttpRequestMessage` and the gRPC client `Filter`.
+  `TelemetryOptions.HealthPaths` is validated as in Go, Python and Node.js.
+  `GrpcClientTraceInstrumentationOptions.SuppressDownstreamInstrumentation =
+  true` gives one CLIENT span per gRPC call (measured with HTTP
+  instrumentation 1.20.1: the HttpClient `POST` span is gone and the server
+  span's parent is the gRPC client span). New `Tracing/GrpcServerTracingCheck.cs`
+  (O7 (b)): at `ApplicationStarted`, when traces are exported, gRPC endpoints
+  are mapped (endpoint metadata `Grpc.AspNetCore.Server.GrpcMethodMetadata`,
+  by type name; the name verified at Grpc.AspNetCore.Server 2.62.0) and
+  `OTEL_DOTNET_EXPERIMENTAL_ASPNETCORE_ENABLE_GRPC_INSTRUMENTATION` in the app
+  `IConfiguration` is not `true` (`bool.TryParse`, as the instrumentation
+  reads it), one warning. `OTEL_HELPER_HTTP_OPT_IN_METRICS` / `HttpOptInMetrics`
+  (A30): a view drops the opt-in names of the `Microsoft.AspNetCore.Hosting`
+  and `System.Net.Http` meters unless the switch is on (one INFO line then).
+  Meters `<ServiceName>.*` are subscribed (the SDK wildcard; also dropped by
+  the idle view and quiet in the SDK "not subscribed" filter). The parity
+  driver maps the code key `http_opt_in_metrics` and writes the snapshot field
+  `http_opt_in_metrics`; it already registered the `parity` meter through
+  `AdditionalMeters`. The `dotnet-backend` example sets the O7 key in its
+  `appsettings.json`. Parity: the 12 `xfail:C11` cases pass (C11 group: 25
+  `pass`, the two `no-upstream-rpc-metrics` and three
+  `no-upstream-dotnet-http-body-size` skips stay). Fixture: 382 cases; .NET
+  332 `pass`, 36 `xfail:C<n>` (C12 26, C13 3, C16 7), 14 known-difference
+  skips; only `status.dotnet` changed. Tests: `HttpGrpcInstrumentationTests`
+  (114 cases); 11 mutants of the new rules each fail a test. Suite 1485/1485
+  on `sdk:8.0` and SDK 10.0.403 roll-forward (line coverage 98.44%).
+- **.NET: C11 fix round 1 (2026-11-10).** An HttpClient call to a health path
+  is sent without trace context, as Go's `NewHTTPTransport` (before, the
+  downstream received `traceparent …-01` naming a span that is never
+  exported): the HttpClient filter removes the context headers the
+  instrumentation injected, and the helper's runtime propagator writes none
+  for such a request. This corrects the last sentence of .NET migration
+  telemetry row 20 ("still sends a `traceparent` with the sampled flag
+  cleared"): the measured header was sampled (`-01`), and nothing is sent now.
+  The server filter decodes an absolute-form target once (`PathBase + Path` is
+  already decoded: `GET http://host/%2568ealth` is traced). The .NET parity
+  driver makes `grpc.health.v1.Health/*` calls from an uninstrumented client
+  (no client span, no `traceparent`, as a kubelet or `grpc_health_probe`), so
+  `grpc.health_check_no_span` and `grpc.health_watch_no_span` need the server
+  filter; the driver keeps enabling the O7 key, so the `grpc.server_*` cases
+  describe a correctly configured app. Documented: options registered after
+  `AddOtelHelper()` replace the helper's filters (HOW-TO §9); .NET framework
+  series beyond the two HTTP durations and gRPC calls counted as HTTP (root
+  README gap rows); the gRPC key and metadata type in the release skill's .NET
+  SDK-bump checklist. Fixture unchanged. Suite 1498/1498 on `sdk:8.0` (line
+  coverage 98.49%) and SDK 10.0.403 roll-forward (98.42%); 3 more mutants each
+  fail a test.
+- **.NET: C11 fix round 2 (2026-11-10).** The HttpClient health filter
+  removes only the trace context the propagators wrote (a `traceparent` or
+  `Request-Id` naming the client activity, a `tracestate` equal to its trace
+  state): an application's own `baggage` or `tracestate` on a health request
+  is kept, and the runtime propagator still writes baggage on it (round 1
+  removed every context header). With traces disabled the pass-through
+  propagator writes no trace context on a health request either. This narrows
+  round 1's statement to "a sampled client call": an unsampled health call
+  keeps `traceparent …-00` (it names no exported span). The health list the
+  runtime propagator checks is process-wide (the last container wins), as the
+  C10 propagation settings. Parity drivers: the Node.js driver makes
+  `grpc.health.v1.Health/*` calls under `suppressTracing`, so
+  `grpc.health_check_no_span` and `grpc.health_watch_no_span` need the
+  server-side drop in Node.js too (measured: they passed on the unsampled parent
+  alone before; Python already needed it). Fixture unchanged. Suite 1502/1502
+  on `sdk:8.0` (line coverage 98.39%) and SDK 10.0.403 roll-forward (98.31%);
+  3 more mutants each fail a test.
 
 ### Breaking — telemetry output changes (dashboards/alerts)
 

@@ -30,17 +30,52 @@ namespace StaffOps.OtelHelper.Metrics
                 .AddPrometheusHttpListener();
 
         /// <summary>
-        /// The meters the helper subscribes or instruments: the service meter, the additional
-        /// meters, and the ASP.NET Core, <c>System.Net.*</c>, runtime and OpenTelemetry
-        /// instrumentation meters.
+        /// The meters the helper subscribes or instruments: the service meter and its children
+        /// (<c>&lt;ServiceName&gt;.*</c>, N5), the additional meters, and the ASP.NET Core,
+        /// <c>System.Net.*</c>, runtime and OpenTelemetry instrumentation meters.
         /// </summary>
         internal static bool IsHelperInstrumentation(string meterName, ResolvedTelemetry resolved)
-            => meterName == resolved.ServiceName
+            => IsServiceMeter(meterName, resolved.ServiceName)
                 || resolved.AdditionalMeters.Contains(meterName)
                 || meterName.StartsWith("Microsoft.AspNetCore", StringComparison.Ordinal)
                 || meterName.StartsWith("System.Net.", StringComparison.Ordinal)
                 || meterName == "System.Runtime"
                 || meterName.StartsWith("OpenTelemetry.Instrumentation.", StringComparison.Ordinal);
+
+        /// <summary>
+        /// The service meter <c>&lt;ServiceName&gt;</c> or one of its children <c>&lt;ServiceName&gt;.*</c>
+        /// (DN5, N5), as the SDK's <c>AddMeter</c> wildcard matches them (<c>svc.</c> included).
+        /// </summary>
+        internal static bool IsServiceMeter(string meterName, string serviceName)
+            => meterName == serviceName || meterName.StartsWith(serviceName + ".", StringComparison.Ordinal);
+
+        /// <summary>
+        /// The HTTP metrics semantic conventions v1.43 make opt-in (contract D1 row "HTTP opt-in
+        /// metrics", A30): the list Go and Python drop, plus the .NET-only
+        /// <c>http.client.request.time_in_queue</c>. Of these, .NET 8 records the active requests and
+        /// the three connection metrics; the body sizes and the old-generation sizes have no instrument.
+        /// </summary>
+        internal static readonly string[] HttpOptInMetricNames =
+        {
+            "http.server.active_requests", "http.client.active_requests",
+            "http.server.request.body.size", "http.server.response.body.size",
+            "http.client.request.body.size", "http.client.response.body.size",
+            "http.server.request.size", "http.server.response.size",
+            "http.client.request.size", "http.client.response.size",
+            "http.client.open_connections", "http.client.connection.duration",
+            "http.client.request.time_in_queue",
+        };
+
+        /// <summary>
+        /// The framework meters the helper subscribes for HTTP (ASP.NET Core 8 <c>AddAspNetCoreInstrumentation</c>
+        /// and <c>AddHttpClientInstrumentation</c>): the opt-in view is scoped to them, so an
+        /// application meter's instrument of the same name is kept (as Go and Python scope theirs).
+        /// </summary>
+        internal static readonly string[] HttpInstrumentationMeters = { "Microsoft.AspNetCore.Hosting", "System.Net.Http" };
+
+        /// <summary>Whether the opt-in view drops the instrument <paramref name="instrumentName"/> of <paramref name="meterName"/>.</summary>
+        internal static bool IsHttpOptInInstrument(string meterName, string instrumentName)
+            => Array.IndexOf(HttpInstrumentationMeters, meterName) >= 0 && Array.IndexOf(HttpOptInMetricNames, instrumentName) >= 0;
 
         /// <summary>Name of the OTLP exporter and reader options of the histogram-aggregation path.</summary>
         internal const string HistogramPathName = "StaffOps.OtelHelper.OtlpMetrics";
@@ -320,10 +355,22 @@ namespace StaffOps.OtelHelper.Metrics
                 return;
             }
 
-            builder.AddMeter(resolved.ServiceName);
+            // The service meter and its children (N5: <ServiceName>.* is a wildcard of the SDK's AddMeter).
+            builder.AddMeter(resolved.ServiceName, resolved.ServiceName + ".*");
             foreach (var meter in resolved.AdditionalMeters)
             {
                 builder.AddMeter(meter);
+            }
+
+            // HTTP opt-in metrics (A30): off, the framework meters keep only the two durations.
+            if (!resolved.HttpOptInMetrics)
+            {
+                builder.AddView(instrument => IsHttpOptInInstrument(instrument.Meter.Name, instrument.Name) ? MetricStreamConfiguration.Drop : null);
+            }
+            else
+            {
+                sp.GetRequiredService<IOtelHelperDiagnostics>().ReportOnce("info:http-opt-in-metrics", DiagnosticLevel.Info,
+                    "HTTP opt-in metrics on: ASP.NET Core and System.Net.Http record the active requests and the client connection metrics, and have no body-size instruments");
             }
 
             // OTEL_METRICS_EXPORTER=console (or the alias logging): the SDK console exporter on a

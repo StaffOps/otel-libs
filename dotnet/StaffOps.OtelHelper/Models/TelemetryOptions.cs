@@ -58,6 +58,8 @@ namespace StaffOps.OtelHelper
         public const string ConfigFileEnvVar = "OTEL_CONFIG_FILE";
         /// <summary>Environment variable name: Deprecated name of <see cref="ConfigFileEnvVar"/>; not supported (warned, ignored).</summary>
         public const string ExperimentalConfigFileEnvVar = "OTEL_EXPERIMENTAL_CONFIG_FILE";
+        /// <summary>Environment variable name: HTTP opt-in metrics switch (<c>true</c>/<c>false</c>, ASCII case-insensitive; another value warns and means <c>false</c>); see <see cref="HttpOptInMetrics"/>.</summary>
+        public const string HttpOptInMetricsEnvVar = "OTEL_HELPER_HTTP_OPT_IN_METRICS";
 
         internal const int DefaultExportIntervalMs = 30_000;
         internal const int DefaultExportTimeoutMs = 10_000;
@@ -235,10 +237,28 @@ namespace StaffOps.OtelHelper
         public string? Compression { get; set; }
 
         /// <summary>
-        /// HTTP paths whose server and client spans are not recorded. Not set: the helper's
-        /// default health paths.
+        /// HTTP paths whose server and client spans are not recorded, replacing the default list
+        /// <c>/health /healthz /ready /readyz /live /livez /ping /metrics</c>; an empty list traces
+        /// every HTTP path. Each path must be ASCII, start with <c>/</c> and have no <c>?</c>,
+        /// <c>#</c> or <c>,</c>; otherwise host start fails. A request matches when its path, cut
+        /// at the query, percent-decoded, ASCII-lowercased and without trailing slashes, equals a
+        /// listed path normalized the same way (<c>/Health/?x=1</c> and <c>/%68ealth</c> are
+        /// <c>/health</c>; <c>/users/ping</c> is not <c>/ping</c>). Health requests are still counted
+        /// in <c>http.server.request.duration</c>. The <c>grpc.health.v1.Health</c> service is
+        /// always dropped, whatever this list holds.
         /// </summary>
         public List<string>? HealthPaths { get; set; }
+
+        /// <summary>
+        /// Record the HTTP metrics semantic conventions make opt-in: <c>http.server.active_requests</c>,
+        /// <c>http.client.active_requests</c>, <c>http.client.open_connections</c>,
+        /// <c>http.client.connection.duration</c> and the .NET-only <c>http.client.request.time_in_queue</c>
+        /// (ASP.NET Core and <c>System.Net.Http</c> record no body sizes). <c>false</c>: only
+        /// <c>http.server.request.duration</c> and <c>http.client.request.duration</c>. Not set:
+        /// <c>OTEL_HELPER_HTTP_OPT_IN_METRICS</c>, else <c>false</c>. An application meter's own
+        /// instrument of one of these names is kept; <see cref="DisabledMetrics"/> still drops one.
+        /// </summary>
+        public bool? HttpOptInMetrics { get; set; }
 
         /// <summary>
         /// Forward OpenTelemetry SDK warnings and errors (its <c>EventSource</c> events) to the

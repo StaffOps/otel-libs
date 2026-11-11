@@ -779,6 +779,21 @@ the runtime's shared framework, not the target framework — C1b observability
 LOW-4). **Alternatives**: sampler wrapper now (rejected: no path
 on net8).
 
+> **Note 2026-11-10 (C11, implemented, awaiting review).** The two `[TO VERIFY C11]` items: (1) the gRPC
+> endpoint metadata type is `Grpc.AspNetCore.Server.GrpcMethodMetadata` at the pinned Grpc.AspNetCore.Server 2.62.0
+> (test `The_Grpc_Metadata_Type_Name_Is_The_Pinned_One`); (2) `SuppressDownstreamInstrumentation = true` works with
+> OpenTelemetry.Instrumentation.Http 1.20.1: one CLIENT span per gRPC call, and the server span's parent is the gRPC
+> client span (test `One_Client_Span_Per_Grpc_Call_And_The_Server_Continues_It`), so the `Content-Type` fallback
+> filter is not used. Choices made while implementing: the server `Filter` matches the raw request target
+> (`IHttpRequestFeature.RawTarget`; Kestrel leaves `%2F` encoded in `HttpRequest.Path`), falling back to
+> `PathBase + Path` for a target that is not origin-form; the gRPC health service is matched as Go does, the whole
+> service `grpc.health.v1.Health/` (Check, Watch, List), case-sensitive, also by the HttpClient filter; the warning
+> is written only when traces are exported (no warning under `OTEL_TRACES_EXPORTER=none`, disabled traces or
+> `OTEL_SDK_DISABLED`). Measured limits: with an instrumented client a health call's filtered client activity still
+> sends an unsampled `traceparent` (the server drops the call either way; a non-health downstream would follow the
+> unsampled flag, as in 0.2.x); HttpClient health calls stay in `http.client.request.duration` (the `System.Net.Http`
+> meter has no path attribute to filter on).
+
 ### D-NET9 — Sampler, propagators and the debug marker
 **Choice**: the resolver parses `OTEL_TRACES_SAMPLER`/`_ARG` (the six spec
 names, A20 ASCII folding) and always calls `SetSampler` — code sampler, else

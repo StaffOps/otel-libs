@@ -149,7 +149,13 @@ namespace StaffOps.OtelHelper.Tracing
 
             public override void Inject<T>(PropagationContext context, T carrier, Action<T, string, string> setter)
             {
-                if (Activity.Current is { } current && current.Context == context.ActivityContext)
+                if (HealthMatching.IsClientHealthRequest(carrier))
+                {
+                    // A health request carries no trace context, also when its activity is not
+                    // sampled (the HttpClient filter then does not run; C11 fix round 2).
+                    context = new PropagationContext(default, context.Baggage);
+                }
+                else if (Activity.Current is { } current && current.Context == context.ActivityContext)
                 {
                     context = new PropagationContext(PropagationSettings.PassThrough(current), context.Baggage);
                 }

@@ -5,8 +5,8 @@ namespace StaffOps.OtelHelper.ParityDriver;
 /// <summary>
 /// Maps a fixture `code` object (snake_case) to <see cref="TelemetryOptions"/>
 /// members. An unmapped key is an adapter error (fails the case whatever its
-/// status; design D-NET12). Every fixture key has a member since task C5,
-/// except `http_opt_in_metrics` (task C11).
+/// status; design D-NET12). Every fixture key has a member (since task C11,
+/// `http_opt_in_metrics` too).
 /// </summary>
 internal static class CodeMapper
 {
@@ -66,9 +66,7 @@ internal static class CodeMapper
         "health_paths" => o => o.HealthPaths = value.AsArray().Select(v => (string)v!).ToList(),
         "prometheus_metrics_port" => o => o.PrometheusMetricsPort = value.GetValue<int>(),
         "resource_attributes" => o => MapResourceAttributes(o, value.AsObject()),
-        // No option until task C11: accepted so the cases can run, and they stay
-        // xfail because `http_opt_in_metrics` is absent from the snapshot.
-        "http_opt_in_metrics" => _ => { },
+        "http_opt_in_metrics" => o => o.HttpOptInMetrics = value.GetValue<bool>(),
         _ => null,
     };
 

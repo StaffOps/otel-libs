@@ -66,14 +66,15 @@ namespace StaffOps.OtelHelper.Diagnostics
         /// <summary>
         /// The SDK's event 33 (<c>MetricInstrumentIgnored</c>) with the not-subscribed reason, for an
         /// instrument of one of <paramref name="quietMeters"/> — the forwarding provider's own
-        /// meters while its helper metrics are off: the app records on the keyed service meter,
+        /// meters while its helper metrics are off (an entry ending in <c>.*</c> covers its children,
+        /// <c>&lt;ServiceName&gt;.*</c>): the app records on the keyed service meter,
         /// which that provider does not subscribe then, by design. Any other reason is forwarded.
         /// </summary>
         internal static bool IsQuietMeterNotice(string? eventName, object?[] payload, IReadOnlyCollection<string> quietMeters)
             => quietMeters.Count > 0
                 && eventName == "MetricInstrumentIgnored"
                 && payload.Length >= 3
-                && payload[1] is string meter && quietMeters.Contains(meter)
+                && payload[1] is string meter && quietMeters.Any(q => q == meter || (q.EndsWith(".*", StringComparison.Ordinal) && meter.StartsWith(q[..^1], StringComparison.Ordinal)))
                 && payload[2] is string reason && reason.Contains("not subscribed", StringComparison.OrdinalIgnoreCase);
 
         /// <summary>SDK parse warnings repeat once per provider; they are written once per sink.</summary>

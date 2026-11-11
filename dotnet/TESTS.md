@@ -1,6 +1,6 @@
 # Tests — StaffOps.OtelHelper (.NET)
 
-1371 tests (xUnit) with the parity runner, 0 failed, 0 warnings (compose `dotnet-tests` on `sdk:8.0`, and on `sdk:10.0` (10.0.403) with `DOTNET_ROLL_FORWARD=Major`, 2026-11-10, task C10 fix round 2); coverlet total `| Total | 98.37% | 96.51% | 99.22% |` (line, branch, method) on `sdk:8.0` and on SDK 10. The total varies by about ±0.1 point between runs; the cause was not investigated.
+1502 tests (xUnit) with the parity runner, 0 failed, 0 warnings (compose `dotnet-tests` on `sdk:8.0`, and on `sdk:10.0` (10.0.403) with `DOTNET_ROLL_FORWARD=Major`, 2026-11-10, task C11 fix round 2); coverlet total `| Total | 98.39% | 96.37% | 99.27% |` (line, branch, method) on `sdk:8.0`, `| Total | 98.31% | 96.32% | 99.27% |` on SDK 10. The total varies by about ±0.1 point between runs; the cause was not investigated.
 
 From `dotnet/`; the repository root is mounted because the parity runner reads
 `parity/cases.json` (and `specs/dotnet-otel-helper/tasks.md`) from it:
@@ -533,3 +533,51 @@ The wire side is the parity fixture: the 37 cases of the C10 group (five added i
 (`sampler.*`, `debug.*`, `propagation.*`, `config.code_sample_ratio_*`) pass.
 The ParentBased default also makes `http.health_child_span_dropped` (C11 group)
 pass: a child of a dropped health span now follows the drop.
+
+## HTTP/gRPC instrumentation and health (task C11)
+
+`HttpGrpcInstrumentationTests` (`[Collection("EnvVarTests")]`; contract R7,
+R10, D5, A22, A30; requirements DN5, DN7; design D-NET8, N1, N5), 131 cases.
+The web-host tests run Kestrel on a loopback port (HTTP/1.1, or HTTP/2 for
+gRPC with raw-byte methods, no protoc) and select spans by `server.port`,
+because every ASP.NET Core host in the process reports to the same
+instrumentation; raw HTTP requests go over a socket so the target reaches
+Kestrel as written. Each rule was checked to fail a test when removed (11
+mutants, 2026-11-10: no `SuppressDownstreamInstrumentation`, no gRPC client
+filter, HttpClient filter without the gRPC health service, no percent-decoding,
+no HTTP opt-in view, the gRPC check on `ApplicationStopped` instead of
+`ApplicationStarted`, the key ignored, the invalid-boolean warning removed,
+the `HealthPaths` validation removed, the 0.2.x server filter on
+`HttpRequest.Path` without the gRPC health service; the last one is caught
+only by the uninstrumented-client tests `The_Server_Filter_Drops_Grpc_Health_Calls_Of_An_Uninstrumented_Client`
+and `Grpc_Health_Service_Is_Dropped_Whatever_The_Health_List` — with an
+instrumented client the filtered client span sends an unsampled parent, which
+ParentBased drops on its own; since fix round 1 also by the parity cases
+`grpc.health_check_no_span` and `grpc.health_watch_no_span`).
+Fix round 1 (2026-11-10): 3 more mutants, each failing a test — no header
+removal in the HttpClient health filter, no health check in the runtime
+propagator (both needed: the instrumentation injects with the OpenTelemetry
+propagator before its filter, the runtime injects through
+`DistributedContextPropagator.Current`), the absolute-form fallback decoded twice. Fix round 2 (2026-11-10): 3 more mutants, each failing a test — every
+context header removed (the application's own lost), no header removal, no
+health check in the pass-through propagator. Not mutation-checked: the runtime
+propagator keeping baggage on a health request (no test sets Activity baggage
+there).
+
+| Area | Tests |
+|---|---|
+| Normalization | `Normalize_Follows_The_Contract` × 15 (query, fragment, trailing slashes, `%68`, `%2f`, a decoded `?`/`#`, malformed escapes, non-UTF-8 bytes, UTF-8, ASCII-only folding), `The_Grpc_Health_Service_Is_Matched_Whole_And_Case_Sensitive` × 9, `The_Default_List_Is_The_Contract_List` × 11, `Default_List_Matches_Go` |
+| `HealthPaths` validation | `Invalid_Code_Health_Path_Fails_Start` × 6, `Null_Code_Health_Path_Fails_Start`, `Valid_Code_Health_Paths_Pass` |
+| Server | `Server_Health_Requests_Get_No_Span_And_Are_Counted` × 9 (still counted in `http.server.request.duration`), `Server_Paths_That_Only_Contain_A_Health_Path_Are_Traced` × 4, `Code_Health_Paths_Replace_The_Default_List`, `An_Empty_Health_List_Traces_Every_Path`, `Children_Of_A_Health_Request_Are_Dropped_And_Of_Others_Kept` |
+| HttpClient | `HttpClient_Health_Requests_Get_No_Client_Span` (also `/grpc.health.v1.Health/Check`), `HttpClient_Follows_Code_Health_Paths`, `HttpClient_Health_Requests_Send_No_Context` × 12 (fix rounds 1 and 2: a local `TcpListener` records the headers; health paths get no `traceparent` or `tracestate` inside a sampled request and as a root, with the default list and a lone `tracecontext`; an application's own `baggage` and `tracestate` survive; with traces disabled a health call carries nothing and `/orders` the inbound `traceparent`; `/orders` keeps the context) |
+| Server (fix round 1) | `Absolute_Form_Targets_Are_Decoded_Once` × 3 (`GET http://host/%2568ealth` is traced), `An_Application_Filter_Registered_After_AddOtelHelper_Replaces_The_Health_Filter` × 2 |
+| gRPC | `One_Client_Span_Per_Grpc_Call_And_The_Server_Continues_It` (the only CLIENT span is GrpcNetClient's `parity.v1.Echo/Ping`, the parent of the server span `parity.v1.Echo/Ping` under scope `Microsoft.AspNetCore` with `rpc.system.name=grpc`), `Grpc_Not_Found_Is_Unset_On_The_Server`, `Grpc_Health_Calls_Get_No_Server_Or_Client_Span` × 2 (Check, Watch), `The_Server_Filter_Drops_Grpc_Health_Calls_Of_An_Uninstrumented_Client` × 2 (with and without the key), `Grpc_Health_Service_Is_Dropped_Whatever_The_Health_List`, `Without_The_Key_Grpc_Server_Spans_Are_Http_Shaped` (`POST …`, status 200, UNSET for NOT_FOUND) |
+| O7 (b) warning | `Mapped_Grpc_Endpoints_Without_The_Key_Warn_Once` × 8 (environment and `IConfiguration` values, `bool.TryParse` reading, exact line), `No_Grpc_Endpoint_No_Warning`, `No_Warning_When_Traces_Are_Off` × 3, `The_Grpc_Metadata_Type_Name_Is_The_Pinned_One` (the D-NET8 TO VERIFY at Grpc.AspNetCore.Server 2.62.0) |
+| Keyed DI (N1) | `In_A_Web_Host_Unkeyed_ActivitySource_Is_AspNetCore_And_Server_Spans_Keep_Its_Scope`, `In_A_Worker_Unkeyed_Instrumentation_Is_Null` |
+| Meters (N5) | `Service_Meter_Children_And_Additional_Meters_Are_Exported` (`svc`, `svc.x`, `svc.a.b`, `svc.` and `AdditionalMeters`; not `svcx`, a child of an additional meter, or an unrelated meter), `Idle_Metrics_Drop_The_Service_Meter_Children_Too`, `Quiet_Meter_Notices_Cover_The_Service_Meter_Children` × 4 |
+| HTTP opt-in metrics (A30) | `Http_Opt_In_Metrics_From_The_Environment` × 7, `Http_Opt_In_Metrics_Code_Wins_And_The_Variable_Is_Not_Read` × 3, `The_Opt_In_View_Is_Scoped_To_The_Framework_Http_Meters` × 9, `Http_Opt_In_Metrics_Switch_Controls_The_Framework_Series` × 2 (with the INFO line), `An_Application_Instrument_With_An_Opt_In_Name_Is_Kept`, `Disabled_Metrics_Still_Drop_A_Switched_On_Series` |
+
+The wire side is the parity fixture: the C11 group (`http.*`, `grpc.*`,
+`metrics.http_server_duration_histogram_name`, 30 cases) has 25 `pass`; the
+two `grpc.health_*_counted_in_metrics` (`skip:no-upstream-rpc-metrics`) and
+three body-size cases (`skip:no-upstream-dotnet-http-body-size`) stay skipped.

@@ -359,6 +359,14 @@ task C3, 1.15.x → 1.20.x):
   (the `UseOtlpExporter()` marker the SDK's `EnsureNoUseOtlpExporterRegistrations`
   checks; `MetricsSetup.UseOtlpExporterRegistrationType`, C5): the canary test
   `UseOtlpExporter_Registration_Type_Still_Exists` fails if a bump renames it.
+- **gRPC server tracing key and metadata type (C11).** `OTEL_DOTNET_EXPERIMENTAL_ASPNETCORE_ENABLE_GRPC_INSTRUMENTATION`
+  is an experimental upstream key (O7 (b): the app sets it, the parity driver and
+  `dotnet-backend` example set it): check that the bumped AspNetCore instrumentation
+  still reads it from `IConfiguration` with `bool.TryParse` and which RPC attributes
+  it now emits (`grpc.server_*` parity cases, `One_Client_Span_Per_Grpc_Call_And_The_Server_Continues_It`).
+  Next to it, the endpoint metadata type the helper matches by name,
+  `Grpc.AspNetCore.Server.GrpcMethodMetadata` (`GrpcServerTracingCheck.GrpcMethodMetadataType`;
+  canary `The_Grpc_Metadata_Type_Name_Is_The_Pinned_One`), on a Grpc.AspNetCore bump.
 - **SDK fields read by reflection (tests only).** `ExporterSettingsTests.Timeout_Bounds_…`
   and the batch-size tests read the export timeout and batch size of
   `BatchExportProcessor<T>` and `PeriodicExportingMetricReader` through

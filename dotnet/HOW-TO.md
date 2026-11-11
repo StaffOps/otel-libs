@@ -91,8 +91,8 @@ Without any additional code, the lib instruments:
 
 | Signal | What is captured |
 |---|---|
-| **Traces** | Incoming HTTP requests (ASP.NET Core), outgoing HTTP requests (HttpClient), gRPC calls. SQL, AWS and Redis only through the opt-in subpackages (§14) |
-| **Metrics** | .NET Runtime (GC, thread pool), ASP.NET Core (duration, active requests), HttpClient (outbound requests) |
+| **Traces** | Incoming HTTP requests (ASP.NET Core), outgoing HTTP requests (HttpClient), gRPC client calls (one CLIENT span per call), gRPC server calls (RPC spans only with the upstream key, below). SQL, AWS and Redis only through the opt-in subpackages (§14) |
+| **Metrics** | .NET Runtime (GC, thread pool), ASP.NET Core and HttpClient request durations; the active requests and connection metrics only with `OTEL_HELPER_HTTP_OPT_IN_METRICS=true` (§9) |
 | **Logs** | All logs via `ILogger` are exported via OTLP with automatic `traceId`/`spanId` |
 
 ### Extra Instrumentations
@@ -133,6 +133,39 @@ var app = builder.Build();
 app.MapGrpcService<MyService>();
 app.Run();
 ```
+
+### gRPC server spans: set the upstream key (0.3, this branch, task C11)
+
+The ASP.NET Core instrumentation traces gRPC server calls as RPC spans only
+when the **application** sets its experimental key in its configuration; the
+helper never sets it (owner decision O7 (b)):
+
+```bash
+OTEL_DOTNET_EXPERIMENTAL_ASPNETCORE_ENABLE_GRPC_INSTRUMENTATION=true
+```
+
+or in `appsettings.json`:
+
+```json
+{ "OTEL_DOTNET_EXPERIMENTAL_ASPNETCORE_ENABLE_GRPC_INSTRUMENTATION": "true" }
+```
+
+| | Without the key | With the key |
+|---|---|---|
+| Server span name | `POST /order.OrderService/CancelOrder` | `order.OrderService/CancelOrder` |
+| Attributes | HTTP ones (`http.request.method`, `url.path`, `http.response.status_code=200`) | `rpc.system.name=grpc`, `rpc.method`, `rpc.response.status_code` |
+| Status of a failed RPC | from the HTTP status: 200, so UNSET | ERROR for `UNKNOWN`, `DEADLINE_EXCEEDED`, `UNIMPLEMENTED`, `INTERNAL`, `UNAVAILABLE`, `DATA_LOSS`; UNSET for the other codes (`NOT_FOUND` included) |
+| `grpc.health.v1.Health/*` | no span | no span |
+
+When gRPC endpoints are mapped and the key is not `true`, the helper writes
+one line at start:
+`otelhelper: WARN gRPC endpoints are mapped but OTEL_DOTNET_EXPERIMENTAL_ASPNETCORE_ENABLE_GRPC_INSTRUMENTATION is not true in the application configuration: … variable=OTEL_DOTNET_EXPERIMENTAL_ASPNETCORE_ENABLE_GRPC_INSTRUMENTATION`.
+The value is read as the instrumentation reads it (`bool.TryParse`, so `True`
+works and `1` does not).
+
+gRPC calls are counted in `http.server.request.duration` with
+`http.response.status_code=200` even when the RPC fails: there is no RPC
+metric in the .NET instrumentations. Compute gRPC error rates from spans.
 
 ---
 
@@ -303,7 +336,15 @@ var meter = new Meter(
     Environment.GetEnvironmentVariable("SERVICE_NAME") ?? "my-service");
 ```
 
-> ⚠️ **The Meter name MUST match ServiceName.** The lib only exports metrics from Meters with that name.
+> ⚠️ **The Meter name MUST be the service name, start with `<ServiceName>.`, or be listed in `AdditionalMeters`.** The lib exports metrics only from those Meters (0.3, this branch: `<ServiceName>.*`, for example `orders-api.billing`, is exported without listing it; 0.2.x exported only a Meter named exactly `ServiceName`).
+
+```csharp
+// A library meter of another name: list it.
+builder.Services.AddOtelHelper(opts => opts.AdditionalMeters.Add("Example.Payments"));
+
+// A child meter of the service: exported as is.
+var billing = new Meter("orders-api.billing");
+```
 
 ### Counter — counts events
 
@@ -407,12 +448,67 @@ record CheckoutRequest(string Product, int Quantity);
 
 ### Health Checks Filtered
 
-The lib **does not generate spans** for the following paths (inbound and outbound):
+The lib **does not generate spans** for the following paths (inbound and
+outbound), the contract list of every language (0.3, this branch, task C11):
 
+- `/health`, `/healthz`
+- `/ready`, `/readyz`
+- `/live`, `/livez`
 - `/ping`
-- `/health`
-- `/healthz`
-- `/ready`
+- `/metrics`
+
+Matching: the path is cut at `?`/`#`, percent-decoded, ASCII-lowercased and
+stripped of trailing slashes, then compared exactly — `/Health/`,
+`/healthz?probe=1`, `/%68ealth` and `/HEALTH%2f` match `/health`;
+`/users/ping`, `/healthcare` and `/health/live` do not. The gRPC health
+service `grpc.health.v1.Health` (Check, Watch, List) is never traced, on the
+server or the client. Health requests are still counted in
+`http.server.request.duration` (so probe failures stay visible; exclude health
+routes in SLI queries) and spans started inside a health request are dropped
+too. 0.2.x: `/ping`, `/health`, `/healthz`, `/ready` only, no trailing-slash,
+query or encoding handling.
+
+An HttpClient call to a health path is sent **without trace context** (no
+`traceparent` or `tracestate` written by the propagators; C11 fix rounds 1
+and 2), as Go's transport does: a `traceparent` would name a client span that
+is never exported. Headers the application set on the request itself (its
+own `baggage` or `tracestate`) are kept, and propagated baggage still goes
+(it names no span). With traces disabled (pass-through) a health call carries
+no inbound context either. Limit: when the client activity is not sampled
+(an unsampled caller) the instrumentation's filter does not run, and the
+OpenTelemetry propagator still writes `traceparent …-00` — unsampled, so it
+names no exported span. The call is still counted in `http.client.request.duration`.
+
+Replace the list in code (an empty list traces every HTTP path; each path
+must be ASCII, start with `/` and have no `?`, `#` or `,`, or start fails):
+
+```csharp
+builder.Services.AddOtelHelper(opts => opts.HealthPaths = new List<string> { "/status", "/internal/ready" });
+```
+
+**Your own instrumentation options.** The helper sets `Filter` and
+`RecordException` on `AspNetCoreTraceInstrumentationOptions`,
+`FilterHttpRequestMessage` and `RecordException` on
+`HttpClientTraceInstrumentationOptions`, and `SuppressDownstreamInstrumentation`
+and `Filter` on `GrpcClientTraceInstrumentationOptions`. Configure these options
+**after** `AddOtelHelper()` (`services.Configure<AspNetCoreTraceInstrumentationOptions>(…)`):
+a `Filter` you set there replaces the helper's health filter (keep the health
+behavior by calling your own check and returning `false` for health paths
+yourself); a `Configure` registered before `AddOtelHelper()` is overwritten by
+the helper's for the members above.
+
+### HTTP opt-in metrics (0.3, this branch, task C11)
+
+By default only `http.server.request.duration` and
+`http.client.request.duration` are exported, as in Go, Python and Node.js.
+`OTEL_HELPER_HTTP_OPT_IN_METRICS=true` (or `opts.HttpOptInMetrics = true`)
+keeps what ASP.NET Core and `System.Net.Http` record besides:
+`http.server.active_requests`, `http.client.active_requests`,
+`http.client.open_connections`, `http.client.connection.duration` and
+`http.client.request.time_in_queue` (one INFO line says so; .NET records no
+body sizes). 0.2.x exported them always: dashboards on them need the switch.
+An instrument of your own meter with one of these names is kept, and
+`OTEL_HELPER_DISABLED_METRICS` still drops a switched-on one.
 
 ### Exceptions Recorded in Spans
 
@@ -441,6 +537,8 @@ When you use placeholders in logs, values are extracted as **separate attributes
 | `OTEL_HELPER_EXTRA_INSTRUMENTATION` | No effect in core (use the subpackages, §14) | `SQL` | — |
 | `OTEL_HELPER_SAMPLE_RATIO` | Deprecated: a plain decimal in [0, 1] → `parentbased_traceidratio`; anything else warns and is ignored (not clamped); read only while `OTEL_TRACES_SAMPLER` is unset (§13) | _(unset)_ | Helm Chart |
 | `OTEL_HELPER_METRICS_PORT` | Standalone Prometheus `/metrics` listener port (`0` disables it) | `9464` | Helm Chart |
+| `OTEL_HELPER_HTTP_OPT_IN_METRICS` | `true` keeps the HTTP opt-in metrics (§9); not `true`/`false` → warning, `false` | `false` | Manual |
+| `OTEL_DOTNET_EXPERIMENTAL_ASPNETCORE_ENABLE_GRPC_INSTRUMENTATION` | Upstream key, read from the app configuration: `true` traces gRPC server calls as RPC spans (§3) | _(unset)_ | Manual (app) |
 | `OTEL_METRICS_EXPORTER` | Metric exporter(s): `otlp`, `prometheus`, `console`, a list such as `otlp,prometheus`, or `none` (`logging` = warned alias of `console`) | legacy inference | Manual |
 | `OTEL_TRACES_EXPORTER`, `OTEL_LOGS_EXPORTER` | `otlp`, `console`, `none` (§15 "Choosing exporters per signal") | `otlp` | Manual |
 | `OTEL_METRIC_EXPORT_INTERVAL` | OTLP and console metric export interval (ms; digits with an optional `+`, clamped at 2 147 483 647) | `30000` | Manual |
@@ -556,6 +654,7 @@ Notes:
 - Under `OTEL_SDK_DISABLED=true` with `tracecontext`, the helper's activity listener is process-wide: ASP.NET Core then creates a propagation-only (non-recorded) activity for every request that carries a `traceparent`, in every host of the process, until the container that started it is disposed.
 - With traces or the SDK disabled, only an activity with a **remote** parent (`HasRemoteParent`, as ASP.NET Core and the instrumentations create) passes its inbound context on; an activity an application starts with `SetParentId(string)` or with a local context counts as started here and carries nothing. The SDK's expected "Failed to inject activity context … 'Invalid context'" line is not forwarded then.
 - The settings are process-wide: the last container resolved wins, and nothing is restored when it is disposed.
+- The HttpClient health list the runtime propagator checks (no trace context on a health request, §9) is process-wide too: the last container whose HttpClient instrumentation options were built wins (C11 fix round 2).
 - A `SocketsHttpHandler` takes the runtime propagator when it is created: an `HttpClient` created before the host starts keeps the earlier one. `IHttpClientFactory` handlers are created later and follow the setting.
 - Without a host (a bare `ServiceProvider`) the propagators are installed when the helper's settings are first resolved: when a provider is built, or the keyed `ActivitySource`/`Meter` (`OtelHelperKeys.Instrumentation`) is resolved. Under `OTEL_SDK_DISABLED=true` the no-op providers run no helper code, so resolve the keyed `ActivitySource` once, or use a host (it resolves the settings at start).
 

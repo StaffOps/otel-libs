@@ -55,6 +55,7 @@ namespace StaffOps.OtelHelper
                     $"Valid values: {string.Join(", ", TelemetryOptions.ValidCompressions)}.");
             }
 
+            CheckHealthPaths(failures, options);
             CheckMetricExporters(failures, options);
             CheckDisabledSignals(failures, options);
             CheckResourceAttributes(failures, options);
@@ -132,6 +133,29 @@ namespace StaffOps.OtelHelper
             {
                 failures.Add($"Unknown signal(s) {string.Join(", ", unknown.Select(DiagnosticText.Echo))} in {Owner}{nameof(TelemetryOptions.DisabledSignals)}. " +
                     $"Valid values: {string.Join(", ", ResolvedTelemetry.Signals)}.");
+            }
+        }
+
+        /// <summary>
+        /// Code health paths (Go <c>WithHealthPaths</c>, Python <c>health_paths</c>, Node.js
+        /// <c>healthPaths</c>): each must be ASCII, start with <c>/</c> and have no query, fragment or
+        /// comma; a null item fails too.
+        /// </summary>
+        private static void CheckHealthPaths(List<string> failures, TelemetryOptions options)
+        {
+            if (options.HealthPaths is null)
+            {
+                return;
+            }
+
+            for (var i = 0; i < options.HealthPaths.Count; i++)
+            {
+                var path = options.HealthPaths[i];
+                if (path is null || !path.StartsWith('/') || path.IndexOfAny(new[] { '?', '#', ',' }) >= 0 || !path.All(char.IsAscii))
+                {
+                    failures.Add($"{Owner}{nameof(TelemetryOptions.HealthPaths)} item #{(i + 1).ToString(CultureInfo.InvariantCulture)} " +
+                        $"({(path is null ? "null" : DiagnosticText.Echo(path))}) must be ASCII, start with \"/\" and have no query, fragment or comma.");
+                }
             }
         }
 

@@ -69,6 +69,8 @@ After registration, available via DI:
 |---|---|---|
 | `OTEL_HELPER_DEBUG_LEVEL` | Debug mode: forces Debug log level and sets the attribute `debug=true` on entry spans (`true`/`false`) | `false` |
 | `OTEL_HELPER_METRICS_PORT` | Prometheus `/metrics` port when no OTLP endpoint is configured | `9464` |
+| `OTEL_HELPER_HTTP_OPT_IN_METRICS` | 0.3 (this branch, task C11, A30): `true` (ASCII case-insensitive) keeps the HTTP metrics semantic conventions make opt-in: `http.server.active_requests`, `http.client.active_requests`, `http.client.open_connections`, `http.client.connection.duration`, `http.client.request.time_in_queue`; another value than `true`/`false` warns and means `false`. `TelemetryOptions.HttpOptInMetrics` wins. 0.2.x exported them always | `false` |
+| `OTEL_DOTNET_EXPERIMENTAL_ASPNETCORE_ENABLE_GRPC_INSTRUMENTATION` | Upstream key, read by the ASP.NET Core instrumentation from the **application configuration** (environment or `appsettings.json`), never set by the helper (owner decision O7 (b)): `true` traces gRPC server calls as RPC spans; see [gRPC server spans](#grpc-server-spans) | unset |
 
 ### Extra Instrumentation
 
@@ -243,23 +245,32 @@ How the 0.2.x helper treats the standard variables. Some are read by the .NET SD
 |---|---|
 | ASP.NET Core | Incoming HTTP requests (server spans) |
 | HttpClient | Outgoing HTTP requests (client spans) |
-| gRPC Client | Outgoing gRPC calls |
+| gRPC Client | Outgoing gRPC calls: one CLIENT span per call, `pkg.Svc/Method` (0.3, this branch, task C11; 0.2.x also had the HttpClient `POST` span under it) |
+| gRPC Server | Incoming gRPC calls, through ASP.NET Core: RPC spans only with the upstream key set by the app ([gRPC server spans](#grpc-server-spans)) |
 | SqlClient | SQL queries — only with the `StaffOps.OtelHelper.Sql` subpackage (`AddOtelHelperSql()`) |
 | AWS SDK | S3, SQS, DynamoDB calls, etc. — only with the `StaffOps.OtelHelper.AWS` subpackage (`AddOtelHelperAws()`) |
 | Custom Sources | Spans created via `ActivitySource(serviceName)` |
 
 Sampler (0.3, this branch, task C10): `parentbased_always_on` in all environments (ADR-002, as Go, Python and Node.js): roots are sampled, a span with a parent follows the parent's sampled flag, so an unsampled caller stays unsampled. Configurable with `opts.Sampler`, `opts.SampleRatio` or `OTEL_TRACES_SAMPLER`. The sampler is set also when traces are off (`OTEL_TRACES_EXPORTER=none`, a disabled signal): the instrumentations stay registered, and `HttpClient` passes the inbound trace and its sampled flag on. 0.2.x: a bare `AlwaysOnSampler`, which ignored the parent's flag. Tail-based sampling is done in the Collector.
 
-> Paths `/ping`, `/health`, `/healthz`, `/ready` (exact match, case-insensitive) are filtered automatically on ASP.NET Core server spans and HttpClient client spans — they do not generate trace spans. Go/Python 0.3 use a longer list (`/readyz`, `/live`, `/livez`, `/metrics` too) and keep these requests in the HTTP metrics; .NET adopts that in Phase C.
+> Health paths (0.3, this branch, task C11, contract R7/D5, as Go, Python and Node.js): `/health`, `/healthz`, `/ready`, `/readyz`, `/live`, `/livez`, `/ping`, `/metrics` — or `TelemetryOptions.HealthPaths` — get no ASP.NET Core server span and no HttpClient client span. The request path is cut at `?`/`#`, percent-decoded (a malformed escape keeps the raw path), ASCII-lowercased and stripped of trailing slashes, then matched exactly: `/Health/`, `/healthz?probe=1`, `/%68ealth` and `/HEALTH%2f` are health requests, `/users/ping` and `/healthcare` are not. The `grpc.health.v1.Health` service (Check, Watch, List) gets no server or client span, whatever the list. Health requests are still counted in `http.server.request.duration` (the framework meter does not see the filter) and their child spans are dropped under the default sampler; HttpClient health calls sampled by the client are sent without the trace context the propagators write (no `traceparent` or `tracestate`, as Go's transport; C11 fix rounds 1 and 2; the application's own headers and propagated baggage are kept; an unsampled call keeps its `…-00` `traceparent`; HOW-TO §9) and stay in `http.client.request.duration`. 0.2.x: `/ping`, `/health`, `/healthz`, `/ready` only, without the trailing-slash, query or encoding rules.
+
+#### gRPC server spans
+
+Without `OTEL_DOTNET_EXPERIMENTAL_ASPNETCORE_ENABLE_GRPC_INSTRUMENTATION=true` in the application configuration, gRPC server spans are **HTTP-shaped**: named `POST /pkg.Svc/Method`, with the status taken from the HTTP status, which is 200 also when the RPC fails. With the key, ASP.NET Core emits RPC spans (semconv 1.42 in the 1.20.x instrumentation): name `pkg.Svc/Method` (the gRPC span name of every language, contract D1 row "gRPC span names"), `rpc.system.name`, `rpc.method`, `rpc.response.status_code`, and ERROR only for `UNKNOWN`, `DEADLINE_EXCEEDED`, `UNIMPLEMENTED`, `INTERNAL`, `UNAVAILABLE` and `DATA_LOSS` (contract A22). The key is experimental upstream (attribute changes per bump). When gRPC endpoints are mapped, traces are exported and the key is not `true`, the helper writes one warning at start.
+
+gRPC calls are counted in `http.server.request.duration` with `http.response.status_code=200` **even when the RPC fails**: the .NET instrumentations have no RPC metric (`rpc.server.call.duration` exists in Go only), so error rates of gRPC services come from spans, not from this metric.
 
 ### Metrics
 
 | Instrumentation | What it captures |
 |---|---|
 | .NET Runtime | GC, thread pool, JIT, assemblies |
-| ASP.NET Core | Request duration, active requests, request size |
-| HttpClient | Outbound request duration, active requests |
-| Custom Meters | Business metrics via `Meter(serviceName)` |
+| ASP.NET Core | `http.server.request.duration`; `http.server.active_requests` only with the HTTP opt-in switch (0.3, this branch) |
+| HttpClient | `http.client.request.duration`; `http.client.active_requests`, `http.client.open_connections`, `http.client.connection.duration` and `http.client.request.time_in_queue` only with the HTTP opt-in switch |
+| Other framework meters | Also exported (measured 2026-11-10): `kestrel.active_connections`, `kestrel.connection.duration`, `kestrel.queued_connections`, `kestrel.queued_requests`, `aspnetcore.routing.match_attempts`, `dns.lookup.duration`; Go, Python and Node.js have no counterpart (root README gap rows). Drop unneeded ones with `OTEL_HELPER_DISABLED_METRICS` |
+| gRPC | No `rpc.*` metric: a gRPC client call is counted in `http.client.request.duration` as `POST`, status 200, `network.protocol.version=2`; a server call in `http.server.request.duration` with status 200 even when the RPC fails |
+| Custom Meters | Business metrics via the keyed `Meter` (named after the service), any `Meter` named `<serviceName>` or `<serviceName>.<anything>` (0.3, this branch, N5), and the meters in `AdditionalMeters` |
 
 Metrics are exported every **30 seconds** (overrides SDK default of 60s).
 
@@ -297,8 +308,9 @@ Exemplars enabled (`ExemplarFilterType.TraceBased`) — metric → trace correla
 | `Insecure` | bool? | `OTEL_EXPORTER_OTLP_<SIGNAL>_INSECURE` / `OTEL_EXPORTER_OTLP_INSECURE` | `false` (schemeless endpoint → `https://`) |
 | `Compression` | string? (`gzip`/`none`) | `OTEL_EXPORTER_OTLP_<SIGNAL>_COMPRESSION` / `OTEL_EXPORTER_OTLP_COMPRESSION` | `gzip` (0.2.x: `none`) |
 | `SampleRatio` | double? (in [0, 1]) | `OTEL_HELPER_SAMPLE_RATIO` (deprecated) | none (`ParentBased(TraceIdRatioBased(ratio))` when set, 1.0 included) |
-| `HealthPaths` | List\<string\>? | — | `/ping`, `/health`, `/healthz`, `/ready` |
-| `AdditionalMeters` | List\<string\> | — | empty |
+| `HealthPaths` | List\<string\>? (each ASCII, starting with `/`, no `?`, `#`, `,`) | — | `/health`, `/healthz`, `/ready`, `/readyz`, `/live`, `/livez`, `/ping`, `/metrics` (0.2.x: `/ping`, `/health`, `/healthz`, `/ready`); an empty list traces every HTTP path |
+| `AdditionalMeters` | List\<string\> | — | empty (meters `<ServiceName>` and `<ServiceName>.*` are exported without it) |
+| `HttpOptInMetrics` | bool? | `OTEL_HELPER_HTTP_OPT_IN_METRICS` | `false` |
 | `ForwardSdkDiagnostics` | bool | — | `true` (SDK warnings on stderr, redacted) |
 | `MetricExporters` | string? (`otlp`, `prometheus`, `console`, `none`) | `OTEL_METRICS_EXPORTER` | `otlp` with an endpoint, else `prometheus` |
 | `ExportIntervalMs` | long? (in [1, 2 147 483 647]) | `OTEL_METRIC_EXPORT_INTERVAL` | `30000` |
@@ -452,6 +464,8 @@ StaffOps.OtelHelper.sln
 │   ├── TracerSetup.cs                  # Tracing + health filter + sampler
 │   ├── Tracing/
 │   │   ├── DebugMarkerProcessor.cs     # debug=true attribute on entry spans
+│   │   ├── HealthMatching.cs           # Health list and path normalization (server, HttpClient, gRPC)
+│   │   ├── GrpcServerTracingCheck.cs   # One-time warning: gRPC endpoints without the upstream key
 │   │   └── PropagatorSetup.cs          # OTEL_PROPAGATORS: OTel default + runtime HttpClient propagator
 │   ├── MetricsSetup.cs                 # Metrics with exemplars
 │   ├── LoggingSetup.cs                 # Logging via OpenTelemetry SDK

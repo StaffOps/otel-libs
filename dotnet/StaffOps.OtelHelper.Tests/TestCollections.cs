@@ -29,5 +29,6 @@ public sealed class ResetGlobalPropagationAttribute : BeforeAfterTestAttribute
         Sdk.SetDefaultTextMapPropagator(new CompositeTextMapPropagator(new TextMapPropagator[] { new TraceContextPropagator(), new BaggagePropagator() }));
         DistributedContextPropagator.Current = DistributedContextPropagator.CreateDefaultPropagator();
         HelperRuntimePropagator.GlobalSettings = PropagationSettings.Default;
+        HealthMatching.ClientPaths = null;
     }
 }

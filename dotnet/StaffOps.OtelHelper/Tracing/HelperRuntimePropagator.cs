@@ -88,6 +88,19 @@ namespace StaffOps.OtelHelper.Tracing
                 return;
             }
 
+            if (HealthMatching.IsClientHealthRequest(carrier))
+            {
+                // A health request names no span (C11): baggage still goes, trace fields do not.
+                var write = setter;
+                setter = (c, key, value) =>
+                {
+                    if (Array.IndexOf(TraceFields, key) < 0)
+                    {
+                        write(c, key, value);
+                    }
+                };
+            }
+
             if (s.IsDefault)
             {
                 Inner.Inject(activity, carrier, setter);
