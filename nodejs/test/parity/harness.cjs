@@ -41,6 +41,7 @@ const INPUT_SCHEMA = {
   http_server: ['requests', 'traceparent', 'child_span', 'allow_server_error'],
   grpc_server: ['method'],
   metrics_listener: ['requests', 'connect_host'],
+  logging: ['attributes'],
 };
 const SIGNALS = new Set(['traces', 'metrics', 'logs']);
 const RECORD_FIELDS = new Set(['proto', 'tls', 'port', 'path', 'raw_path', 'encoding', 'headers', 'timeout_ms', 'absent']);
@@ -108,6 +109,7 @@ function validateCase(c) {
     else if (['method', 'scenario', 'traceparent'].includes(key) && typeof val !== 'string') errs.push(`input.${key} must be a string`);
     else if ((key === 'child_span' || key === 'allow_server_error') && typeof val !== 'boolean') errs.push(`input.${key} must be a boolean`);
     else if (key === 'connect_host' && val !== '127.0.0.1' && val !== 'localhost') errs.push('input.connect_host must be "127.0.0.1" or "localhost"');
+    else if (key === 'attributes' && !(isObject(val) && Object.values(val).every((x) => typeof x === 'string'))) errs.push('input.attributes must be an object of strings');
   }
   if (c.kind === 'metrics_listener') {
     const reqs = c.input?.requests;

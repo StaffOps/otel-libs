@@ -491,7 +491,9 @@ def kind_grpc_server(case: dict) -> dict:
 def kind_logging(case: dict) -> dict:
     # "console" (stdout + stderr) is filled in by the parent from the process output.
     _, snap = _setup(case)
-    logging.getLogger("parity").warning("parity-console-record")
+    # input.attributes: the record's extras (the stdlib refuses LogRecord attribute names such as msg).
+    attributes = dict(sorted((case.get("input") or {}).get("attributes", {}).items()))
+    logging.getLogger("parity").warning("parity-console-record", extra=attributes)
     _flush_and_shutdown()
     return snap
 

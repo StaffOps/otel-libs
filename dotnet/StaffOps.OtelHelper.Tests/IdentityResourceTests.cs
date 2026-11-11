@@ -731,7 +731,7 @@ public class IdentityResourceTests : IDisposable
         }))));
         using (host)
         {
-            Assert.Equal(LogLevel.Warning, host.Services.GetRequiredService<IOptionsMonitor<LoggerFilterOptions>>().CurrentValue.MinLevel);
+            Assert.Equal(LogLevel.Warning, StaffOps.OtelHelper.Logging.LoggingSetup.HelperLevel(host.Services.GetRequiredService<IOptionsMonitor<LoggerFilterOptions>>().CurrentValue));
             Assert.Equal(0, Count(diagnostics, "is not set"));
             var line = Assert.Single(diagnostics.Lines, l => l.Contains("differs between signals", StringComparison.Ordinal));
             Assert.Contains("missing=metrics,logs", line);
@@ -765,9 +765,9 @@ public class IdentityResourceTests : IDisposable
         using (provider)
         {
             var filters = provider.GetRequiredService<IOptionsMonitor<LoggerFilterOptions>>();
-            Assert.Equal(LogLevel.Information, filters.CurrentValue.MinLevel);
+            Assert.Equal(LogLevel.Information, StaffOps.OtelHelper.Logging.LoggingSetup.HelperLevel(filters.CurrentValue));
             Assert.Equal("prd", TraceResource(provider)["deployment.environment.name"]);
-            Assert.Equal(LogLevel.Warning, filters.CurrentValue.MinLevel);
+            Assert.Equal(LogLevel.Warning, StaffOps.OtelHelper.Logging.LoggingSetup.HelperLevel(filters.CurrentValue));
 
             // The meter's resource has no app environment (it reports it absent), but the "not set"
             // warning is not written once another signal's resource carried one.

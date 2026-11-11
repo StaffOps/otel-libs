@@ -617,7 +617,9 @@ async function kindLogging(c) {
   setupCase(c, snap);
   const h = helper();
   need(h, ['createLogger'], 'B8');
-  h.createLogger({ name: 'parity' }).warn('parity-console-record');
+  // input.attributes: the record's attributes, in key order.
+  const attributes = Object.fromEntries(Object.entries(c.input?.attributes ?? {}).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)));
+  h.createLogger({ name: 'parity' }).warn('parity-console-record', attributes);
   await shutdown();
   return snap;
 }

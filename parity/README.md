@@ -40,7 +40,7 @@ suite runs every case. **`cases.json` is hand-maintained**: edit it directly
 | `propagation` | — | Inject inside a span with baggage `parity=1` | `headers` (sorted names) |
 | `http_server` | `requests`, `traceparent`, `child_span`, `allow_server_error` (fix round 2 of C10, 2026-11-10: without it a 5xx response is an adapter error in every driver, so a failing request cannot satisfy `server_spans: 0` or `requests_counted`) | Serve the requests through the helper's HTTP server instrumentation; optionally the handler starts `handler-child` | `response_statuses` (each request's HTTP status), `server_spans`, `server_continues_inbound` (a SERVER span exists and every SERVER span is in the inbound `traceparent`'s trace; added 2026-11-10, C10 fix round 1), `handler_child_spans`, `requests_counted` (HTTP server duration `_count` from the helper's `/metrics`), `scrape` (that `/metrics` text; added 2026-11-02, Node B7) |
 | `grpc_server` | `method` | One call on an instrumented server (`/parity.v1.Echo/NotFound` answers NOT_FOUND; added 2026-11-02, A22) | `server_spans`, `rpcs_counted`, `call_ok`, `server_span_status` (status code of the first SERVER span: `UNSET`, `ERROR`, `OK`, or `none`; added 2026-11-02, A22), `server_span_name` (name of the first SERVER span, or `none`; added 2026-11-05, A30), `client_span_name` (the same for the first CLIENT span; added 2026-11-08, A30) |
-| `logging` | — | Emit one WARN record through the helper's logger | (common fields) |
+| `logging` | optional `attributes` (an object of strings: the record's attributes, emitted in key order — Go `Warn(msg, k, v, …)`, Python `extra=`, Node.js `warn(msg, attributes)`, .NET the record state; added 2026-11-11, .NET C13) | Emit one WARN record `parity-console-record` through the helper's logger | (common fields) |
 | `metrics_scrape` | — | Increment `parity.requests` and `parity.payload` (unit `By`, by 5; added 2026-11-02, Node B7), record the Gauge `parity.utilization` (unit `1`, 0.5) and add 1 to the UpDownCounter `parity.inflight` (unit `1`; both A21), scrape the helper's `/metrics` | `scrape`, `scrape_status` (HTTP status of the mounted handler: 503 before/after/failed setup, 200 when Prometheus is deliberately inactive — design "Mounted /metrics handler status") |
 | `metrics_listener` | `requests` (`"METHOD /path"` strings); optional `connect_host`: `"127.0.0.1"` (the default) or `"localhost"` (the runner connects to every address the resolver returns and sends `Host: localhost`; added 2026-11-11, .NET C12 fix round 1) | Set `OTEL_HELPER_METRICS_PORT` to a free port, set up, send each request to the helper's own listener (added 2026-11-02, A21) | `listener_statuses` (HTTP status per request) |
 | `fork` | — | Python: import the helper, `os.fork()` twice, set up in each child (gunicorn `post_fork` model). Node.js: `cluster.fork()` twice, set up in each worker (design D-JS13). Go: `skip:no-prefork-model` | `instance_ids`, `instance_ids_distinct` |
@@ -114,6 +114,15 @@ case that passes fails the build; only a behavior mismatch satisfies an
 `xfail` — fixture and adapter errors never do. `python@sdk>=X.Y` overrides
 `python` when the installed `opentelemetry-sdk` is at least X.Y (the highest
 matching key wins).
+
+Go accepted-difference skips (no task flips them; they stay at release):
+`skip:no-prefork-model` (`fork.*`), `skip:no-logger-name`
+(`logging.stdout_logger_field`, added 2026-11-11 with .NET C13: Go's
+`NewLogger` / `NewSlogHandler` take no name, so its stdout line has no `logger`
+field unless the record carries one — contract design D1 row "Stdout fallback
+fields" (b), root README "Known emitted-telemetry gaps"), and the
+`skip:no-upstream-go-*` / `skip:go-sdk-*` / `skip:no-detector-variable`
+rows named in their cases' notes.
 
 **Release gate:** `skip:A…` (a case waiting for a task's API) must not survive a
 release. `PARITY_RELEASE=1` enables `TestParityNoTaskSkipsAtRelease` (Go) and
@@ -317,8 +326,9 @@ docker compose -f testing/docker-compose.yml run --rm -e PARITY_ONLY=export.grpc
   - `metric_exporters`, the interval and the port come from the helper's
     internal resolved state (`ResolvedTelemetry`, through `InternalsVisibleTo`;
     since C5 `IOptions<TelemetryOptions>` holds code values only, and the SDK
-    has no public getter for a reader's interval); `log_level` is the installed
-    `LoggerFilterOptions.MinLevel`; `metric_exporters` is `[]` when metrics are
+    has no public getter for a reader's interval); `log_level` is the lowest
+    level a `parity` logger enables (since C13, 2026-11-11: the helper's level is
+    a rule on its own providers, N9, not `LoggerFilterOptions.MinLevel`); `metric_exporters` is `[]` when metrics are
     disabled or `OTEL_SDK_DISABLED` is true, which the helper reads from
     `IConfiguration` as the SDK does (the providers expose no public flag).
   - `prometheus_metrics_host` is omitted: the helper has no such setting yet

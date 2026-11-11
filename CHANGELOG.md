@@ -1311,6 +1311,29 @@ dashboards and alerts.
    the exporter in time", not "accepted by the collector". With OTLP only,
    `MeterProvider.Shutdown()` returns `true` even after a 500 (upstream,
    measured): only `ForceFlushOtelHelper()` reports the metric export result.
+22. **Logs: stdout fallback, levels and filters** (task C13, contract D6, R4,
+   A23; design D-NET10, requirement DN8, N9). Before (0.2.x) → after:
+
+   | Input | 0.2.x | 0.3 (this branch) |
+   |---|---|---|
+   | no logs exporter (no endpoint, `OTEL_LOGS_EXPORTER=none`, logs disabled, `OTEL_SDK_DISABLED=true`, an endpoint the helper cannot use) | the OpenTelemetry logger provider was added with no processor: records were dropped there; stdout showed only what the host's own console provider wrote, in its format | the helper's provider (alias `OtelHelperStdout`) writes one JSON object per line on standard output: `{"time":"2026-11-11T12:00:00.000Z","level":"WARN","msg":"…","logger":"<category>",<state values>,"exception":"…"}` — `time` in UTC with milliseconds and `Z`, `level` one of `DEBUG` (Trace, Debug), `INFO`, `WARN`, `ERROR` (Error, Critical), `logger` the category, the record's name/value pairs after it (`{OriginalFormat}` left out, the first of duplicate names kept), `exception` the exception's `ToString()`; a value named `time`, `level`, `msg` or `logger` is dropped; numbers and booleans keep their JSON type, non-finite numbers and other values are text (`NaN`, `Infinity`); ILogger scopes are not written. The OpenTelemetry provider is held at `None`. The host's console provider is not removed: an app that keeps it gets both lines (`builder.Logging.ClearProviders()` before `AddOtelHelper()` keeps only the contract line, HOW-TO §4) |
+   | a logs exporter active (OTLP with an endpoint, `console`) | OTLP | unchanged; the stdout provider writes nothing (no tee, D6) |
+   | `OTEL_LOGS_EXPORTER=console` | not read | the OpenTelemetry console exporter (row 18): a multi-line debugging dump, not the JSON line |
+   | the helper's level (R4: LOCAL Debug, DEV/HML/unset/unknown Information, PRD Warning) | `LoggerFilterOptions.MinLevel`, for **every** provider; any rule without a provider (`Logging:LogLevel:Default` in the template `appsettings.json`) beat it, so a PRD app with that file exported Information | on the helper's two providers only; precedence (owner decision 2026-11-11, as Python and 0.2.x): code `MinimumLogLevel` > your rule for the helper's provider without category (`Logging:OpenTelemetry:LogLevel:Default`) > your default for every provider (`Logging:LogLevel:Default`, `AddFilter(null, level)`, `SetMinimumLevel`) > the environment default. A PRD app with the template file still exports Information. `MinLevel` and the application's own providers are left as they are |
+   | `Microsoft.*` and `System.Net.Http*` above Debug | held at Error on **every** provider (the host console included) | held at Error on the helper's providers only; the application's providers show framework warnings again |
+   | an application rule without a provider for a category (`Logging:LogLevel:Microsoft.AspNetCore`, `AddFilter("Orders", …)`) | applied to every provider; a rule for exactly `Microsoft` or `System.Net.Http` lost to the helper's Error rule (registered later) | still applied to the helper's providers (copied as a rule for each), also when registered after `AddOtelHelper()`; a rule for exactly `Microsoft` or `System.Net.Http` now replaces the helper's Error rule |
+   | a rule for one of the helper's providers (`Logging:OpenTelemetry:LogLevel:…`, `Logging:OtelHelperStdout:LogLevel:…`) | applied | applied; the helper adds no rule of its own for that category |
+   | the stdout fallback next to the host's console provider | — | each record twice on stdout; one warning at host start names `ClearProviders()` (fix round 1) |
+| the Profiling prerequisite warning | category `OtelHelper.Profiling` | unchanged (decision 2026-11-11, design D-NET10 note): `Logging:LogLevel:OtelHelper.Profiling` filters keep working; it is an application-side record, so it reaches the helper's providers at their level (Warning in PRD) |
+
+   Check: log pipelines that tail stdout of a pod without a Collector now get
+   one JSON object per line from the helper (and, if the app keeps the host's
+   console provider, the console lines too — remove one); OTLP log volume per
+   level is unchanged for apps with `Logging:LogLevel:Default` (it still wins)
+   and for apps without one (the environment default, as 0.2.x's `MinLevel`);
+   app-side consoles show `Microsoft.*` warnings again. Loki: `| json | level="ERROR"` matches .NET Error and
+   Critical, as in Go, Python and Node.js; OTLP records keep the SDK's severity
+   number and text (design D-NET10).
 
 ### Collector / platform prerequisites (before rolling 0.3.0 out)
 
@@ -1886,6 +1909,41 @@ Phase C work on this branch (no .NET release yet; the first will be
   errno 98, and an address this machine does not own, 99, measured on .NET
   8.0.33 and 10.0.14), and echoes its OS text; another failure of the listener
   reader's factory (an options `Configure` that throws) propagates without it.
+- **.NET: Logging (task C13, contract D6, R4, A23; design D-NET10, DN8, N9;
+  implemented 2026-11-11, awaiting review).** Stdout fallback: with no logs
+  exporter active (no endpoint, `OTEL_LOGS_EXPORTER=none`, logs disabled,
+  `OTEL_SDK_DISABLED=true`, an unusable endpoint) the new provider
+  `Logging/JsonLineLoggerProvider.cs` (alias `OtelHelperStdout`) writes one
+  JSON object per line on standard output — `time` (UTC, milliseconds, `Z`),
+  `level` (`DEBUG`/`INFO`/`WARN`/`ERROR`), `msg`, `logger` (the category), the
+  state values, `exception` — with the reserved keys dropped (A23); it writes
+  nothing while OTLP or `console` is active. Before, the OpenTelemetry provider
+  had no processor there and the records were lost unless the host's console
+  provider printed them. The level (R4) and the `Microsoft` /
+  `System.Net.Http` Error rules are now provider-specific rules on the
+  helper's two providers only (`LoggingSetup.ApplyHelperRules`, a
+  post-configure step); `LoggerFilterOptions.MinLevel` and the application's
+  own providers and rules are no longer changed, the application's category
+  rules still reach the helper's providers, and the idle helper provider is
+  held at `None`. Fix round 1 (2026-11-11, owner decision): the application's
+  explicit default (`Logging:LogLevel:Default`, `AddFilter(null, level)`,
+  `SetMinimumLevel`, a rule for the helper's provider) wins over the R4
+  environment default, code `MinimumLogLevel` over everything; one warning at
+  host start when the fallback writes next to the host's console provider;
+  `JsonLine.Format` inside the logger's guard with a minimal fallback line;
+  lone surrogates written as U+FFFD; characters outside the BMP raw UTF-8
+  when `Console.OutputEncoding` is UTF-8 (escaped otherwise, round 2);
+  collections capped at 1000 items; new case `logging.stdout_logger_field`
+  (Go `skip:no-logger-name`, A23 (b)). The Profiling logger category stays `OtelHelper.Profiling` (decision
+  2026-11-11: C15 moves that warning to the diagnostics sink). Migration
+  guide: telemetry item 22. Parity: the 3 `xfail:C13` cases pass; new cases
+  `logging.stdout_line_shape` and `logging.stdout_reserved_keys_dropped` and
+  the `logging` kind input `attributes` in the four runners (pass in Go,
+  Python, Node.js and .NET); 386 cases, .NET 362 `pass`, 7 `xfail:C16`, 17
+  known-difference skips. The .NET driver's `log_level` reads the level a
+  logger enables instead of `MinLevel`. Tests: `StdoutLoggingTests`; 12
+  mutants, plus the fix-round ones, each fail a test. Suite and coverage:
+  `dotnet/TESTS.md`.
 
 ### Breaking — telemetry output changes (dashboards/alerts)
 

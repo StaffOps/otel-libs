@@ -164,7 +164,7 @@ When `OTEL_EXPORTER_OTLP_ENDPOINT` is **not set**, the library automatically fal
 |--------|----------|
 | Metrics | Exposed via Prometheus HTTP `/metrics` on port 9464 |
 | Traces | In-process only (context propagation works, no export) |
-| Logs | stdout/console only (no OTel export) |
+| Logs | stdout: one JSON object per line (`time` UTC, `level`, `msg`, `logger`, values; no OTel export) |
 
 The Prometheus metrics port is configurable via `OTEL_HELPER_METRICS_PORT` env var (default: 9464).
 
@@ -338,9 +338,11 @@ Exemplars enabled (`ExemplarFilterType.TraceBased`) — metric → trace correla
 | OTLP Export | Logs sent via OTLP to the Collector |
 | Trace Correlation | `traceId`/`spanId` automatic via `Activity.Current` |
 | Formatted Message | Formatted message included |
-| Scopes | ILogger scopes included |
+| Scopes | ILogger scopes included (OTLP; the stdout line has none) |
+| Stdout fallback | No logs exporter active (no endpoint, `OTEL_LOGS_EXPORTER=none`, logs disabled, `OTEL_SDK_DISABLED=true`): one JSON object per line on standard output, the line Go and Python write (0.3, this branch, task C13; HOW-TO §4) |
+| Levels and framework filters | Code `MinimumLogLevel`, else your own default (`Logging:LogLevel:Default`, `SetMinimumLevel`), else the environment level (table above); `Microsoft.*` / `System.Net.Http*` at Error above Debug. All on the helper's own providers only, never on the application's (0.3, task C13, N9; 0.2.x set them on every provider; HOW-TO §4) |
 
-> The lib adds to the logging pipeline the exporters `OTEL_LOGS_EXPORTER` selects: OTLP (the default, with an endpoint) and, with `console`, the OpenTelemetry console exporter (0.3, this branch, task C9). The application's own console provider and its filters stay the application's responsibility.
+> The lib adds to the logging pipeline the exporters `OTEL_LOGS_EXPORTER` selects: OTLP (the default, with an endpoint) and, with `console`, the OpenTelemetry console exporter (0.3, this branch, task C9). With neither active, its stdout provider (alias `OtelHelperStdout`) writes the contract JSON line instead; with one active it writes nothing. The application's own console provider and its filters stay the application's responsibility: keep the host's console provider and every record appears twice on stdout (call `builder.Logging.ClearProviders()` before `AddOtelHelper()` to keep only the JSON line).
 > Console output is each SDK's native format, not a shared one: multi-line text in .NET, JSON in Go (one object per line) and Python (indented), `console.dir` objects in Node.js. Use it for local debugging, not as a log pipeline.
 
 ---
@@ -523,7 +525,8 @@ StaffOps.OtelHelper.sln
 │   │   ├── GrpcServerTracingCheck.cs   # One-time warning: gRPC endpoints without the upstream key
 │   │   └── PropagatorSetup.cs          # OTEL_PROPAGATORS: OTel default + runtime HttpClient propagator
 │   ├── MetricsSetup.cs                 # Metrics with exemplars
-│   ├── LoggingSetup.cs                 # Logging via OpenTelemetry SDK
+│   ├── LoggingSetup.cs                 # Logging via OpenTelemetry SDK; level and filter rules on the helper's providers
+│   ├── Logging/JsonLineLoggerProvider.cs # Stdout JSON-line fallback (no logs exporter)
 │   ├── Models/
 │   │   ├── DeploymentEnvironments.cs   # Environment name constants
 │   │   ├── TelemetryOptions.cs         # Code options (nullable)

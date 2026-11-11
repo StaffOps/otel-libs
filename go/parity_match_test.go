@@ -48,6 +48,7 @@ var inputSchema = map[string][]string{
 	"http_server":      {"requests", "traceparent", "child_span", "allow_server_error"},
 	"grpc_server":      {"method"},
 	"metrics_listener": {"requests", "connect_host"},
+	"logging":          {"attributes"},
 }
 
 var (
@@ -117,6 +118,16 @@ func validateCase(c parityCase) []string {
 		case "connect_host":
 			if h, _ := v.(string); h != "127.0.0.1" && h != "localhost" {
 				errs = append(errs, `input.connect_host must be "127.0.0.1" or "localhost"`)
+			}
+		case "attributes":
+			m, ok := v.(map[string]any)
+			for _, e := range m {
+				if _, isStr := e.(string); !isStr {
+					ok = false
+				}
+			}
+			if !ok {
+				errs = append(errs, "input.attributes must be an object of strings")
 			}
 		}
 	}

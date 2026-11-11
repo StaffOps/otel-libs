@@ -224,8 +224,10 @@ internal static class CaseKinds
             // The resolved interval is what the helper hands the periodic reader (MetricsSetup);
             // the SDK has no public getter for a reader's interval, so the resolved value is read.
             snap["metric_export_interval_ms"] = r.ExportIntervalMs;
-            // The level the helper installed: LoggingSetup calls SetMinimumLevel, which sets this.
-            snap["log_level"] = LogLevelName(run.Host.Services.GetRequiredService<IOptions<LoggerFilterOptions>>().Value.MinLevel);
+            // The level the helper installed. Since C13 it is a rule on the helper's own providers
+            // (N9), not LoggerFilterOptions.MinLevel: the lowest level a logger enables, read through
+            // the factory (the driver cleared the host's providers, so only the helper's remain).
+            snap["log_level"] = LogLevelName(InstalledLogLevel(run.Host.Services.GetRequiredService<ILoggerFactory>()));
             snap["prometheus_metrics_port"] = r.PrometheusMetricsPort;
             // The filter the built MeterProvider applies (SDK-internal member, read by reflection),
             // not the resolved value: the helper sets it in a deferred step (task C9).
@@ -289,6 +291,20 @@ internal static class CaseKinds
             null => "unset",
             _ => "unknown",
         };
+    }
+
+    private static LogLevel InstalledLogLevel(ILoggerFactory factory)
+    {
+        var logger = factory.CreateLogger(ParityScope);
+        for (var level = LogLevel.Trace; level < LogLevel.None; level++)
+        {
+            if (logger.IsEnabled(level))
+            {
+                return level;
+            }
+        }
+
+        return LogLevel.None;
     }
 
     private static string LogLevelName(LogLevel level) => level switch
@@ -671,7 +687,13 @@ internal static class CaseKinds
         if (run is not null)
         {
             var logger = run.Host.Services.GetRequiredService<ILoggerFactory>().CreateLogger(ParityScope);
-            logger.LogWarning("parity-console-record");
+            // input.attributes: the record's name/value pairs, as the state of the record (not a
+            // message template, so the message stays the same text in every language).
+            var attributes = (c["input"]?["attributes"] as JsonObject ?? new JsonObject())
+                .OrderBy(kv => kv.Key, StringComparer.Ordinal)
+                .Select(kv => new KeyValuePair<string, object?>(kv.Key, (string?)kv.Value))
+                .ToList();
+            logger.Log(LogLevel.Warning, default, attributes, null, (_, _) => "parity-console-record");
         }
 
         await ShutdownAsync(run);

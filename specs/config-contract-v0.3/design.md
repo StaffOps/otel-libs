@@ -535,6 +535,13 @@ helper's JSON fallback (one JSON object per line), which is what a no-exporter
 or `OTEL_LOGS_EXPORTER=none` process writes. Pipelines that tail stdout must
 not rely on the console exporter's output.
 
+*Note 2026-11-11 (.NET task C13 fix round 1):* the stdout `level` word set is
+four words in every language — `DEBUG`, `INFO`, `WARN`, `ERROR` — and a level
+above ERROR is written `ERROR`: Python maps CRITICAL to ERROR (`_console.py`
+`_slog_level`), Go's slog and the Node.js logger have no fifth level, and .NET
+writes `Critical` as `ERROR` (`JsonLine.LevelWord`). OTLP records keep each SDK's
+severity.
+
 **Choice**: OTLP-only when an exporter is active; stdout is the opt-in via the
 standard `OTEL_LOGS_EXPORTER` list.
 

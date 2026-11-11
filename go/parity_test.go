@@ -428,7 +428,7 @@ func runCaseKind(t *testing.T, c parityCase, recv *fakeReceiver) map[string]any 
 	case "grpc_server":
 		snap = runGRPCServer(t, opts, c.Input)
 	case "logging":
-		snap = runLogging(t, opts)
+		snap = runLogging(t, opts, c.Input)
 	case "metrics_scrape":
 		snap = runMetricsScrape(opts)
 	case "metrics_listener":
@@ -1048,7 +1048,7 @@ func runGRPCServer(t *testing.T, opts []Option, input map[string]any) map[string
 
 // runLogging emits one record through the helper's public logger (Go apps
 // build their logger with NewLogger) and reports the process console.
-func runLogging(t *testing.T, opts []Option) map[string]any {
+func runLogging(t *testing.T, opts []Option, input map[string]any) map[string]any {
 	t.Helper()
 	r, w, err := os.Pipe()
 	if err != nil {
@@ -1065,7 +1065,18 @@ func runLogging(t *testing.T, opts []Option) map[string]any {
 	if o := installedOptions(); o != nil {
 		env, debug = o.Environment, o.DebugLevel
 	}
-	NewLogger(env, debug).Warn("parity-console-record")
+	// input.attributes: the record's attributes, in key order.
+	attrs, _ := input["attributes"].(map[string]any)
+	keys := make([]string, 0, len(attrs))
+	for k := range attrs {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	args := make([]any, 0, 2*len(keys))
+	for _, k := range keys {
+		args = append(args, k, attrs[k])
+	}
+	NewLogger(env, debug).Warn("parity-console-record", args...)
 	shutdownQuick(shutdown)
 	os.Stdout, os.Stderr = origOut, origErr
 	_ = w.Close()

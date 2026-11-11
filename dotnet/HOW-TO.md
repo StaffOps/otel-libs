@@ -204,6 +204,78 @@ as written. An unset environment is no longer `LOCAL`: the
 `deployment.environment.name` attribute is absent, the level is Information and the
 helper warns once on standard error.
 
+0.3 (this branch, task C13, N9): the level applies to the helper's two providers
+only — the OpenTelemetry provider (alias `OpenTelemetry`) and the stdout provider
+(alias `OtelHelperStdout`). The application's own providers, its rules and
+`LoggerFilterOptions.MinLevel` are not changed (0.2.x set `MinLevel` for every
+provider). An explicit level of the application wins over the environment default
+above (owner decision 2026-11-11, as in Python and 0.2.x). Precedence, highest first:
+
+| # | Source | Example |
+|---|---|---|
+| 1 | `TelemetryOptions.MinimumLogLevel` in code | `o.MinimumLogLevel = LogLevel.Debug` |
+| 2 | a rule of yours for the helper's provider, no category | `Logging:OpenTelemetry:LogLevel:Default`, `Logging:OtelHelperStdout:LogLevel:Default` |
+| 3 | your default for every provider | `Logging:LogLevel:Default`, `AddFilter((string?)null, level)`, `SetMinimumLevel(level)` |
+| 4 | the environment default (table above) | `ENVIRONMENT=PRD` → Warning |
+
+`SetMinimumLevel` counts as your choice wherever it is called, also from a library
+that configures logging for you (including `SetMinimumLevel(LogLevel.Information)`).
+So the ASP.NET Core template (`appsettings.json` with `"Default": "Information"`)
+exports Information in PRD, as on 0.2.x; remove that line, or set
+`MinimumLogLevel`, to get the PRD Warning default. Category rules work as for any
+provider:
+
+| Your configuration | Effect on the helper's providers |
+|---|---|
+| `Logging:LogLevel:<category>` (or `AddFilter("<category>", …)`), before or after `AddOtelHelper()` | applies to that category, as for every provider |
+| `Logging:LogLevel:Microsoft` or `:System.Net.Http` exactly | replaces the helper's Error rule for that category (that rule applies only while the resulting default level is above Debug) |
+| `Logging:OpenTelemetry:LogLevel:<category>`, `Logging:OtelHelperStdout:LogLevel:<category>` | applies; the helper adds no rule for that category. Provider names and aliases are case-sensitive (the framework compares them ordinally: `Logging:opentelemetry:…` is ignored) |
+
+The helper's rules are visible in `LoggerFilterOptions.Rules` (`IOptionsMonitor<LoggerFilterOptions>.CurrentValue`),
+with the provider's full type name (`OpenTelemetry.Logs.OpenTelemetryLoggerProvider`,
+`StaffOps.OtelHelper.Logging.JsonLineLoggerProvider`). They are computed in a
+`PostConfigure<LoggerFilterOptions>` step: rules your own `PostConfigure` registered
+after `AddOtelHelper()` adds are not mirrored onto the helper's providers.
+
+### Stdout fallback (no logs exporter)
+
+With no logs exporter active — no OTLP endpoint, `OTEL_LOGS_EXPORTER=none`,
+`OTEL_HELPER_DISABLED_SIGNALS=logs`, `OTEL_SDK_DISABLED=true`, or an endpoint the
+helper cannot use — the helper writes each record as one JSON object on one line
+of standard output, the same line Go and Python write (contract D6, A23):
+
+```json
+{"time":"2026-11-11T12:00:00.000Z","level":"WARN","msg":"Order 42 delayed","logger":"Orders.Api","OrderId":42}
+```
+
+| Field | Value |
+|---|---|
+| `time` | UTC, milliseconds, `Z`, whatever the process time zone |
+| `level` | `DEBUG` (Trace, Debug), `INFO`, `WARN`, `ERROR` (Error **and** Critical: the four words Go, Python and Node.js write; Python maps CRITICAL to ERROR, Go and Node.js have no fifth level) |
+| `msg` | the formatted message |
+| `logger` | the category (`ILogger<T>`: the full type name) |
+| the state values | after `logger`, in template order; numbers and booleans as JSON, non-finite numbers and other values as text, a collection as an array of at most 1000 items (then `"…"`); `{OriginalFormat}` left out; the first of duplicate names kept; a value named `time`, `level`, `msg` or `logger` is dropped |
+| `exception` | last, the exception's `ToString()` (one line: the line breaks are escaped) |
+
+ILogger scopes are not written on this line. It is written synchronously, one
+`Console.Out.Write` per record. Text is UTF-8 as written (emoji included) when `Console.OutputEncoding` is UTF-8 (the
+Linux and container default); with another console encoding, characters outside the
+BMP stay `\uXXXX\uXXXX` escapes (still valid JSON) instead of becoming `?`; a lone
+surrogate becomes U+FFFD. A value whose `ToString()` recurses without end cannot be
+guarded (a stack overflow ends the process in .NET). The provider writes nothing while a logs exporter
+is active (no tee), and `OTEL_LOGS_EXPORTER=console` gives the OpenTelemetry
+console exporter instead (§15), not this line.
+
+The helper does not remove the host's console provider: an app that keeps it gets
+each record twice on stdout, and the helper warns once at host start
+(`… written to standard output twice …`). To keep only the JSON line:
+
+```csharp
+var builder = WebApplication.CreateBuilder(args);
+builder.Logging.ClearProviders();   // before AddOtelHelper(): it would remove the helper's providers too
+builder.Services.AddOtelHelper();
+```
+
 ### Structured Logs
 
 Use `{Name}` placeholders instead of interpolation. This enables search and filtering:
@@ -517,6 +589,7 @@ When an exception occurs in HTTP requests (inbound/outbound) or SQL queries, the
 ### Framework Logs Filtered
 
 In non-debug environments (DEV, HML, PRD), logs from `Microsoft.*` and `System.Net.Http.*` are only exported if `Error` or `Critical`.
+0.3 (this branch, task C13, N9): only on the helper's providers (OTLP and the stdout fallback); the application's own providers (the host console) show framework warnings again. A rule of yours for exactly `Microsoft` or `System.Net.Http`, or a longer category (`Microsoft.AspNetCore`), wins over the helper's rule (§4).
 
 ### Structured Logs (ParseStateValues)
 
@@ -722,7 +795,7 @@ When `OTEL_EXPORTER_OTLP_ENDPOINT` is **not set**, the library automatically fal
 |--------|----------|
 | Metrics | Exposed via Prometheus HTTP `/metrics` on port 9464 |
 | Traces | In-process only (context propagation works, no export) |
-| Logs | stdout/console only (no OTel export) |
+| Logs | stdout: one JSON object per line (§4 "Stdout fallback"; no OTel export) |
 
 The port is configurable via `OTEL_HELPER_METRICS_PORT` env var (default: `9464`).
 

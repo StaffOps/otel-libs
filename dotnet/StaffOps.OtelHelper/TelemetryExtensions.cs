@@ -151,6 +151,7 @@ namespace StaffOps.OtelHelper
             MetricsSetup.ConfigureListenerOptions(services);
             MetricsSetup.ConfigureReaderOptions(services);
             LoggingSetup.ConfigureFilters(services);
+            LoggingSetup.RegisterStdoutFallback(services);
             services.ConfigureOpenTelemetryTracerProvider(TracerSetup.ApplyResolved);
             services.ConfigureOpenTelemetryMeterProvider(MetricsSetup.ApplyResolved);
             services.ConfigureOpenTelemetryLoggerProvider(LoggingSetup.ApplyResolved);
@@ -186,6 +187,7 @@ namespace StaffOps.OtelHelper
                     ["logs"] = _services.GetService<OpenTelemetry.Logs.LoggerProvider>()?.GetResource(),
                 };
                 _services.GetService<AppResourceState>()?.CheckBuiltResources(built, _services.GetRequiredService<ResolvedTelemetry>(), _services.GetRequiredService<IOtelHelperDiagnostics>());
+                LoggingSetup.WarnDuplicateConsole(_services, _services.GetRequiredService<ResolvedTelemetry>(), _services.GetRequiredService<IOtelHelperDiagnostics>());
 
                 // The Prometheus listener's cancel is shutdown noise only once the host stops
                 // (attached here, not in the lease factory: the lifetime needs a logger, which may

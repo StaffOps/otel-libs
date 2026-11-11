@@ -1,5 +1,7 @@
 # Tests — StaffOps.OtelHelper (.NET)
 
+1689 tests (xUnit) with the parity runner, 0 failed, 0 warnings (compose `dotnet-tests` on `sdk:8.0`, and on `sdk:10.0` (10.0.403) with `DOTNET_ROLL_FORWARD=Major`, 2026-11-11, task C13 fix round 1); coverlet total `| Total | 98.44% | 96.48% | 99.35% |` (line, branch, method) on both. Before the fix round: 1671 tests, 98.45% / 98.52%. The C12 line below is the previous task's run.
+
 1615 tests (xUnit) with the parity runner, 0 failed, 0 warnings (compose `dotnet-tests` on `sdk:8.0`, and on `sdk:10.0` (10.0.403) with `DOTNET_ROLL_FORWARD=Major`, 2026-11-11, task C12 fix round 1); coverlet total `| Total | 98.47% | 96.37% | 99.3% |` (line, branch, method) on `sdk:8.0`, `| Total | 98.4% | 96.32% | 99.3% |` on SDK 10. Before the fix round (C12): 1598 tests, 98.41% / 98.44%. The C11 line below is the previous task's run.
 
 1502 tests (xUnit) with the parity runner, 0 failed, 0 warnings (compose `dotnet-tests` on `sdk:8.0`, and on `sdk:10.0` (10.0.403) with `DOTNET_ROLL_FORWARD=Major`, 2026-11-10, task C11 fix round 2); coverlet total `| Total | 98.39% | 96.37% | 99.27% |` (line, branch, method) on `sdk:8.0`, `| Total | 98.31% | 96.32% | 99.27% |` on SDK 10. The total varies by about ±0.1 point between runs; the cause was not investigated.
@@ -644,3 +646,45 @@ are `skip:no-upstream-dotnet-prom-ratio`, `metrics.scrape_colliding_label_values
 `skip:no-upstream-dotnet-prom-label-order`. Across containers:
 `testing/e2e/dotnet-prom-scrape.sh` (the second app, bound to `127.0.0.1`,
 refuses the curl container).
+
+## Logging (task C13)
+
+`StdoutLoggingTests` (`[Collection("EnvVarTests")]`; contract D6, R4, A23;
+design D-NET10, requirement DN8, N9). The stdout provider's `Output` and
+`Clock` are internal seams: the container tests point `Output` at a
+`StringWriter`, so no test redirects the process-wide `Console.Out`. Parity
+cases: `logging.*` (6; `logging.stdout_line_shape` and
+`logging.stdout_reserved_keys_dropped` added with this task, with the
+`logging` kind input `attributes`; `logging.stdout_logger_field` in fix round 1).
+
+| Area | Tests |
+|---|---|
+| Line shape (A23) | `Line_Has_The_Contract_Fields_In_Order_Compact_And_One_Line`, `Time_Is_Utc_With_Z_And_Truncated_Milliseconds_Whatever_The_Offset`, `Level_Uses_The_Four_Contract_Words` × 6, `Control_Characters_Are_Escaped_Non_Ascii_And_Html_Characters_Are_Not` |
+| Fields and values | `Reserved_Keys_Are_Dropped_And_Other_Attributes_Follow_Logger`, `Reserved_Keys_Are_Case_Sensitive`, `Template_Values_Become_Attributes_Without_The_Original_Format_And_Duplicates_Keep_The_First`, `Exception_Is_The_Last_Field_And_Replaces_An_Attribute_Of_That_Name`, `An_Exception_Attribute_Is_Kept_When_The_Record_Has_None`, `Values_Keep_Their_Json_Type_And_The_Rest_Becomes_Text`, `Hostile_Values_Never_Lose_The_Record`, `A_State_That_Is_Not_Pairs_Gives_Only_The_Message_And_A_Null_Formatter_Uses_Its_Text` |
+| Provider | `Logger_Writes_Through_Output_Only_When_Active_And_Never_Throws`, `Default_Output_Is_The_Current_Console_Out`, `A_Second_AddOtelHelper_Registers_No_Second_Stdout_Provider`, `Host_Writes_The_Line_And_Keeps_The_App_Console_Provider` |
+| When it writes (D6) | `Fallback_Writes_Exactly_When_No_Logs_Exporter_Is_Active` × 9 (no endpoint, endpoint, `none`, `console`, `otlp,console`, `otlp` without endpoint, logs or traces disabled; the idle provider held at `None`), `Sdk_Disabled_Writes_The_Fallback`, `Unusable_Endpoint_Writes_The_Fallback`, `Fallback_Line_Written_Through_The_Container_Has_The_Category_And_The_State` |
+| Level (R4) | `Stdout_Level_Follows_R4_And_Code_Wins` × 8, `Debug_Mode_Gives_Debug_And_Keeps_Framework_Categories`, `Level_Reapplies_When_The_App_Environment_Arrives` |
+| N9 (helper's providers only) | `App_Provider_Keeps_Its_Level_And_Framework_Warnings_While_The_Helper_Holds_Its_Own`, `App_Category_Rules_Without_Provider_Still_Apply_To_The_Helper_Providers_Also_When_Registered_Later`, `App_Rule_For_A_Framework_Category_Replaces_The_Helper_Error_Rule`, `Longer_App_Category_Beats_The_Helper_Framework_Rule`, `App_Filter_Without_Level_Leaves_R4_And_Still_Runs`, `Provider_Specific_App_Configuration_Wins_For_That_Provider` × 3 (a lower-case alias is not applied, as in the framework), `Otel_Provider_Alias_Is_Read_From_The_Sdk`, `Apply_Helper_Rules_Without_App_Rules`, `Apply_Helper_Rules_Leaves_Slots_The_App_Set_By_Alias` |
+| Profiling category (kept, 2026-11-11) | `Profiling_Prerequisite_Warning_Keeps_The_OtelHelper_Profiling_Category` |
+
+The parity driver's `log_level` now reads the lowest level a `parity` logger
+enables (only the helper's providers remain after `ClearProviders()`), not
+`LoggerFilterOptions.MinLevel`, which the helper no longer sets; the C6
+`IdentityResourceTests` that asserted `MinLevel` read `LoggingSetup.HelperLevel`.
+
+*Fix round 1 (2026-11-11, owner decision: the application's explicit level wins):*
+`Template_Appsettings_In_Prd_Exports_Information_The_App_Default_Wins` (the
+ASP.NET Core template `appsettings.json` in PRD exports Information, framework
+Information still dropped), `App_Default_Through_AddFilter_Wins_Over_R4`,
+`App_SetMinimumLevel_Wins_Over_R4` × 2, `App_SetMinimumLevel_Is_Detected`,
+`Code_MinimumLogLevel_Wins_Over_The_App_Default_And_The_Provider_Slot`,
+`Apply_Helper_Rules_App_MinLevel_Gives_No_Default_Rule`,
+`Host_Console_Provider_With_The_Fallback_Warns_Once` × 3,
+`Lone_Surrogates_In_Message_Value_And_Key_Become_Replacement_Characters`,
+`Characters_Outside_The_Bmp_Are_Written_Raw_And_A_Literal_Backslash_U_Stays_Escaped`,
+`Collections_Are_Capped`, `A_Failure_Outside_Format_Guards_Writes_The_Minimal_Line`.
+8 more mutants: 7 each fail a test (app default ignored, `SetMinimumLevel`
+ignored, code not winning over the provider slot, no duplicate-console warning,
+no raw supplementary characters, cap doubled, no minimal line); dropping
+`Clean` on the message survives, because `Utf8JsonWriter` already writes U+FFFD
+for a lone surrogate (an equivalent mutant, measured).

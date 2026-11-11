@@ -359,6 +359,13 @@ task C3, 1.15.x → 1.20.x):
   (the `UseOtlpExporter()` marker the SDK's `EnsureNoUseOtlpExporterRegistrations`
   checks; `MetricsSetup.UseOtlpExporterRegistrationType`, C5): the canary test
   `UseOtlpExporter_Registration_Type_Still_Exists` fails if a bump renames it.
+- **Logging type the helper matches by name (C13).** `DefaultLoggerLevelConfigureOptions`
+  (Microsoft.Extensions.Logging, the `IConfigureOptions<LoggerFilterOptions>` that
+  `AddLogging` registers once and every `SetMinimumLevel` registers again;
+  `LoggingSetup.AppSetMinimumLevel` counts them). On a `Microsoft.Extensions.*` or
+  .NET runtime bump, run `StdoutLoggingTests.App_SetMinimumLevel_Is_Detected`: its
+  `SetMinimumLevel(Information)` case is the only one a rename breaks silently
+  (other levels are still caught by `MinLevel != Information`).
 - **gRPC server tracing key and metadata type (C11).** `OTEL_DOTNET_EXPERIMENTAL_ASPNETCORE_ENABLE_GRPC_INSTRUMENTATION`
   is an experimental upstream key (O7 (b): the app sets it, the parity driver and
   `dotnet-backend` example set it): check that the bumped AspNetCore instrumentation

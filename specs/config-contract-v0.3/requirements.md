@@ -134,6 +134,15 @@ Evidence (F4): Go `config.go:53-66`, Python `config.py:44-49` map unset/unknown 
 - WHEN the environment is unset or unknown THEN helper-created log handlers
   SHALL use level INFO (LOCAL keeps DEBUG).
 
+*Note 2026-11-11 (.NET task C13 fix round 1, owner decision):* the environment
+level is a **default**. In .NET an explicit logging default of the application —
+a provider-less `Logging:LogLevel:Default`, `AddFilter(null, level)`,
+`SetMinimumLevel`, or a rule for the helper's provider — wins over it, as in
+Python (`python/staffops_otel_helper/logging_setup.py:230-231`, the application's
+root level is kept) and as in .NET 0.2.x; code `TelemetryOptions.MinimumLogLevel`
+wins over everything. The R4 level applies only when the application chose none
+(design `specs/dotnet-otel-helper/design.md` D-NET10 note (c)).
+
 ### R5 — Standard variables win
 Evidence (F5): `SERVICE_NAME` beats `OTEL_SERVICE_NAME` (Go `config.go:98-104`,
 Python `config.py:175-176`); `OTEL_RESOURCE_ATTRIBUTES=deployment.environment.name=PRD`

@@ -4097,7 +4097,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C13",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -4120,7 +4120,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C13",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -4143,7 +4143,90 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C13",
+        "dotnet": "pass",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "logging.stdout_line_shape",
+      "kind": "logging",
+      "requirement": "D6/A23",
+      "note": "contract design D1 rows \"Stdout fallback time zone\" and \"Stdout fallback fields\" (A23): one compact JSON object per line, fields time (UTC, ms, Z), level (WARN), msg, then logger where the language has a logger name (Go has none, A23 (b)); no other field for a record without attributes (added 2026-11-11, .NET C13)",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "ENVIRONMENT": "DEV"
+      },
+      "code": {},
+      "expect": {
+        "console": {
+          "regex": "\\{\"time\":\"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{3}Z\",\"level\":\"WARN\",\"msg\":\"parity-console-record\"(,\"logger\":\"parity\")?\\}"
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "pass",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "logging.stdout_reserved_keys_dropped",
+      "kind": "logging",
+      "requirement": "D6/A23",
+      "note": "contract design D1 row \"Stdout fallback fields\" (A23 (a)): a top-level attribute named time or level is dropped, the record's own field is the only one; other attributes follow logger. msg is not in the input (Python's stdlib refuses it as an extra) and logger is not either (Go writes a logger attribute as the field, A23 amendment) (added 2026-11-11, .NET C13)",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "ENVIRONMENT": "DEV"
+      },
+      "code": {},
+      "input": {
+        "attributes": {
+          "level": "parity-reserved-level",
+          "parity_attr": "parity-kept",
+          "time": "parity-reserved-time"
+        }
+      },
+      "expect": {
+        "console": {
+          "all": [
+            {
+              "regex": "\"level\":\"WARN\",\"msg\":\"parity-console-record\"(,\"logger\":\"parity\")?,\"parity_attr\":\"parity-kept\"\\}"
+            },
+            {
+              "not_contains": "parity-reserved-time"
+            },
+            {
+              "not_contains": "parity-reserved-level"
+            }
+          ]
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "pass",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "logging.stdout_logger_field",
+      "kind": "logging",
+      "requirement": "D6/A23",
+      "note": "contract design D1 row \"Stdout fallback fields\" (A23 (b)): where the language has a logger name the line carries it as logger, right after msg; Go's NewLogger has no name (accepted difference, skip:no-logger-name) (added 2026-11-11, .NET C13 fix round 1)",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "ENVIRONMENT": "DEV"
+      },
+      "code": {},
+      "expect": {
+        "console": {
+          "regex": "\"msg\":\"parity-console-record\",\"logger\":\"parity\"\\}"
+        }
+      },
+      "status": {
+        "go": "skip:no-logger-name",
+        "python": "pass",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },

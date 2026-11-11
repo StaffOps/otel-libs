@@ -926,6 +926,84 @@ action**: map the contract fields onto a custom `ConsoleFormatter`.
 **Alternatives**: rely on the host console provider (rejected: not the
 contract line).
 
+*Note 2026-11-11 (task C13, implemented, awaiting review):*
+(a) **Provider.** `Logging/JsonLineLoggerProvider.cs`, alias
+`OtelHelperStdout`, registered by `AddOtelHelper` with `TryAddEnumerable`
+(eager, D-NET3); whether it writes is decided once per container from the
+resolved state (`LoggingSetup.LogsExporterActive`: `console`, or `otlp` with a
+target the exporter can use — the test `ApplyResolved` applies, without its
+diagnostics), so a late `Configure<TelemetryOptions>` still decides it. Writes
+when no logs exporter is active: no endpoint, `OTEL_LOGS_EXPORTER=none`, logs
+disabled, `OTEL_SDK_DISABLED=true` (as Go, whose bridge is off then), an
+endpoint the helper cannot use. One synchronous `Console.Out.Write` per record
+(the current `Console.Out`, read per record; Go's slog handler and Python's
+`StreamHandler` also write synchronously), so nothing is lost at exit and
+lines never interleave.
+(b) **Line.** `time`, `level`, `msg`, `logger` (the category), the state's
+pairs in order (`{OriginalFormat}` left out, the first of duplicate names kept,
+the four reserved names dropped, case-sensitive as in the other languages),
+`exception` last (`Exception.ToString()`; with an exception an attribute named
+`exception` is dropped, as Python's `exc_info` wins; without one it is kept).
+Numbers and booleans keep their JSON type; non-finite `double`/`float` and every
+other value are text (`NaN`, `Infinity`, `-Infinity`; `DateTime`/`DateTimeOffset`
+in the `O` format; a collection one level deep as an array; a throwing
+`ToString` → `[unprintable <type>]`), so a record is never lost and the line is
+always valid JSON (contract D1 row "Stdout fallback fields" (d)). Compact
+separators; `System.Text.Json` with `JavaScriptEncoder.UnsafeRelaxedJsonEscaping`
+(no HTML escaping; non-ASCII text raw as in Go and Python; control characters,
+quotes and backslashes escaped, so one record is one line; characters outside
+the BMP: raw UTF-8 since fix round 1, see (f)). Scopes are not written (Go and
+Python have none; OTLP keeps them).
+(c) **N9 and R4 — rules on the helper's two providers, not `MinLevel`.**
+*Rewritten in fix round 1 (2026-11-11, owner decision: the application's
+explicit level wins).* `ConfigureFilters` is a post-configure step
+(`ApplyHelperRules`): the application's rules and `LoggerFilterOptions.MinLevel`
+stay as they are; the idle helper provider (the stdout one with an exporter, the
+SDK's without) is held at `None`, so the SDK provider never takes records while it
+has no processor (D6 "never an OTel handler without a processor"). The active one
+gets (1) a copy of every application rule that names a category but no provider —
+still needed: Microsoft.Extensions.Logging's rule selector prefers any
+provider-specific rule to every rule without a provider, so once the helper adds
+its framework or default rule the application's category rules would stop reaching
+that provider; (2) a default-level rule only for code `MinimumLogLevel` (wins over
+everything, also over the application's rule for that provider) or, when the
+application chose no default, for the R4 environment level. The application's
+default, in this order: its rule for that provider without category (type name or
+alias, compared ordinally as the framework does — measured: `Logging:otelhelperstdout:…`
+is not applied), its rule without provider and category with a level
+(`Logging:LogLevel:Default`, `AddFilter(null, level)`), `SetMinimumLevel`
+(`AppSetMinimumLevel`: `MinLevel` other than Information, or a second
+`DefaultLoggerLevelConfigureOptions`). This is Python's rule (the helper sets the
+root level only while the application left it at its default,
+`logging_setup.py:230-231`) and 0.2.x's effective behavior (its `MinLevel` lost to
+any matching rule); the ASP.NET Core template (`Default: Information`) exports
+Information in PRD. (3) Above Debug — of the resulting default level — `Microsoft`
+and `System.Net.Http` at Error unless the application has a rule for exactly that
+category. Not mirrored: rules an application `PostConfigure<LoggerFilterOptions>`
+registered after `AddOtelHelper` adds. *First version (2026-11-11, replaced):*
+the R4 level was always added, so `Logging:LogLevel:Default` no longer beat it.
+(d) **Profiling category — kept `OtelHelper.Profiling`.** Reason: task C15
+(N11) moves the prerequisite warning to the D-NET5 diagnostics sink, which
+removes the ILogger category; a rename now would make applications change
+`Logging:LogLevel` filters twice (the API part of the migration guide already
+says the category stays). Migration telemetry item 22 records it.
+(f) **Fix round 1 (2026-11-11), the line.** `JsonLine.Format` runs inside the
+logger's guard, with `JsonLine.Minimal` (time, level, `[unrenderable record]`) if
+anything still throws; a lone surrogate in a message, key or value becomes U+FFFD
+(`JsonLine.Clean`; measured: `Utf8JsonWriter` with this encoder already writes
+U+FFFD without throwing — a mutant dropping `Clean` on the message survives — so
+`Clean` only makes it independent of the encoder); the encoder's surrogate-pair escapes are
+written back as UTF-8 (`RawSupplementary`, an escaped backslash before them kept),
+so emoji are raw as in Go and Python (round 2: only when `Console.OutputEncoding`
+is UTF-8; another encoding keeps the escapes, which it would turn into `?`) — measured: `UnsafeRelaxedJsonEscaping` alone
+writes `\uD83D\uDE00`; a collection is capped at 1000 items, then `"…"`. A
+`ToString()` that recurses without end is not guarded (a stack overflow cannot be
+caught). With the fallback writing and the framework's `ConsoleLoggerProvider`
+registered, one warning at host start (`LoggingSetup.WarnDuplicateConsole`).
+(e) **`[TO VERIFY C13]` resolved**: see the measurement in the task C13 note
+(the built-in JSON console formatter writes its own field names, not the
+contract's), so the custom provider stays.
+
 ### D-NET11 — Prometheus: upstream listener on an explicit `+` prefix
 **Choice** (r2 after C1 dev H1/H2, observability H9/M6/M7, refuter H6; r3
 after C1b): C3 moves to 1.20.1-beta.1 and configures the listener with `Port`

@@ -64,6 +64,7 @@ internal static class ParityHarness
         ["http_server"] = new[] { "requests", "traceparent", "child_span", "allow_server_error" },
         ["grpc_server"] = new[] { "method" },
         ["metrics_listener"] = new[] { "requests", "connect_host" },
+        ["logging"] = new[] { "attributes" },
     };
 
     private static readonly HashSet<string> Signals = new(StringComparer.Ordinal) { "traces", "metrics", "logs" };
@@ -241,6 +242,10 @@ internal static class ParityHarness
             else if ((key is "child_span" or "allow_server_error") && !(val is JsonValue b && b.TryGetValue<bool>(out _)))
             {
                 errs.Add($"input.{key} must be a boolean");
+            }
+            else if (key == "attributes" && !(val is JsonObject attrs && attrs.All(kv => kv.Value is JsonValue v && v.TryGetValue<string>(out _))))
+            {
+                errs.Add("input.attributes must be an object of strings");
             }
         }
 

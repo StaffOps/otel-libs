@@ -57,6 +57,7 @@ _INPUT_SCHEMA = {
     "http_server": {"requests", "traceparent", "child_span", "allow_server_error"},
     "grpc_server": {"method"},
     "metrics_listener": {"requests", "connect_host"},
+    "logging": {"attributes"},
 }
 _SIGNALS = {"traces", "metrics", "logs"}
 _RECORD_FIELDS = {"proto", "tls", "port", "path", "raw_path", "encoding", "headers", "timeout_ms", "absent"}
@@ -132,6 +133,8 @@ def validate_case(case: dict) -> list[str]:
             errs.append(f"input.{key} must be a boolean")
         elif key == "connect_host" and val not in ("127.0.0.1", "localhost"):
             errs.append('input.connect_host must be "127.0.0.1" or "localhost"')
+        elif key == "attributes" and not (isinstance(val, dict) and all(isinstance(x, str) for x in val.values())):
+            errs.append("input.attributes must be an object of strings")
     if kind == "metrics_listener":
         reqs = inp.get("requests")
         if not (isinstance(reqs, list) and reqs and all(isinstance(r, str) and re.fullmatch(r"[A-Z]+ /\S*", r) for r in reqs)):
