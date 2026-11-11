@@ -12,12 +12,12 @@ namespace StaffOps.OtelHelper.Tests;
 
 /// <summary>
 /// Prometheus fallback listener on OpenTelemetry.Exporter.Prometheus.HttpListener
-/// 1.20.x (task C3, design D-NET11): the 0.2.x bind (every IPv4 interface on the
-/// helper port) and fresh scrapes are kept although upstream now defaults the host
-/// to <c>localhost</c>, caches responses for 300 ms and reads
-/// <c>OTEL_EXPORTER_PROMETHEUS_HOST</c>/<c>_PORT</c>. Reachability from another
-/// container is checked by <c>testing/e2e/dotnet-prom-scrape.sh</c>, so this
-/// suite runs without a network.
+/// 1.20.x (tasks C3 and C12, design D-NET11): every IPv4 interface on the resolved
+/// port unless <c>OTEL_EXPORTER_PROMETHEUS_HOST</c> names an address, and fresh
+/// scrapes, although upstream defaults the host to <c>localhost</c> and caches
+/// responses for 300 ms. Reachability from another container is checked by
+/// <c>testing/e2e/dotnet-prom-scrape.sh</c>; the bind-host negative control is in
+/// <c>PrometheusFallbackC12Tests</c>.
 /// </summary>
 [Collection("EnvVarTests")]
 [ResetGlobalPropagation]
@@ -44,10 +44,16 @@ public class PrometheusListenerTests : IDisposable
             Environment.SetEnvironmentVariable(v, null);
     }
 
-    [Fact]
-    public void ListenerPrefix_IsWildcardHostMetricsPath()
+    [Theory]
+    [InlineData("", "http://+:9464/metrics/")]
+    [InlineData("0.0.0.0", "http://+:9464/metrics/")]
+    [InlineData("127.0.0.1", "http://127.0.0.1:9464/metrics/ http://localhost:9464/metrics/")]
+    [InlineData("10.1.2.3", "http://10.1.2.3:9464/metrics/")]
+    public void ListenerPrefixes_FollowTheBindHost(string host, string prefixes)
     {
-        Assert.Equal("http://+:9464/metrics/", MetricsSetup.PrometheusListenerPrefix(9464));
+        // Every interface is the "+" prefix (the managed HttpListener refuses 0.0.0.0); an IPv4 literal
+        // binds itself; 127.0.0.1 also answers Host: localhost (C12 fix round 1).
+        Assert.Equal(prefixes.Split(' '), MetricsSetup.PrometheusListenerPrefixes(9464, host));
     }
 
     [Fact]
@@ -69,16 +75,15 @@ public class PrometheusListenerTests : IDisposable
     }
 
     [Fact]
-    public void ConfigurePrometheusListener_Inactive_ClearsEveryPrefix()
+    public void ConfigurePrometheusListener_Host_ReplacesThePrefix()
     {
-        // D-NET3 "no listener": the reader exists, the HttpListener gets no prefix.
         var opts = new PrometheusHttpListenerOptions();
-        MetricsSetup.ConfigurePrometheusListener(opts, 9999, active: false);
+        MetricsSetup.ConfigurePrometheusListener(opts, 9999, "127.0.0.1");
 
         using var listener = new HttpListener();
         listener.Prefixes.Add("http://localhost:9999/metrics/");
         opts.ConfigureHttpListener!(opts, listener);
-        Assert.Empty(listener.Prefixes);
+        Assert.Equal(new[] { "http://127.0.0.1:9999/metrics/", "http://localhost:9999/metrics/" }, listener.Prefixes.OrderBy(p => p, StringComparer.Ordinal).ToArray());
     }
 
     [Fact]
@@ -101,27 +106,25 @@ public class PrometheusListenerTests : IDisposable
     }
 
     [Fact]
-    public async Task PrometheusEnvVars_HaveNoEffect_HelperPortServed()
+    public async Task PrometheusPortEnvVar_BeatsHelperPort_AndHostStarDoesNotAbort()
     {
-        // OTEL_EXPORTER_PROMETHEUS_HOST="*" aborts the 1.20.x provider build when it
-        // reaches the exporter; _PORT would move the listener. The helper's values
-        // win, as in 0.2.x where the exporter did not read either variable.
+        // A29 (C12): OTEL_EXPORTER_PROMETHEUS_PORT wins over OTEL_HELPER_METRICS_PORT; an invalid
+        // host ("*", which aborts the 1.20.x build when it reaches the exporter) is warned and
+        // binds every interface.
         var helperPort = TestPorts.FreeTcpPort();
         var envPort = TestPorts.FreeTcpPort();
         Environment.SetEnvironmentVariable(PromHostEnvVar, "*");
         Environment.SetEnvironmentVariable(PromPortEnvVar, envPort.ToString());
         Environment.SetEnvironmentVariable(TelemetryOptions.MetricsPortEnvVar, helperPort.ToString());
 
-        var services = new ServiceCollection();
-        services.AddOtelHelper(o => o.ServiceName = "prom-env-test");
-        using var sp = services.BuildServiceProvider();
-        var meterProvider = sp.GetRequiredService<MeterProvider>();
-        Assert.NotNull(meterProvider);
+        var diagnostics = new TestDiagnostics();
+        using var sp = TestPipelines.Build(o => o.ServiceName = "prom-env-test", diagnostics);
 
         using var http = new HttpClient();
-        var response = await http.GetAsync($"http://localhost:{helperPort}/metrics");
+        var response = await http.GetAsync($"http://localhost:{envPort}/metrics");
         Assert.Equal(HttpStatusCode.OK, response.StatusCode);
-        await Assert.ThrowsAsync<HttpRequestException>(() => http.GetAsync($"http://localhost:{envPort}/metrics"));
+        await Assert.ThrowsAsync<HttpRequestException>(() => http.GetAsync($"http://localhost:{helperPort}/metrics"));
+        Assert.Single(diagnostics.Lines, l => l.Contains(PromHostEnvVar, StringComparison.Ordinal));
     }
 
     private static ServiceProvider PrometheusOnly(int port, string meter)

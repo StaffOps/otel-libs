@@ -738,6 +738,73 @@ from 0.2.x). The upstream exporter's own
 effect; set the port with `OTEL_HELPER_METRICS_PORT`.
 `testing/e2e/dotnet-prom-scrape.sh` checks the scrape from another container.
 
+### Port, bind address and flushing (0.3, this branch, task C12)
+
+The paragraph above describes 0.2.x and the branch before task C12. Now the
+helper honors the standard variables (contract A29):
+
+```bash
+# Port: code PrometheusMetricsPort > OTEL_EXPORTER_PROMETHEUS_PORT > OTEL_HELPER_METRICS_PORT > 9464
+OTEL_EXPORTER_PROMETHEUS_PORT=9100
+
+# Bind address: unset = every IPv4 interface. Restrict to loopback for a sidecar scraper:
+OTEL_EXPORTER_PROMETHEUS_HOST=127.0.0.1
+```
+
+- Both port variables accept `^\+?[0-9]+$` in [0, 65535] (`0` = no listener);
+  `9_100`, `-0` or a 40-digit string warn once and the next level applies.
+- The host is an IPv4 literal, `localhost` (bound as `127.0.0.1`) or `0.0.0.0`
+  (every IPv4 interface). Any other value warns once and binds every IPv4
+  interface. .NET has no IPv6 bind: `::1` binds `127.0.0.1` (one warning), `::`
+  every IPv4 interface (one warning), any other IPv6 address no listener (one
+  ERROR; start continues).
+- A bind failure (busy port, an address the machine does not own) writes one
+  ERROR naming the address, the port and what set them; then the build fails.
+- With `127.0.0.1` (or `localhost`, `::1`) the listener stays on loopback and
+  answers `http://127.0.0.1:9100/metrics` always. `http://localhost:9100/metrics`
+  answers clients that dial `::1` first (Go — Prometheus, vmagent — and .NET
+  `HttpClient`, measured); curl and Node.js resolve `localhost` with
+  `AI_ADDRCONFIG` and, in a container whose only IPv6 address is `::1`, get 404
+  (the listener routes by `Host` and the `localhost` prefix sits on `::1`):
+  point them at `127.0.0.1`. Any other address answers only requests that name
+  it in `Host`.
+- The listener reader exists only while the listener binds. With both `otlp`
+  and `prometheus`, `MeterProvider.ForceFlush()` and `Shutdown()` return
+  `false` whatever the OTLP result (upstream: a pull-only reader fails any
+  collection outside a scrape; a mounted scraping endpoint, below, does the
+  same). With OTLP only, `ForceFlush()` reports the export result, but
+  `Shutdown()` returns `true` even after the collector answered 500 (upstream,
+  measured). **Only `ForceFlushOtelHelper()` is a reliable success signal**:
+  call it before a short-lived process exits:
+
+```csharp
+using StaffOps.OtelHelper;
+
+var host = builder.Build();
+await host.RunAsync();
+
+// True when the helper's metric readers exported (a collector answering 500 → false)
+// and the trace and log batches were handed to their exporters within 5 s.
+if (!host.Services.ForceFlushOtelHelper(timeoutMilliseconds: 5_000))
+{
+    Console.Error.WriteLine("telemetry flush incomplete");
+}
+```
+
+`ForceFlushOtelHelper` throws `ObjectDisposedException` once the service
+provider is disposed, so call it before disposing the host. It flushes the
+`TracerProvider` and `LoggerProvider` (for
+them the result is the SDK's: "handed to the exporter in time", not
+"accepted") and collects each push metric reader the helper built (OTLP,
+console), returning their export result. With
+`OTEL_EXPORTER_OTLP_METRICS_DEFAULT_HISTOGRAM_AGGREGATION=base2_exponential_bucket_histogram`
+the OTLP metric reader is the SDK's, so the metric part is
+`MeterProvider.ForceFlush()` (`false` in dual mode). Under
+`OTEL_SDK_DISABLED=true` it returns `true`.
+
+- `OTEL_HELPER_DISABLED_METRICS` patterns are case-sensitive: `Http.*` does not
+  drop `http.server.request.duration`. `?` matches one character.
+
 ### Running OTLP push AND `/metrics` at the same time
 
 `OTEL_METRICS_EXPORTER` selects which exporter(s) are active on the metrics pipeline, independent of the legacy endpoint-based fallback above:

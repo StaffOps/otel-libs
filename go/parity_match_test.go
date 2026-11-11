@@ -47,7 +47,7 @@ var inputSchema = map[string][]string{
 	"sampler":          {"scenario"},
 	"http_server":      {"requests", "traceparent", "child_span", "allow_server_error"},
 	"grpc_server":      {"method"},
-	"metrics_listener": {"requests"},
+	"metrics_listener": {"requests", "connect_host"},
 }
 
 var (
@@ -113,6 +113,10 @@ func validateCase(c parityCase) []string {
 		case "child_span", "allow_server_error":
 			if _, ok := v.(bool); !ok {
 				errs = append(errs, fmt.Sprintf("input.%s must be a boolean", k))
+			}
+		case "connect_host":
+			if h, _ := v.(string); h != "127.0.0.1" && h != "localhost" {
+				errs = append(errs, `input.connect_host must be "127.0.0.1" or "localhost"`)
 			}
 		}
 	}

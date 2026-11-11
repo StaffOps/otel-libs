@@ -63,7 +63,7 @@ internal static class ParityHarness
         ["sampler"] = new[] { "scenario" },
         ["http_server"] = new[] { "requests", "traceparent", "child_span", "allow_server_error" },
         ["grpc_server"] = new[] { "method" },
-        ["metrics_listener"] = new[] { "requests" },
+        ["metrics_listener"] = new[] { "requests", "connect_host" },
     };
 
     private static readonly HashSet<string> Signals = new(StringComparer.Ordinal) { "traces", "metrics", "logs" };
@@ -252,6 +252,12 @@ internal static class ParityHarness
             if (!ok)
             {
                 errs.Add("metrics_listener needs a non-empty input.requests of \"METHOD /path\" strings");
+            }
+
+            if (input["connect_host"] is { } connectHost
+                && !(connectHost is JsonValue h && h.TryGetValue<string>(out var hostText) && hostText is "127.0.0.1" or "localhost"))
+            {
+                errs.Add("input.connect_host must be \"127.0.0.1\" or \"localhost\"");
             }
         }
     }

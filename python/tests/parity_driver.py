@@ -534,10 +534,12 @@ def kind_metrics_listener(case: dict) -> dict:
     _, snap = _setup(case)
     if "error" in snap:
         return snap
+    # input.connect_host: "127.0.0.1" (default) or "localhost" (every address the resolver returns).
+    host = case["input"].get("connect_host", "127.0.0.1")
     statuses = []
     for request in case["input"]["requests"]:
         method, target = request.split(" ", 1)
-        conn = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
+        conn = http.client.HTTPConnection(host, port, timeout=10)
         try:
             conn.request(method, target)
             response = conn.getresponse()

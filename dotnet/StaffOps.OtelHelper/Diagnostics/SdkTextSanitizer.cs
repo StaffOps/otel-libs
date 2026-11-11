@@ -29,7 +29,7 @@ namespace StaffOps.OtelHelper.Diagnostics
         // The SDK's parse warnings for the rows the resolver resolves and warns about: the OTLP
         // exporter constructor's, and the reader options' interval and the SDK switch (task C9).
         private static readonly Regex HelperOwnedConfigurationWarning = new(
-            @"^Configuration key '(?:OTEL_EXPORTER_OTLP_(?:(?:TRACES|METRICS|LOGS)_)?(?:ENDPOINT|PROTOCOL|COMPRESSION|TIMEOUT)|OTEL_METRIC_EXPORT_INTERVAL|OTEL_SDK_DISABLED)' has an invalid value", RegexOptions.CultureInvariant, RegexTimeout);
+            @"^Configuration key '(?:OTEL_EXPORTER_OTLP_(?:(?:TRACES|METRICS|LOGS)_)?(?:ENDPOINT|PROTOCOL|COMPRESSION|TIMEOUT)|OTEL_METRIC_EXPORT_INTERVAL|OTEL_SDK_DISABLED|OTEL_EXPORTER_PROMETHEUS_(?:PORT|HOST))' has an invalid value", RegexOptions.CultureInvariant, RegexTimeout);
 
         private static readonly string[] HeaderVariables = TelemetryResolver.HeaderVariables;
 

@@ -4334,7 +4334,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C12",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -4392,7 +4392,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C12",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -4453,7 +4453,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C12",
+        "dotnet": "skip:no-upstream-dotnet-prom-label-order",
         "nodejs": "pass"
       }
     },
@@ -4516,7 +4516,7 @@
       "status": {
         "go": "skip:no-upstream-go-otlptranslator-tokens",
         "python": "pass",
-        "dotnet": "xfail:C12",
+        "dotnet": "skip:no-upstream-dotnet-prom-ratio",
         "nodejs": "pass"
       }
     },
@@ -4545,7 +4545,7 @@
       "status": {
         "go": "pass",
         "python": "skip:no-upstream-python-case-preserving-names",
-        "dotnet": "xfail:C12",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -4582,7 +4582,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C12",
+        "dotnet": "skip:no-upstream-dotnet-prom-ratio",
         "nodejs": "pass"
       }
     },
@@ -4604,7 +4604,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C12",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -4648,7 +4648,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C12",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -10329,7 +10329,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C12",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -10355,7 +10355,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C12",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -10377,7 +10377,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C12",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -10422,7 +10422,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C12",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -10443,7 +10443,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C12",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -10464,7 +10464,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C12",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -10485,7 +10485,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C12",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -10506,7 +10506,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C12",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -10530,7 +10530,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C12",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -10552,7 +10552,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C12",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -10576,6 +10576,34 @@
         "listener_statuses": [
           200,
           404
+        ]
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "pass",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "metrics.listener_prometheus_host_ipv6_loopback",
+      "kind": "metrics_listener",
+      "requirement": "D1/A29",
+      "note": "Design D1 row \"Prometheus exporter variables\" (A29; added 2026-11-11, .NET C12 fix round 1): OTEL_EXPORTER_PROMETHEUS_HOST=[::1] keeps the listener on loopback and a scrape of localhost answers. The runner connects to localhost (every address the resolver returns), so the case holds whether the socket is ::1 (Go, Python, Node.js) or 127.0.0.1: .NET maps the IPv6 loopback to 127.0.0.1 (its HttpListener cannot bind an IPv6 literal; specs/dotnet-otel-helper D-NET15) and also answers Host: localhost. The case does not assert an IPv6 socket.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_PROMETHEUS_HOST": "[::1]"
+      },
+      "code": {},
+      "input": {
+        "requests": [
+          "GET /metrics"
+        ],
+        "connect_host": "localhost"
+      },
+      "expect": {
+        "listener_statuses": [
+          200
         ]
       },
       "status": {
@@ -10858,7 +10886,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C12",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -10879,7 +10907,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C12",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -10900,7 +10928,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C12",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -10924,7 +10952,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C12",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -10948,7 +10976,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C12",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -10972,7 +11000,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C12",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -10996,7 +11024,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C12",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     },
@@ -11030,7 +11058,7 @@
       "status": {
         "go": "pass",
         "python": "pass",
-        "dotnet": "xfail:C12",
+        "dotnet": "pass",
         "nodejs": "pass"
       }
     }

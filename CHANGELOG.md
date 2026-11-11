@@ -682,6 +682,7 @@ emitted telemetry.
    | — | new constants `TelemetryOptions.TracesSamplerArgEnvVar` (`OTEL_TRACES_SAMPLER_ARG`) and `TelemetryOptions.PropagatorsEnvVar` (`OTEL_PROPAGATORS`) (task C10) |
    | public `IsSignalEnabled()`, `ResolvedMetricExporters()`, `ResolvedOtlpProtocol()` | removed (they answered from code-only state) |
    | public `TelemetryOptionsValidator` | internal |
+   | — | new `IServiceProvider.ForceFlushOtelHelper(int timeoutMilliseconds = Timeout.Infinite)` (`TelemetryFlushExtensions`, task C12): flushes the helper's traces and logs and collects the push metric readers it built, returning their result; `MeterProvider.ForceFlush()` is `false` whenever a pull-only reader (the Prometheus listener in dual mode, a mounted scraping endpoint) is registered. .NET-only (contract D13 note); throws `ObjectDisposedException` on a disposed provider |
 4. **Invalid values: environment warns, code fails at start** (task C5, design
    D-NET6). 0.2.x threw `OptionsValidationException` inside the
    `AddOtelHelper()` call for some environment values (`OTEL_METRICS_EXPORTER=console`,
@@ -1279,6 +1280,38 @@ dashboards and alerts.
    a sampled request still sends a `traceparent` with the sampled flag cleared
    (the filtered activity's), as 0.2.x did.
 
+21. **Prometheus fallback: port, host, disabled metrics, flush** (task C12,
+   contract A21, A29, N8; ADR-007; design D-NET11, D-NET3). This row
+   supersedes the `OTEL_EXPORTER_PROMETHEUS_HOST`/`_PORT` sentence of
+   telemetry row 3 and the "the Prometheus listener reader always exists"
+   sentence of row 9. Before (0.2.x) → after:
+
+   | Input | 0.2.x | 0.3 (this branch) |
+   |---|---|---|
+   | `OTEL_EXPORTER_PROMETHEUS_PORT` | no effect | the listener port: code `PrometheusMetricsPort` > `OTEL_EXPORTER_PROMETHEUS_PORT` > `OTEL_HELPER_METRICS_PORT` > 9464; `0` = no listener on either variable; an invalid value warns once and the next level applies |
+   | `OTEL_HELPER_METRICS_PORT` grammar | `int.TryParse` (a sign, Unicode spaces accepted); an unparseable value silently used 9464 | `^\+?[0-9]+$` after the contract trim, in [0, 65535], leading zeros allowed; anything else (`9_100`, `-0`, a 40-digit string) warns once (`invalid port`) and falls back |
+   | `OTEL_EXPORTER_PROMETHEUS_HOST` | no effect (every IPv4 interface) | the bind address: an IPv4 literal binds that address only; `localhost` binds `127.0.0.1`; unset, `0.0.0.0`, `::` and `[::]` bind every IPv4 interface (`+`, as 0.2.x); any other value warns once (`invalid host, not applied: the listener binds every interface, wider than a restriction …`) and binds every IPv4 interface (fails open, owner decision) |
+   | an IPv6 host | — | the .NET `HttpListener` cannot bind an IPv6 literal (measured on .NET 8.0.33 and 10.0.14: `Invalid port in prefix`). Fix round 1 (2026-11-11): `::1` / `[::1]` binds `127.0.0.1` (one warning); `::` / `[::]` every IPv4 interface (one warning); any other IPv6 address gets no listener (one ERROR; start continues, never widened) |
+   | a scrape of a host-bound listener | — | the managed `HttpListener` routes a specific-host bind by the `Host` header. Fix round 1: `127.0.0.1` (and `localhost`, `::1`) also registers a `localhost` prefix, so `http://localhost:9464/metrics` answers 200 from loopback for Go (Prometheus, vmagent) and .NET `HttpClient`; curl and Node.js (`AI_ADDRCONFIG`) get 404 in a container whose only IPv6 address is `::1` (use `127.0.0.1`); any other address answers only requests naming it |
+   | a busy port, an address the machine does not own | the build failed (busy port) | one ERROR naming the address, the port and what set them (fix round 1), then the build fails (`InvalidOperationException`, "HttpListener could not be started") |
+   | `OTEL_HELPER_DISABLED_METRICS` / `DisabledMetrics` | case-insensitive; `*` only, `?` literal; items trimmed with Unicode whitespace | the contract glob: **case-sensitive** on the instrument name, `*` any run, `?` one character, everything else literal; items trimmed with the contract set (ASCII) |
+   | Prometheus listener reader | always registered (a non-listening reader when inactive) | registered only when the listener binds (`prometheus` exporter active, port > 0, metrics and SDK enabled), decided at provider build, so a late `Configure<TelemetryOptions>` still decides it |
+   | `MeterProvider.ForceFlush()` / `Shutdown()`, OTLP only | no pull reader (0.2.x added the listener only for `prometheus` with a port above 0), so the OTLP result | the OTLP result again (on this branch before C12 both returned `false` with every request received) |
+   | `MeterProvider.ForceFlush()` / `Shutdown()`, dual mode `otlp,prometheus` | `false` | still `false` (upstream: a pull-only reader fails every collection outside a scrape); new `IServiceProvider.ForceFlushOtelHelper(timeoutMilliseconds)` flushes the helper's traces and logs providers and collects only the push metric readers the helper built, and returns their result (a collector answering 500 → `false`) |
+   | an application `AddPrometheusHttpListener()` next to an inactive helper listener | its options left alone | left alone (on this branch before C12 the helper's options cleared its prefixes) |
+   | an application `AddPrometheusHttpListener()` next to an active helper listener | (0.2.x: the helper's own options delegate only) | both run on their own ports: the helper's reader and options are named `StaffOps.OtelHelper.Prometheus` (fix round 1; before, both got the helper's prefix and the second start failed) |
+
+   Check: a deployment that set `OTEL_EXPORTER_PROMETHEUS_PORT` (or `_HOST`)
+   for another purpose now moves (or restricts) the listener; scrape configs
+   and `NetworkPolicy` follow the new port; a `OTEL_HELPER_DISABLED_METRICS`
+   pattern written in another case than the instrument name no longer drops
+   it; shutdown code that tested `MeterProvider.ForceFlush()` in dual mode
+   should call `ForceFlushOtelHelper()` instead (HOW-TO §15). For traces and
+   logs `ForceFlushOtelHelper` returns the SDK's result, which means "handed to
+   the exporter in time", not "accepted by the collector". With OTLP only,
+   `MeterProvider.Shutdown()` returns `true` even after a 500 (upstream,
+   measured): only `ForceFlushOtelHelper()` reports the metric export result.
+
 ### Collector / platform prerequisites (before rolling 0.3.0 out)
 
 Owned outside this repo (design D11); each item blocks the rollout, not the rc:
@@ -1781,6 +1814,78 @@ Phase C work on this branch (no .NET release yet; the first will be
   alone before; Python already needed it). Fixture unchanged. Suite 1502/1502
   on `sdk:8.0` (line coverage 98.39%) and SDK 10.0.403 roll-forward (98.31%);
   3 more mutants each fail a test.
+- **.NET: Prometheus fallback (task C12, contract A21, A29, N8; ADR-007;
+  design D-NET11, D-NET3; implemented 2026-11-11, awaiting review).** Port:
+  code > `OTEL_EXPORTER_PROMETHEUS_PORT` > `OTEL_HELPER_METRICS_PORT` > 9464,
+  both variables on the A21 grammar (`TelemetryResolver.TryParseMetricsPort`),
+  an invalid value warned once with the echo redacted; the unparseable
+  `OTEL_HELPER_METRICS_PORT` is no longer silent. Host:
+  `OTEL_EXPORTER_PROMETHEUS_HOST` parsed as Go's `parsePrometheusHost`
+  (`TryParsePrometheusHost`: strict dotted quad, IPv6 without zone, IPv4-mapped
+  → IPv4, all-zero → every interface, `localhost` → `127.0.0.1`) and bound
+  through the listener prefix (`http://<ip>:<port>/metrics/`, `+` for every
+  interface and `0.0.0.0`); an IPv6 host is one ERROR line and a failed build
+  (no IPv6 bind in the managed `HttpListener`, measured). The listener reader
+  is added at provider build only when it binds: `AddPrometheusHttpListener()`
+  without a configure delegate registers no service, only a reader factory, so
+  the deferred step can call it (revises D-NET3; it also drops the idle
+  reader's second aggregation of every series, measured at about 1.9× the
+  managed heap in the C5 note). With it, `MeterProvider.ForceFlush()` and
+  `Shutdown()` return `true` in an OTLP-only setup (were `false`, the C8
+  release blocker). New public `TelemetryFlushExtensions.ForceFlushOtelHelper`
+  for dual mode: tracer and logger provider flushes plus a `Collect` of each
+  push reader the helper built (OTLP, console); on the exponential-histogram
+  path it uses `MeterProvider.ForceFlush()` (the SDK builds that reader).
+  `OTEL_HELPER_DISABLED_METRICS` follows the contract glob (case-sensitive,
+  `?`, literal rest, contract trim; `MetricsSetup.DisabledMetricPatterns`).
+  Parity driver: snapshot field `prometheus_metrics_host`. Parity: of the 26
+  `xfail:C12` cases, 23 pass and 3 are upstream exposition residuals —
+  `metrics.scrape_gauge_unit_one_ratio` and `metrics.scrape_ratio_inside_name`
+  `skip:no-upstream-dotnet-prom-ratio` (no `_ratio` for a unit-`1` Gauge),
+  `metrics.scrape_colliding_label_values_sorted`
+  `skip:no-upstream-dotnet-prom-label-order` (values joined in key order,
+  `a_b="y;x"`); the exporter's serializer is internal and a View rename would
+  rename the OTLP stream too. Fixture: 382 cases; .NET 355 `pass`, 10
+  `xfail:C<n>` (C13 3, C16 7), 17 known-difference skips; only
+  `status.dotnet` changed. `testing/e2e/dotnet-prom-scrape.sh` adds the
+  bind-host negative control: a second app with
+  `OTEL_EXPORTER_PROMETHEUS_HOST=127.0.0.1` answers on loopback inside its
+  container and refuses another container (curl exit 7; exit 0 on the
+  pre-C12 tree). Tests: `PrometheusFallbackC12Tests` (non-loopback connect
+  refused with `127.0.0.1`, answered when unset); 7 mutants of the new rules
+  each fail a test. Suite 1598/1598 on `sdk:8.0` (line coverage 98.41%) and
+  SDK 10.0.403 roll-forward (98.44%).
+- **.NET: C12 fix round 1 (2026-11-11).** Loopback: a `127.0.0.1` bind (also
+  `localhost`) registers `http://127.0.0.1:<port>/metrics/` and
+  `http://localhost:<port>/metrics/`, so a Go sidecar (Prometheus, vmagent)
+  scraping `localhost` gets 200 (it got 404: the `HttpListener` routes by
+  `Host`); still loopback only (measured: another container's connect is
+  refused). `localhost` binds the resolver's first address (`::1` when the host
+  has an IPv6 loopback, `127.0.0.1` with IPv6 off, measured on .NET 8.0.33 and
+  10.0.14); Go and .NET `HttpClient` dial `::1` first. Residual (measured):
+  curl and Node.js resolve with `AI_ADDRCONFIG`, so in a container whose only
+  IPv6 address is `::1` they connect to `127.0.0.1` with `Host: localhost` and
+  get 404; scrape `127.0.0.1` with them. IPv6 (coordinator decision, never widen, never fail start for an env
+  value): `::1` → `127.0.0.1` with one warning, `::` → every IPv4 interface with
+  one warning, any other IPv6 address → no listener and one ERROR (was a failed
+  build). A failed bind writes one ERROR naming the address, the port and what
+  set them before the upstream exception. The helper's reader and listener
+  options are named `StaffOps.OtelHelper.Prometheus`, so an application's own
+  `AddPrometheusHttpListener()` runs beside it. `OTEL_EXPORTER_PROMETHEUS_PORT`
+  and `_HOST` join the helper-owned SDK "invalid value" noise (no SDK line for
+  `+9464`, one line for `abc`). The glob anchors with `\z`. The two
+  non-loopback bind tests are skipped with a reason offline.
+  `ForceFlushOtelHelper` documents `ObjectDisposedException`. New parity case
+  `metrics.listener_prometheus_host_ipv6_loopback` and the optional
+  `metrics_listener` input `connect_host` (`127.0.0.1` or `localhost`) in the
+  four runners; the case passes in Go, Python, Node.js and .NET (.NET through
+  the `127.0.0.1` mapping). Root README gap rows and contract notes (Prometheus
+  host row, D13 `.NET flush result`).
+- **.NET: C12 round 2 (2026-11-11).** The bind-failure ERROR is written only
+  when the exporter's exception wraps an `HttpListenerException` (a busy port,
+  errno 98, and an address this machine does not own, 99, measured on .NET
+  8.0.33 and 10.0.14), and echoes its OS text; another failure of the listener
+  reader's factory (an options `Configure` that throws) propagates without it.
 
 ### Breaking — telemetry output changes (dashboards/alerts)
 

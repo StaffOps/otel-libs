@@ -270,13 +270,8 @@ public class SignalIntegrationTests : IDisposable
         var exportedMetrics = new List<Metric>();
         var serviceName = "drop-metrics-test";
 
-        // Simulate the view logic that MetricsSetup uses
-        var disabledMetrics = "http.server.*,system.disk.*";
-        var patterns = disabledMetrics
-            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-            .Select(p => "^" + System.Text.RegularExpressions.Regex.Escape(p).Replace("\\*", ".*") + "$")
-            .Select(p => new System.Text.RegularExpressions.Regex(p, System.Text.RegularExpressions.RegexOptions.Compiled | System.Text.RegularExpressions.RegexOptions.IgnoreCase))
-            .ToList();
+        // The patterns MetricsSetup builds (contract glob, task C12).
+        var patterns = StaffOps.OtelHelper.Metrics.MetricsSetup.DisabledMetricPatterns("http.server.*,system.disk.*");
 
         using var meterProvider = Sdk.CreateMeterProviderBuilder()
             .AddMeter(serviceName)

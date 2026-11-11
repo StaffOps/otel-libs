@@ -186,7 +186,8 @@ namespace StaffOps.OtelHelper
         public string? DisabledSignals { get; set; }
 
         /// <summary>
-        /// Comma-separated metric name patterns to drop (<c>*</c> wildcard).
+        /// Comma-separated metric name patterns to drop: case-sensitive globs on the instrument
+        /// name, <c>*</c> any run of characters, <c>?</c> one character, everything else literal.
         /// Not set: <c>OTEL_HELPER_DISABLED_METRICS</c>.
         /// </summary>
         public string? DisabledMetrics { get; set; }
@@ -212,7 +213,9 @@ namespace StaffOps.OtelHelper
 
         /// <summary>
         /// Port of the standalone Prometheus <c>/metrics</c> listener, in [0, 65535]; 0 means no
-        /// listener. Not set: <c>OTEL_HELPER_METRICS_PORT</c>, else 9464.
+        /// listener. Not set: <c>OTEL_EXPORTER_PROMETHEUS_PORT</c>, else <c>OTEL_HELPER_METRICS_PORT</c>
+        /// (both <c>^\+?[0-9]+$</c>; an invalid value warns and the next one applies), else 9464.
+        /// The bind address comes from <c>OTEL_EXPORTER_PROMETHEUS_HOST</c> (no code option).
         /// </summary>
         public int? PrometheusMetricsPort { get; set; }
 

@@ -660,14 +660,35 @@ function freePort() {
   });
 }
 
-// One raw HTTP/1.1 request over node:net (not instrumented); resolves to the status code.
-function rawStatus(port, method, target) {
+// Every address the resolver returns for `host`, in its order, without the AI_ADDRCONFIG hint
+// net.connect uses (with it, a container without global IPv6 drops ::1 from "localhost").
+function lookupAll(host) {
+  return new Promise((resolve) => {
+    require('node:dns').lookup(host, { all: true }, (err, addresses) => resolve(err ? [] : addresses.map((a) => a.address)));
+  });
+}
+
+// A connected socket to the first address of `host` that accepts, or null.
+async function connectAny(port, host) {
   const net = require('node:net');
+  for (const address of await lookupAll(host)) {
+    const sock = await new Promise((resolve) => {
+      const s = net.connect({ port, host: address }, () => resolve(s));
+      s.on('error', () => resolve(null));
+    });
+    if (sock) return sock;
+  }
+  return null;
+}
+
+// One raw HTTP/1.1 request over node:net (not instrumented); resolves to the status code.
+async function rawStatus(port, method, target, host = '127.0.0.1') {
+  const sock = await connectAny(port, host);
+  if (!sock) throw new Error(`${method} ${target}: no address of ${host} accepts on port ${String(port)}`);
   return new Promise((resolve, reject) => {
-    const sock = net.connect(port, '127.0.0.1');
     let data = '';
     sock.setEncoding('utf8');
-    sock.on('connect', () => sock.write(`${method} ${target} HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n`));
+    sock.write(`${method} ${target} HTTP/1.1\r\nHost: ${host}\r\nConnection: close\r\n\r\n`);
     sock.on('data', (d) => {
       data += d;
     });
@@ -685,16 +706,14 @@ async function kindMetricsListener(c) {
   process.env.OTEL_HELPER_METRICS_PORT = String(port);
   setupCase(c, snap);
   if ('error' in snap) return snap;
+  // input.connect_host: '127.0.0.1' (default) or 'localhost' (every address the resolver returns).
+  const host = c.input?.connect_host ?? '127.0.0.1';
   // setup() is synchronous, the bind is not: wait until the port accepts.
   let bound = false;
   for (let i = 0; i < 100 && !bound; i++) {
-    const up = await new Promise((resolve) => {
-      const sock = require('node:net').connect(port, '127.0.0.1', () => {
-        sock.destroy();
-        resolve(true);
-      });
-      sock.on('error', () => resolve(false));
-    });
+    const sock = await connectAny(port, host);
+    if (sock) sock.destroy();
+    const up = sock !== null;
     bound = up;
     if (!up) await new Promise((resolve) => setTimeout(resolve, 20));
   }
@@ -705,7 +724,7 @@ async function kindMetricsListener(c) {
   snap.listener_statuses = [];
   for (const request of c.input?.requests ?? []) {
     const [method, target] = request.split(' ', 2);
-    snap.listener_statuses.push(await rawStatus(port, method, target));
+    snap.listener_statuses.push(await rawStatus(port, method, target, host));
   }
   await shutdown();
   return snap;

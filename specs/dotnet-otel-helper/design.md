@@ -523,6 +523,22 @@ and ignores bound options).
 > shutdown and every ~24.8 days (interval `int.MaxValue`), to a client that
 > answers locally; nothing is ever sent over the network.
 
+> **Revised 2026-11-11 (C12).** The Prometheus listener reader is no longer
+> registered eagerly. `AddPrometheusHttpListener()` with no configure delegate
+> calls only `builder.AddReader(sp => …)` (upstream
+> `PrometheusHttpListenerMeterProviderBuilderExtensions.cs` at
+> `coreunstable-1.20.1-beta.1`: `ConfigureServices` runs only for a non-null
+> delegate), which a deferred builder runs at once, so `MetricsSetup.ApplyResolved`
+> adds it only when `PrometheusListenerActive`. Late `Configure` still decides
+> it. Why: a pull-only reader fails every collection outside a scrape
+> (`BaseExportingMetricReader.OnCollect`), so the always-registered reader made
+> `MeterProvider.ForceFlush()` and `Shutdown()` return `false` in an OTLP-only
+> setup (C8 notes); it also aggregated every series a second time (about 1.9×
+> the managed heap, measured in the C5 note). Measured after: both `true`. The
+> "no listener" empty-prefix path is gone, and an application's own
+> `AddPrometheusHttpListener()` keeps its options when the helper listener is
+> inactive (the helper configured the default-named options before).
+
 ### D-NET4 — Options API: nullable code fields, one breaking release
 **Choice**: the API table above. Every option with an env counterpart becomes
 nullable and holds **only** the code value; the resolver keeps the effective
@@ -958,6 +974,29 @@ services).
 > `publish-dotnet` and `publish-dotnet-release` need; C17 may fold it into the
 > `dotnet-smoke` service.
 
+> **Note 2026-11-11 (C12, implemented, awaiting review).** O10 (a) is superseded
+> as recorded (A29): the helper resolves `OTEL_EXPORTER_PROMETHEUS_PORT` (beats
+> `OTEL_HELPER_METRICS_PORT`, code wins) and `OTEL_EXPORTER_PROMETHEUS_HOST` and
+> writes both into the listener options after the factory, so the exporter's own
+> reading never applies (`Host` stays the `localhost` placeholder). Prefix:
+> `http://+:{port}/metrics/` for every interface (unset, `::`, `[::]`) and for
+> `0.0.0.0` (the managed `HttpListener` throws "not supported" on a `0.0.0.0`
+> prefix); `http://{ipv4}:{port}/metrics/` otherwise. Measured on .NET 8.0.33 and
+> 10.0.14: every IPv6 literal prefix fails with `Invalid port in prefix`, so an
+> IPv6 host is reported once (ERROR) and the build fails as for a busy port
+> (D-NET15). A specific-host prefix is routed by the `Host` header (`localhost`
+> → 404 on `127.0.0.1`, measured). The listener reader is added in the deferred
+> step only when it binds (D-NET3 note of the same date). Exposition residuals
+> confirmed: no `_ratio` for unit-`1` Gauges (`ratio_load`, `parity_utilization`),
+> colliding values joined in key order (`a_b="y;x"`, `x_y="2;1"`), D-NET15.
+>
+> **Fix round 1, 2026-11-11 (C12).** The helper's reader is
+> `AddPrometheusHttpListener("StaffOps.OtelHelper.Prometheus", null)` with named
+> options, so an application's default-named listener keeps its own (code-review
+> M3). A `127.0.0.1` bind registers `127.0.0.1` and `localhost` prefixes (all three
+> reviewers M1). IPv6 hosts and the bind-failure ERROR: D-NET15 rows of the same
+> date.
+
 > **Superseded 2026-11-05 (owner decision, contract task A29).** O10 (a) no
 > longer holds: the contract now honors both variables (config-contract design
 > D1 row "Prometheus exporter variables"): port = code >
@@ -1124,6 +1163,13 @@ failure is upstream.
 | (no case) gRPC span names `pkg.Svc/Method` *(amended 2026-11-08, A30: cases `grpc.server_span_name_semconv` and `grpc.client_span_name_semconv` now cover it)* | README row: same as Go | upstream | C11 |
 | `metrics.scrape_inactive_exporter_none`, `metrics.scrape_inactive_sdk_disabled` *(added 2026-11-09, C4 fix round; coordinator decision)* | `skip:no-upstream-dotnet-prom-mounted-handler` | they assert a mounted `/metrics` handler's status (200 while Prometheus is deliberately inactive); .NET serves the upstream listener only and D-NET11 rejects a mounted handler | C4 |
 | `http.opt_in_metrics_scrape_disabled_pattern_wins` *(added 2026-11-09, C4 fix round)* | `skip:no-upstream-dotnet-http-body-size` | it drops a body-size instrument .NET does not have, so it passes trivially | C4 |
+| `metrics.scrape_ratio_inside_name` *(added 2026-11-11, C12)* | `skip:no-upstream-dotnet-prom-ratio` | the same root cause as `metrics.scrape_gauge_unit_one_ratio`: the 1.20.1-beta.1 exporter writes `ratio_load` (no `_ratio` at all for a unit-`1` Gauge, measured) | C12 |
+| `metrics.scrape_colliding_label_values_sorted` *(added 2026-11-11, C12)* | `skip:no-upstream-dotnet-prom-label-order` | the exporter merges colliding names (`metrics.scrape_colliding_label_names_merged` passes) but joins the values in attribute order, `a_b="y;x"` and `target_info{x_y="2;1"}` (measured); its serializer is internal and has no ordering option | C12 |
+| (no case) IPv6 `OTEL_EXPORTER_PROMETHEUS_HOST` *(added 2026-11-11, C12)* | resolved as the contract says (snapshot `::1`), but not bindable | the managed `HttpListener` refuses every IPv6 literal prefix (`Invalid port in prefix`, .NET 8.0.33 and 10.0.14, measured): one helper ERROR, then the build fails as for a busy port | C12 |
+| (no case) every interface is IPv4 only *(added 2026-11-11, C12)* | recorded | `+` binds `IPAddress.Any`; the contract's dual-stack bind is not available (D-NET11 trade-off, unchanged from 0.2.x) | C12 |
+| (no case) host-bound listener routes by `Host` *(added 2026-11-11, C12)* | recorded | with `127.0.0.1` a scrape must name `127.0.0.1`; `Host: localhost` gets 404 (measured) | C12 |
+| (no case) IPv6 `OTEL_EXPORTER_PROMETHEUS_HOST` *(amended 2026-11-11, C12 fix round 1, coordinator decision: never widen exposure, never fail start for an env value the host owns)* | recorded; case `metrics.listener_prometheus_host_ipv6_loopback` `pass` | `::1` binds `127.0.0.1` with one warning; `::`/`[::]` every IPv4 interface with one warning; any other IPv6 address: no listener, one ERROR. Supersedes the "build fails" text of the row above | C12 |
+| (no case) host-bound listener routes by `Host` *(amended 2026-11-11, C12 fix round 1)* | recorded | `127.0.0.1` also registers a `localhost` prefix, which binds the resolver's first loopback address (`::1` dual-stack, `127.0.0.1` with IPv6 off, measured); HttpClient and Go dial `::1` first, so `http://localhost:<port>/metrics` answers them; residual (measured in the e2e, Docker user network with `::1` as the only IPv6 address): curl and Node.js resolve with `AI_ADDRCONFIG`, connect to `127.0.0.1` with `Host: localhost` and get 404 (`curl -6` gets 200); any other address answers only requests naming it. Reopen with a helper-owned front if a curl/Node.js scraper on such hosts matters. Supersedes the row above | C12 |
 | `http.opt_in_metrics_scrape_body_size_on`, `http.opt_in_metrics_scrape_code_on` *(added 2026-11-08, A30)*: ASP.NET Core and `System.Net.Http` have no HTTP body-size instrument (Microsoft Learn built-in metrics pages read 2026-11-08), so the opt-in switch brings back active requests and connection metrics only | `skip:no-upstream-dotnet-http-body-size` | upstream | C11 |
 
 > **Added 2026-11-10 (task C8).** The two value-length cases take `skip:no-upstream-dotnet-attribute-limit`: OpenTelemetry .NET 1.20.1 has no public override (the exporter builds its `SdkLimitOptions` from the environment); the helper warns once per variable set to 0. The gRPC TLS-file cases pass through the helper handler (measured on the receiver's TLS port), so `skip:no-upstream-dotnet-grpc-tls-files` is not used.

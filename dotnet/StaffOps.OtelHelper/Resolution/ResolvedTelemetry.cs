@@ -112,6 +112,44 @@ namespace StaffOps.OtelHelper
 
         public required int PrometheusMetricsPort { get; init; }
 
+        /// <summary>
+        /// Bind address of the standalone listener from <c>OTEL_EXPORTER_PROMETHEUS_HOST</c> (A29):
+        /// <c>""</c> = every interface (on .NET: every IPv4 interface, the <c>+</c> prefix), else an
+        /// IP literal without brackets, ASCII-lowercased (<c>localhost</c> → <c>127.0.0.1</c>).
+        /// </summary>
+        public string PrometheusMetricsHost { get; init; } = "";
+
+        /// <summary>Whether <c>OTEL_EXPORTER_PROMETHEUS_HOST</c> was <c>::</c> or <c>[::]</c> (every interface; .NET binds IPv4 only).</summary>
+        public bool PrometheusHostIPv6Unspecified { get; init; }
+
+        /// <summary>What set the listener port (code option or variable; the default names <c>OTEL_EXPORTER_PROMETHEUS_PORT</c>, contract A29).</summary>
+        public string PrometheusPortSource { get; init; } = "OTEL_EXPORTER_PROMETHEUS_PORT";
+
+        /// <summary>
+        /// The address the .NET listener binds (fix round 1 of task C12): <c>""</c> = every IPv4
+        /// interface; an IPv4 literal; <c>127.0.0.1</c> for the IPv6 loopback (the managed
+        /// <c>HttpListener</c> cannot bind an IPv6 literal); null for any other IPv6 address, which
+        /// gets no listener (never widened to every interface).
+        /// </summary>
+        public string? PrometheusBindHost
+        {
+            get
+            {
+                if (!PrometheusMetricsHost.Contains(':'))
+                {
+                    return PrometheusMetricsHost;
+                }
+
+                return System.Net.IPAddress.TryParse(PrometheusMetricsHost, out var address) && address.Equals(System.Net.IPAddress.IPv6Loopback)
+                    ? "127.0.0.1"
+                    : null;
+            }
+        }
+
+        /// <summary>Whether the <c>prometheus</c> exporter is active with a port above 0 (the listener is wanted).</summary>
+        public bool PrometheusListenerWanted
+            => PrometheusMetricsPort > 0 && ResolvedMetricExporters().Contains("prometheus");
+
         /// <summary>The HTTP health paths as configured (code, else the contract default list); matched normalized (<see cref="Tracing.HealthMatching"/>).</summary>
         public required IReadOnlyList<string> HealthPaths { get; init; }
 
@@ -147,9 +185,9 @@ namespace StaffOps.OtelHelper
         public IReadOnlyList<string> ResolvedMetricExporters()
             => IsSignalEnabled("metrics") && !SdkDisabled ? MetricExporters : Array.Empty<string>();
 
-        /// <summary>Whether the Prometheus listener binds: the exporter is active and the port is above 0.</summary>
+        /// <summary>Whether the Prometheus listener binds: the exporter is active, the port is above 0 and the host is bindable on .NET.</summary>
         public bool PrometheusListenerActive
-            => PrometheusMetricsPort > 0 && ResolvedMetricExporters().Contains("prometheus");
+            => PrometheusListenerWanted && PrometheusBindHost is not null;
 
         /// <summary>Protocol of the generic endpoint: explicit, else port 4318 → http/protobuf, else grpc.</summary>
         public string ResolvedOtlpProtocol() => GenericOtlpProtocol;

@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Text.RegularExpressions;
 using Microsoft.Extensions.DependencyInjection;
@@ -11,23 +12,18 @@ using StaffOps.OtelHelper.Exporters;
 namespace StaffOps.OtelHelper.Metrics
 {
     /// <summary>
-    /// Metrics in two phases (design D-NET3): instrumentations and the Prometheus listener
-    /// reader are registered when <c>AddOtelHelper</c> runs — the reader always, so whether
-    /// it listens follows the resolved options; meters, views and the OTLP reader are added
-    /// when the provider is built.
+    /// Metrics in two phases (design D-NET3): instrumentations are registered when
+    /// <c>AddOtelHelper</c> runs; meters, views and the readers (OTLP, console and, only when it
+    /// binds, the Prometheus listener; task C12) are added when the provider is built.
     /// </summary>
     internal static class MetricsSetup
     {
-        /// <summary>Placeholder port of an inactive listener: it is never bound (no prefix).</summary>
-        private const int InactiveListenerPort = TelemetryOptions.DefaultPrometheusMetricsPort;
-
         /// <summary>Eager part: service-registering calls only.</summary>
         internal static MeterProviderBuilder AddHelperInstrumentation(this MeterProviderBuilder builder)
             => builder
                 .AddRuntimeInstrumentation()
                 .AddAspNetCoreInstrumentation()
-                .AddHttpClientInstrumentation()
-                .AddPrometheusHttpListener();
+                .AddHttpClientInstrumentation();
 
         /// <summary>
         /// The meters the helper subscribes or instruments: the service meter and its children
@@ -186,7 +182,7 @@ namespace StaffOps.OtelHelper.Metrics
         }
 
         /// <summary>Whether the histogram path's reader really exports: metrics on and an OTLP metrics target.</summary>
-        private static bool HistogramPathActive(ResolvedTelemetry resolved)
+        internal static bool HistogramPathActive(ResolvedTelemetry resolved)
             => resolved.IsSignalEnabled("metrics") && resolved.ResolvedMetricExporters().Contains("otlp") && resolved.OtlpTarget("metrics") is not null;
 
         /// <summary>
@@ -318,14 +314,26 @@ namespace StaffOps.OtelHelper.Metrics
                     }
                 });
 
-        /// <summary>Deferred values of the Prometheus listener options.</summary>
+        /// <summary>
+        /// Deferred values of the Prometheus listener options: the resolved port and host, applied
+        /// only when the helper registers its listener reader (an application's own
+        /// <c>AddPrometheusHttpListener</c> next to an inactive helper listener keeps its options).
+        /// </summary>
         internal static void ConfigureListenerOptions(IServiceCollection services)
-            => services.AddOptions<PrometheusHttpListenerOptions>()
+            => services.AddOptions<PrometheusHttpListenerOptions>(ListenerName)
                 .Configure<IServiceProvider>((opts, sp) =>
                 {
-                    var active = ResolvedAccess.TryGet(sp, out var resolved) && resolved.PrometheusListenerActive;
-                    ConfigurePrometheusListener(opts, active ? resolved.PrometheusMetricsPort : InactiveListenerPort, active);
+                    if (ResolvedAccess.TryGet(sp, out var resolved) && resolved.PrometheusListenerActive)
+                    {
+                        ConfigurePrometheusListener(opts, resolved.PrometheusMetricsPort, resolved.PrometheusBindHost!);
+                    }
                 });
+
+        /// <summary>
+        /// Name of the helper's listener options and reader (fix round 1 of C12): an application's
+        /// own <c>AddPrometheusHttpListener()</c> uses the default-named options and keeps them.
+        /// </summary>
+        internal const string ListenerName = "StaffOps.OtelHelper.Prometheus";
 
         /// <summary>Deferred part, at provider build.</summary>
         internal static void ApplyResolved(IServiceProvider sp, MeterProviderBuilder builder)
@@ -342,12 +350,12 @@ namespace StaffOps.OtelHelper.Metrics
             // SetExemplarFilter still wins.
             builder.SetExemplarFilter(resolved.ExemplarFilter);
 
-            // "Off" (signal disabled, or no metric exporter at all): instrumentation and the
-            // non-listening reader registered, no meter, no OTLP reader, and a view that drops the
-            // helper's own instrumentation meters, so the idle reader aggregates nothing of the
-            // helper's (D-NET3, fix rounds 2026-11-10). Meters and readers the application adds
-            // itself are not touched. `prometheus` with port 0 is an active exporter (the app may
-            // mount the scraping endpoint, HOW-TO), not "off".
+            // "Off" (signal disabled, or no metric exporter at all): instrumentation registered, no
+            // meter, no reader, and a view that drops the helper's own instrumentation meters, so a
+            // reader the application adds aggregates nothing of the helper's (D-NET3, fix rounds
+            // 2026-11-10). Meters and readers the application adds itself are not touched.
+            // `prometheus` with port 0 is an active exporter (the app may mount the scraping
+            // endpoint with its own exporter, HOW-TO), not "off".
             var otlpActive = resolved.ResolvedMetricExporters().Contains("otlp");
             if (!resolved.IsSignalEnabled("metrics") || resolved.ResolvedMetricExporters().Count == 0)
             {
@@ -373,22 +381,27 @@ namespace StaffOps.OtelHelper.Metrics
                     "HTTP opt-in metrics on: ASP.NET Core and System.Net.Http record the active requests and the client connection metrics, and have no body-size instruments");
             }
 
+            // The standalone listener, only when it binds (C12, revising D-NET3): with no configure
+            // delegate AddPrometheusHttpListener registers no service, only a reader factory, which
+            // this deferred step runs at once. A pull-only reader fails every collection outside a
+            // scrape, so registering it always made MeterProvider.ForceFlush and Shutdown return
+            // false in an OTLP-only configuration (measured, C8 notes).
+            if (resolved.PrometheusListenerWanted)
+            {
+                AddListener(sp, builder, resolved);
+            }
+
             // OTEL_METRICS_EXPORTER=console (or the alias logging): the SDK console exporter on a
             // periodic reader with the resolved interval, built directly (AddConsoleExporter
             // registers services, which this deferred step cannot).
             if (resolved.ResolvedMetricExporters().Contains("console"))
             {
-                builder.AddReader(CreateConsoleReader(sp, resolved));
+                builder.AddReader(Track(sp, CreateConsoleReader(sp, resolved)));
             }
 
             if (!string.IsNullOrEmpty(resolved.DisabledMetrics))
             {
-                var patterns = resolved.DisabledMetrics
-                    .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-                    .Select(p => "^" + Regex.Escape(p).Replace("\\*", ".*") + "$")
-                    .Select(p => new Regex(p, RegexOptions.Compiled | RegexOptions.IgnoreCase))
-                    .ToList();
-
+                var patterns = DisabledMetricPatterns(resolved.DisabledMetrics);
                 builder.AddView(instrument => patterns.Any(p => p.IsMatch(instrument.Name)) ? MetricStreamConfiguration.Drop : null);
             }
 
@@ -401,8 +414,95 @@ namespace StaffOps.OtelHelper.Metrics
             var diagnostics = sp.GetRequiredService<IOtelHelperDiagnostics>();
             if (OtlpExporters.OptionsFor("metrics", resolved, diagnostics, sp.GetRequiredService<ExporterClients>()) is { } otlp)
             {
-                var reader = CreateOtlpReader(sp, resolved, otlp);
-                builder.AddReader(reader);
+                builder.AddReader(Track(sp, CreateOtlpReader(sp, resolved, otlp)));
+            }
+        }
+
+        /// <summary>
+        /// The standalone listener, named (<see cref="ListenerName"/>). IPv6 hosts follow the fix-round-1
+        /// decision (the managed <c>HttpListener</c> refuses every IPv6 literal prefix, measured on
+        /// .NET 8.0.33 and 10.0.14): the loopback binds 127.0.0.1 with one warning; any other IPv6
+        /// address gets no listener and one ERROR (never widened to every interface); <c>::</c>
+        /// binds every IPv4 interface with one warning. A failed bind (busy port, an address the
+        /// machine does not own) writes one ERROR naming what set the port and the host, then the
+        /// build fails with the upstream exception, as the contract says.
+        /// </summary>
+        private static void AddListener(IServiceProvider sp, MeterProviderBuilder builder, ResolvedTelemetry resolved)
+        {
+            var diagnostics = sp.GetRequiredService<IOtelHelperDiagnostics>();
+            var variable = TelemetryResolver.PrometheusHostEnvVar;
+            if (resolved.PrometheusBindHost is null)
+            {
+                diagnostics.ReportOnce("prometheus-ipv6-host", DiagnosticLevel.Error,
+                    $"{variable} is an IPv6 address, which the .NET HttpListener cannot bind: no Prometheus listener runs (not widened to every interface); use an IPv4 address or localhost, or leave it unset (every IPv4 interface)",
+                    ("variable", variable), ("value", resolved.PrometheusMetricsHost));
+                return;
+            }
+
+            if (resolved.PrometheusMetricsHost.Contains(':'))
+            {
+                diagnostics.ReportOnce("prometheus-ipv6-loopback", DiagnosticLevel.Warn,
+                    $"{variable} is the IPv6 loopback, which the .NET HttpListener cannot bind: the listener binds 127.0.0.1 (and answers requests for localhost) instead",
+                    ("variable", variable), ("value", resolved.PrometheusMetricsHost));
+            }
+            else if (resolved.PrometheusHostIPv6Unspecified)
+            {
+                diagnostics.ReportOnce("prometheus-ipv6-any", DiagnosticLevel.Warn,
+                    $"{variable} is the IPv6 unspecified address; .NET has no IPv6 or dual-stack bind: the listener binds every IPv4 interface",
+                    ("variable", variable));
+            }
+
+            try
+            {
+                builder.AddPrometheusHttpListener(ListenerName, null);
+            }
+            // Only the listener start (measured on .NET 8.0.33 and 10.0.14: a busy port and an address
+            // this machine does not own both surface as HttpListenerException, errno 98 and 99, wrapped
+            // by the exporter); any other failure of the reader factory propagates without this line.
+            catch (InvalidOperationException ex) when (ex.InnerException is System.Net.HttpListenerException listenerError)
+            {
+                var host = resolved.PrometheusBindHost.Length == 0 ? "every IPv4 interface" : resolved.PrometheusBindHost;
+                var hint = resolved.PrometheusMetricsHost.Length > 0
+                    ? $"the port set by {resolved.PrometheusPortSource} or the host set by {variable}"
+                    : $"the port set by {resolved.PrometheusPortSource}";
+                diagnostics.ReportOnce("prometheus-bind-failed", DiagnosticLevel.Error,
+                    $"the Prometheus listener cannot bind (port in use, or an address this machine does not own); change {hint}; the MeterProvider build fails",
+                    ("host", host), ("port", resolved.PrometheusMetricsPort.ToString(System.Globalization.CultureInfo.InvariantCulture)),
+                    ("error", listenerError.Message));
+                throw;
+            }
+        }
+
+        /// <summary>A push reader the helper builds itself, recorded for <c>ForceFlushOtelHelper</c>.</summary>
+        private static MetricReader Track(IServiceProvider sp, MetricReader reader)
+        {
+            sp.GetService<HelperMetricReaders>()?.Add(reader);
+            return reader;
+        }
+
+        /// <summary>
+        /// The push metric readers the helper built for one container (OTLP and console), which
+        /// <c>ForceFlushOtelHelper</c> collects one by one. The SDK-built reader of the histogram
+        /// path is not among them (the SDK gives no handle to it).
+        /// </summary>
+        internal sealed class HelperMetricReaders
+        {
+            private readonly List<MetricReader> _readers = new();
+
+            internal void Add(MetricReader reader)
+            {
+                lock (_readers)
+                {
+                    _readers.Add(reader);
+                }
+            }
+
+            internal IReadOnlyList<MetricReader> Snapshot()
+            {
+                lock (_readers)
+                {
+                    return _readers.ToArray();
+                }
             }
         }
 
@@ -450,24 +550,46 @@ namespace StaffOps.OtelHelper.Metrics
                 () => defaults.PeriodicExportingMetricReaderOptions.ExportTimeoutMilliseconds is not null, diagnostics);
 
         /// <summary>
-        /// Prefix the Prometheus listener binds: every IPv4 address (the managed
-        /// <c>HttpListener</c> maps <c>+</c> to <c>IPAddress.Any</c>; no IPv6), path
-        /// <c>/metrics/</c> (design D-NET11). The upstream default host is
-        /// <c>localhost</c>, which other containers and pods cannot reach, and a
-        /// <c>*</c>, <c>+</c> or <c>0.0.0.0</c> <c>Host</c> aborts the provider build.
+        /// The contract glob of <c>OTEL_HELPER_DISABLED_METRICS</c> (D1 row "Disabled-metric
+        /// patterns", A21): comma-separated items trimmed with the contract set, blank items
+        /// ignored; each item a <b>case-sensitive</b> match of the whole instrument name where
+        /// <c>*</c> is any run of characters (<c>.</c> and <c>/</c> included), <c>?</c> exactly one
+        /// character, and every other character literal (no classes, no escapes).
         /// </summary>
-        internal static string PrometheusListenerPrefix(int port) => $"http://+:{port}/metrics/";
+        internal static Regex[] DisabledMetricPatterns(string list)
+            => list.Split(',')
+                .Select(ContractText.Trim)
+                .Where(item => item.Length > 0)
+                .Select(item => new Regex(
+                    "^" + Regex.Escape(item).Replace("\\*", ".*").Replace("\\?", ".") + "\\z",
+                    RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.Singleline))
+                .ToArray();
 
         /// <summary>
-        /// Keeps the 0.2.x listener behavior on the 1.20.x exporter: bind all
-        /// interfaces on the helper's port and serve a fresh collection on every
-        /// scrape. This delegate runs after the options factory has read
-        /// <c>OTEL_EXPORTER_PROMETHEUS_HOST</c>/<c>_PORT</c>, so the values set
-        /// here win and those variables have no effect, as in 0.2.x. An inactive
-        /// listener (<paramref name="active"/> false) gets no prefix: nothing listens
-        /// (design D-NET3, "no listener").
+        /// Prefixes the Prometheus listener binds, path <c>/metrics/</c> (design D-NET11, task C12).
+        /// Every interface (<paramref name="host"/> <c>""</c>, or <c>0.0.0.0</c>): <c>+</c>, which the
+        /// managed <c>HttpListener</c> binds to <c>IPAddress.Any</c> (every IPv4 interface; it refuses
+        /// a <c>0.0.0.0</c> prefix and every IPv6 literal). An IPv4 literal: that address only. The
+        /// listener routes a specific-host prefix by the request's <c>Host</c> header, so
+        /// <c>127.0.0.1</c> also gets a <c>localhost</c> prefix (fix round 1): <c>localhost</c> binds
+        /// what the resolver returns first (<c>::1</c> on a dual-stack host, <c>127.0.0.1</c> with
+        /// IPv6 off, measured), loopback either way.
         /// </summary>
-        internal static void ConfigurePrometheusListener(PrometheusHttpListenerOptions opts, int port, bool active = true)
+        internal static string[] PrometheusListenerPrefixes(int port, string host = "")
+            => host switch
+            {
+                "" or "0.0.0.0" => new[] { $"http://+:{port}/metrics/" },
+                "127.0.0.1" => new[] { $"http://127.0.0.1:{port}/metrics/", $"http://localhost:{port}/metrics/" },
+                _ => new[] { $"http://{host}:{port}/metrics/" },
+            };
+
+        /// <summary>
+        /// The listener the helper registers: its port and host, and a fresh collection on every
+        /// scrape. This delegate runs after the options factory has read
+        /// <c>OTEL_EXPORTER_PROMETHEUS_HOST</c>/<c>_PORT</c> itself, so the values set here (the
+        /// helper's resolution of the same variables, A29) win.
+        /// </summary>
+        internal static void ConfigurePrometheusListener(PrometheusHttpListenerOptions opts, int port, string host = "")
         {
             // A valid host for the exporter's own prefix, which the delegate below
             // replaces; an env-provided "*" would otherwise abort the build.
@@ -475,15 +597,17 @@ namespace StaffOps.OtelHelper.Metrics
             opts.Port = port;
             // 0.2.x (1.9.0-beta.2) had no response cache; upstream now defaults to 300 ms.
             opts.ScrapeResponseCacheDurationMilliseconds = 0;
-            opts.ConfigureHttpListener = active
-                ? static (o, listener) =>
+            var prefixes = PrometheusListenerPrefixes(port, host);
+            opts.ConfigureHttpListener = (_, listener) =>
+            {
+                // Clear first: keeping the localhost prefix next to "+" fails on
+                // Linux with "Address already in use" (exporter README).
+                listener.Prefixes.Clear();
+                foreach (var prefix in prefixes)
                 {
-                    // Clear first: keeping the localhost prefix next to "+" fails on
-                    // Linux with "Address already in use" (exporter README).
-                    listener.Prefixes.Clear();
-                    listener.Prefixes.Add(PrometheusListenerPrefix(o.Port));
+                    listener.Prefixes.Add(prefix);
                 }
-                : static (_, listener) => listener.Prefixes.Clear();
+            };
         }
     }
 }

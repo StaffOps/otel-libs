@@ -1091,10 +1091,15 @@ func runMetricsListener(t *testing.T, opts []Option, input map[string]any) map[s
 		return snap
 	}
 	client := &http.Client{Timeout: 10 * time.Second, Transport: &http.Transport{DisableKeepAlives: true}}
+	// input.connect_host: "127.0.0.1" (default) or "localhost" (every address the resolver returns).
+	host := "127.0.0.1"
+	if h, ok := input["connect_host"].(string); ok {
+		host = h
+	}
 	statuses := []any{}
 	for _, r := range input["requests"].([]any) {
 		method, target, _ := strings.Cut(r.(string), " ")
-		req, err := http.NewRequest(method, fmt.Sprintf("http://127.0.0.1:%d%s", port, target), nil)
+		req, err := http.NewRequest(method, fmt.Sprintf("http://%s:%d%s", host, port, target), nil)
 		if err != nil {
 			return map[string]any{"adapter_error": "request: " + err.Error()}
 		}

@@ -68,7 +68,9 @@ After registration, available via DI:
 | Variable | Description | Default |
 |---|---|---|
 | `OTEL_HELPER_DEBUG_LEVEL` | Debug mode: forces Debug log level and sets the attribute `debug=true` on entry spans (`true`/`false`) | `false` |
-| `OTEL_HELPER_METRICS_PORT` | Prometheus `/metrics` port when no OTLP endpoint is configured | `9464` |
+| `OTEL_HELPER_METRICS_PORT` | Prometheus `/metrics` port when no OTLP endpoint is configured. 0.3 (this branch, task C12): `^\+?[0-9]+$` after the contract trim, in [0, 65535], leading zeros allowed, `0` = no listener; anything else warns once and uses 9464 (0.2.x: `int.TryParse`, an unparseable value silently 9464). `OTEL_EXPORTER_PROMETHEUS_PORT` and `TelemetryOptions.PrometheusMetricsPort` win | `9464` |
+| `OTEL_EXPORTER_PROMETHEUS_PORT` | 0.3 (this branch, task C12, A29): the listener port, same grammar; beats `OTEL_HELPER_METRICS_PORT` (no warning when both are set); invalid → one warning, the next level applies. 0.2.x: no effect | _(unset)_ |
+| `OTEL_EXPORTER_PROMETHEUS_HOST` | 0.3 (this branch, task C12, A29): the listener bind address, see [Prometheus fallback](#prometheus-fallback-03-this-branch). 0.2.x: no effect | _(unset)_: every IPv4 interface |
 | `OTEL_HELPER_HTTP_OPT_IN_METRICS` | 0.3 (this branch, task C11, A30): `true` (ASCII case-insensitive) keeps the HTTP metrics semantic conventions make opt-in: `http.server.active_requests`, `http.client.active_requests`, `http.client.open_connections`, `http.client.connection.duration`, `http.client.request.time_in_queue`; another value than `true`/`false` warns and means `false`. `TelemetryOptions.HttpOptInMetrics` wins. 0.2.x exported them always | `false` |
 | `OTEL_DOTNET_EXPERIMENTAL_ASPNETCORE_ENABLE_GRPC_INSTRUMENTATION` | Upstream key, read by the ASP.NET Core instrumentation from the **application configuration** (environment or `appsettings.json`), never set by the helper (owner decision O7 (b)): `true` traces gRPC server calls as RPC spans; see [gRPC server spans](#grpc-server-spans) | unset |
 
@@ -175,6 +177,59 @@ scrape. There is no IPv6 bind: on an IPv6-only cluster a scrape of the pod IP
 fails (known limitation, unchanged from 0.2.x). `OTEL_EXPORTER_PROMETHEUS_HOST` and `OTEL_EXPORTER_PROMETHEUS_PORT`,
 which the upstream exporter reads since 1.16, have no effect: use
 `OTEL_HELPER_METRICS_PORT`.
+
+#### Prometheus fallback (0.3, this branch)
+
+Task C12 replaces the last sentence above: the helper honors the standard
+variables (contract A29).
+
+- **Port:** `TelemetryOptions.PrometheusMetricsPort` > `OTEL_EXPORTER_PROMETHEUS_PORT` >
+  `OTEL_HELPER_METRICS_PORT` > 9464; both variables take `^\+?[0-9]+$` in
+  [0, 65535] (`0` = no listener); an invalid value warns once (the echo loses
+  URL userinfo and query) and the next level applies.
+- **Host:** `OTEL_EXPORTER_PROMETHEUS_HOST` unset, `0.0.0.0`, `::` or `[::]`:
+  every IPv4 interface (the `+` prefix). An IPv4 literal (no leading zeros):
+  that address only. `localhost` (any case): `127.0.0.1`. An IPv4-mapped IPv6
+  address binds its IPv4 address. Any other value (a host name, `*`, a URL, a
+  port, a zone id) warns once and binds every IPv4 interface (fails open,
+  owner decision). **.NET has no IPv6 bind** (fix round 1, 2026-11-11): the
+  managed `HttpListener` rejects every IPv6 literal prefix (measured on .NET
+  8.0.33 and 10.0.14). So `::1` / `[::1]` binds `127.0.0.1` with one warning;
+  `::` / `[::]` binds every IPv4 interface with one warning; any other IPv6
+  address gets **no listener** and one ERROR (never widened to every interface,
+  never a failed start).
+- **A failed bind** (a busy port, an address the machine does not own): one
+  ERROR naming the address, the port and what set them, then the
+  `MeterProvider` build fails with the upstream `InvalidOperationException`.
+- **Scraping a host-bound listener:** the listener routes a specific-host bind
+  by the request's `Host` header. A `127.0.0.1` bind (also `localhost` and
+  `::1`) registers a `localhost` prefix too. `http://127.0.0.1:9464/metrics`
+  always answers. `http://localhost:9464/metrics` answers on the `localhost`
+  prefix, which binds the resolver's first loopback address (`::1` when the
+  host has an IPv6 loopback, `127.0.0.1` with IPv6 off). Measured: Go
+  (Prometheus, vmagent) and .NET `HttpClient` dial `::1` first and get 200;
+  curl and Node.js resolve with `AI_ADDRCONFIG`, so in a container whose only
+  IPv6 address is `::1` (Docker networks, many pods) they connect to
+  `127.0.0.1` with `Host: localhost` and get 404: point them at
+  `http://127.0.0.1:9464/metrics`. Any other address answers only requests
+  naming it.
+- **An application listener next to the helper's:** the helper uses named
+  options (`StaffOps.OtelHelper.Prometheus`), so an application's own
+  `AddPrometheusHttpListener()` keeps its options and port.
+- **When the listener runs:** the `prometheus` metric exporter is active, the
+  port is above 0, metrics and the SDK are enabled. Only then is the listener
+  reader added, at provider build (a late `Configure<TelemetryOptions>` still
+  decides it). So `MeterProvider.ForceFlush()` and `Shutdown()` report the OTLP
+  result in an OTLP-only setup; in dual mode `otlp,prometheus` they return
+  `false` (a pull-only reader fails every collection outside a scrape, upstream),
+  and `services.ForceFlushOtelHelper()` gives the helper's own result (HOW-TO §15).
+- **Disabled metrics:** `OTEL_HELPER_DISABLED_METRICS` patterns are
+  case-sensitive globs on the instrument name (`*`, `?`, every other character
+  literal), dropped from every exporter. 0.2.x matched case-insensitively and
+  took `?` literally.
+- **Exposition gaps** (upstream exporter, recorded as parity skips): a Gauge in
+  unit `1` gets no `_ratio` suffix; colliding label values are joined in
+  attribute order (`a_b="y;x"`), not sorted as in Go.
 
 
 ### Standard OpenTelemetry SDK Variables

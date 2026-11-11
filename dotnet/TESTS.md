@@ -1,5 +1,7 @@
 # Tests — StaffOps.OtelHelper (.NET)
 
+1615 tests (xUnit) with the parity runner, 0 failed, 0 warnings (compose `dotnet-tests` on `sdk:8.0`, and on `sdk:10.0` (10.0.403) with `DOTNET_ROLL_FORWARD=Major`, 2026-11-11, task C12 fix round 1); coverlet total `| Total | 98.47% | 96.37% | 99.3% |` (line, branch, method) on `sdk:8.0`, `| Total | 98.4% | 96.32% | 99.3% |` on SDK 10. Before the fix round (C12): 1598 tests, 98.41% / 98.44%. The C11 line below is the previous task's run.
+
 1502 tests (xUnit) with the parity runner, 0 failed, 0 warnings (compose `dotnet-tests` on `sdk:8.0`, and on `sdk:10.0` (10.0.403) with `DOTNET_ROLL_FORWARD=Major`, 2026-11-10, task C11 fix round 2); coverlet total `| Total | 98.39% | 96.37% | 99.27% |` (line, branch, method) on `sdk:8.0`, `| Total | 98.31% | 96.32% | 99.27% |` on SDK 10. The total varies by about ±0.1 point between runs; the cause was not investigated.
 
 From `dotnet/`; the repository root is mounted because the parity runner reads
@@ -314,9 +316,12 @@ Opt-in subpackage extensions (AWS, SQL, Redis) — each verifies the fluent `ISe
 
 The Prometheus fallback on `OpenTelemetry.Exporter.Prometheus.HttpListener`
 1.20.x keeps the 0.2.x listener behavior (task C3, design D-NET11). Uses
-`[Collection("EnvVarTests")]`. No test needs a network (the suite runs with
-`--network none`): reachability from another container, in the text and
-OpenMetrics formats, is checked by `testing/e2e/dotnet-prom-scrape.sh`.
+`[Collection("EnvVarTests")]`. *Corrected 2026-11-11 (C12 fix round 1):* these
+tests need no network, but two `PrometheusFallbackC12Tests` facts
+(`[NonLoopbackFact]`) need a non-loopback IPv4 address of the container and
+are skipped, with the reason, without one (`--network none`). Reachability
+from another container, in the text and OpenMetrics formats, and the
+loopback-bind refusal are checked by `testing/e2e/dotnet-prom-scrape.sh`.
 
 | Test | Description |
 |-------|-----------|
@@ -324,6 +329,14 @@ OpenMetrics formats, is checked by `testing/e2e/dotnet-prom-scrape.sh`.
 | `ConfigurePrometheusListener_SetsHostPortCacheAndPrefixDelegate` | `Host` reset to `localhost`, helper port, response cache 0, and a delegate that replaces the listener prefixes with the `+` prefix only |
 | `Scrape_IsFresh_NoResponseCache` | Two scrapes back to back see the new value (upstream caches 300 ms by default) |
 | `PrometheusEnvVars_HaveNoEffect_HelperPortServed` | `OTEL_EXPORTER_PROMETHEUS_HOST=*` does not abort the build and `OTEL_EXPORTER_PROMETHEUS_PORT` does not move the listener: `OTEL_HELPER_METRICS_PORT` is served |
+
+*Changed 2026-11-11 (task C12):* `ListenerPrefix_IsWildcardHostMetricsPath`
+became `ListenerPrefix_FollowsResolvedHost` × 4 (`""` and `0.0.0.0` → `+`, an
+IPv4 literal, `::1` → `[::1]`); `ConfigurePrometheusListener_Host_ReplacesThePrefix`
+is new; `PrometheusEnvVars_HaveNoEffect_HelperPortServed` became
+`PrometheusPortEnvVar_BeatsHelperPort_AndHostStarDoesNotAbort` (the standard
+port is served, the helper port is not, `*` warns once); the inactive-prefix
+test is gone (no listener reader is registered then, see below).
 
 ## SamplerPrecedenceTests
 
@@ -581,3 +594,53 @@ The wire side is the parity fixture: the C11 group (`http.*`, `grpc.*`,
 `metrics.http_server_duration_histogram_name`, 30 cases) has 25 `pass`; the
 two `grpc.health_*_counted_in_metrics` (`skip:no-upstream-rpc-metrics`) and
 three body-size cases (`skip:no-upstream-dotnet-http-body-size`) stay skipped.
+
+## Prometheus fallback (task C12)
+
+`PrometheusFallbackC12Tests` (`[Collection("EnvVarTests")]`; contract A21,
+A29, N8; design D-NET11, D-NET3), 104 cases with `PrometheusListenerTests` (120 after fix round 1).
+The bind tests need the container's own non-loopback IPv4 address (compose
+`dotnet-tests` has one, `eth0`); since fix round 1 `LoopbackHost_RefusesANonLoopbackConnect`
+and `UnspecifiedIpv4Host_BindsEveryIpv4Interface` are skipped with a reason
+without it, and the loopback tests check the refusal only when one exists. Each rule was checked to fail a test when
+broken (7 mutants, 2026-11-11: glob case-insensitive again, the bind ignoring
+the host, the listener reader registered with OTLP too, the two port
+variables swapped, IPv4 leading zeros accepted, the push readers not tracked
+for `ForceFlushOtelHelper`, the invalid-host warning removed).
+
+| Area | Tests |
+|---|---|
+| Port grammar (A21) | `PortGrammar_Valid` × 6, `PortGrammar_Invalid` × 12, `UnparseableHelperPort_Warns_And_Uses9464` (silent before C12), `HelperPort_IsTrimmedWithTheContractSet` (U+00A0 kept) |
+| Port precedence (A29) | `StandardPort_BeatsHelperPort_WithoutWarning`, `InvalidStandardPort_Warns_And_FallsToHelperPort`, `BothPortsInvalid_EachWarnsOnce_9464`, `StandardPortZero_IsNoListener_NotTheNextLevel`, `EmptyStandardPort_IsUnset`, `CodePort_Beats_BothVariables_AndThey_AreNotRead`, `InvalidPortEcho_LosesUserinfoAndQuery` |
+| Host grammar (A29) | `HostGrammar_Valid` × 15, `HostGrammar_Invalid` × 19, `InvalidHost_WarnsOnce_FailsOpen_And_RedactsTheEcho`, `Host_IsTrimmed_AndBlankIsUnset`, `Host_IsParsedAndWarned_EvenWhenTheListenerDoesNotRun` |
+| Bind | `LoopbackHost_RefusesANonLoopbackConnect` (the negative control: with `127.0.0.1`, a connect to the container's `eth0` address is refused; unset, the same connect gets 200), `SpecificHost_AnswersOnlyRequestsNamingIt` (`Host: localhost` → 404 on a `127.0.0.1` bind), `UnspecifiedIpv4Host_BindsEveryIpv4Interface`, `Ipv6Host_FailsTheBuild_WithOneHelperError`, `Ipv6Host_WithoutListener_IsNotAnError`, `UnownedHost_FailsTheBuild_LikeABusyPort` (TEST-NET-1 `192.0.2.1`, and a busy port) |
+| Reader registration | `ListenerReader_IsRegistered_OnlyWhenItBinds` × 5, `ApplicationListener_KeepsItsOptions_WhenTheHelperListenerIsInactive` |
+| Flush | `OtlpOnly_SdkForceFlushAndShutdown_ReportTheRealResult` (both `true`; `false` before C12), `DualMode_SdkForceFlushIsFalse_HelperFlushIsTrue`, `HelperFlush_IsFalse_WhenTheOtlpExportFails` (receiver answering 500), `HelperFlush_FlushesTracesAndLogs` (a 500 still gives `true` there: batch-processor semantics), `HelperFlush_HistogramPath_UsesTheMeterProvider`, `HelperFlush_ArgumentsAndNoHelper`, `HelperFlush_SdkDisabled_IsTrue` |
+| Disabled-metric glob (A21) | `DisabledMetricGlob` × 11, `DisabledMetricGlob_ItemsTrimmedWithTheContractSet`, `DisabledMetrics_CaseSensitive_OnTheScrape` |
+
+*Fix round 1 (2026-11-11):* `PrometheusFallbackC12Tests` has 112 cases (120 with `PrometheusListenerTests`); 7 more mutants each fail a test (no `localhost` prefix, no `::1` mapping, other IPv6 widened, default-named options, no SDK noise entry, no bind-failure ERROR, `$` instead of `\z`).
+`SpecificHost_AnswersOnlyRequestsNamingIt` became
+`LoopbackHost_AnswersLocalhostAnd127_StillLoopbackOnly` × 3 and
+`OtherIpv4Host_RoutesByHostHeader` (127.0.0.2: 404 for `Host: localhost`); the
+IPv6 tests became `Ipv6LoopbackHost_Binds127001_WithOneWarning` × 3,
+`OtherIpv6Host_NoListener_OneError_StartSucceeds` × 2,
+`UnspecifiedIpv6Host_EveryIpv4Interface_OneWarning` × 2 and
+`Ipv6Host_WithoutListener_IsNotReported`; the bind failures
+`UnownedHost_FailsTheBuild_AfterOneHelperError` and
+`BusyPort_FailsTheBuild_AfterOneHelperError_NamingThePortSource`; new
+`HelperAndApplicationListeners_BothActive_OnTheirOwnPorts` (named options),
+`PrometheusPortVariable_IsWarnedByTheHelperOnly` × 2 (SDK noise),
+`HelperFlush_DisposedProvider_Throws`,
+`OtlpOnly_SdkResults_AfterA500_OnlyTheHelperFlushIsFalse`, and a `\z` glob row.
+
+A test that builds a provider expecting the build to fail goes through
+`BuildMetricsOnly`, which disposes the container: a `TracerProvider` left
+alive by a failed build keeps sampling other tests' activities (it made two
+`SamplerPropagatorDebugTests` cases fail in a full run).
+
+The wire side is the parity fixture: of the 26 `xfail:C12` cases 23 pass;
+`metrics.scrape_gauge_unit_one_ratio` and `metrics.scrape_ratio_inside_name`
+are `skip:no-upstream-dotnet-prom-ratio`, `metrics.scrape_colliding_label_values_sorted`
+`skip:no-upstream-dotnet-prom-label-order`. Across containers:
+`testing/e2e/dotnet-prom-scrape.sh` (the second app, bound to `127.0.0.1`,
+refuses the curl container).

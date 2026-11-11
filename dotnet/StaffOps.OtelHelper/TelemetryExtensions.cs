@@ -79,6 +79,8 @@ namespace StaffOps.OtelHelper
 
             // The helper's exporter clients, disposed with the container after the providers.
             services.TryAddSingleton<StaffOps.OtelHelper.Exporters.ExporterClients>();
+            // The push metric readers the helper builds, for ForceFlushOtelHelper (C12).
+            services.TryAddSingleton<MetricsSetup.HelperMetricReaders>();
 
             // Resolved once per container, from the final IOptions value (late Configure included).
             services.TryAddSingleton(sp =>

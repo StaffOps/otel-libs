@@ -234,8 +234,9 @@ internal static class CaseKinds
                 snap["exemplar_filter"] = exemplarFilter;
             }
             snap["http_opt_in_metrics"] = r.HttpOptInMetrics;
-            // prometheus_metrics_host is omitted: the helper has no such setting yet (it binds
-            // IPv4 "+" whatever the environment says); task C12.
+            // The resolved bind address of the standalone listener (A29, task C12): "" = every
+            // interface, which .NET binds as every IPv4 interface (the "+" prefix).
+            snap["prometheus_metrics_host"] = r.PrometheusMetricsHost;
         }
 
         await ShutdownAsync(run);
@@ -729,11 +730,13 @@ internal static class CaseKinds
             return new JsonObject { ["adapter_error"] = $"listener never bound on port {port}" };
         }
 
+        // input.connect_host: "127.0.0.1" (default) or "localhost" (every address the resolver returns).
+        var host = (string?)c["input"]?["connect_host"] ?? "127.0.0.1";
         var statuses = new JsonArray();
         foreach (var request in StringList(c["input"]?["requests"]))
         {
             var parts = request.Split(' ', 2);
-            var (status, _) = await RawHttp.RequestAsync(parts[0], "127.0.0.1", port, parts[1], NoHeaders);
+            var (status, _) = await RawHttp.RequestAsync(parts[0], host, port, parts[1], NoHeaders);
             statuses.Add(status);
         }
 

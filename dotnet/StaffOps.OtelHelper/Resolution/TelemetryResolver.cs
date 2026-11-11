@@ -70,6 +70,7 @@ namespace StaffOps.OtelHelper
                 ["metrics"] = metricsChosen,
                 ["logs"] = logsExporters is not null,
             };
+            var portSource = PrometheusPortEnvVar;
             return new ResolvedTelemetry
             {
                 ServiceName = identity.ServiceName,
@@ -102,7 +103,12 @@ namespace StaffOps.OtelHelper
                 LogsExporters = logsExporters ?? DefaultTraceLogExporters,
                 ExportIntervalMs = code.ExportIntervalMs ?? ResolveEnvInterval(diagnostics, configuration),
                 ExemplarFilter = ResolveExemplarFilter(diagnostics),
-                PrometheusMetricsPort = code.PrometheusMetricsPort ?? ResolveEnvPort(diagnostics),
+                // Code wins (the variables are then not read, as in Go); the variables are parsed and
+                // warned at every setup, also when the listener does not run (A29).
+                PrometheusMetricsPort = code.PrometheusMetricsPort ?? ResolveEnvPort(diagnostics, out portSource),
+                PrometheusPortSource = code.PrometheusMetricsPort is null ? portSource : "TelemetryOptions.PrometheusMetricsPort",
+                PrometheusMetricsHost = ResolvePrometheusHost(diagnostics, out var ipv6Unspecified),
+                PrometheusHostIPv6Unspecified = ipv6Unspecified,
                 HealthPaths = code.HealthPaths?.ToArray() ?? DefaultHealthPaths,
                 HttpOptInMetrics = code.HttpOptInMetrics ?? ResolveEnvHttpOptInMetrics(diagnostics),
                 SdkDisabled = sdkDisabled,
@@ -792,21 +798,154 @@ namespace StaffOps.OtelHelper
             }
         }
 
-        private static int ResolveEnvPort(IOtelHelperDiagnostics diagnostics)
+        /// <summary>Standard variable of the Prometheus listener port (contract D1 row "Prometheus exporter variables", A29).</summary>
+        internal const string PrometheusPortEnvVar = "OTEL_EXPORTER_PROMETHEUS_PORT";
+
+        /// <summary>Standard variable of the Prometheus listener bind address (A29).</summary>
+        internal const string PrometheusHostEnvVar = "OTEL_EXPORTER_PROMETHEUS_HOST";
+
+        /// <summary>The A29 warning, the same text in every language: an invalid restriction widens exposure.</summary>
+        internal const string InvalidPrometheusHostMessage =
+            "invalid host, not applied: the listener binds every interface, wider than a restriction (use an IP address or localhost)";
+
+        /// <summary>
+        /// The listener port when code sets none: <c>OTEL_EXPORTER_PROMETHEUS_PORT</c> &gt;
+        /// <c>OTEL_HELPER_METRICS_PORT</c> &gt; 9464 (A29). Both use the A21 grammar
+        /// (<see cref="TryParseMetricsPort"/>); an empty or blank value is unset; an invalid value
+        /// warns once naming the variable (the echoed value redacted) and the next level applies.
+        /// </summary>
+        private static int ResolveEnvPort(IOtelHelperDiagnostics diagnostics, out string source)
         {
-            var text = Env(TelemetryOptions.MetricsPortEnvVar);
-            if (string.IsNullOrWhiteSpace(text) || !int.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out var port))
+            // What set the port, for the bind-failure line (contract A29: the default names the standard variable).
+            source = PrometheusPortEnvVar;
+            foreach (var (variable, next) in new[]
             {
-                return TelemetryOptions.DefaultPrometheusMetricsPort;
+                (PrometheusPortEnvVar, TelemetryOptions.MetricsPortEnvVar + ", else 9464"),
+                (TelemetryOptions.MetricsPortEnvVar, "9464"),
+            })
+            {
+                if (ContractText.NonBlank(Env(variable)) is not { } text)
+                {
+                    continue;
+                }
+
+                if (TryParseMetricsPort(text, out var port))
+                {
+                    source = variable;
+                    return port;
+                }
+
+                WarnInvalidEnv(diagnostics, variable, text,
+                    $"invalid port (ASCII digits with an optional +, in [0, 65535]; 0 = no listener), using {next}");
             }
 
-            if (port is < 0 or > 65535)
+            return TelemetryOptions.DefaultPrometheusMetricsPort;
+        }
+
+        /// <summary>
+        /// The contract port grammar (D1 row "Metrics port grammar", A21): <c>^\+?[0-9]+$</c> on the
+        /// trimmed value, ASCII digits only, in [0, 65535]; leading zeros allowed whatever the length
+        /// (only the significant digits are converted, so a long digit string is never parsed).
+        /// </summary>
+        internal static bool TryParseMetricsPort(string text, out int port)
+        {
+            port = 0;
+            var digits = text.StartsWith('+') ? text[1..] : text;
+            if (digits.Length == 0 || !digits.All(char.IsAsciiDigit))
             {
-                WarnInvalidEnv(diagnostics, TelemetryOptions.MetricsPortEnvVar, text, "port outside [0, 65535], using 9464");
-                return TelemetryOptions.DefaultPrometheusMetricsPort;
+                return false;
             }
 
-            return port;
+            var significant = digits.TrimStart('0');
+            if (significant.Length > 5)
+            {
+                return false;
+            }
+
+            port = significant.Length == 0 ? 0 : int.Parse(significant, NumberStyles.None, CultureInfo.InvariantCulture);
+            return port <= 65535;
+        }
+
+        /// <summary>
+        /// <c>OTEL_EXPORTER_PROMETHEUS_HOST</c> (A29): <c>""</c> = every interface (unset, blank,
+        /// <c>::</c> or <c>[::]</c>), else the bind address as the contract snapshot spells it. Invalid
+        /// values warn once and bind every interface (fails open, owner decision).
+        /// </summary>
+        private static string ResolvePrometheusHost(IOtelHelperDiagnostics diagnostics, out bool ipv6Unspecified)
+        {
+            ipv6Unspecified = false;
+            if (ContractText.NonBlank(Env(PrometheusHostEnvVar)) is not { } text)
+            {
+                return "";
+            }
+
+            if (TryParsePrometheusHost(text, out var host))
+            {
+                // "::" or "[::]": every interface by the contract; .NET binds IPv4 only (warned at bind).
+                ipv6Unspecified = host.Length == 0;
+                return host;
+            }
+
+            WarnInvalidEnv(diagnostics, PrometheusHostEnvVar, text, InvalidPrometheusHostMessage);
+            return "";
+        }
+
+        /// <summary>
+        /// The contract host grammar (A29): <c>localhost</c> (ASCII case-insensitive) → <c>127.0.0.1</c>;
+        /// an IPv4 dotted quad without leading zeros; an IPv6 literal with or without brackets and
+        /// without a zone id (an IPv4-mapped one → its IPv4 address; the all-zero one → <c>""</c>,
+        /// every interface; any other one ASCII-lowercased, brackets dropped, as written). Host names
+        /// are not resolved. Mirrors Go's <c>parsePrometheusHost</c>.
+        /// </summary>
+        internal static bool TryParsePrometheusHost(string text, out string host)
+        {
+            host = "";
+            if (ContractText.AsciiLower(text) == "localhost")
+            {
+                host = "127.0.0.1";
+                return true;
+            }
+
+            var bracketed = text.Length >= 2 && text[0] == '[' && text[^1] == ']';
+            var literal = bracketed ? text[1..^1] : text;
+            if (!literal.Contains(':'))
+            {
+                // IPv4: brackets are for IPv6 only.
+                if (bracketed || !IsDottedQuad(literal))
+                {
+                    return false;
+                }
+
+                host = literal;
+                return true;
+            }
+
+            // IPv6: hex digits, ':' and the dots of an embedded IPv4 tail only (no zone, no prefix length).
+            if (!literal.All(c => char.IsAsciiHexDigit(c) || c is ':' or '.')
+                || !System.Net.IPAddress.TryParse(literal, out var address)
+                || address.AddressFamily != System.Net.Sockets.AddressFamily.InterNetworkV6
+                || (literal.Contains('.') && !IsDottedQuad(literal[(literal.LastIndexOf(':') + 1)..])))
+            {
+                return false;
+            }
+
+            if (address.IsIPv4MappedToIPv6)
+            {
+                host = address.MapToIPv4().ToString();
+                return true;
+            }
+
+            host = address.Equals(System.Net.IPAddress.IPv6Any) ? "" : ContractText.AsciiLower(literal);
+            return true;
+        }
+
+        /// <summary>Four decimal octets in [0, 255], no leading zeros (<c>0</c> itself is fine).</summary>
+        private static bool IsDottedQuad(string text)
+        {
+            var parts = text.Split('.');
+            return parts.Length == 4 && parts.All(p =>
+                p.Length is >= 1 and <= 3 && p.All(char.IsAsciiDigit) && (p.Length == 1 || p[0] != '0')
+                && int.Parse(p, NumberStyles.None, CultureInfo.InvariantCulture) <= 255);
         }
 
         internal const string TemporalityVariable = "OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE";
