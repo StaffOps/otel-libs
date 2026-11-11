@@ -1048,6 +1048,12 @@ func runGRPCServer(t *testing.T, opts []Option, input map[string]any) map[string
 
 // runLogging emits one record through the helper's public logger (Go apps
 // build their logger with NewLogger) and reports the process console.
+// The fixed span context of the logging kind's in_span input (parity/README.md).
+const (
+	paritySpanTraceID = "4bf92f3577b34da6a3ce929d0e0e4736"
+	paritySpanSpanID  = "00f067aa0ba902b7"
+)
+
 func runLogging(t *testing.T, opts []Option, input map[string]any) map[string]any {
 	t.Helper()
 	r, w, err := os.Pipe()
@@ -1076,7 +1082,16 @@ func runLogging(t *testing.T, opts []Option, input map[string]any) map[string]an
 	for _, k := range keys {
 		args = append(args, k, attrs[k])
 	}
-	NewLogger(env, debug).Warn("parity-console-record", args...)
+	// input.in_span: the record is written inside a span (contract A23 amendment 2026-11-11).
+	if inSpan, _ := input["in_span"].(bool); inSpan {
+		// A valid, non-recording span context with fixed ids, whatever tracer is installed.
+		tid, _ := trace.TraceIDFromHex(paritySpanTraceID)
+		sid, _ := trace.SpanIDFromHex(paritySpanSpanID)
+		ctx := trace.ContextWithSpanContext(context.Background(), trace.NewSpanContext(trace.SpanContextConfig{TraceID: tid, SpanID: sid, TraceFlags: trace.FlagsSampled}))
+		NewLogger(env, debug).WarnContext(ctx, "parity-console-record", args...)
+	} else {
+		NewLogger(env, debug).Warn("parity-console-record", args...)
+	}
 	shutdownQuick(shutdown)
 	os.Stdout, os.Stderr = origOut, origErr
 	_ = w.Close()

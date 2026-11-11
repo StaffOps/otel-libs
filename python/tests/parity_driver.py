@@ -493,7 +493,18 @@ def kind_logging(case: dict) -> dict:
     _, snap = _setup(case)
     # input.attributes: the record's extras (the stdlib refuses LogRecord attribute names such as msg).
     attributes = dict(sorted((case.get("input") or {}).get("attributes", {}).items()))
-    logging.getLogger("parity").warning("parity-console-record", extra=attributes)
+    if (case.get("input") or {}).get("in_span"):
+        # input.in_span: the record is written inside a span (contract A23 amendment 2026-11-11).
+        # A valid, non-recording span context with fixed ids, whatever tracer is installed.
+        from opentelemetry import trace
+
+        span = trace.NonRecordingSpan(trace.SpanContext(
+            trace_id=int("4bf92f3577b34da6a3ce929d0e0e4736", 16), span_id=int("00f067aa0ba902b7", 16),
+            is_remote=False, trace_flags=trace.TraceFlags(trace.TraceFlags.SAMPLED)))
+        with trace.use_span(span):
+            logging.getLogger("parity").warning("parity-console-record", extra=attributes)
+    else:
+        logging.getLogger("parity").warning("parity-console-record", extra=attributes)
     _flush_and_shutdown()
     return snap
 

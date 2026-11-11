@@ -843,6 +843,17 @@ emitted telemetry.
    spans; the helper does not set it and warns once when gRPC endpoints are
    mapped without it (owner decision O7 (b)).
 
+15. **`AddOtelHelperSql()` subscribes more** (task C14a, design D-NET14, O5):
+   Npgsql and MySqlConnector spans and metrics (their `Npgsql` /
+   `MySqlConnector` source and meter, added to `AdditionalActivitySources` /
+   `AdditionalMeters` by a post-configure step) and the SqlClient
+   `db.client.operation.duration` metric; 0.2.x added SqlClient tracing only.
+   Call `AddOtelHelper()` too: without it the two driver names are not
+   subscribed. Remove an `AddNpgsql()` / `AddSource("Npgsql")` /
+   `AddSource("MySqlConnector")` of your own if you want them to follow the
+   helper's signal switches (keeping them is harmless: no duplicate span).
+   No new package dependency; the application brings its driver.
+
 **Telemetry part.** Each row: before (0.2.x) → after, and what to check in
 dashboards and alerts.
 
@@ -1334,6 +1345,59 @@ dashboards and alerts.
    app-side consoles show `Microsoft.*` warnings again. Loki: `| json | level="ERROR"` matches .NET Error and
    Critical, as in Go, Python and Node.js; OTLP records keep the SDK's severity
    number and text (design D-NET10).
+
+23. **Database spans: one sanitizer, two new drivers** (task C14a and its fix
+   round 1, contract A25, R10; design D-NET14, D-NET15, DN9). Before (0.2.x) → after:
+
+   | Input | 0.2.x | 0.3 (this branch) |
+   |---|---|---|
+   | SqlClient instrumentation | 1.15.2 | 1.20.2 (1.20.0 and 1.20.2 sanitizer fixes, telemetry item 6; 1.20.2 changes some `db.query.summary` values and with them the span names — delimited and multi-part identifiers, `TRUNCATE` — and moves to semconv 1.45; not measured: no SQL Server in the tests) |
+   | SqlClient span keys | `db.system.name=microsoft.sql_server` only | also `db.system=mssql` (the helper, R10 default); only `db.system.name` with `OTEL_SEMCONV_STABILITY_OPT_IN=database` |
+   | SqlClient metric | none | `db.client.operation.duration` (meter `OpenTelemetry.Instrumentation.SqlClient`; the keys SqlClient writes, no `db.system`) |
+   | Npgsql, MySqlConnector | not subscribed (no span, no metric) unless the app added the sources | spans and metrics through `AddOtelHelperSql()`. Npgsql 10 spans: `db.system.name=postgresql`, `db.query.text`, `db.namespace`, plus `db.system=postgresql` from the helper. MySqlConnector 2.6 spans (its legacy conventions by default): `db.system=mysql`, `db.statement`, plus `db.system.name=mysql` and `db.query.text` from the helper; with `OTEL_SEMCONV_STABILITY_OPT_IN=database` only the new keys |
+   | Npgsql / MySqlConnector metric attributes | — | the pool name (`db.client.connection.pool.name`, `pool.name`) is dropped by a view (an unnamed pool is named after its connection string, `SSL Password` / `Certificate Password` included); an allowlist of semconv keys is kept, so pools are merged |
+   | failed DB span status | SqlClient 1.15.2: the exception message as description | `ERROR` without a description for SqlClient, Npgsql and MySqlConnector (A25); for MySqlConnector in what the helper's exporters send (it sets the status after the span ended); `error.type` as each driver writes it (Npgsql the SQLSTATE, MySqlConnector the exception type, or the error number with the stable conventions) |
+   | query text | SqlClient sanitized upstream | also Npgsql and MySqlConnector: literals → `?`, comments dropped (`SELECT * FROM t WHERE a = 'x' -- c` → `SELECT * FROM t WHERE a = ? `); a PostgreSQL string with a backslash drops the rest of the text |
+   | connection strings and bound values in spans | — | `db.connection_string` and `db.query.parameter.*` removed; password keys of `db.npgsql.data_source` written `REDACTED` |
+   | `exception` event | the database's error text (message and stack trace) | only `exception.type` — the detail is in a correlated log record (telemetry item 24, ADR-014) |
+
+   Check: span queries on `db_system` or `db_system_name` now see every .NET
+   driver (both keys by default); metric queries on `db_system` see none of the
+   .NET driver metrics, and `db_system_name` misses MySqlConnector's pool
+   metrics. Per-pool Npgsql / MySqlConnector series are merged (no pool label).
+   Telemetry item 6 marked the SqlClient span-name change from
+   `db.query.summary` `[TO VERIFY C14a]`: not measured in C14a (no SQL Server
+   in the test setup); it stays as the SqlClient CHANGELOGs (1.20.0, 1.20.2)
+   state it.
+
+24. **DB exception message and stack trace moved from span events to a
+   correlated log record** (task C14a round 2, owner decision
+   [ADR-014](https://github.com/StaffOps/otel-libs/blob/main/specs/decisions/ADR-014-exception-detail-in-correlated-logs.md)).
+   Before (0.2.x): a failed SqlClient span's `exception` event carried
+   `exception.message` and `exception.stacktrace` (Npgsql and MySqlConnector
+   were not instrumented). After: on failed SqlClient, Npgsql and
+   MySqlConnector spans the event keeps only `exception.type`; one log record
+   (category `StaffOps.OtelHelper.Database`, level Error, body = the message,
+   attributes `exception.type`, `exception.message`, `exception.stacktrace`)
+   carries the span's `trace_id` / `span_id` on OTLP, or `trace_id` / `span_id`
+   fields on the stdout fallback line. Check: Tempo queries or alerts on
+   `event.exception.message` of DB spans find nothing — search the logs
+   (`{service_name="…"} | json | logger="StaffOps.OtelHelper.Database"` on the
+   stdout fallback, or by trace id); log volume grows by one record per failed
+   statement; logs may now hold the data values the error text quotes.
+   MySqlConnector events seen by an application's own exporter keep the detail
+   (added after the span ended; the helper's exporters handle them).
+   *Round 3:* the record's time is the exception event's time; every stdout
+   fallback line written while a span is current now carries `trace_id` and
+   `span_id` right after `logger` (contract A23 amendment; an attribute of
+   either name is dropped). The MySqlConnector case is an ADR-014 exception:
+   export through the helper or use the Collector rule in HOW-TO §14.
+   MySqlConnector spans also get `db.namespace` / `server.address` /
+   `server.port` from `db.name` / `net.peer.*`, and lose `db.user` in every mode. Driver
+   metrics: an application `Drop` view on an `Npgsql` / `MySqlConnector`
+   instrument no longer drops it (the helper's view adds its own stream; use
+   `OTEL_HELPER_DISABLED_METRICS`), and pools are merged (no pool label,
+   unlike the semantic conventions).
 
 ### Collector / platform prerequisites (before rolling 0.3.0 out)
 
@@ -1944,6 +2008,60 @@ Phase C work on this branch (no .NET release yet; the first will be
   logger enables instead of `MinLevel`. Tests: `StdoutLoggingTests`; 12
   mutants, plus the fix-round ones, each fail a test. Suite and coverage:
   `dotnet/TESTS.md`.
+- **.NET: Sql package and the database sanitizer (task C14a, contract A25,
+  R10; design D-NET14, DN9, O5; implemented 2026-11-11, awaiting review).**
+  Core now adds one sanitizing processor (`Tracing/SanitizingProcessor.cs`)
+  before the helper's export processors — also when the helper exports no
+  traces — and its OTLP and console exporters apply the same rules again to
+  each batch (MySqlConnector 2.6.2 sets a failed command's status after the
+  span ended). Database rules (`Tracing/DbSpanRules.cs`), for the
+  `OpenTelemetry.Instrumentation.SqlClient`, `Npgsql` and `MySqlConnector`
+  sources whoever subscribed them: a failed span keeps `ERROR` without its
+  description; the literals of Npgsql and MySqlConnector `db.query.text` /
+  `db.statement` become `?` and comments are dropped
+  (`Tracing/DbQuerySanitizer.cs`, PostgreSQL and MySQL lexical rules, fails
+  closed on unterminated text); `db.connection_string` is removed; password
+  keys of `db.npgsql.data_source` are written `REDACTED`; a rule that throws
+  removes those attributes and warns once (exception type only).
+  `AddOtelHelperSql()` subscribes the Npgsql and MySqlConnector sources and
+  meters through `AdditionalActivitySources` / `AdditionalMeters` and adds
+  the SqlClient metric; no new package dependency (no `Npgsql.OpenTelemetry`),
+  SqlClient instrumentation 1.20.1 (1.20.2 since fix round 1). Tests: `DbQuerySanitizerTests`,
+  `DbSpanSanitizerTests`, `SqlDriverIntegrationTests` (Npgsql 10.0.3 and
+  MySqlConnector 2.6.2, test-only references, against compose `sql-postgres`
+  / `sql-mysql`; `dotnet-tests` now starts both). README gap rows for
+  `db.system`, query text and pool names, and the MySqlConnector status.
+  Migration guide: API item 15, telemetry item 23. No parity case (no
+  database fixture kind). Suite and coverage: `dotnet/TESTS.md`.
+  Fix round 1 (2026-11-11): a view on the `Npgsql` and `MySqlConnector`
+  meters drops the pool-name attribute (an unnamed pool carried its
+  connection string, `SSL Password` / `Certificate Password` included);
+  `db.system` / `db.system.name` on spans follow R10 as Go (both by default,
+  the new keys only with `database`), MySqlConnector also gets
+  `db.query.text`; `db.query.parameter.*` removed; a PostgreSQL string with a
+  backslash drops the rest of the text; tags are written only when they
+  change; SqlClient instrumentation 1.20.1 → 1.20.2; CI `dotnet-test` runs the
+  database tests against `postgres` / `mysql` services.
+  Round 2 (2026-11-11, owner decision ADR-014): failed DB spans keep only
+  `exception.type` in their `exception` event; the message and stack trace
+  go to one ERROR log record of category `StaffOps.OtelHelper.Database` with
+  the span's trace context (`Tracing/DbExceptionEvents.cs` rebuilds the event
+  list through `Activity`'s private `_events` field, warned once if absent;
+  `Logging/DbExceptionLog.cs` writes the record and its `CorrelationProcessor`
+  sets the OTLP trace context). Migration guide: telemetry item 24.
+  Round 3 (2026-11-11): `DbExceptionEvents.Handle` serialized (two exporter
+  passes on two threads logged twice); the correlation processor accepts only
+  lower-case non-zero hex ids (a bad id no longer throws inside `OnEnd`) and
+  sets the record's timestamp to the event time; stdout lines carry
+  `trace_id` / `span_id` for any record written in a span context (contract
+  A23 amendment, parity case `logging.stdout_span_context`, `in_span` input in
+  the four drivers; `xfail:A36` for Go, Python and Node.js); MySqlConnector
+  legacy name and peer keys mapped, `db.user` removed in every mode; the lazy exception
+  logger returns null once the container is disposed.
+  Round 4 (2026-11-11): `DbExceptionEvents.Handle` reads without the lock,
+  rewrites under it, and calls the logger after releasing it (a blocking log
+  sink no longer stalls other span ends); the `in_span` parity input is a
+  fixed, non-recording span context in the four drivers.
 
 ### Breaking — telemetry output changes (dashboards/alerts)
 

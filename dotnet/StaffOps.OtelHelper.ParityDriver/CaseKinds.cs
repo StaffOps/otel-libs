@@ -693,6 +693,14 @@ internal static class CaseKinds
                 .OrderBy(kv => kv.Key, StringComparer.Ordinal)
                 .Select(kv => new KeyValuePair<string, object?>(kv.Key, (string?)kv.Value))
                 .ToList();
+            // input.in_span: the record is written inside a span (contract A23 amendment 2026-11-11). A
+            // plain Activity, whatever tracer is installed, under the fixed trace id: an Activity's own span
+            // id cannot be set, so the fixed span id is its parent and the case matches the trace id.
+            using var span = c["input"]?["in_span"]?.GetValue<bool>() == true
+                ? new System.Diagnostics.Activity("parity-log-span")
+                    .SetParentId(System.Diagnostics.ActivityTraceId.CreateFromString("4bf92f3577b34da6a3ce929d0e0e4736"), System.Diagnostics.ActivitySpanId.CreateFromString("00f067aa0ba902b7"))
+                    .Start()
+                : null;
             logger.Log(LogLevel.Warning, default, attributes, null, (_, _) => "parity-console-record");
         }
 

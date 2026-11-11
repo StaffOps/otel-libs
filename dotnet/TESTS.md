@@ -1,5 +1,13 @@
 # Tests — StaffOps.OtelHelper (.NET)
 
+1840 tests (xUnit) with the parity runner, 0 failed, 0 skipped, 0 warnings (compose `dotnet-tests` on `sdk:8.0` with `sql-postgres` and `sql-mysql`, and on `sdk:10.0` (10.0.403) with `DOTNET_ROLL_FORWARD=Major` on the same network, 2026-11-11, task C14a round 4); coverlet total `| Total | 98.52% | 96.81% | 99.41% |` on `sdk:8.0`, `| Total | 98.49% | 96.77% | 99.41% |` on SDK 10. Go, Python and Node.js re-run green (Node.js on the second run: the first timed out in the unrelated cluster test `D4 A24 an env-provided id …`, 20 s deadline). The round-3 line below is the previous run.
+
+1840 tests (xUnit) with the parity runner, 0 failed, 0 skipped, 0 warnings (compose `dotnet-tests` on `sdk:8.0` with `sql-postgres` and `sql-mysql`, and on `sdk:10.0` (10.0.403) with `DOTNET_ROLL_FORWARD=Major` on the same network, 2026-11-11, task C14a round 3); coverlet total `| Total | 98.54% | 96.81% | 99.41% |` (line, branch, method) on both. Go, Python (1546 passed, 3 xfailed, 97.43%) and Node.js suites re-run green with the new parity case. The round-2 line below is the previous run.
+
+1823 tests (xUnit) with the parity runner, 0 failed, 0 skipped, 0 warnings (compose `dotnet-tests` on `sdk:8.0` with `sql-postgres` and `sql-mysql`, and on `sdk:10.0` (10.0.403) with `DOTNET_ROLL_FORWARD=Major` on the same network, 2026-11-11, task C14a round 2); coverlet total `| Total | 98.58% | 96.79% | 99.4% |` (line, branch, method) on both. The round-1 line below is the previous run.
+
+1810 tests (xUnit) with the parity runner, 0 failed, 0 skipped, 0 warnings (compose `dotnet-tests` on `sdk:8.0` with `sql-postgres` and `sql-mysql`, and on `sdk:10.0` (10.0.403) with `DOTNET_ROLL_FORWARD=Major` on the same network, 2026-11-11, task C14a fix round 1); coverlet total `| Total | 98.58% | 96.87% | 99.4% |` (line, branch, method) on both. Before the fix round: 1781 tests. The C13 line below is the previous task's run.
+
 1689 tests (xUnit) with the parity runner, 0 failed, 0 warnings (compose `dotnet-tests` on `sdk:8.0`, and on `sdk:10.0` (10.0.403) with `DOTNET_ROLL_FORWARD=Major`, 2026-11-11, task C13 fix round 1); coverlet total `| Total | 98.44% | 96.48% | 99.35% |` (line, branch, method) on both. Before the fix round: 1671 tests, 98.45% / 98.52%. The C12 line below is the previous task's run.
 
 1615 tests (xUnit) with the parity runner, 0 failed, 0 warnings (compose `dotnet-tests` on `sdk:8.0`, and on `sdk:10.0` (10.0.403) with `DOTNET_ROLL_FORWARD=Major`, 2026-11-11, task C12 fix round 1); coverlet total `| Total | 98.47% | 96.37% | 99.3% |` (line, branch, method) on `sdk:8.0`, `| Total | 98.4% | 96.32% | 99.3% |` on SDK 10. Before the fix round (C12): 1598 tests, 98.41% / 98.44%. The C11 line below is the previous task's run.
@@ -688,3 +696,117 @@ ignored, code not winning over the provider slot, no duplicate-console warning,
 no raw supplementary characters, cap doubled, no minimal line); dropping
 `Clean` on the message survives, because `Utf8JsonWriter` already writes U+FFFD
 for a lone surrogate (an equivalent mutant, measured).
+
+## Sql and the database sanitizer (task C14a)
+
+Contract A25, R10; design D-NET14, DN9, O5. No parity case: the fixture has
+no database kind. `DbSpanSanitizerTests` and `SqlDriverIntegrationTests` are
+in `[Collection("EnvVarTests")]` (driver-named test sources, one test swaps
+`Console.Out`).
+
+| Area | Tests |
+|---|---|
+| Literal sanitizer, both dialects (`DbQuerySanitizerTests`) | `String_Literals_Become_Placeholders_In_Both_Dialects` × 3, `Numbers_Become_Placeholders` × 5, `Comments_Are_Dropped_In_Both_Dialects` × 5, `Parameters_Keywords_And_Identifiers_With_Digits_Are_Kept` × 2, `Empty_And_Literal_Free_Text_Is_Unchanged`, `Non_Ascii_Identifiers_Are_Kept`, `Identifier_Adjacent_To_A_Quote_Is_Not_A_Prefix_Unless_Listed` |
+| PostgreSQL rules | `PostgreSql_Escape_String_Honors_Backslash` × 2, `PostgreSql_Double_Quoted_Text_Is_An_Identifier_And_Kept`, `PostgreSql_Prefixed_Strings_Become_Placeholders` × 2, `PostgreSql_Unicode_Identifier_Is_Kept`, `PostgreSql_Dollar_Quoted_Strings_Become_Placeholders` × 3, `PostgreSql_Parameters_And_Dollar_In_Identifiers_Are_Kept` × 4, `PostgreSql_Block_Comments_Nest`, `Backtick_Is_Ordinary_Text_In_PostgreSql`, `Underscore_Introducer_Is_MySql_Only`, `PostgreSql_Unterminated_Text_Drops_The_Rest` × 6 |
+| MySQL rules | `MySql_Backslash_Escapes_In_Every_Quoted_String`, `MySql_Double_Quoted_Text_Is_A_String`, `MySql_Backtick_Identifier_Is_Kept_Even_With_A_Quote_Inside`, `MySql_Prefixed_Strings_And_Introducers_Become_Placeholders` × 2, `E_Prefix_Is_PostgreSql_Only`, `Dollar_Is_Not_A_Quote_In_MySql`, `MySql_Block_Comments_Do_Not_Nest`, `Hash_Starts_A_Comment_In_MySql_Only`, `MySql_Unterminated_Text_Drops_The_Rest` × 4 |
+| Span rules (`DbSpanSanitizerTests`) | `Failed_Db_Span_Keeps_Error_Without_The_Description` × 3, `Other_Sources_Keep_Their_Status_And_Attributes`, `Unset_Or_Ok_Status_Is_Left_Alone`, `Npgsql_Query_Text_Uses_The_PostgreSql_Rules`, `MySqlConnector_Query_Text_Uses_The_MySql_Rules`, `SqlClient_Query_Text_Is_Left_To_Upstream`, `Non_String_Query_Text_Is_Left_Alone`, `Connection_String_Attribute_Is_Removed` × 3, `Npgsql_Data_Source_Password_Keys_Are_Redacted` × 4, `Npgsql_Data_Source_Without_Password_Is_Unchanged` × 2, `Npgsql_Data_Source_That_Does_Not_Parse_Is_Removed`, `Data_Source_Rule_Is_Npgsql_Only` |
+| Processor and exporters | `Spans_Without_Recorded_Data_Are_Not_Touched`, `A_Failing_Rule_Strips_The_Sensitive_Attributes_And_Warns_Once`, `A_Failing_Rule_Leaves_An_Unfailed_Status_Alone`, `The_Helper_Console_Exporter_Sees_The_Sanitized_Span`, `Sanitize_Reads_The_Batch_Once_And_Returns_Every_Span_Sanitized`, `Sanitized_Exporter_Behind_A_Batch_Processor_Exports_Every_Span`, `Helper_Otlp_Exporter_Sanitizes_A_Span_Changed_After_It_Ended`, `Helper_Console_Exporter_Sanitizes_A_Span_Changed_After_It_Ended`, `Sanitizer_Runs_When_The_Helper_Exports_No_Traces`, `Rules_Apply_To_A_Driver_Source_The_Application_Subscribed_Without_The_Sql_Package` |
+| `AddOtelHelperSql()` | `Sql_Package_Subscribes_The_Driver_Sources`, `Sql_Package_Keeps_Its_Names_Over_A_Later_Configure_And_Adds_No_Duplicate`, `Driver_Sources_Are_Not_Subscribed_While_The_Helper_Exports_No_Traces`, `Sql_Package_Exports_The_Driver_Meters_And_The_SqlClient_Meter`, `Driver_Meters_Are_Dropped_While_The_Helper_Exports_No_Metrics` |
+| Real drivers (`SqlDriverIntegrationTests`) | `Npgsql_Spans_Are_Sanitized_And_Metrics_Exported` (Npgsql 10.0.3 on `sql-postgres`: literal, comment, `CAST` error text, `SSL Password` and the password absent from every attribute and the status; `22P02` as `error.type`; `db.system` absent; `Npgsql` `db.client.operation.duration` exported), `MySqlConnector_Spans_Are_Sanitized_And_Metrics_Exported` (MySqlConnector 2.6.2 on `sql-mysql`: single-, double-quoted and comment literals, `Certificate Password` and the password absent; the late status seen by a processor, removed by the helper's OTLP exporter at shutdown; legacy keys only) |
+
+The integration tests need `SQL_TEST_POSTGRES` / `SQL_TEST_MYSQL`
+(`postgres://` / `mysql://` URLs, as the Node.js suite); compose
+`dotnet-tests` sets them and `SQL_TEST_REQUIRE=1`, so a missing database fails
+the run. Without the variables they are skipped. Stop the databases afterwards:
+`docker compose -f testing/docker-compose.yml stop sql-postgres sql-mysql`.
+
+Mutation check (2026-11-11, scripted, one mutant per run on a fresh copy, the
+three C14a classes as the filter): 45 mutants — 23 of the span rules,
+processor, exporters and `AddOtelHelperSql()`, 22 of the sanitizer's lexical
+rules — 44 each fail at least one test; the survivor is equivalent (an
+unterminated literal that sets the index to the end instead of leaving the
+loop). Two first-round survivors were fixed: a batch read twice (test
+`Sanitized_Exporter_Behind_A_Batch_Processor_Exports_Every_Span` added) and
+`$` inside an identifier (case `SELECT x$tag$y FROM t` added); a dead
+key-compaction step in the password-key match was removed.
+
+*Fix round 1 (2026-11-11):* `PostgreSql_Standard_String_With_A_Backslash_Drops_The_Rest`
+× 4 (`'C:\'`, `'it\'s secret'`, `N'it\'s secret'`, `'C:\\'`) and
+`PostgreSql_Standard_String_Without_A_Backslash_Keeps_The_Rest` replace the
+standard-string backslash test; `Legacy_Keys_Follow_The_Opt_In_As_Go` × 11,
+`Stable_Only_Drivers_Get_The_Legacy_System_By_Default` × 2,
+`MySqlConnector_Legacy_Span_Gets_The_New_Keys_And_Keeps_The_Legacy_By_Default`,
+`MySqlConnector_Legacy_Span_Keeps_Only_The_New_Keys_In_The_Stable_Mode`,
+`Existing_Query_Text_Is_Not_Replaced_By_The_Statement`,
+`Spans_Without_A_System_Key_Get_None`,
+`Processor_Reads_The_Opt_In_When_The_Provider_Is_Built`,
+`Default_Pipeline_Adds_The_Legacy_System`, `Query_Parameters_Are_Removed` × 2,
+`SqlClient_Exception_Events_Can_Be_Turned_Off_After_AddOtelHelperSql`,
+`Driver_Meters_Lose_The_Pool_Name_And_Keep_The_Other_Keys`,
+`Driver_Meters_Subscribed_By_The_Application_Lose_The_Pool_Name_Too`,
+`Disabled_Metric_Patterns_Still_Drop_A_Driver_Instrument`. The integration
+tests also assert that no Npgsql or MySqlConnector metric point carries the
+pool name, the `SSL Password` / `Certificate Password` value or the password,
+and the helper-added `db.system` / `db.system.name` / `db.query.text`. 20 new
+mutants (backslash drop in both string branches, opt-in parse — dup, folding,
+trimming —, each key addition and removal, the SqlClient legacy value,
+parameter removal, the meter views, the helper's drop rules inside the view,
+the env read) each fail a test. Writing a tag only when it changes has no
+observable effect to test (an equivalent mutant by construction).
+
+Quick run without the databases (fakeotlp only; the two integration tests skip):
+
+```bash
+docker compose -f testing/docker-compose.yml up -d --wait fakeotlp-dotnet
+docker compose -f testing/docker-compose.yml run --rm --no-deps \
+  -e SQL_TEST_POSTGRES= -e SQL_TEST_MYSQL= -e SQL_TEST_REQUIRE=0 dotnet-tests
+docker compose -f testing/docker-compose.yml stop fakeotlp-dotnet
+```
+
+CI's `dotnet-test` job now has `postgres` and `mysql` services and
+`SQL_TEST_REQUIRE: '1'` (fix round 1), so the integration tests run there too.
+
+*Round 2 (2026-11-11, ADR-014: exception detail to a correlated log):*
+`Activity_Still_Has_The_Private_Event_List_The_Rewrite_Uses` (canary for
+`Activity._events`), `Exception_Event_Keeps_Only_The_Type_And_The_Detail_Goes_To_One_Correlated_Log`
+× 3 (SqlClient, Npgsql, MySqlConnector; processor and exporter pass, one
+record), `An_Exception_Event_Added_After_The_Span_Ended_Is_Handled_By_The_Helper_Exporter`
+(MySqlConnector's late event), `Other_Sources_Keep_Their_Exception_Events`,
+`Without_The_Private_Event_List_Nothing_Changes_And_One_Warning_Is_Written`,
+`A_Failing_Rule_Still_Removes_The_Exception_Detail`,
+`No_Record_When_The_Logger_Is_Off_Or_Absent_And_The_Detail_Still_Leaves_The_Span`,
+`Otlp_Log_Record_Carries_The_Span_Context_From_Any_Thread`,
+`Correlation_Processor_Leaves_Other_Records_Alone`,
+`Stdout_Fallback_Line_Has_The_Detail_And_The_Ids`, and
+`On_The_Wire_The_Span_Has_No_Detail_And_The_Log_Has_The_Span_Ids` (an in-test
+OTLP/HTTP receiver: `/v1/traces` without the literal or `exception.stacktrace`,
+`/v1/logs` with the literal and the span's trace and span id bytes). The
+integration tests use `pgcastsecret` (Npgsql `CAST`) and `mydupsecret`
+(MySqlConnector duplicate key): the literal is in no span attribute or event,
+and one record per failed span has the span's ids, the message and the stack
+trace. 16 mutants: 15 fail a test; the survivor (lifting
+`SuppressInstrumentation` around the write) was dead code — the helper's
+exporters sanitize before `OtlpTraceExporter.Export` enters its suppression
+scope — and was removed.
+
+*Round 3 (2026-11-11):* `Two_Exporter_Passes_On_Two_Threads_Log_Once_And_Keep_Every_Event`
+(50 barrier rounds), `Ids_Are_Lower_Case_Non_Zero_Hex` × 7,
+`Invalid_Ids_Leave_The_Record_Unchanged_And_Do_Not_Throw`,
+`Otlp_Record_Timestamp_Is_The_Exception_Event_Time`,
+`Late_Event_Record_Reaches_The_Log_Pipeline_Through_The_Helper_Exporter` (pins
+that the record is not written under `SuppressInstrumentation`),
+`Stdout_Line_Has_The_Current_Span_Ids_After_Logger_And_No_Duplicate`,
+`Stdout_Line_Without_A_Span_Has_No_Ids_And_Keeps_An_App_Trace_Id`,
+`Stdout_Database_Record_Uses_Its_Span_And_Event_Time_Not_The_Current_Span`,
+`MySqlConnector_Legacy_Name_And_Peer_Keys_Get_The_Current_Names`,
+`Exception_Logger_Is_Null_When_The_Container_Is_Disposed`; the MySqlConnector
+integration test also asserts `db.namespace`, `server.address` and no
+`db.user`. Parity: new case `logging.stdout_span_context` (`logging` input
+`in_span`), `pass` on .NET.
+
+*Round 4 (2026-11-11):* `A_Blocked_Log_Sink_Stalls_No_Other_Span_And_A_Concurrent_Pass_Logs_Nothing`
+replaces the 50-round barrier test: the first pass blocks in the logger (inside
+`Handle`, after the lock), and while it is blocked a second pass over the same
+span and the end of another failed DB span must finish within 10 s; then one
+record for the late span, one for the other, events intact. With the logger
+called under the lock (the round-3 code) it times out.

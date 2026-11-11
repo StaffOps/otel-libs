@@ -41,6 +41,7 @@ Planning artefacts for `otel-libs`. Conventions and principles live in
 | [011](decisions/ADR-011-owner-prefixed-package-names.md) | Owner-prefixed package names in every language | Accepted |
 | [012](decisions/ADR-012-node-helper-owns-env-resolution.md) | Node.js helper composes the SDK and owns env resolution (amends ADR-001) | Accepted |
 | [013](decisions/ADR-013-dotnet-helper-owns-env-resolution.md) | .NET helper owns env resolution and builds its exporters with explicit values (amends ADR-001) | Accepted |
+| [014](decisions/ADR-014-exception-detail-in-correlated-logs.md) | Exception detail goes to a correlated log; spans carry only the exception type | Accepted |
 
 ## Format
 

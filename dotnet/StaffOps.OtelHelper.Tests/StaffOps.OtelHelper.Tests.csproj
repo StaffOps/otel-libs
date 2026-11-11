@@ -18,6 +18,10 @@
     <PackageReference Include="Microsoft.Extensions.Hosting" Version="8.0.1" />
     <PackageReference Include="OpenTelemetry.Exporter.InMemory" Version="1.20.1" />
     <PackageReference Include="Moq" Version="4.20.72" />
+    <!-- Drivers of the StaffOps.OtelHelper.Sql integration tests (task C14a); the package itself
+         depends on neither (the application brings its driver). -->
+    <PackageReference Include="Npgsql" Version="10.0.3" />
+    <PackageReference Include="MySqlConnector" Version="2.6.2" />
   </ItemGroup>
 
   <ItemGroup>

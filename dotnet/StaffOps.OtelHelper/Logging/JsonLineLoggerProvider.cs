@@ -99,8 +99,10 @@ namespace StaffOps.OtelHelper.Logging
                 string line;
                 try
                 {
-                    line = JsonLine.Format(_provider.Clock(), logLevel, _category, state, exception, formatter,
-                        JsonLine.RawSupplementaryFor(_provider.OutputEncoding()));
+                    var time = _provider.Clock();
+                    var context = JsonLine.SpanContext(_category, state, ref time);
+                    line = JsonLine.Format(time, logLevel, _category, state, exception, formatter,
+                        JsonLine.RawSupplementaryFor(_provider.OutputEncoding()), context);
                 }
                 catch (Exception)
                 {
@@ -127,6 +129,31 @@ namespace StaffOps.OtelHelper.Logging
         internal const int MaxItems = 1000;
 
         private const string ExceptionKey = "exception";
+        private const string TraceIdKey = "trace_id";
+        private const string SpanIdKey = "span_id";
+
+        /// <summary>
+        /// The span context of a line (contract A23 amendment 2026-11-11): a database exception record
+        /// (ADR-014) names its span and event time in its attributes; any other record emitted while a
+        /// span is current (<see cref="System.Diagnostics.Activity.Current"/>) gets that span's ids.
+        /// </summary>
+        internal static (string TraceId, string SpanId)? SpanContext<TState>(string category, TState state, ref DateTimeOffset time)
+        {
+            if (DbExceptionLog.TryReadContext(category, Attributes(state), out var traceId, out var spanId, out var eventTime))
+            {
+                if (eventTime is { } at)
+                {
+                    time = new DateTimeOffset(at, TimeSpan.Zero);
+                }
+
+                return (traceId.ToHexString(), spanId.ToHexString());
+            }
+
+            return System.Diagnostics.Activity.Current is { } current && current.TraceId != default && current.SpanId != default
+                ? (current.TraceId.ToHexString(), current.SpanId.ToHexString())
+                : null;
+        }
+
         private const string OriginalFormatKey = "{OriginalFormat}";
 
         // No HTML escaping (a log line is not HTML): non-ASCII text stays readable, as in Go and
@@ -153,7 +180,7 @@ namespace StaffOps.OtelHelper.Logging
         /// surrogate U+FFFD. Not guarded: a <c>ToString()</c> that recurses without end (a stack
         /// overflow cannot be caught in .NET).
         /// </summary>
-        internal static string Format<TState>(DateTimeOffset time, LogLevel level, string category, TState state, Exception? exception, Func<TState, Exception?, string>? formatter, bool rawSupplementary = true)
+        internal static string Format<TState>(DateTimeOffset time, LogLevel level, string category, TState state, Exception? exception, Func<TState, Exception?, string>? formatter, bool rawSupplementary = true, (string TraceId, string SpanId)? context = null)
         {
             var buffer = new ArrayBufferWriter<byte>(256);
             using (var writer = new Utf8JsonWriter(buffer, WriterOptions))
@@ -165,6 +192,21 @@ namespace StaffOps.OtelHelper.Logging
                 writer.WriteString("logger", Clean(category));
 
                 var seen = new HashSet<string>(ReservedKeys, StringComparer.Ordinal);
+                if (context is { } ids)
+                {
+                    // A23 amendment (2026-11-11): the span context right after logger; an attribute of
+                    // either name is then dropped (no duplicate key).
+                    writer.WriteString(TraceIdKey, ids.TraceId);
+                    writer.WriteString(SpanIdKey, ids.SpanId);
+                    seen.Add(TraceIdKey);
+                    seen.Add(SpanIdKey);
+                }
+
+                if (category == DbExceptionLog.Category)
+                {
+                    seen.Add(DbExceptionLog.EventTimeKey);
+                }
+
                 if (exception is not null)
                 {
                     // The record's exception is the field (as Python's exc_info); an attribute of that name is dropped.

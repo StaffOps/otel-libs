@@ -619,7 +619,17 @@ async function kindLogging(c) {
   need(h, ['createLogger'], 'B8');
   // input.attributes: the record's attributes, in key order.
   const attributes = Object.fromEntries(Object.entries(c.input?.attributes ?? {}).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)));
-  h.createLogger({ name: 'parity' }).warn('parity-console-record', attributes);
+  if (c.input?.in_span) {
+    // input.in_span: the record is written inside a span (contract A23 amendment 2026-11-11).
+    // A valid, non-recording span context with fixed ids, whatever tracer is installed.
+    const { trace, context } = api();
+    const span = trace.wrapSpanContext({ traceId: '4bf92f3577b34da6a3ce929d0e0e4736', spanId: '00f067aa0ba902b7', traceFlags: 1 });
+    context.with(trace.setSpan(context.active(), span), () => {
+      h.createLogger({ name: 'parity' }).warn('parity-console-record', attributes);
+    });
+  } else {
+    h.createLogger({ name: 'parity' }).warn('parity-console-record', attributes);
+  }
   await shutdown();
   return snap;
 }

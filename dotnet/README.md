@@ -394,7 +394,7 @@ AWS, Redis, SQL, and Profiling instrumentations are **no longer bundled in core*
 |---------|--------------|---------------------|
 | `StaffOps.OtelHelper.AWS` | `services.AddOtelHelperAws()` | AWS SDK calls (S3, SQS, DynamoDB, etc.) |
 | `StaffOps.OtelHelper.Redis` | `services.AddOtelHelperRedis()` | StackExchange.Redis commands |
-| `StaffOps.OtelHelper.Sql` | `services.AddOtelHelperSql()` | SqlClient queries |
+| `StaffOps.OtelHelper.Sql` | `services.AddOtelHelperSql()` | SqlClient (spans and `db.client.operation.duration`), Npgsql and MySqlConnector (their own spans and metrics) — see [Sql](#sql-databases) |
 | `StaffOps.OtelHelper.Profiling` | `services.AddOtelHelperProfiling()` | Pyroscope continuous profiling |
 
 ### Usage
@@ -413,6 +413,51 @@ Redis with explicit connection:
 ```csharp
 services.AddOtelHelperRedis(connectionMultiplexer);
 ```
+
+### Sql (databases)
+
+`AddOtelHelperSql()` (task C14a) instruments three drivers; the application brings
+the driver, the package depends on none of them except through the SqlClient
+instrumentation (`OpenTelemetry.Instrumentation.SqlClient` 1.20.2):
+
+| Driver | Spans | Metrics | Verified at |
+|---|---|---|---|
+| Microsoft.Data.SqlClient / System.Data.SqlClient | `OpenTelemetry.Instrumentation.SqlClient` (exception events recorded) | `db.client.operation.duration` | instrumentation 1.20.2 (no SQL Server in the tests: synthetic spans) |
+| Npgsql | source `Npgsql` | meter `Npgsql` (`db.client.operation.*`, `db.client.connection.*`) | Npgsql 10.0.3 on `postgres:17.11-alpine` |
+| MySqlConnector | source `MySqlConnector` | meter `MySqlConnector` (`db.client.connections.*`) | MySqlConnector 2.6.2 on `mysql:8.4.11` |
+
+The Npgsql and MySqlConnector names are added to `AdditionalActivitySources` and
+`AdditionalMeters` (a post-configure step, so a later `Configure<TelemetryOptions>`
+does not drop them): call `AddOtelHelper()` too, and they follow its signal
+switches (no source or meter while the helper exports nothing). No
+`Npgsql.OpenTelemetry` package is needed: its builder extensions only add the
+`Npgsql` source and meter.
+
+The helper's sanitizing processor (core, before every exporter the helper adds;
+the helper's exporters apply it again to each batch) handles the spans of these
+three sources, also when the application subscribed them itself:
+
+| Rule | Effect |
+|---|---|
+| Failed span (contract A25) | status `ERROR` kept, description removed (Npgsql writes the SQLSTATE or the exception message, MySqlConnector the error code or the message; SqlClient 1.20 writes none) |
+| Query text | Npgsql and MySqlConnector record the command text as written: the literals of `db.query.text` and `db.statement` become `?` and comments are dropped (PostgreSQL rules for Npgsql, MySQL rules for MySqlConnector). SqlClient sanitizes its own |
+| `db.connection_string` | removed (MySqlConnector legacy conventions, Npgsql 8 and 9): the connection string without `Password` but with every other key, `Certificate Password` included |
+| `db.npgsql.data_source` | the value of every password key (`SSL Password`, …) written as `REDACTED`; a value that does not parse is removed |
+| `db.query.parameter.*` | removed (SqlClient records bound values with `OTEL_DOTNET_EXPERIMENTAL_SQLCLIENT_ENABLE_TRACE_DB_QUERY_PARAMETERS`) |
+| `db.user`; MySqlConnector `db.name`, `net.peer.name`, `net.peer.port` | `db.user` removed in every mode; the three MySqlConnector legacy keys also give `db.namespace`, `server.address`, `server.port` (removed in the stable mode) |
+| `exception` events ([ADR-014](../specs/decisions/ADR-014-exception-detail-in-correlated-logs.md)) | keep only `exception.type` (and other non-detail attributes); the message and the stack trace go to one ERROR log record, category `StaffOps.OtelHelper.Database`, with the span's `trace_id` / `span_id` (OTLP), through the normal log pipeline and level rules |
+| `db.system` / `db.system.name` (R10) | both on every span by default (SqlClient `mssql` / `microsoft.sql_server`, Npgsql and MySqlConnector `postgresql`, `mysql`), only the new key with `OTEL_SEMCONV_STABILITY_OPT_IN=database`; a MySqlConnector `db.statement` also gives `db.query.text`, and is removed in that mode |
+
+On the `Npgsql` and `MySqlConnector` meters a view drops the pool-name attribute
+(`db.client.connection.pool.name`, `pool.name`): an unnamed pool is named after
+its connection string, `SSL Password` / `Certificate Password` included. The view
+keeps an allowlist of semconv keys and merges the pools.
+
+The database's error text is in the correlated log, not on the span (ADR-014;
+Go, Python and Node.js follow in contract task A36). Gaps (root `README.md`, "Known emitted-telemetry
+gaps"): system keys on driver metrics, the stricter query-text rule, the
+MySqlConnector status seen by application processors, and exception events.
+Configuration and examples: `HOW-TO.md` §14.
 
 ### Profiling (Pyroscope)
 

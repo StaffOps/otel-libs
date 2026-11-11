@@ -57,7 +57,7 @@ _INPUT_SCHEMA = {
     "http_server": {"requests", "traceparent", "child_span", "allow_server_error"},
     "grpc_server": {"method"},
     "metrics_listener": {"requests", "connect_host"},
-    "logging": {"attributes"},
+    "logging": {"attributes", "in_span"},
 }
 _SIGNALS = {"traces", "metrics", "logs"}
 _RECORD_FIELDS = {"proto", "tls", "port", "path", "raw_path", "encoding", "headers", "timeout_ms", "absent"}
@@ -129,7 +129,7 @@ def validate_case(case: dict) -> list[str]:
             errs.append("input.requests must be a list of strings")
         elif key in ("method", "scenario", "traceparent") and not isinstance(val, str):
             errs.append(f"input.{key} must be a string")
-        elif key in ("child_span", "allow_server_error") and not isinstance(val, bool):
+        elif key in ("child_span", "allow_server_error", "in_span") and not isinstance(val, bool):
             errs.append(f"input.{key} must be a boolean")
         elif key == "connect_host" and val not in ("127.0.0.1", "localhost"):
             errs.append('input.connect_host must be "127.0.0.1" or "localhost"')

@@ -4,6 +4,8 @@
 #   docker compose -f testing/docker-compose.yml run --rm python-tests
 #   PY_VERSION=3.10 PY_DEPS=lower docker compose -f testing/docker-compose.yml run --rm python-tests
 #   docker compose -f testing/docker-compose.yml run --rm dotnet-tests
+#     (also starts sql-postgres and sql-mysql for StaffOps.OtelHelper.Sql; stop them afterwards
+#      with `docker compose -f testing/docker-compose.yml stop sql-postgres sql-mysql`)
 #   NODE_VERSION=22.15.0 docker compose -f testing/docker-compose.yml run --rm node-tests
 #     (also starts sql-postgres and sql-mysql for @staffops/otel-helper-sql and
 #      redis-test for @staffops/otel-helper-redis; stop them afterwards with
@@ -137,10 +139,20 @@ services:
     depends_on:
       fakeotlp-dotnet:
         condition: service_healthy
+      sql-postgres:
+        condition: service_healthy
+      sql-mysql:
+        condition: service_healthy
     environment:
       <<: *fakeotlp-env
       PARITY_CASES: /src/parity/cases.json
       PARITY_TASKS: /src/specs/dotnet-otel-helper/tasks.md
+      # StaffOps.OtelHelper.Sql integration tests (task C14a; throwaway credentials, the
+      # node-tests URLs). REQUIRE (default 1): a missing URL fails instead of skipping.
+      # Stop the databases afterwards: `docker compose -f testing/docker-compose.yml stop sql-postgres sql-mysql`.
+      SQL_TEST_POSTGRES: postgres://otel:otel-test-only@sql-postgres:5432/otel_test
+      SQL_TEST_MYSQL: mysql://otel:otel-test-only@sql-mysql:3306/otel_test
+      SQL_TEST_REQUIRE: ${SQL_TEST_REQUIRE:-1}
       DOTNET_CLI_TELEMETRY_OPTOUT: "1"
       DOTNET_NOLOGO: "1"
       # vstest kills the test host ~100 ms after the last test, before coverlet
@@ -165,9 +177,10 @@ services:
           /p:Threshold=90 /p:ThresholdType=line /p:ThresholdStat=total \
           /p:Exclude="[xunit*]*%2c[StaffOps.OtelHelper.ParityDriver]*"
 
-  # Databases for @staffops/otel-helper-sql (Node task B10a), used only by
-  # node-tests. Throwaway credentials; data on tmpfs (no volume is created).
-  # node-tests reaches them by service name through fakeotlp-node's network.
+  # Databases for @staffops/otel-helper-sql (Node task B10a) and the
+  # StaffOps.OtelHelper.Sql integration tests (.NET task C14a), used by node-tests and
+  # dotnet-tests. Throwaway credentials; data on tmpfs (no volume is created).
+  # Each suite reaches them by service name through its fakeotlp container's network.
   sql-postgres:
     image: postgres:17.11-alpine
     environment:

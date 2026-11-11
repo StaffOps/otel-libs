@@ -350,6 +350,14 @@ namespace StaffOps.OtelHelper.Metrics
             // SetExemplarFilter still wins.
             builder.SetExemplarFilter(resolved.ExemplarFilter);
 
+            // The database driver meters lose their pool-name attribute (C14a fix round 1): an unnamed
+            // pool is named after its connection string. One stream per matching view, so this view
+            // also drops what the helper's drop views below drop (a Drop elsewhere would not stop it).
+            var helperOff = !resolved.IsSignalEnabled("metrics") || resolved.ResolvedMetricExporters().Count == 0;
+            var disabledPatterns = string.IsNullOrEmpty(resolved.DisabledMetrics) ? Array.Empty<Regex>() : DisabledMetricPatterns(resolved.DisabledMetrics);
+            builder.AddView(instrument => DbMetricViews.View(instrument,
+                i => (helperOff && IsHelperInstrumentation(i.Meter.Name, resolved)) || disabledPatterns.Any(p => p.IsMatch(i.Name))));
+
             // "Off" (signal disabled, or no metric exporter at all): instrumentation registered, no
             // meter, no reader, and a view that drops the helper's own instrumentation meters, so a
             // reader the application adds aggregates nothing of the helper's (D-NET3, fix rounds

@@ -231,7 +231,7 @@ without any warning (rows above). Cases `deprecation.*` (6).
 | DB span ERROR without description (A25) | SqlClient 1.20.0: "Fixed exception messages being exported as the span status description" (SqlClient CHANGELOG line 33) — met upstream after C3 |
 | DB error text in exception events (accepted residual) | `RecordException = true` (`OtelSqlExtensions.cs:17`) records the `SqlException` text in `exception.message` — kept deliberately, as Go (XSAM `RecordError`) |
 | `db.system.name` + legacy `db.system` by default (R10) | SqlClient stable-only since 1.14.0-rc.1 (already so in 0.2.x: 1.15.2 — `db.system.name=microsoft.sql_server` is not a 0.2 → 0.3 change); StackExchange.Redis 1.20.1-beta.1 defaults to **legacy only** (`EmitOldAttributes=True`, `EmitNewAttributes=False`), and only the process environment switches it (an in-memory `IConfiguration` key had no effect; measured, C1 dev H6) — owner decision O8 (c), 2026-11-04: documented gap; `database/dup` is purely additive (C1 observability L6) |
-| PostgreSQL and MySQL drivers (O5, 2026-11-04) | not instrumented; Npgsql and MySqlConnector emit native `ActivitySource`s `[TO VERIFY C14a: source/meter names and attribute keys at the pinned driver versions]` |
+| PostgreSQL and MySQL drivers (O5, 2026-11-04) | not instrumented; Npgsql and MySqlConnector emit native `ActivitySource`s `[TO VERIFY C14a: source/meter names and attribute keys at the pinned driver versions]` *Verified 2026-11-11 (C14a), from the driver source at the tags and measured on compose `sql-postgres` / `sql-mysql`:* source and meter `Npgsql` (Npgsql 10.0.3, `NpgsqlActivitySource.cs:15`, `MetricsReporter.cs:54`; stable keys only: `db.system.name`, `db.query.text` as written, `db.namespace`, `server.*`, `db.npgsql.data_source` = the connection string without `Password`, failed status = SQLSTATE or the exception message, `error.type`, `db.response.status_code`; Npgsql 8.0.8 and 9.0.4 write the legacy keys and `db.connection_string` instead) and `MySqlConnector` (2.6.2, `ActivitySourceHelper.cs`; legacy keys by default — `db.system`, `db.statement` as written, `db.connection_string`, `db.user`, `db.name`, `net.*` — and the stable ones only with `database` or `database/dup` in `OTEL_SEMCONV_STABILITY_OPT_IN`, read once, exact tokens, `MySqlConnectorTracingOptions.cs`; a failed command's status is set after its activity stopped) |
 | Redis ERROR without description, reply code (A26) | spans built after the fact from `IProfiledCommand` never get a status, `error.type`, exception or reply code (`Implementation/RedisProfilerEntryToActivityConverter.cs:122-260`) → permanent gap |
 | Redis span names: uppercased command (Node/Python) | the command as StackExchange.Redis formats it, e.g. `SET` (`RedisProfilerEntryToActivityConverter.cs:137-140`) — matches Node/Python `[TO VERIFY C14b: MULTI/pipeline names]` |
 | Redis `db.operation.name` | only with the new conventions, i.e. when the deployment sets `database` or `database/dup` (O8 (c)) `[TO VERIFY C14b]` |
@@ -1217,6 +1217,34 @@ copying `db.system.name` into `db.system`. **Alternatives**: per-package
 processors (rejected: ordering); align query redaction to the list (rejected
 by the owner, O3).
 
+*Note 2026-11-11 (task C14a, implementation):* (1) **The database rules live in core**, keyed by the
+source name (`OpenTelemetry.Instrumentation.SqlClient`, `Npgsql`, `MySqlConnector`), not registered
+by the Sql package through DI: they need no type of the package, and they also cover a driver source
+the application subscribed itself; C14b/C14c add their sources the same way. (2) **The sanitizer runs
+twice for the helper's exporters**: as the processor added before them (what every processor
+registered after `AddOtelHelper` sees) and again on each batch inside the helper's OTLP and console
+exporters (`SanitizingOtlpTraceExporter`, `SanitizingConsoleActivityExporter`, subclasses so the
+exporter keeps its parent provider and resource). Reason: MySqlConnector 2.6.2 sets a failed
+command's status after stopping its activity (measured: the processor saw no status, the batch did),
+which no `OnEnd` rule can see; an exporter the application adds itself still gets that description
+(README gap row). The rules are idempotent; the batch is read once (a batch processor's batch drains
+its queue). (3) **Query text**: Npgsql and MySqlConnector record the command text as written, so the
+rules replace literals with `?` and drop comments (`DbQuerySanitizer`, written from the PostgreSQL
+and MySQL lexical rules; fails closed on an unterminated literal or comment); SqlClient keeps its own
+(upstream 1.20.1). (4) **`db.system`**: no key is added for any driver (the reversal action above
+stays open); gap row per driver. *Superseded 2026-11-11 (C14a fix round 1, observability review):*
+the reversal is taken — spans follow R10 as Go (`DbSpanRules.ApplySemconvKeys`, contract A25 note of
+the same date); metrics keep the drivers' keys (D-NET15 row). The fix round also adds the pool-name
+view on the driver meters (D-NET15 row), removes `db.query.parameter.*`, drops the rest of the text
+after a PostgreSQL string with a backslash, and bumps SqlClient instrumentation to 1.20.2. (5) No `Npgsql.OpenTelemetry`: its builder extensions are
+`AddSource("Npgsql")` and `AddMeter("Npgsql")` (10.0.3 source), done through
+`AdditionalActivitySources`/`AdditionalMeters` so the names follow the signal switches.
+*Note 2026-11-11 (C14a round 2, ADR-014):* failed DB spans keep only `exception.type` in their
+`exception` event and the detail goes to a correlated ERROR log record (category
+`StaffOps.OtelHelper.Database`). Mechanism and the options rejected: tasks.md C14a row, round 2. The
+log pipeline gains `DbExceptionLog.CorrelationProcessor` before its exporters (core); the trace
+pipeline's sanitizer writes the records lazily through `ILoggerFactory`.
+
 ### D-NET15 — Known .NET differences (reference; each with a fixture status)
 
 A `skip:` status is set only after the C4 runner or the named task shows the
@@ -1249,6 +1277,8 @@ failure is upstream.
 | (no case) IPv6 `OTEL_EXPORTER_PROMETHEUS_HOST` *(amended 2026-11-11, C12 fix round 1, coordinator decision: never widen exposure, never fail start for an env value the host owns)* | recorded; case `metrics.listener_prometheus_host_ipv6_loopback` `pass` | `::1` binds `127.0.0.1` with one warning; `::`/`[::]` every IPv4 interface with one warning; any other IPv6 address: no listener, one ERROR. Supersedes the "build fails" text of the row above | C12 |
 | (no case) host-bound listener routes by `Host` *(amended 2026-11-11, C12 fix round 1)* | recorded | `127.0.0.1` also registers a `localhost` prefix, which binds the resolver's first loopback address (`::1` dual-stack, `127.0.0.1` with IPv6 off, measured); HttpClient and Go dial `::1` first, so `http://localhost:<port>/metrics` answers them; residual (measured in the e2e, Docker user network with `::1` as the only IPv6 address): curl and Node.js resolve with `AI_ADDRCONFIG`, connect to `127.0.0.1` with `Host: localhost` and get 404 (`curl -6` gets 200); any other address answers only requests naming it. Reopen with a helper-owned front if a curl/Node.js scraper on such hosts matters. Supersedes the row above | C12 |
 | `http.opt_in_metrics_scrape_body_size_on`, `http.opt_in_metrics_scrape_code_on` *(added 2026-11-08, A30)*: ASP.NET Core and `System.Net.Http` have no HTTP body-size instrument (Microsoft Learn built-in metrics pages read 2026-11-08), so the opt-in switch brings back active requests and connection metrics only | `skip:no-upstream-dotnet-http-body-size` | upstream | C11 |
+| (no case) database driver pool names on metrics *(added 2026-11-11, C14a fix round 1)* | recorded | a view on the `Npgsql` and `MySqlConnector` meters keeps an allowlist of semconv keys without `db.client.connection.pool.name` / `pool.name` (an unnamed pool is named after its connection string, `SSL Password` / `Certificate Password` included; Go never exports the DSN on pool metrics), so pools are merged and a new driver attribute is dropped until listed; no opt-in switch. **Reopen when** an application needs per-pool metrics: it names its pools and opts in (a switch to keep the pool name) | C14a |
+| (no case) database system keys on driver metrics *(added 2026-11-11, C14a fix round 1)* | recorded | spans follow R10 (`DbSpanRules`); metrics cannot gain an attribute through a view, so the driver metrics keep the keys each driver writes (contract A25 note of the same date) | C14a |
 
 > **Added 2026-11-10 (task C8).** The two value-length cases take `skip:no-upstream-dotnet-attribute-limit`: OpenTelemetry .NET 1.20.1 has no public override (the exporter builds its `SdkLimitOptions` from the environment); the helper warns once per variable set to 0. The gRPC TLS-file cases pass through the helper handler (measured on the receiver's TLS port), so `skip:no-upstream-dotnet-grpc-tls-files` is not used.
 

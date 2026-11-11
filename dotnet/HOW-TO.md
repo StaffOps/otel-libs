@@ -769,8 +769,155 @@ builder.Services.AddOtelHelperProfiling();
 |---------|-----------------|---------------------|
 | `StaffOps.OtelHelper.AWS` | `AddOtelHelperAws()` | AWS SDK calls (S3, SQS, DynamoDB, etc.) |
 | `StaffOps.OtelHelper.Redis` | `AddOtelHelperRedis()` | StackExchange.Redis commands |
-| `StaffOps.OtelHelper.Sql` | `AddOtelHelperSql()` | SqlClient queries |
+| `StaffOps.OtelHelper.Sql` | `AddOtelHelperSql()` | SqlClient, Npgsql and MySqlConnector spans and metrics (below) |
 | `StaffOps.OtelHelper.Profiling` | `AddOtelHelperProfiling()` | .NET CLR profiling via OTel |
+
+### SQL: drivers, sanitizing and semantic conventions
+
+`AddOtelHelperSql()` subscribes SqlClient (tracing with exception events, and the
+`db.client.operation.duration` metric, instrumentation 1.20.2), and the `Npgsql` and `MySqlConnector`
+sources and meters of those drivers (task C14a). Call it next to
+`AddOtelHelper()`; nothing else is needed for Npgsql or MySqlConnector (no
+`Npgsql.OpenTelemetry`, no `AddNpgsql()`):
+
+```csharp
+builder.Services.AddOtelHelper();
+builder.Services.AddOtelHelperSql();
+
+// The driver of the application, as usual (here Npgsql.DependencyInjection):
+builder.Services.AddNpgsqlDataSource(builder.Configuration.GetConnectionString("orders")!,
+    b => b.Name = "orders");   // a name keeps the connection string out of metric attributes
+```
+
+What the spans look like after the helper's sanitizer (the application runs
+`SELECT * FROM orders WHERE email = 'a@example.com' AND id = 42`):
+
+| Attribute | Npgsql 10 | MySqlConnector 2.6 (default conventions) |
+|---|---|---|
+| `db.query.text` | `SELECT * FROM orders WHERE email = ? AND id = ?` | the same (added by the helper from `db.statement`) |
+| `db.statement` | — | `SELECT * FROM orders WHERE email = ? AND id = ?` |
+| `db.system.name` | `postgresql` | `mysql` (added by the helper) |
+| `db.system` | `postgresql` (added by the helper) | `mysql` |
+| status of a failed command | `ERROR`, no description; `error.type` = SQLSTATE (`22P02`) | `ERROR`, no description in what the helper exports; `error.type` = `MySqlConnector.MySqlException` |
+| `db.connection_string` | — | removed |
+
+SqlClient spans get `db.system=mssql` next to `db.system.name=microsoft.sql_server`.
+With `OTEL_SEMCONV_STABILITY_OPT_IN=database` (without `database/dup`) the helper
+keeps only the new keys on spans: no `db.system`, and no MySqlConnector
+`db.statement`. A PostgreSQL string literal with a backslash drops the rest of the
+statement from the text (its end depends on the server's
+`standard_conforming_strings`).
+
+Parameters (`$1`, `@p0`, `?`) are never values and stay as written; send values as
+parameters, not inlined literals. `db.query.parameter.*` attributes (SqlClient with
+`OTEL_DOTNET_EXPERIMENTAL_SQLCLIENT_ENABLE_TRACE_DB_QUERY_PARAMETERS`) are removed.
+
+**Exception detail goes to a correlated log** ([ADR-014](../specs/decisions/ADR-014-exception-detail-in-correlated-logs.md)).
+A database's error text can quote values (`Duplicate entry 'x' for key …`,
+`invalid input syntax for type integer: "x"`). On a failed SqlClient, Npgsql or
+MySqlConnector span the `exception` event keeps only `exception.type` (and any
+other non-detail attribute); the helper writes the detail as one log record:
+
+| Field | Value |
+|---|---|
+| category | `StaffOps.OtelHelper.Database` (filter it like any category, e.g. `Logging:LogLevel:StaffOps.OtelHelper.Database`) |
+| level | Error (the helper's level rules apply; a level above Error drops it) |
+| body | the exception message |
+| attributes | `exception.type`, `exception.message`, `exception.stacktrace` |
+| trace context | the span's `trace_id` / `span_id` on the OTLP record (Grafana: Tempo → Loki by trace id); on the stdout fallback line as the fields `trace_id` and `span_id` |
+
+In Tempo a failed DB span shows the status, `error.type`,
+`db.response.status_code` and the exception type; follow the trace-to-logs link
+for the message and the stack trace. Treat logs as possibly holding data values
+(retention, access). With no logs exporter and the stdout fallback off (an
+application level above Error), the detail is not kept. To keep no exception
+event at all for SqlClient, turn the recording off after `AddOtelHelperSql()`
+(the helper then has nothing to log for SqlClient):
+
+```csharp
+builder.Services.Configure<OpenTelemetry.Instrumentation.SqlClient.SqlClientTraceInstrumentationOptions>(
+    o => o.RecordException = false);
+```
+
+`System.Diagnostics.Activity` has no API to remove an event, so the helper
+rebuilds the event list through a private field; if a future runtime lacks it,
+the helper writes one warning on standard error and leaves the events as they
+are. MySqlConnector adds its event after the span ended: only the helper's
+exporters see it in time, so an exporter you add yourself still gets the full
+event for MySqlConnector (and no log record is written for it on that path) —
+an exception to ADR-014. Export through the helper, or delete the detail at the
+Collector (**not tested**):
+
+```yaml
+processors:
+  transform/db-exception-detail:
+    error_mode: ignore
+    trace_statements:
+      - context: spanevent
+        conditions:
+          - name == "exception" and (span.attributes["db.system"] != nil or span.attributes["db.system.name"] != nil)
+        statements:
+          - delete_key(attributes, "exception.message")
+          - delete_key(attributes, "exception.stacktrace")
+```
+
+`StaffOps.OtelHelper.Database` is a reserved category: the helper reads the
+`trace_id`, `span_id` and `otelhelper.event_time` attributes of its records to
+set the record's trace context and time, so do not log through it yourself.
+Other logger providers (Serilog, the host console) see those three attributes
+as plain fields on its records.
+The record's time is the exception event's time (OTLP and the stdout `time`).
+A late MySqlConnector record written while the host shuts down is best-effort:
+once the container is disposed the helper has no logger and writes none.
+
+**Stdout lines carry the span context** (contract A23 amendment): when no logs
+exporter is active, a line for any record written while a span is current has
+`trace_id` and `span_id` right after `logger` (an attribute of either name is
+then dropped):
+
+```json
+{"time":"2026-11-11T12:00:00.000Z","level":"WARN","msg":"order failed","logger":"Orders","trace_id":"4bf92f3577b34da6a3ce929d0e0e4736","span_id":"00f067aa0ba902b7","order":"o1"}
+```
+
+
+
+**Semantic conventions on metrics.** The drivers' metrics keep the keys each
+driver writes (no view can add an attribute): SqlClient and Npgsql
+`db.system.name`, MySqlConnector's pool metrics no system key. MySqlConnector
+also reads `OTEL_SEMCONV_STABILITY_OPT_IN` itself (once per process, exact
+lower-case tokens); `database/dup` set in the deployment gives its native new
+keys too.
+
+**Metric attributes.** Npgsql names a pool after the data source's `Name`, else
+its connection string without `Password` (`SSL Password` stays); MySqlConnector
+after `Application Name`, else the connection string without the password keys
+(`Certificate Password` stays). The helper therefore drops the pool-name attribute
+(`db.client.connection.pool.name`, `pool.name`) from every metric of the
+`Npgsql` and `MySqlConnector` meters, also when the application subscribed them
+itself: the pools of a meter are merged. The view keeps an allowlist of semconv
+keys (`db.system.name`, `server.address`, `server.port`,
+`db.client.connection.state`, `state`, …), so a new driver attribute is dropped
+until it is listed. No switch exists yet to keep per-pool metrics (design D-NET15).
+An application `MetricStreamConfiguration.Drop` view on one of these
+instruments does not drop it (the helper's view adds its own stream); use
+`OTEL_HELPER_DISABLED_METRICS` instead. Likewise an application view that returns its own
+stream configuration for one of these instruments adds a second stream, which
+keeps the pool name unless it sets `TagKeys`. The merge departs from the
+semantic conventions (`db.client.connection.pool.name` is required on
+`db.client.connection.*`) and sums the gauges of several pools into one series
+(contract A25 note).
+
+**Your own processors and exporters.** The sanitizer runs before every
+processor registered after `AddOtelHelper()`. MySqlConnector sets the status
+of a failed command after its span ended, so a processor or exporter you add
+yourself still sees that status description (the error code name, for
+example `NoSuchTable`), also when the app traces only through its own exporter;
+the helper's own OTLP and console exporters remove it. Note the two ways to turn
+the helper's traces off: `OTEL_TRACES_EXPORTER=none` drops only the helper's
+exporter (your exporters on the same provider still get spans), while
+`OTEL_HELPER_DISABLED_SIGNALS=traces` makes the sampler record nothing, which
+silences your exporters too.
+
 
 ### Profiling Prerequisites
 

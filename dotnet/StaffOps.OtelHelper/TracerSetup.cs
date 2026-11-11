@@ -102,6 +102,13 @@ namespace StaffOps.OtelHelper.Tracing
             // followed; what is propagated is the no-op tracer's (PropagatorSetup, pass-through only).
             builder.SetSampler(resolved.IsSignalEnabled("traces") ? resolved.Sampler : new ParentBasedSampler(new AlwaysOffSampler()));
 
+            // The sanitizing processor (D-NET14, C14a) before every export processor below, and also
+            // when the helper exports no traces (an exporter the application adds still sees it). The
+            // helper's exporters run its rules again on each batch, for a span changed after it ended.
+            var exceptionLogger = new Lazy<Microsoft.Extensions.Logging.ILogger?>(() => ExceptionLogger(sp));
+            var sanitizer = new SanitizingProcessor(sp.GetRequiredService<IOtelHelperDiagnostics>()) { ExceptionLogger = () => exceptionLogger.Value };
+            builder.AddProcessor(sanitizer);
+
             // "Off" (disabled signal, OTEL_TRACES_EXPORTER=none, or OTEL_SDK_DISABLED): instrumentation
             // registered, no source and no exporter (D-NET3, contract row "Signal on/off").
             var exporters = resolved.ResolvedSignalExporters("traces");
@@ -125,23 +132,40 @@ namespace StaffOps.OtelHelper.Tracing
             if (exporters.Contains("otlp")
                 && OtlpExporters.OptionsFor("traces", resolved, diagnostics, sp.GetRequiredService<ExporterClients>()) is { } otlp)
             {
-                builder.AddProcessor(CreateOtlpProcessor(sp, resolved, otlp, diagnostics));
+                builder.AddProcessor(CreateOtlpProcessor(sp, resolved, otlp, diagnostics, sanitizer));
             }
 
             // OTEL_TRACES_EXPORTER=console (or the alias logging): the SDK console exporter, built
             // directly because AddConsoleExporter registers services, which this deferred step cannot.
             if (exporters.Contains("console"))
             {
-                builder.AddProcessor(new SimpleActivityExportProcessor(new ConsoleActivityExporter(new ConsoleExporterOptions())));
+                builder.AddProcessor(new SimpleActivityExportProcessor(new SanitizingConsoleActivityExporter(new ConsoleExporterOptions(), sanitizer)));
+            }
+        }
+
+        /// <summary>
+        /// The ADR-014 logger, or null when the container is already disposed (a late MySqlConnector
+        /// event exported during shutdown: its record is best-effort).
+        /// </summary>
+        internal static Microsoft.Extensions.Logging.ILogger? ExceptionLogger(IServiceProvider sp)
+        {
+            try
+            {
+                return sp.GetService<Microsoft.Extensions.Logging.ILoggerFactory>()?.CreateLogger(Logging.DbExceptionLog.Category);
+            }
+            catch (ObjectDisposedException)
+            {
+                return null;
             }
         }
 
         /// <summary>
         /// The OTLP batch processor: queue size and delay from the SDK's options, the export deadline
         /// of traces (A18: <c>OTEL_BSP_EXPORT_TIMEOUT</c> is not honored) and the batch size clamped to
-        /// the queue size (A18: the SDK constructor would throw).
+        /// the queue size (A18: the SDK constructor would throw). The exporter sanitizes each batch
+        /// (<see cref="SanitizingOtlpTraceExporter"/>, C14a).
         /// </summary>
-        internal static BatchActivityExportProcessor CreateOtlpProcessor(IServiceProvider sp, ResolvedTelemetry resolved, OtlpExporterOptions otlp, IOtelHelperDiagnostics diagnostics)
+        internal static BatchActivityExportProcessor CreateOtlpProcessor(IServiceProvider sp, ResolvedTelemetry resolved, OtlpExporterOptions otlp, IOtelHelperDiagnostics diagnostics, SanitizingProcessor? sanitizer = null)
         {
             var batch = sp.GetRequiredService<Microsoft.Extensions.Options.IOptionsMonitor<BatchExportActivityProcessorOptions>>()
                 .Get(Microsoft.Extensions.Options.Options.DefaultName);
@@ -149,7 +173,7 @@ namespace StaffOps.OtelHelper.Tracing
                 nameof(BatchExportActivityProcessorOptions) + "." + nameof(BatchExportActivityProcessorOptions.ExporterTimeoutMilliseconds), "OTEL_BSP_EXPORT_TIMEOUT",
                 () => batch.ExporterTimeoutMilliseconds != new BatchExportActivityProcessorOptions().ExporterTimeoutMilliseconds, diagnostics);
             return new BatchActivityExportProcessor(
-                new OtlpTraceExporter(otlp),
+                new SanitizingOtlpTraceExporter(otlp, sanitizer ?? new SanitizingProcessor(diagnostics)),
                 batch.MaxQueueSize,
                 batch.ScheduledDelayMilliseconds,
                 OtlpExporters.TimeoutFor("traces", resolved),

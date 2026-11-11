@@ -121,6 +121,33 @@ jobs:
       # Parity release gate (parity/README.md, DN11): no xfail or skip:C<n> left; runs on a
       # dotnet/v* release tag only.
       PARITY_RELEASE: ${{ startsWith(github.ref, 'refs/tags/dotnet/v') && '1' || '' }}
+      # StaffOps.OtelHelper.Sql integration tests (task C14a): the services below, the
+      # throwaway credentials of testing/docker-compose.yml; a missing database fails the run.
+      SQL_TEST_POSTGRES: postgres://otel:otel-test-only@localhost:5432/otel_test
+      SQL_TEST_MYSQL: mysql://otel:otel-test-only@localhost:3306/otel_test
+      SQL_TEST_REQUIRE: '1'
+    services:
+      postgres:
+        image: postgres:17.11-alpine
+        env:
+          POSTGRES_USER: otel
+          POSTGRES_PASSWORD: otel-test-only
+          POSTGRES_DB: otel_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -h 127.0.0.1 -U otel -d otel_test"
+          --health-interval 2s --health-timeout 3s --health-retries 60
+      mysql:
+        image: mysql:8.4.11
+        env:
+          MYSQL_RANDOM_ROOT_PASSWORD: 'yes'
+          MYSQL_USER: otel
+          MYSQL_PASSWORD: otel-test-only
+          MYSQL_DATABASE: otel_test
+        ports: ['3306:3306']
+        options: >-
+          --health-cmd "mysql -h 127.0.0.1 -uotel -potel-test-only -e 'SELECT 1' otel_test"
+          --health-interval 2s --health-timeout 3s --health-retries 60 --health-start-period 10s
     steps:
       - uses: actions/checkout@v4
         with:

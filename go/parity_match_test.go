@@ -48,7 +48,7 @@ var inputSchema = map[string][]string{
 	"http_server":      {"requests", "traceparent", "child_span", "allow_server_error"},
 	"grpc_server":      {"method"},
 	"metrics_listener": {"requests", "connect_host"},
-	"logging":          {"attributes"},
+	"logging":          {"attributes", "in_span"},
 }
 
 var (
@@ -111,7 +111,7 @@ func validateCase(c parityCase) []string {
 			if _, ok := v.(string); !ok {
 				errs = append(errs, fmt.Sprintf("input.%s must be a string", k))
 			}
-		case "child_span", "allow_server_error":
+		case "child_span", "allow_server_error", "in_span":
 			if _, ok := v.(bool); !ok {
 				errs = append(errs, fmt.Sprintf("input.%s must be a boolean", k))
 			}

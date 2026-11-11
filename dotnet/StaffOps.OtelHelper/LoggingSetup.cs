@@ -233,6 +233,9 @@ namespace StaffOps.OtelHelper.Logging
 
             builder.ConfigureResource(r => ResourceSetup.Apply(r, resolved, sp, "logs"));
 
+            // ADR-014 records (C14a): the span's trace context, before every exporter below.
+            builder.AddProcessor(new DbExceptionLog.CorrelationProcessor());
+
             // Disabled, OTEL_LOGS_EXPORTER=none or OTEL_SDK_DISABLED: no exporter; the stdout
             // fallback (JsonLineLoggerProvider, design D-NET10) writes instead, and the filter
             // rules keep this provider at None (LogsExporterActive must match the test below).
