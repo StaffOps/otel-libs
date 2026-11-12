@@ -879,6 +879,25 @@ emitted telemetry.
    attributes and no suppression (measured). In both cases the HttpClient
    child span may exist, but the helper replaces its URL path with `/`, so it
    carries no object key (fix round 1).
+18. **`AddOtelHelperProfiling()` starts nothing at registration; stricter
+   prerequisites; the `OtelHelper.Profiling` logger category is gone** (task
+   C15, requirement DN9, N11). The profiler starts in a hosted service when the
+   host starts; calling the method twice registers it once; a null collection
+   throws `ArgumentNullException`. `ProfilingPrerequisites` gains
+   `ProfilerEnvVar`, `ProfilerPathEnvVar`, `PreloadEnvVar`,
+   `PyroscopeProfilerClsid`, `Profiler`, `ProfilerPathVariable`,
+   `ProfilerPathExists`, `PreloadRequired`, `PreloadHasApiWrapper` and `Unmet`
+   (the unmet items, in check order); `IsSatisfied` now also requires
+   `CORECLR_PROFILER` = the Pyroscope CLSID, an existing profiler file and, on
+   Linux, `LD_PRELOAD` with `Pyroscope.Linux.ApiWrapper`;
+   `CORECLR_ENABLE_PROFILING` must be exactly `1` (0.2.x also took `true`,
+   which the runtime does not); `PYROSCOPE_PROFILING_ENABLED` follows
+   Pyroscope's rule (`1`, `t`, `y`, `true`, `yes`; 0.2.x took `1` and `true`
+   only); `DescribeMissing()` lists the same items. This supersedes the
+   sentence in item 1: the prerequisite warning is no longer an `ILogger`
+   record, so `Logging:LogLevel:OtelHelper.Profiling` filters have no effect —
+   delete them. Install `StaffOps.OtelHelper.Profiling` at the same version as
+   `StaffOps.OtelHelper` (it uses the core's internal diagnostics channel).
 
 **Telemetry part.** Each row: before (0.2.x) → after, and what to check in
 dashboards and alerts.
@@ -1362,6 +1381,7 @@ dashboards and alerts.
    | a rule for one of the helper's providers (`Logging:OpenTelemetry:LogLevel:…`, `Logging:OtelHelperStdout:LogLevel:…`) | applied | applied; the helper adds no rule of its own for that category |
    | the stdout fallback next to the host's console provider | — | each record twice on stdout; one warning at host start names `ClearProviders()` (fix round 1) |
 | the Profiling prerequisite warning | category `OtelHelper.Profiling` | unchanged (decision 2026-11-11, design D-NET10 note): `Logging:LogLevel:OtelHelper.Profiling` filters keep working; it is an application-side record, so it reaches the helper's providers at their level (Warning in PRD) |
+| the Profiling prerequisite warning (*superseded 2026-11-12 by C15*) | — | moved to the diagnostics sink: one `otelhelper: WARN` line, no `ILogger` record; the `OtelHelper.Profiling` category is retired and its filters have no effect (telemetry item 27) |
 
    Check: log pipelines that tail stdout of a pod without a Collector now get
    one JSON object per line from the helper (and, if the app keeps the host's
@@ -1473,6 +1493,26 @@ dashboards and alerts.
    log volume grows by one record per failed AWS call, and logs may now hold
    the request literals DynamoDB quotes, item values or an SNS phone number
    from a failed publish: treat the log pipeline as sensitive.
+27. **Profiling start, warning and span link** (task C15, N11, design D-NET5;
+   measured 2026-11-12 with the native Pyroscope profiler 0.14.5 on
+   `linux/amd64`). Before (0.2.x) → after:
+
+   | Input | 0.2.x | 0.3 (this branch) |
+   |---|---|---|
+   | when the profiler starts | at `AddOtelHelperProfiling()` | at host start, only when every check passes |
+   | a prerequisite missing: the warning | an `ILogger` warning of category `OtelHelper.Profiling` (into the app's log pipeline, OTLP included) | one line on standard error: `otelhelper: WARN profiling prerequisites not met (<items>): the helper does not start the Pyroscope profiler and spans get no pyroscope.profile.id; …` (no `ILogger` record) |
+   | a prerequisite missing: root spans | `pyroscope.profile.id` written anyway (the span processor was always added) | no `pyroscope.profile.id` |
+   | a prerequisite missing: standard output | without the native library, Pyroscope's multi-line `[Profiler] Failed to load Pyroscope.Profiler.Native.so : System.DllNotFoundException: …` text (measured when its API is called) | nothing (the API is not called) |
+   | checks | `CORECLR_ENABLE_PROFILING` (`1` or `true`), `PYROSCOPE_PROFILING_ENABLED` (`1` or `true`), `PYROSCOPE_SERVER_ADDRESS` | also `CORECLR_PROFILER` (the Pyroscope CLSID), the profiler path (architecture-specific variable first, an existing file), `LD_PRELOAD` on Linux; `CORECLR_ENABLE_PROFILING` exactly `1`; Pyroscope's boolean rule for its switch |
+   | the start throws | the exception escaped `AddOtelHelperProfiling()` | one `otelhelper: ERROR … error.type=<type>` line; the host starts |
+   | everything met | profiler started, root spans tagged | the same (no helper line) |
+
+   Check: alerts or queries on log records of category `OtelHelper.Profiling`
+   find nothing — collect the container's standard error; a dashboard that
+   links traces to profiles through `pyroscope.profile.id` sees the attribute
+   only on services whose profiler is configured; a deployment that set
+   `CORECLR_ENABLE_PROFILING=true` never loaded the profiler (measured) and now
+   gets the warning.
 
 ### Collector / platform prerequisites (before rolling 0.3.0 out)
 
@@ -2223,6 +2263,33 @@ Phase C work on this branch (no .NET release yet; the first will be
   correlated record on OTLP and stdout, an application-side Redis error
   counter, the fail-fast message) and an "Exceptions: traces vs logs"
   subsection with Grafana trace-to-logs settings (not tested).
+- **.NET: Profiling package (task C15, requirement DN9, N11; design D-NET5;
+  implemented 2026-11-12, awaiting review).** `ProfilingStartup`, an
+  `IHostedService`, reads the prerequisites once per container
+  (`ProfilingState`, shared with the tracer build) and calls `Start()` at host
+  start; unmet checks give one `otelhelper: WARN` line through the diagnostics
+  sink (the container's, else the registration fallback), no start and no
+  `PyroscopeSpanProcessor`; a throwing start gives one `otelhelper: ERROR` line
+  with the exception type. New checks: `CORECLR_PROFILER` (the Pyroscope CLSID
+  `{BD1A650D-AC5D-4896-B64F-D6FA25D6B26A}`, any case, braces), the profiler
+  path (`CORECLR_PROFILER_PATH_64` / `_ARM64` / `_32` / `_ARM32` first, then
+  `CORECLR_PROFILER_PATH`, the file must exist), `LD_PRELOAD` with
+  `Pyroscope.Linux.ApiWrapper` on Linux; `CORECLR_ENABLE_PROFILING` exactly
+  `1`. Measured with the `pyroscope/pyroscope-dotnet:0.14.5-glibc-x86_64`
+  files on `aspnet:8.0` (`linux/amd64` under emulation) and a Pyroscope 1.10.0
+  server: profiles arrived, root spans carried `pyroscope.profile.id`, and each
+  check's failure case did what the HOW-TO table says. The logger category
+  `OtelHelper.Profiling` is retired (decision 2026-11-12, design D-NET10 (d)
+  addition). The default provider is now created by the container and is also
+  `IDisposable` (a synchronous `ServiceProvider.Dispose()` threw for the
+  `IAsyncDisposable`-only type, found by the new tests). Core declares
+  `InternalsVisibleTo` for the Profiling assembly. The HOW-TO's old CLSID
+  (`{918728DD-…}`) and library names were wrong; replaced by the measured ones.
+  Tests: `ProfilingTests` (55 with theory rows); 13 mutants each fail a test.
+  README "Profiling (Pyroscope)", HOW-TO §14 "Profiling (Pyroscope)" (checks,
+  success, failure and error examples), root README gap row. Migration guide:
+  API item 18, telemetry item 27. No parity case. Not verified: Arm64, musl,
+  the .NET 10 runtime with the native profiler.
 
 ### Breaking — telemetry output changes (dashboards/alerts)
 

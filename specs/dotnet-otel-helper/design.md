@@ -239,7 +239,7 @@ without any warning (rows above). Cases `deprecation.*` (6).
 | AWS payload attributes (A27) | `aws.s3.key` recorded from the request `Key` (`AWSServiceHelper.cs:25, 35`; since 1.15.1, today's pin); `aws.dynamodb.item_collection_metrics` and the SNS phone number not recorded *Verified 2026-11-11 (C14c):* also no `aws.s3.copy_source` / `aws.s3.delete` (CopyObject, DeleteObjects measured); the four keys removed by the sanitizer; without `SuppressDownstreamInstrumentation` the key also appears in the HttpClient child span's `url.full` path, so `AddOtelHelperAws()` sets it |
 | AWS RPC keys and service attribute values (parity gaps) | default `SemanticConventionVersion.V1_28_0` (AWS README line 56): legacy `rpc.*` keys, as Python and Node `[TO VERIFY C14c: messaging.system and db.system.name values]` *Verified 2026-11-11 (C14c):* no `messaging.system` / `messaging.operation.name` / destination on SQS and SNS spans, DynamoDB `db.system=dynamodb` only (no `db.system.name`), SQS `aws.queue_url`, no `server.address` / `server.port`, legacy `http.status_code`; SQS send and SNS publish CLIENT; README gap row (A30 alignment not in C14c) |
 | URL query redaction, listed names as `REDACTED` (A28) | see D-NET14 (target-framework dependent) |
-| Profiling starts with the host; prerequisites complete (N11) | `provider.Start()` at registration (`OtelHelper.Profiling/OtelProfilingExtensions.cs:28-29`); checks `CORECLR_ENABLE_PROFILING`, `PYROSCOPE_*` only (`ProfilingPrerequisites.cs:40-43`) |
+| Profiling starts with the host; prerequisites complete (N11) | `provider.Start()` at registration (`OtelHelper.Profiling/OtelProfilingExtensions.cs:28-29`); checks `CORECLR_ENABLE_PROFILING`, `PYROSCOPE_*` only (`ProfilingPrerequisites.cs:40-43`) *Implemented 2026-11-12 (C15):* `ProfilingStartup` starts the provider at host start when every check passes; the checks add `CORECLR_PROFILER` (the Pyroscope CLSID), the architecture-specific then generic `CORECLR_PROFILER_PATH` (an existing file) and, on Linux, `LD_PRELOAD` with `Pyroscope.Linux.ApiWrapper`; unmet → one D-NET5 WARN line, no start, no span processor; measured against the native profiler 0.14.5 on `linux/amd64` (tasks.md C15 note) |
 
 ### Count check
 
@@ -987,6 +987,11 @@ the R4 level was always added, so `Logging:LogLevel:Default` no longer beat it.
 removes the ILogger category; a rename now would make applications change
 `Logging:LogLevel` filters twice (the API part of the migration guide already
 says the category stays). Migration telemetry item 22 records it.
+*Addition 2026-11-12 (C15):* the warning moved to the D-NET5 sink
+(`otelhelper: WARN profiling prerequisites not met (…)`), so the package writes
+no `ILogger` record and the `OtelHelper.Profiling` category is retired, not
+renamed: filters on it become inert (migration API item 18, telemetry item 27).
+Applications change their filters once — they delete them.
 (f) **Fix round 1 (2026-11-11), the line.** `JsonLine.Format` runs inside the
 logger's guard, with `JsonLine.Minimal` (time, level, `[unrenderable record]`) if
 anything still throws; a lone surrogate in a message, key or value becomes U+FFFD

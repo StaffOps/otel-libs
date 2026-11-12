@@ -36,6 +36,10 @@ release candidate `0.3.0-rc.1`, tag `nodejs/v0.3.0-rc.1`, on npmjs with dist-tag
    (`OTEL_EXPORTER_PROMETHEUS_PORT` > `OTEL_HELPER_METRICS_PORT`; bind address
    `OTEL_EXPORTER_PROMETHEUS_HOST`, unset = every interface, A29). This fallback stays in core
    (decided 2026-10-27, see [ADR-007](specs/decisions/ADR-007-keep-prometheus-in-core.md)).
+   **Second exception (2026-11-12):** continuous profiles from the opt-in .NET
+   package `StaffOps.OtelHelper.Profiling` are pushed by the Pyroscope native
+   profiler straight to `PYROSCOPE_SERVER_ADDRESS` — no OTLP path exists yet
+   ([ADR-015](specs/decisions/ADR-015-dotnet-profiles-push-to-pyroscope.md)).
 3. **Sampling at the Collector** — tail sampling at the gateway, not in app
    code. Target default sampler: `parentbased_always_on`
    ([ADR-002](specs/decisions/ADR-002-parentbased-sampler.md)).

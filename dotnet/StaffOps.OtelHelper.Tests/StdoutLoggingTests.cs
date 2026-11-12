@@ -10,7 +10,6 @@ using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
 using StaffOps.OtelHelper.Diagnostics;
 using StaffOps.OtelHelper.Logging;
-using StaffOps.OtelHelper.Profiling;
 using Xunit;
 
 namespace StaffOps.OtelHelper.Tests;
@@ -703,17 +702,6 @@ public sealed class StdoutLoggingTests : IDisposable
         await host.StopAsync();
         Assert.Contains("\"msg\":\"hosted\",\"logger\":\"StaffOps.OtelHelper.Tests.StdoutLoggingTests\"}", writer.ToString());
         Assert.Contains("hosted", app.Messages);
-    }
-
-    // ── Profiling category (decision 2026-11-11: kept) ─────────────────────
-
-    [Fact]
-    public async Task Profiling_Prerequisite_Warning_Keeps_The_OtelHelper_Profiling_Category()
-    {
-        var app = new CapturingProvider();
-        using var factory = LoggerFactory.Create(b => b.AddProvider(app));
-        await new ProfilingPrerequisiteWarning(factory, "X").StartAsync(CancellationToken.None);
-        Assert.Equal("OtelHelper.Profiling", Assert.Single(app.Categories));
     }
 
     // ── Helpers ────────────────────────────────────────────────────────────

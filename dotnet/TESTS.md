@@ -1,5 +1,7 @@
 # Tests — StaffOps.OtelHelper (.NET)
 
+2025 tests (xUnit) with the parity runner, 0 failed, 0 skipped, 0 warnings (compose `dotnet-tests` on `sdk:8.0` with `sql-postgres`, `sql-mysql` and `redis-test`, and on `sdk:10.0` (10.0.403) with `DOTNET_ROLL_FORWARD=Major` on the same network, 2026-11-12, task C15); coverlet total `| Total | 98.73% | 97.18% | 99.63% |` (line, branch, method) on `sdk:8.0` (a first run, before the ERROR message wording was final, gave 98.78% / 97.21%), `| Total | 98.73% | 97.18% | 99.63% |` on SDK 10 (that earlier tree); `StaffOps.OtelHelper.Profiling` 100% / 98.18% / 100% in all three runs. The C14c round-2 line below is the previous run.
+
 1992 tests (xUnit) with the parity runner, 0 failed, 0 skipped, 0 warnings (compose `dotnet-tests` on `sdk:8.0` with `sql-postgres`, `sql-mysql` and `redis-test`, 2026-11-12, task C14c round 2; SDK 10 leg not re-run); coverlet total `| Total | 98.65% | 97.11% | 99.44% |`; `StaffOps.OtelHelper.AWS` 100% / 100% / 100%. The fix-round-1 line below is the previous run.
 
 1981 tests (xUnit) with the parity runner, 0 failed, 0 skipped, 0 warnings (compose `dotnet-tests` on `sdk:8.0` with `sql-postgres`, `sql-mysql` and `redis-test`, and on `sdk:10.0` (10.0.403) with `DOTNET_ROLL_FORWARD=Major` on the same network, 2026-11-11, task C14c fix round 1); coverlet total `| Total | 98.71% | 97.17% | 99.44% |` (line, branch, method) on `sdk:8.0`, `| Total | 98.65% | 97.14% | 99.44% |` on SDK 10; `StaffOps.OtelHelper.AWS` 100% / 100% / 100% on both. The C14c line below is the previous run.
@@ -273,24 +275,55 @@ Opt-in subpackage extensions (AWS, SQL, Redis) — each verifies the fluent `ISe
 
 ## ProfilingTests
 
-`StaffOps.OtelHelper.Profiling`'s `ProfilingPrerequisites` and extension registration. Uses `[Collection("EnvVarTests")]`.
+`StaffOps.OtelHelper.Profiling` (task C15, N11): the prerequisite rules, the
+start at host start, the warning through the diagnostics sink (D-NET5) and the
+span processor wiring. Rules pinned here were measured 2026-11-12 against the
+native Pyroscope 0.14.5 profiler on `linux/amd64` (dotnet `HOW-TO.md` §14
+"Profiling"); the unit tests do not load the native profiler. Uses
+`[Collection("EnvVarTests")]`.
 
 | Test | Description |
 |-------|-----------|
-| `ProfilingPrerequisites_FromEnvironment_AllSet_IsSatisfied` | All required env vars set → satisfied |
-| `ProfilingPrerequisites_Missing_ServerAddress_NotSatisfied` | Missing server address → not satisfied |
-| `ProfilingPrerequisites_Missing_ClrProfiler_NotSatisfied` | Missing CLR profiler env var → not satisfied |
-| `ProfilingPrerequisites_Missing_ProfilingEnabled_NotSatisfied` | Missing "profiling enabled" var → not satisfied |
-| `ProfilingPrerequisites_DescribeMissing_ListsMissingVars` | `DescribeMissing()` lists all missing vars when nothing is set |
-| `ProfilingPrerequisites_DescribeMissing_OnlyListsMissing` | `DescribeMissing()` omits vars that are already set |
-| `ProfilingPrerequisites_DescribeMissing_ReturnsNull_When_Satisfied` | `DescribeMissing()` returns null when fully satisfied |
-| `ProfilingPrerequisites_Truthy_AcceptsBothOneAndTrue` × 4 | "1", "true", "True", "TRUE" all count as enabled |
-| `ProfilingPrerequisites_NotTruthy_Rejects_InvalidValues` × 5 | "0", "false", "", "yes", "on" are all rejected |
-| `ProfilingPrerequisites_ApplicationName_IsRead` | ApplicationName read from its env var |
-| `ProfilingPrerequisites_IsSatisfied_Without_ApplicationName` | ApplicationName is optional — not required for `IsSatisfied` |
-| `AddOtelHelperProfiling_Registers_HostedService_When_Prerequisites_Missing` | Missing prerequisites → `ProfilingPrerequisiteWarning` hosted service registered |
-| `ProfilingPrerequisiteWarning_LogsWarning_OnStart` | The warning hosted service starts/stops without exception |
-| `AddOtelHelperProfiling_Registers_IProfilingProvider` | `IProfilingProvider` resolves from DI after registration |
+| `Complete_Environment_Is_Satisfied` | Every prerequisite as the README snippet → satisfied, `Unmet` empty, `DescribeMissing()` null |
+| `One_Unmet_Prerequisite_Is_Named` × 14 | Each check alone names exactly its item: `CORECLR_ENABLE_PROFILING` unset, `0` or `true` (measured: the runtime needs `1`); `CORECLR_PROFILER` unset, blank, another CLSID, no braces; profiler path unset or a missing file; `LD_PRELOAD` unset or without the API wrapper; `PYROSCOPE_PROFILING_ENABLED` unset; `PYROSCOPE_SERVER_ADDRESS` unset or blank |
+| `Clsid_Comparison_Ignores_Case` | The lowercase CLSID passes (measured: the runtime loads it) |
+| `Nothing_Set_Lists_Every_Prerequisite_In_Check_Order` | Order of `Unmet` and the `DescribeMissing()` text |
+| `Preload_Is_Not_Required_Off_Linux` | `LD_PRELOAD` is checked on Linux only |
+| `Architecture_Specific_Path_Wins_Over_The_Generic_One` × 4 | `_64` / `_32` / `_ARM64` / `_ARM32` before `CORECLR_PROFILER_PATH` |
+| `Architecture_Specific_Path_To_A_Missing_File_Is_Named_Even_With_A_Valid_Generic_Path` | The variable the runtime reads is the one checked and named |
+| `Path_Variable_Of_Another_Architecture_Is_Ignored` | `_64` does not count on Arm64 |
+| `Unknown_Architecture_Reads_Only_The_Generic_Path` | No specific variable for other architectures |
+| `Pyroscope_Switch_Follows_Pyroscope_Boolean_Rule` × 6 | `1`, `t`, `Y`, `true`, `TRUE`, `yes` enable (Pyroscope 1.2.0's rule) |
+| `Pyroscope_Switch_Rejects_Other_Values` × 5 | `0`, `false`, empty, `on`, `" 1"` do not |
+| `FromEnvironment_Reads_The_Process_Environment` | The real process environment and file system |
+| `ApplicationName_Is_Optional` | `PYROSCOPE_APPLICATION_NAME` is not required |
+| `Profiler_Starts_When_The_Host_Starts_Not_At_Registration` | `Start()` not called by registration or by building the container; once by the hosted service; no diagnostic on success |
+| `Generic_Host_Start_Starts_The_Profiler_Once` | The same through `Host.CreateApplicationBuilder` start and stop |
+| `Unmet_Prerequisites_Warn_Once_Through_The_Sink_And_Do_Not_Start` | The exact `otelhelper: WARN` line, once per sink over two starts; `Start()` not called |
+| `Warning_Writes_No_Logger_Record` | No `ILogger` record of any `*Profiling*` category (decision 2026-11-12: the `OtelHelper.Profiling` category is gone) |
+| `Warning_Names_Variables_Never_Values` | Server address with credentials, `PYROSCOPE_AUTH_TOKEN` and a path value never appear in the line |
+| `Start_That_Throws_Reports_One_Error_And_The_Host_Keeps_Starting` | The exact `otelhelper: ERROR` line with `error.type` only (no message, no path), once per sink |
+| `Without_AddOtelHelper_The_Warning_Goes_To_The_Fallback_Sink` | No container sink → the registration-time fallback |
+| `Calling_Twice_Registers_The_Profiler_Once` | One state, one provider, one hosted service |
+| `Registration_Resolves_The_Pyroscope_Provider` | The default provider and its span processor |
+| `Synchronous_Container_Dispose_Does_Not_Throw` | The container-created provider is also `IDisposable` (an `IAsyncDisposable`-only service makes `ServiceProvider.Dispose()` throw) |
+| `Null_Services_Throws` | `ArgumentNullException` |
+| `Met_Prerequisites_Add_The_Span_Processor` | A root span gets `pyroscope.profile.id` = its span id |
+| `Unmet_Prerequisites_Leave_The_Span_Processor_Out` | No `pyroscope.profile.id` |
+| `Two_Registrations_Add_One_Span_Processor` | One `pyroscope.profile.id` tag |
+| `Pyroscope_Provider_Disposes_Without_Error` | `DisposeAsync` of the default provider |
+| `State_Reads_The_Prerequisites_Once` | One read per container (host start and tracer build agree) |
+| `Default_State_Reads_The_Process_Environment` | The default `ProfilingState` uses `FromEnvironment` |
+
+Mutation check (2026-11-12, a container-local copy, `ProfilingTests` only):
+13 mutants each fail at least one test — starting despite unmet checks, adding
+the span processor without the check, accepting `CORECLR_ENABLE_PROFILING=true`,
+the generic path before the architecture-specific one, catching only
+`DllNotFoundException`, no double-registration guard, no `IDisposable`, no
+fallback sink, an ordinal CLSID comparison, `LD_PRELOAD` required off Linux,
+`Report` instead of `ReportOnce`, no file-exists check, any `LD_PRELOAD` accepted.
+`PyroscopeProfilingProvider.Start()` stays `[ExcludeFromCodeCoverage]` (it calls
+the native library); it was run against the real profiler in the measurement.
 
 ## MetricsContractTests
 
@@ -683,7 +716,7 @@ cases: `logging.*` (6; `logging.stdout_line_shape` and
 | When it writes (D6) | `Fallback_Writes_Exactly_When_No_Logs_Exporter_Is_Active` × 9 (no endpoint, endpoint, `none`, `console`, `otlp,console`, `otlp` without endpoint, logs or traces disabled; the idle provider held at `None`), `Sdk_Disabled_Writes_The_Fallback`, `Unusable_Endpoint_Writes_The_Fallback`, `Fallback_Line_Written_Through_The_Container_Has_The_Category_And_The_State` |
 | Level (R4) | `Stdout_Level_Follows_R4_And_Code_Wins` × 8, `Debug_Mode_Gives_Debug_And_Keeps_Framework_Categories`, `Level_Reapplies_When_The_App_Environment_Arrives` |
 | N9 (helper's providers only) | `App_Provider_Keeps_Its_Level_And_Framework_Warnings_While_The_Helper_Holds_Its_Own`, `App_Category_Rules_Without_Provider_Still_Apply_To_The_Helper_Providers_Also_When_Registered_Later`, `App_Rule_For_A_Framework_Category_Replaces_The_Helper_Error_Rule`, `Longer_App_Category_Beats_The_Helper_Framework_Rule`, `App_Filter_Without_Level_Leaves_R4_And_Still_Runs`, `Provider_Specific_App_Configuration_Wins_For_That_Provider` × 3 (a lower-case alias is not applied, as in the framework), `Otel_Provider_Alias_Is_Read_From_The_Sdk`, `Apply_Helper_Rules_Without_App_Rules`, `Apply_Helper_Rules_Leaves_Slots_The_App_Set_By_Alias` |
-| Profiling category (kept, 2026-11-11) | `Profiling_Prerequisite_Warning_Keeps_The_OtelHelper_Profiling_Category` |
+| Profiling category (kept 2026-11-11; gone 2026-11-12, task C15) | removed with the warning's move to the diagnostics sink; `ProfilingTests.Warning_Writes_No_Logger_Record` replaces `Profiling_Prerequisite_Warning_Keeps_The_OtelHelper_Profiling_Category` |
 
 The parity driver's `log_level` now reads the lowest level a `parity` logger
 enables (only the helper's providers remain after `ClearProviders()`), not

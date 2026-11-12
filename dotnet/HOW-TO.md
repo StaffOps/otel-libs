@@ -772,7 +772,7 @@ builder.Services.AddOtelHelperProfiling();
 | `StaffOps.OtelHelper.AWS` | `AddOtelHelperAws()` | AWS SDK for .NET v4 calls (S3, SQS, SNS, DynamoDB, etc.): one CLIENT span per call ([below](#aws-spans-failed-calls-and-url-redaction)) |
 | `StaffOps.OtelHelper.Redis` | `AddOtelHelperRedis()` | StackExchange.Redis commands |
 | `StaffOps.OtelHelper.Sql` | `AddOtelHelperSql()` | SqlClient, Npgsql and MySqlConnector spans and metrics (below) |
-| `StaffOps.OtelHelper.Profiling` | `AddOtelHelperProfiling()` | .NET CLR profiling via OTel |
+| `StaffOps.OtelHelper.Profiling` | `AddOtelHelperProfiling()` | Pyroscope continuous profiling (native CLR profiler), root spans linked to profiles by `pyroscope.profile.id` ([below](#profiling-pyroscope)) |
 
 ### SQL: drivers, sanitizing and semantic conventions
 
@@ -1411,18 +1411,161 @@ Examples of the records: SQL and Redis above, AWS in the previous subsection
 (for AWS use `logger="StaffOps.OtelHelper.Aws"`).
 
 
-### Profiling Prerequisites
+### Profiling (Pyroscope)
 
-`StaffOps.OtelHelper.Profiling` requires the following environment variables for the .NET CLR profiler:
+`AddOtelHelperProfiling()` adds Grafana Pyroscope's in-process .NET profiler
+(packages `Pyroscope` 1.2.0 and `Pyroscope.OpenTelemetry` 0.5.0). The runtime
+loads the native profiler itself, from environment variables it reads when the
+process starts: the helper cannot set them in time, so it checks them and tells
+you what is missing (task C15). Before 0.3 this section listed another
+profiler's CLSID and library names; the values below are the ones measured.
 
-```bash
-CORECLR_ENABLE_PROFILING=1
-CORECLR_PROFILER={918728DD-259F-4A6A-AC2B-B85E1B658571}
-CORECLR_PROFILER_PATH=/opt/profiler/libProfiler.so
-LD_PRELOAD=/opt/profiler/libProfiler.so
+**Deployment.** The native files come from the `pyroscope/pyroscope-dotnet`
+image (`Pyroscope.Profiler.Native.so` and `Pyroscope.Linux.ApiWrapper.x64.so`
+at its root):
+
+```dockerfile
+FROM pyroscope/pyroscope-dotnet:0.14.5-glibc-x86_64 AS pyroscope
+
+FROM mcr.microsoft.com/dotnet/aspnet:8.0
+COPY --from=pyroscope /Pyroscope.Profiler.Native.so /Pyroscope.Linux.ApiWrapper.x64.so /opt/pyroscope/
+ENV CORECLR_ENABLE_PROFILING=1 \
+    CORECLR_PROFILER={BD1A650D-AC5D-4896-B64F-D6FA25D6B26A} \
+    CORECLR_PROFILER_PATH=/opt/pyroscope/Pyroscope.Profiler.Native.so \
+    LD_PRELOAD=/opt/pyroscope/Pyroscope.Linux.ApiWrapper.x64.so \
+    PYROSCOPE_PROFILING_ENABLED=1
+# Per deployment (Helm values): PYROSCOPE_SERVER_ADDRESS, PYROSCOPE_APPLICATION_NAME.
 ```
 
-These are typically set in the Dockerfile or Helm values for the target deployment.
+```csharp
+builder.Services.AddOtelHelper();
+builder.Services.AddOtelHelperProfiling();
+```
+
+Profiles go from the native profiler straight to `PYROSCOPE_SERVER_ADDRESS`
+(the profiler has no OTLP export), not through the Collector. A Pyroscope
+behind authentication takes `PYROSCOPE_AUTH_TOKEN` or the basic-auth variables:
+mount them from a Secret; the helper never reads them and never prints any
+`PYROSCOPE_*` value.
+
+**When it starts.** Nothing happens at registration. A hosted service runs the
+checks below when the host starts:
+
+- all met: it switches on Pyroscope's CPU, allocation, contention and
+  exception profiling (`Profiler.Instance.Set…TrackingEnabled(true)`), and the
+  tracer provider gets Pyroscope's span processor, which writes
+  `pyroscope.profile.id` (the span id, 16 hex digits) on root spans and tells
+  the profiler which span is running. A root span is, by the 0.5.0 code, one
+  without an in-process parent, and also a direct child of a span that
+  continues a remote trace (read in the source, not measured).
+- one or more unmet: one `otelhelper: WARN` line (below), the profiler is not
+  started and the span processor is not added. Not starting matters: without
+  the native library, Pyroscope's first call prints a multi-line
+  `[Profiler] Failed to load Pyroscope.Profiler.Native.so : System.DllNotFoundException: …`
+  text on standard output (measured), which would land between the helper's
+  JSON log lines.
+- the start throws (for example a native library of another version without an
+  entry point Pyroscope calls: Pyroscope catches only `DllNotFoundException`):
+  one `otelhelper: ERROR` line with the exception type only, and the host keeps
+  starting.
+
+The checks are read once per container. Calling `AddOtelHelperProfiling()`
+twice registers the profiler once. Without `AddOtelHelper()` the line is
+written by the helper's registration-time sink (still standard error).
+
+**Checks.** Measured 2026-11-12 with the native profiler 0.14.5
+(`glibc-x86_64`, `linux/amd64` under emulation), `aspnet:8.0` and a Pyroscope
+1.10.0 server; the "measured" column is what the runtime or the profiler did:
+
+| Variable | Met when | Unmet item in the warning | Measured |
+|---|---|---|---|
+| `CORECLR_ENABLE_PROFILING` | exactly `1` | `CORECLR_ENABLE_PROFILING=1` | `true` does not load the profiler |
+| `CORECLR_PROFILER` | `{BD1A650D-AC5D-4896-B64F-D6FA25D6B26A}`, any case, with braces | `CORECLR_PROFILER` (unset or blank), `CORECLR_PROFILER: not the Pyroscope profiler` | lowercase loads; without braces nothing loads; another CLSID: the library logs `is not CLSID_CorProfiler` |
+| profiler path | `CORECLR_PROFILER_PATH_64` (x64), `_ARM64` (Arm64), `_32` / `_ARM32` first, then `CORECLR_PROFILER_PATH`; the first one set names an existing file | `CORECLR_PROFILER_PATH` (none set), `<variable>: file not found` | `CORECLR_PROFILER_PATH_64` alone loads on x64 |
+| `LD_PRELOAD` (Linux only) | contains `Pyroscope.Linux.ApiWrapper` | `LD_PRELOAD: no Pyroscope.Linux.ApiWrapper` | without it the runtime loads the profiler, but Pyroscope's managed API cannot reach it (`DllNotFoundException`), so no profile types and no span link |
+| `PYROSCOPE_PROFILING_ENABLED` | `1`, `t`, `y`, `true` or `yes`, any case (Pyroscope's own rule) | `PYROSCOPE_PROFILING_ENABLED=1` | unset: `.NET Profiler is explicitly disabled`; `yes` enables |
+| `PYROSCOPE_SERVER_ADDRESS` | not blank | `PYROSCOPE_SERVER_ADDRESS` | — |
+| `PYROSCOPE_APPLICATION_NAME` | optional | — | becomes the profiles' `service_name` |
+
+Values are compared as written (no trimming: `" 1"` is not `1`). The items
+appear in the table's order.
+
+**Example — success** (measured): the helper writes nothing. The native
+profiler writes its own lines on standard error (about 45 in a short run),
+for example:
+
+```text
+[2026-11-12 04:14:30.516 | info | PId: 1 | TId: 1] .NET Profiler is explicitly enabled.
+[2026-11-12 04:14:30.516 | info | PId: 1 | TId: 1] DllGetClassObject(): Returning an instance of CorProfilerCallbackFactory (hr=0x0)
+[2026-11-12 04:14:30.545 | info | PId: 1 | TId: 1] timer_create-based Cpu Profiler started successfully.
+```
+
+A root span carried `pyroscope.profile.id=bf0c68a10cb14283` (its span id), and
+Pyroscope listed the application: `POST /querier.v1.QuerierService/LabelValues`
+with `{"name":"service_name"}` returned `{"names":["c15-probe","pyroscope"]}`.
+
+**Example — a prerequisite missing** (measured, nothing set):
+
+```text
+otelhelper: WARN profiling prerequisites not met (CORECLR_ENABLE_PROFILING=1, CORECLR_PROFILER, CORECLR_PROFILER_PATH, LD_PRELOAD: no Pyroscope.Linux.ApiWrapper, PYROSCOPE_PROFILING_ENABLED=1, PYROSCOPE_SERVER_ADDRESS): the helper does not start the Pyroscope profiler and spans get no pyroscope.profile.id; set these variables in the container environment (Helm values or Dockerfile), the runtime reads them when the process starts
+```
+
+Other measured lines: another profiler's CLSID gives
+`otelhelper: WARN profiling prerequisites not met (CORECLR_PROFILER: not the Pyroscope profiler): …`
+(after the native library's own `DllGetClassObject(): the specified 'rclsid' … is not CLSID_CorProfiler.`);
+`LD_PRELOAD` unset gives `(LD_PRELOAD: no Pyroscope.Linux.ApiWrapper)` although the
+native profiler logged `.NET Profiler is explicitly enabled.`; a path to a missing
+file gives `(CORECLR_PROFILER_PATH: file not found)`. What still works: traces,
+metrics and logs, the host start, and `pyroscope.profile.id` is simply absent.
+The line is written once per container, on standard error only (stdout stays
+for the application's log lines); with a server address holding credentials
+and `PYROSCOPE_AUTH_TOKEN` set, neither appeared in the output (measured).
+
+**Example — the start throws** (unit test, not reproduced with a real
+library):
+
+```text
+otelhelper: ERROR the Pyroscope profiler could not be started: its profile types stay off and the application keeps running error.type=System.EntryPointNotFoundException
+```
+
+**Migrating from 0.2.x.** The prerequisite warning was an `ILogger` record of
+category `OtelHelper.Profiling`; it is now the `otelhelper: WARN` line above,
+and the category no longer exists: `Logging:LogLevel:OtelHelper.Profiling`
+filters have no effect (remove them), and a log query on that category finds
+nothing — read the container's standard error instead. 0.2.x also started the
+profiler and added the span processor at registration whatever the checks
+said, so root spans carried `pyroscope.profile.id` even with no profiler, and
+without the native library Pyroscope's `[Profiler] Failed to load …` text went
+to standard output; now both happen only when every check passes.
+`CORECLR_ENABLE_PROFILING=true` and an unset `CORECLR_PROFILER`, profiler path
+or `LD_PRELOAD` used to pass the check; `PYROSCOPE_PROFILING_ENABLED=yes` (or
+`t`, `y`) used to fail it.
+
+**Limits.** Install `StaffOps.OtelHelper.Profiling` at the same version as
+`StaffOps.OtelHelper`: it calls the core's internal diagnostics channel, so a
+mismatched pair can fail at run time. Not measured: Arm64 (Pyroscope 1.2.0's
+managed API links spans only in an x64 process: its `ProfilerStatus` checks
+the process architecture, read in the source), musl images, and the .NET 10
+runtime.
+
+**Status: opt-in accessory, known open items (2026-11-12).** The package is
+optional: core does not depend on it, and the Pyroscope native profiler is
+heavy to install and measured only on x64 (`linux/amd64`). Open items, kept
+as long-term TODOs (`specs/dotnet-otel-helper/tasks.md`, Promotion triggers):
+
+- `DOTNET_EnableDiagnostics=0` or `DOTNET_EnableDiagnostics_Profiler=0` stops
+  the runtime from loading the profiler, but the helper does not check them:
+  no warning, and root spans still get `pyroscope.profile.id`.
+- If `Start()` throws, the `otelhelper: ERROR` line is written but the span
+  processor stays, so root spans carry a `pyroscope.profile.id` with no
+  profile behind it.
+- Apps without a generic host (no `IHostedService` run) never start the
+  profiler.
+- `CORECLR_ENABLE_PROFILING` must be the literal `1`; `01` or `0x1` are
+  reported as unmet (whether the runtime accepts them is not measured).
+- On a non-Linux OS the `LD_PRELOAD` item is skipped and no unmet item says
+  that only the Linux profiler was measured.
+- The exact-version requirement above (internal diagnostics channel).
 
 ---
 

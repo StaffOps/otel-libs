@@ -252,6 +252,9 @@ lightweight. Node.js also ships its pino and winston log destinations as
 | Node.js | `@staffops/otel-helper-aws` | `@staffops/otel-helper-redis` | `@staffops/otel-helper-sql` |
 | .NET | `StaffOps.OtelHelper.AWS` | `StaffOps.OtelHelper.Redis` | `StaffOps.OtelHelper.Sql` |
 
+.NET also ships `StaffOps.OtelHelper.Profiling` (Pyroscope continuous
+profiling, no counterpart in the other languages; see the gap row below).
+
 ## Cross-language parity
 
 Parity is enforced, not promised. [`parity/cases.json`](https://github.com/StaffOps/otel-libs/blob/main/parity/cases.json) is a
@@ -322,6 +325,7 @@ always identical:
 | .NET AWS client spans (branch, task C14c) | One CLIENT span per call: `AddOtelHelperAws()` suppresses the HttpClient span under it, whose `url.full` path would be the S3 object key. An AWS client built before the tracer provider, or an `AddAWSInstrumentation()` of the application's own registered first (AWSSDK.Core keeps the first), gets that HttpClient span back; the helper replaces its URL path with `/` (scheme, host, port and redacted query kept), so the child span may exist but carries no key (fix round 1, measured on .NET 8 and 10) |
 | .NET URL query redaction (branch, task C14c, owner decision O3) | .NET keeps upstream's text, stricter than the contract list: server `url.query` and the .NET 8 client `url.full` write every value as `Redacted`, the .NET 9+ client `url.full` writes the query as `*`. With upstream redaction turned off (`OTEL_DOTNET_EXPERIMENTAL_ASPNETCORE_DISABLE_URL_QUERY_REDACTION`, `OTEL_DOTNET_EXPERIMENTAL_HTTPCLIENT_DISABLE_URL_QUERY_REDACTION` on .NET 8, `DOTNET_SYSTEM_NET_HTTP_DISABLEURIREDACTION` on .NET 9+) the helper writes the ten contract names as `REDACTED`, as Go, Python and Node.js, and keeps the rest. Scope: the span URL attributes (`url.full`, `http.url`, `url.query`, `http.target`, also as `Uri` values), not free text — HttpClient error texts carry no URL (measured), but an application exception message embedding a URL is not covered ([dotnet HOW-TO §14](dotnet/HOW-TO.md#aws-spans-failed-calls-and-url-redaction)) |
 | Stdout `trace_id` / `span_id` (contract A23 amendment 2026-11-11) | A stdout fallback line for a record emitted in a span context carries `trace_id` and `span_id` right after `logger`: .NET does (branch, task C14a; the database exception record uses its span's ids and the event time); Go, Python and Node.js write neither until task A36 (case `logging.stdout_span_context`, `xfail:A36`) |
+| .NET profiling (branch, task C15) | Only .NET has a profiling package (`StaffOps.OtelHelper.Profiling`, Grafana Pyroscope's native CLR profiler); Go, Python and Node.js have none. Its profiles go from the native profiler straight to `PYROSCOPE_SERVER_ADDRESS`, not through the Collector, and root spans get `pyroscope.profile.id`. The helper starts it at host start only when the `CORECLR_*`, `LD_PRELOAD` and `PYROSCOPE_*` prerequisites are met, else one `otelhelper: WARN profiling prerequisites not met (…)` line on standard error; measured on `linux/amd64` only ([`dotnet/HOW-TO.md`](dotnet/HOW-TO.md#profiling-pyroscope)) |
 | .NET | Still on the 0.2.x contract and instrumentation set until Phase C ([differences](#net-02x-differences)); the Prometheus variables, the gRPC path warning and the SDK error text rule (A29) land in Phase C (C12, C7b, C8) |
 
 ## Collector and platform prerequisites
