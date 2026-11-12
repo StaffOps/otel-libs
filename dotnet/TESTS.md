@@ -1,5 +1,7 @@
 # Tests — StaffOps.OtelHelper (.NET)
 
+2050 tests (xUnit) with the parity runner, 0 failed, 0 skipped, 0 warnings (compose `dotnet-tests` on `sdk:8.0` with `sql-postgres`, `sql-mysql` and `redis-test`, and on `sdk:10.0` (10.0.403) with `DOTNET_ROLL_FORWARD=Major` on the same network, 2026-11-12, task C16 fix round 1); coverlet total `| Total | 98.74% | 97.19% | 99.63% |` (line, branch, method) on both. Before the fix round: 2044 tests, 98.79% (sdk:8.0 only). Parity: .NET 370 `pass`, 0 `xfail`, 17 `skip` of 387 cases. The C15 line below is the previous run.
+
 2025 tests (xUnit) with the parity runner, 0 failed, 0 skipped, 0 warnings (compose `dotnet-tests` on `sdk:8.0` with `sql-postgres`, `sql-mysql` and `redis-test`, and on `sdk:10.0` (10.0.403) with `DOTNET_ROLL_FORWARD=Major` on the same network, 2026-11-12, task C15); coverlet total `| Total | 98.73% | 97.18% | 99.63% |` (line, branch, method) on `sdk:8.0` (a first run, before the ERROR message wording was final, gave 98.78% / 97.21%), `| Total | 98.73% | 97.18% | 99.63% |` on SDK 10 (that earlier tree); `StaffOps.OtelHelper.Profiling` 100% / 98.18% / 100% in all three runs. The C14c round-2 line below is the previous run.
 
 1992 tests (xUnit) with the parity runner, 0 failed, 0 skipped, 0 warnings (compose `dotnet-tests` on `sdk:8.0` with `sql-postgres`, `sql-mysql` and `redis-test`, 2026-11-12, task C14c round 2; SDK 10 leg not re-run); coverlet total `| Total | 98.65% | 97.11% | 99.44% |`; `StaffOps.OtelHelper.AWS` 100% / 100% / 100%. The fix-round-1 line below is the previous run.
@@ -971,3 +973,52 @@ string-only child mutant after the child test went to one processor pass).
 `https://[::1]:9000/`) and userinfo (`https://u:p@h/b` → `https://u:p@h/`,
 current behavior pinned). The grandchild and relative-URL tests fail with the
 round-1 rule (measured: direct parent only, `://` anywhere).
+
+---
+
+## Deprecations (task C16)
+
+Contract D8, R8; requirement DN3; design D-NET5 (one line through the
+diagnostics sink, "once" per sink). Parity: the 7 `deprecation.*` cases
+(`deprecation.disabled_signals_standard_var_set_still_warns` included).
+`DeprecationTests` is in `[Collection("EnvVarTests")]`.
+
+| Test | Checks |
+|---|---|
+| `Each_Variable_Warns_Once_Verbatim_Without_Its_Value` × 5 | Each of `SERVICE_NAME`, `ENVIRONMENT`, `OTEL_HELPER_SAMPLE_RATIO`, `OTEL_HELPER_DISABLED_SIGNALS`, `OTEL_HELPER_EXTRA_INSTRUMENTATION`: after two resolutions on one sink, exactly one line, equal to the documented text; the value (a sentinel) is not in it |
+| `All_Set_Together_Give_One_Line_Each_In_A_Fixed_Order` | All five set: exactly the five lines, in table order (one once-key per variable) |
+| `Unset_Or_Blank_Is_Silent` × 5 | Unset, empty and contract-trim-set-only values write nothing |
+| `Service_Name_Warns_While_The_Standard_Variable_Wins` | `OTEL_SERVICE_NAME` wins, `SERVICE_NAME` still warns |
+| `Environment_Warns_While_Resource_Attributes_Win` | `deployment.environment.name` in `OTEL_RESOURCE_ATTRIBUTES` wins, `ENVIRONMENT` still warns |
+| `Disabled_Signals_Warns_While_The_Standard_Exporter_Variable_Wins` | `OTEL_TRACES_EXPORTER=otlp` keeps traces on; the deprecation still warns |
+| `Sample_Ratio_Warns_While_The_Standard_Sampler_Wins` | `OTEL_TRACES_SAMPLER` wins; the only line is the deprecation |
+| `Deprecated_Variables_Keep_Their_Effect` | The four deprecated variables still apply when nothing wins (name, canonical environment, ratio sampler, disabled signal) |
+| `Extra_Instrumentation_Adds_No_Source_Or_Meter` | `SQL,REDIS,AWS` changes neither `AdditionalActivitySources` nor `AdditionalMeters` |
+| `Once_Is_Per_Sink_A_Second_Container_Warns_Again` | Two sinks, one line each (design C6 note (n)) |
+| `A_Built_Pipeline_Writes_Each_Warning_Once_Through_The_Container_Sink` | `AddOtelHelper` with the providers built: one line per variable on the container's sink |
+| `Replacement_Is_Written_Whole_Beyond_The_Echo_Limit` | A replacement longer than 64 code points is not cut (`replacement=` is a sink constant) |
+| `Config_File_Variable_Holding_Only_A_No_Break_Space_Is_Set` × 2 | `OTEL_CONFIG_FILE` / `OTEL_EXPERIMENTAL_CONFIG_FILE`: U+00A0 alone warns, ASCII whitespace alone does not (contract trim set) |
+| `A_Lone_No_Break_Space_Counts_As_Set_For_A_Deprecated_Variable` | The same rule for `SERVICE_NAME` |
+| `Sink_Constants_Are_Whole_And_Escaped_While_Attributes_Stay_Cut` | `ReportOnceWithConstants`: exact line — user attribute cut at 64 + `…`, constant whole, a constant with a space and a newline quoted and escaped; second call with the same key writes nothing |
+| `Sink_Constant_Key_Is_Checked_Like_An_Attribute_Key` | An invalid constant key throws `ArgumentException` |
+
+Six earlier tests about another behavior of a deprecated variable
+(`Ratio_Alias_Is_ParentBased`, `Invalid_Ratio_Alias_Warns_And_Is_Ignored_Not_Clamped`,
+`Ratio_Alias_Is_Not_Read_While_The_Standard_Variable_Is_Set`,
+`Code_Sampler_And_Ratio_Win_Over_Every_Variable_Without_A_Line`,
+`Unknown_Disabled_Signal_Entry_Warns_Once_Echoing_It`,
+`Blank_Env_Resource_Attributes_Warn_Nothing`) now leave that one deprecation
+line out (`TestDiagnostics.LinesWithoutDeprecation`, which fails unless exactly
+one such line was written) and still assert every other line.
+
+Mutation check (2026-11-12, a container-local copy, the four affected test
+classes): 11 mutants each fail at least one test — a blank value counted as
+set (deprecated and no-effect checks), one once-key shared by all variables,
+`Report` instead of `ReportOnce` (both warnings), `Info` instead of `Warn`, a
+dropped `ENVIRONMENT` row, the no-effect warning removed, a wrong replacement
+text, the value echoed, and no warning while a standard variable is set.
+Fix round 1 (2026-11-12, the classes above plus `DiagnosticsTests` and
+`ResolverCoreTests`): 8 more mutants each fail at least one test — the resolver
+drops `replacement=`, passes it as a (cut) attribute, the config-file check back
+on `IsNullOrWhiteSpace`, constants echoed (redacted and cut), constants not
+escaped, the constant path not once, the constant key not checked.

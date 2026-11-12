@@ -165,7 +165,7 @@ public sealed class SamplerPropagatorDebugTests : IDisposable
         Set("OTEL_HELPER_SAMPLE_RATIO", "0");
         var diagnostics = new TestDiagnostics();
         var resolved = diagnostics.Resolve(TestDiagnostics.Identified);
-        Assert.Empty(diagnostics.Lines);
+        Assert.Empty(diagnostics.LinesWithoutDeprecation("OTEL_HELPER_SAMPLE_RATIO"));
         Assert.Equal("parentbased_traceidratio", resolved.SamplerName);
         Assert.Equal(SamplingDecision.Drop, Decide(resolved.Sampler, default));
         Assert.Equal(SamplingDecision.RecordAndSample, Decide(resolved.Sampler, Remote(true)));
@@ -184,7 +184,7 @@ public sealed class SamplerPropagatorDebugTests : IDisposable
         var diagnostics = new TestDiagnostics();
         var resolved = diagnostics.Resolve(TestDiagnostics.Identified);
         diagnostics.Resolve(TestDiagnostics.Identified);
-        var line = Assert.Single(diagnostics.Lines);
+        var line = Assert.Single(diagnostics.LinesWithoutDeprecation("OTEL_HELPER_SAMPLE_RATIO"));
         Assert.StartsWith("otelhelper: WARN sample ratio is not a number in [0, 1] variable=OTEL_HELPER_SAMPLE_RATIO", line);
         Assert.EndsWith("using=parentbased_always_on", line);
         Assert.Equal("parentbased_always_on", resolved.SamplerName);
@@ -197,7 +197,7 @@ public sealed class SamplerPropagatorDebugTests : IDisposable
         Set("OTEL_HELPER_SAMPLE_RATIO", "garbage");
         var diagnostics = new TestDiagnostics();
         Assert.Equal("always_on", diagnostics.Resolve(TestDiagnostics.Identified).SamplerName);
-        Assert.Empty(diagnostics.Lines);
+        Assert.Empty(diagnostics.LinesWithoutDeprecation("OTEL_HELPER_SAMPLE_RATIO"));
     }
 
     [Fact]
@@ -209,7 +209,8 @@ public sealed class SamplerPropagatorDebugTests : IDisposable
         var code = new AlwaysOffSampler();
         Assert.Same(code, diagnostics.Resolve(o => { TestDiagnostics.Identified(o); o.Sampler = code; o.SampleRatio = 1.0; }).Sampler);
         Assert.Equal("parentbased_traceidratio", diagnostics.Resolve(o => { TestDiagnostics.Identified(o); o.SampleRatio = 1.0; }).SamplerName);
-        Assert.Empty(diagnostics.Lines);
+        // The deprecation is warned even when code wins (D8); the bad value itself is not read.
+        Assert.Empty(diagnostics.LinesWithoutDeprecation("OTEL_HELPER_SAMPLE_RATIO"));
     }
 
     // ── IConfiguration-only values (principle 8) ─────────────────────────

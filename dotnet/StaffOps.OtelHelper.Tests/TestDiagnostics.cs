@@ -24,6 +24,18 @@ internal sealed class TestDiagnostics
     /// <summary>The written lines.</summary>
     public string[] Lines => Text.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 
+    /// <summary>
+    /// The written lines except the one D8 deprecation warning of <paramref name="variable"/> (task
+    /// C16), for tests about another behavior of a deprecated variable. Fails unless exactly one
+    /// such line was written.
+    /// </summary>
+    public string[] LinesWithoutDeprecation(string variable)
+    {
+        bool IsDeprecation(string line) => line.StartsWith($"otelhelper: WARN {variable} is deprecated and will be removed in 1.0;", StringComparison.Ordinal);
+        Xunit.Assert.Single(Lines, IsDeprecation);
+        return Lines.Where(l => !IsDeprecation(l)).ToArray();
+    }
+
     /// <summary>Resolves code options against the current process environment.</summary>
     public ResolvedTelemetry Resolve(Action<TelemetryOptions>? configure = null, IConfiguration? configuration = null)
     {

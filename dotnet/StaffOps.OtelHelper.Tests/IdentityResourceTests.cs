@@ -165,7 +165,7 @@ public class IdentityResourceTests : IDisposable
         Env("OTEL_RESOURCE_ATTRIBUTES", " \t");
         var resolved = Resolve(null, out var diagnostics);
         Assert.Empty(resolved.EnvResourceAttributes);
-        Assert.Equal("", diagnostics.Text);
+        Assert.Empty(diagnostics.LinesWithoutDeprecation("ENVIRONMENT"));
     }
 
     // ── service.name precedence (R5) ───────────────────────────────────────

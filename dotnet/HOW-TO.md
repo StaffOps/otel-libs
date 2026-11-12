@@ -604,13 +604,13 @@ When you use placeholders in logs, values are extracted as **separate attributes
 | Variable | Effect | Default | Who injects |
 |---|---|---|---|
 | `OTEL_SERVICE_NAME` | Service name (`service.name`); wins over `OTEL_RESOURCE_ATTRIBUTES` and `SERVICE_NAME` | `unknown_service:<process name>` + warning | CI/CD |
-| `SERVICE_NAME` | Deprecated alias of `OTEL_SERVICE_NAME`, read last | — | CI/CD |
+| `SERVICE_NAME` | Deprecated alias of `OTEL_SERVICE_NAME`, read last — warned once when set ([below](#deprecated-variables-03-this-branch-task-c16)) | — | CI/CD |
 | `OTEL_RESOURCE_ATTRIBUTES` | `key=value,…` resource attributes (helper-parsed: percent-decoded, ASCII-trimmed, bad items skipped and warned by position); `deployment.environment.name` here wins over `ENVIRONMENT` | — | Helm Chart |
-| `ENVIRONMENT` | Deprecated alias of `deployment.environment.name` (controls log level; known names canonicalized, others as written) | none: attribute absent + warning | Helm Chart |
+| `ENVIRONMENT` | Deprecated alias of `deployment.environment.name` (controls log level; known names canonicalized, others as written) — warned once when set ([below](#deprecated-variables-03-this-branch-task-c16)) | none: attribute absent + warning | Helm Chart |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | Collector endpoint; unset → no OTLP export, Prometheus `/metrics` fallback | _(unset)_ | Helm Chart |
 | `OTEL_HELPER_DEBUG_LEVEL` | Debug mode: Debug log level + `debug=true` attribute on entry spans (no parent, or a remote one); the tracestate is not touched (0.2.x prepended `debug=true` to it) | `false` | Manual |
-| `OTEL_HELPER_EXTRA_INSTRUMENTATION` | No effect in core (use the subpackages, §14) | `SQL` | — |
-| `OTEL_HELPER_SAMPLE_RATIO` | Deprecated: a plain decimal in [0, 1] → `parentbased_traceidratio`; anything else warns and is ignored (not clamped); read only while `OTEL_TRACES_SAMPLER` is unset (§13) | _(unset)_ | Helm Chart |
+| `OTEL_HELPER_EXTRA_INSTRUMENTATION` | No effect in core (use the subpackages, §14) — warned once when set ([below](#deprecated-variables-03-this-branch-task-c16)) | `SQL` | — |
+| `OTEL_HELPER_SAMPLE_RATIO` | Deprecated: a plain decimal in [0, 1] → `parentbased_traceidratio`; anything else warns and is ignored (not clamped); read only while `OTEL_TRACES_SAMPLER` is unset (§13) — warned once when set ([below](#deprecated-variables-03-this-branch-task-c16)) | _(unset)_ | Helm Chart |
 | `OTEL_HELPER_METRICS_PORT` | Standalone Prometheus `/metrics` listener port (`0` disables it) | `9464` | Helm Chart |
 | `OTEL_HELPER_HTTP_OPT_IN_METRICS` | `true` keeps the HTTP opt-in metrics (§9); not `true`/`false` → warning, `false` | `false` | Manual |
 | `OTEL_DOTNET_EXPERIMENTAL_ASPNETCORE_ENABLE_GRPC_INSTRUMENTATION` | Upstream key, read from the app configuration: `true` traces gRPC server calls as RPC spans (§3) | _(unset)_ | Manual (app) |
@@ -619,7 +619,7 @@ When you use placeholders in logs, values are extracted as **separate attributes
 | `OTEL_METRIC_EXPORT_INTERVAL` | OTLP and console metric export interval (ms; digits with an optional `+`, clamped at 2 147 483 647) | `30000` | Manual |
 | `OTEL_METRICS_EXEMPLAR_FILTER` | `always_on`, `always_off`, `trace_based` (§7) | `trace_based` | Manual |
 | `OTEL_SDK_DISABLED` | `true` turns telemetry off (propagators kept, one INFO line); not `true`/`false` → warning, `false` | `false` | Manual |
-| `OTEL_HELPER_DISABLED_SIGNALS` | Deprecated: signals to disable; a set `OTEL_<SIGNAL>_EXPORTER` wins | _(unset)_ | Manual |
+| `OTEL_HELPER_DISABLED_SIGNALS` | Deprecated: signals to disable; a set `OTEL_<SIGNAL>_EXPORTER` wins — warned once when set ([below](#deprecated-variables-03-this-branch-task-c16)) | _(unset)_ | Manual |
 | `OTEL_TRACES_SAMPLER`, `OTEL_TRACES_SAMPLER_ARG` | Standard OTel sampler (the six spec names) and its ratio, parsed by the helper; takes priority over `OTEL_HELPER_SAMPLE_RATIO`; unknown names warn (§13) | `parentbased_always_on` | Manual |
 | `OTEL_PROPAGATORS` | `tracecontext`, `baggage`, `none`; other tokens warn and are skipped; kept under `OTEL_SDK_DISABLED` (§13) | `tracecontext,baggage` | Manual |
 | `OTEL_EXPORTER_OTLP_PROTOCOL` | OTLP wire protocol: `grpc` or `http/protobuf` | port-based inference | Manual |
@@ -627,6 +627,67 @@ When you use placeholders in logs, values are extracted as **separate attributes
 | `OTEL_EXPORTER_OTLP_TIMEOUT` | Export deadline in milliseconds, per signal with `_<SIGNAL>_TIMEOUT` (§19) | `10000` | Manual |
 | `OTEL_EXPORTER_OTLP_COMPRESSION` | `gzip` or `none`, per signal with `_<SIGNAL>_COMPRESSION` (§19) | `gzip` | Manual |
 | `OTEL_EXPORTER_OTLP_CERTIFICATE`, `_CLIENT_KEY`, `_CLIENT_CERTIFICATE` | TLS files (CA, client pair), per signal too (§17) | system roots, no client certificate | Helm Chart |
+
+### Deprecated variables (0.3, this branch, task C16)
+
+A deprecated variable still works until 1.0, but each one that is set writes
+one line on standard error at start — once per container, also when a
+standard variable or a code option wins over it. The value is never printed.
+
+**Success — nothing deprecated set:** no line. Empty or whitespace-only values
+count as unset, so `SERVICE_NAME=` writes nothing either.
+
+**Warning — a chart still sets the old names:**
+
+```bash
+SERVICE_NAME=orders-api
+ENVIRONMENT=PRD
+OTEL_HELPER_SAMPLE_RATIO=0.1
+OTEL_HELPER_DISABLED_SIGNALS=logs
+OTEL_HELPER_EXTRA_INSTRUMENTATION=SQL
+```
+
+```text
+otelhelper: WARN SERVICE_NAME is deprecated and will be removed in 1.0; use OTEL_SERVICE_NAME variable=SERVICE_NAME replacement=OTEL_SERVICE_NAME
+otelhelper: WARN ENVIRONMENT is deprecated and will be removed in 1.0; use OTEL_RESOURCE_ATTRIBUTES (deployment.environment.name=<value>) variable=ENVIRONMENT replacement="OTEL_RESOURCE_ATTRIBUTES (deployment.environment.name=<value>)"
+otelhelper: WARN OTEL_HELPER_SAMPLE_RATIO is deprecated and will be removed in 1.0; use OTEL_TRACES_SAMPLER=parentbased_traceidratio with OTEL_TRACES_SAMPLER_ARG variable=OTEL_HELPER_SAMPLE_RATIO replacement="OTEL_TRACES_SAMPLER=parentbased_traceidratio with OTEL_TRACES_SAMPLER_ARG"
+otelhelper: WARN OTEL_HELPER_DISABLED_SIGNALS is deprecated and will be removed in 1.0; use OTEL_TRACES_EXPORTER/OTEL_METRICS_EXPORTER/OTEL_LOGS_EXPORTER=none variable=OTEL_HELPER_DISABLED_SIGNALS replacement="OTEL_TRACES_EXPORTER/OTEL_METRICS_EXPORTER/OTEL_LOGS_EXPORTER=none"
+otelhelper: WARN OTEL_HELPER_EXTRA_INSTRUMENTATION has no effect in .NET and is ignored; add the opt-in packages (StaffOps.OtelHelper.Sql, .AWS, .Redis) instead variable=OTEL_HELPER_EXTRA_INSTRUMENTATION
+```
+
+The values still apply (service `orders-api`, environment `PRD`, ratio 0.1,
+logs off). **Migrated** — the same behavior, no line:
+
+```bash
+OTEL_SERVICE_NAME=orders-api
+OTEL_RESOURCE_ATTRIBUTES=deployment.environment.name=PRD
+OTEL_TRACES_SAMPLER=parentbased_traceidratio
+OTEL_TRACES_SAMPLER_ARG=0.1
+OTEL_LOGS_EXPORTER=none
+# OTEL_HELPER_EXTRA_INSTRUMENTATION: remove it; add the package instead
+#   dotnet add package StaffOps.OtelHelper.Sql   →   builder.Services.AddOtelHelperSql();
+```
+
+The warning is written also when the old variable no longer decides anything,
+so leftovers show up before 1.0: `OTEL_SERVICE_NAME` next to `SERVICE_NAME`
+still warns about `SERVICE_NAME`, and `OTEL_TRACES_EXPORTER=otlp` next to
+`OTEL_HELPER_DISABLED_SIGNALS=traces` keeps traces on and still warns about
+the deprecated variable. A value the variable's own parser rejects adds that
+parser's line (for example `sample ratio is not a number in [0, 1]` for
+`OTEL_HELPER_SAMPLE_RATIO=2`, §13). Go and Node.js write the same messages;
+Go, Python and Node.js write them once per process, .NET once per container
+(two hosts in one process each write them).
+
+The fifth deprecation of the contract (D8) is not a variable: a **schemeless
+endpoint with `http/protobuf`** (`OTEL_EXPORTER_OTLP_ENDPOINT=collector:4318`)
+writes `otelhelper: WARN schemeless endpoint is deprecated for http/protobuf and
+will be removed in 1.0; use a URL (http:// or https://)` followed by
+`variable=`, `value=` and `using=` (task C7a; migration guide telemetry
+item 16). Schemeless gRPC endpoints are legal and do not warn.
+
+An unknown `OTEL_HELPER_DISABLED_SIGNALS` entry is echoed **lowercased**
+(`Profiles` → `value=profiles`), as in Go and Node.js: the list is trimmed and
+ASCII-lowercased before it is checked.
 
 ### Configuration Priority
 

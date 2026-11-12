@@ -1514,6 +1514,28 @@ dashboards and alerts.
    `CORECLR_ENABLE_PROFILING=true` never loaded the profiler (measured) and now
    gets the warning.
 
+28. **Deprecated variables warn** (task C16, contract D8, R8). 0.2.x read
+   `SERVICE_NAME`, `ENVIRONMENT`, `OTEL_HELPER_SAMPLE_RATIO` and
+   `OTEL_HELPER_DISABLED_SIGNALS` without a word, and accepted
+   `OTEL_HELPER_EXTRA_INSTRUMENTATION` without effect. Now each one that is set
+   (empty or whitespace only counts as unset) writes one `otelhelper: WARN` line
+   on standard error, once per container, also when a standard variable or
+   code wins over it; the value is never printed. The four deprecated variables
+   keep their 0.3 effect until 1.0, which removes them. Migrate to:
+
+   | Variable | Use instead |
+   |---|---|
+   | `SERVICE_NAME` | `OTEL_SERVICE_NAME` |
+   | `ENVIRONMENT` | `OTEL_RESOURCE_ATTRIBUTES=deployment.environment.name=<value>` |
+   | `OTEL_HELPER_SAMPLE_RATIO` | `OTEL_TRACES_SAMPLER=parentbased_traceidratio` and `OTEL_TRACES_SAMPLER_ARG=<ratio>` |
+   | `OTEL_HELPER_DISABLED_SIGNALS` | `OTEL_TRACES_EXPORTER` / `OTEL_METRICS_EXPORTER` / `OTEL_LOGS_EXPORTER` `=none` |
+   | `OTEL_HELPER_EXTRA_INSTRUMENTATION` (no effect) | the packages `StaffOps.OtelHelper.Sql`, `.AWS`, `.Redis` |
+
+   Check: the container's standard error lists every deprecated variable a
+   chart still sets; remove it after setting the replacement.
+   The fifth D8 deprecation, a schemeless endpoint with `http/protobuf`, warns
+   since task C7a: see item 16.
+
 ### Collector / platform prerequisites (before rolling 0.3.0 out)
 
 Owned outside this repo (design D11); each item blocks the rollout, not the rc:
@@ -2290,6 +2312,30 @@ Phase C work on this branch (no .NET release yet; the first will be
   success, failure and error examples), root README gap row. Migration guide:
   API item 18, telemetry item 27. No parity case. Not verified: Arm64, musl,
   the .NET 10 runtime with the native profiler.
+
+- **.NET: deprecation warnings (task C16, contract D8, R8, requirement DN3;
+  implemented 2026-11-12, awaiting review).** The resolver writes one
+  `otelhelper: WARN <variable> is deprecated and will be removed in 1.0; use
+  <replacement> variable=<variable> replacement=<replacement>` line through the
+  diagnostics sink for each
+  of `SERVICE_NAME`, `ENVIRONMENT`, `OTEL_HELPER_SAMPLE_RATIO` and
+  `OTEL_HELPER_DISABLED_SIGNALS` that is set (blank under the contract trim set
+  = unset), once per container, also when a standard variable or code wins;
+  `OTEL_HELPER_EXTRA_INSTRUMENTATION` gives one `… has no effect in .NET and is
+  ignored; add the opt-in packages (StaffOps.OtelHelper.Sql, .AWS, .Redis)
+  instead` line. Message and attributes as in Go and Node.js (fix round 1:
+  `replacement=` is written whole through a new sink path for helper-controlled
+  constants, `ReportOnceWithConstants`; user values stay cut at 64 code
+  points); the value is never printed. Fix round 1 also: `OTEL_CONFIG_FILE` /
+  `OTEL_EXPERIMENTAL_CONFIG_FILE` count as set under the contract trim set (a
+  lone U+00A0 now warns; 0.3 branch before: ignored as whitespace). The 7 `xfail:C16` parity
+  cases pass (`deprecation.*`, with
+  `deprecation.disabled_signals_standard_var_set_still_warns`); .NET parity:
+  370 pass, 0 xfail, 17 skip. Tests: `DeprecationTests` (25 with theory rows),
+  6 existing tests now ignore the one deprecation line
+  (`TestDiagnostics.LinesWithoutDeprecation`); 19 mutants each fail a test.
+  README "Deprecated variables", HOW-TO §10 "Deprecated variables" (every
+  line verbatim, success = no line). Migration guide: telemetry item 28.
 
 ### Breaking — telemetry output changes (dashboards/alerts)
 

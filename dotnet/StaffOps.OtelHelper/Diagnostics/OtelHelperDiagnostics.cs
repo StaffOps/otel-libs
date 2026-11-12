@@ -35,6 +35,13 @@ namespace StaffOps.OtelHelper.Diagnostics
         bool ReportOnce(string onceKey, DiagnosticLevel level, string message, params (string Key, string Value)[] attributes);
 
         /// <summary>
+        /// <see cref="ReportOnce"/> plus <paramref name="constants"/> written after <paramref name="attributes"/>:
+        /// helper-controlled code constants (a replacement variable name, never a user value), only
+        /// quoted and escaped — not redacted and not cut at <see cref="DiagnosticText.MaxEchoedValue"/>.
+        /// </summary>
+        bool ReportOnceWithConstants(string onceKey, DiagnosticLevel level, string message, (string Key, string Value)[] attributes, (string Key, string Value)[] constants);
+
+        /// <summary>
         /// Writes a forwarded SDK record: the text is redacted, cut at the scan limit and escaped;
         /// with <paramref name="onceKey"/>, at most once per sink.
         /// </summary>
@@ -79,6 +86,20 @@ namespace StaffOps.OtelHelper.Diagnostics
             return true;
         }
 
+        public bool ReportOnceWithConstants(string onceKey, DiagnosticLevel level, string message, (string Key, string Value)[] attributes, (string Key, string Value)[] constants)
+        {
+            lock (_gate)
+            {
+                if (!_once.Add(onceKey))
+                {
+                    return false;
+                }
+            }
+
+            Write(new DiagnosticRecord(level, DiagnosticOrigin.Helper, Format(level, message, attributes, constants)));
+            return true;
+        }
+
         public void ReportSdk(DiagnosticLevel level, string source, string text, string? onceKey = null)
         {
             if (onceKey is not null)
@@ -98,20 +119,31 @@ namespace StaffOps.OtelHelper.Diagnostics
         }
 
         /// <summary>Formats a helper record. Keys are code constants (<c>[A-Za-z0-9_.]</c>); anything else is a programming error.</summary>
-        internal static string Format(DiagnosticLevel level, string message, (string Key, string Value)[] attributes)
+        internal static string Format(DiagnosticLevel level, string message, (string Key, string Value)[] attributes, (string Key, string Value)[]? constants = null)
         {
             var builder = new StringBuilder(Prefix).Append(LevelWord(level)).Append(' ').Append(DiagnosticText.EscapeInline(message));
             foreach (var (key, value) in attributes)
             {
-                if (key.Length == 0 || !key.All(c => char.IsAsciiLetterOrDigit(c) || c == '_' || c == '.'))
-                {
-                    throw new ArgumentException($"invalid diagnostic attribute key \"{key}\"", nameof(attributes));
-                }
+                builder.Append(' ').Append(CheckedKey(key)).Append('=').Append(DiagnosticText.Echo(value));
+            }
 
-                builder.Append(' ').Append(key).Append('=').Append(DiagnosticText.Echo(value));
+            // Code constants: quoted and escaped only (never user input, so no redaction or cut).
+            foreach (var (key, value) in constants ?? Array.Empty<(string, string)>())
+            {
+                builder.Append(' ').Append(CheckedKey(key)).Append('=').Append(DiagnosticText.FormatValue(value));
             }
 
             return builder.ToString();
+        }
+
+        private static string CheckedKey(string key)
+        {
+            if (key.Length == 0 || !key.All(c => char.IsAsciiLetterOrDigit(c) || c == '_' || c == '.'))
+            {
+                throw new ArgumentException($"invalid diagnostic attribute key \"{key}\"", "attributes");
+            }
+
+            return key;
         }
 
         private static string LevelWord(DiagnosticLevel level) => level switch

@@ -56,9 +56,9 @@ After registration, available via DI:
 | Variable | Source | Description | Default |
 |---|---|---|---|
 | `OTEL_SERVICE_NAME` | CI/CD Pipeline | Service name, emitted as `service.name`. 0.3 (this branch): wins over `service.name` in `OTEL_RESOURCE_ATTRIBUTES` and over `SERVICE_NAME` | none: `unknown_service:<process name>` + one warning |
-| `SERVICE_NAME` | CI/CD Pipeline | Deprecated alias. 0.3 (this branch): read after `OTEL_SERVICE_NAME` and `service.name` in `OTEL_RESOURCE_ATTRIBUTES` (0.2.x: read first) | — |
+| `SERVICE_NAME` | CI/CD Pipeline | Deprecated alias. 0.3 (this branch): read after `OTEL_SERVICE_NAME` and `service.name` in `OTEL_RESOURCE_ATTRIBUTES` (0.2.x: read first); warned once when set, also when another level wins ([Deprecated variables](#deprecated-variables-03-this-branch-task-c16)) | — |
 | `OTEL_RESOURCE_ATTRIBUTES` | Helm Chart | `key=value,…` resource attributes, parsed by the helper (0.3, this branch): blank items ignored, an item without `=` or with an empty key skipped, values percent-decoded (`%XX` only; `+` stays `+`) then trimmed of ASCII whitespace, an invalid escape kept literally; problems warned once by item position, never the value. `deployment.environment.name` here wins over `ENVIRONMENT`. `telemetry.sdk.*` keys are ignored | — |
-| `ENVIRONMENT` | Helm Chart (`values.yaml`) | Deprecated alias of `deployment.environment.name`. 0.3 (this branch): a known name (`LOCAL`, `DEV`, `HML`, `PRD`, any case) in its canonical spelling, any other value emitted as written; unset everywhere → the attribute is absent, one warning, log level Information (0.2.x: `LOCAL`) | none |
+| `ENVIRONMENT` | Helm Chart (`values.yaml`) | Deprecated alias of `deployment.environment.name`. 0.3 (this branch): a known name (`LOCAL`, `DEV`, `HML`, `PRD`, any case) in its canonical spelling, any other value emitted as written; unset everywhere → the attribute is absent, one warning, log level Information (0.2.x: `LOCAL`); warned once as deprecated when set ([Deprecated variables](#deprecated-variables-03-this-branch-task-c16)) | none |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | Helm Chart | Collector endpoint. Unset → no OTLP export, Prometheus `/metrics` fallback. 0.3 (this branch): parsed by the contract rules below ([Endpoint parsing](#endpoint-parsing-03-this-branch)); `OTEL_EXPORTER_OTLP_<SIGNAL>_ENDPOINT` beats it for one signal | _(unset)_ |
 
 > These variables are injected automatically. Application teams **do not need to configure them manually**.
@@ -78,12 +78,35 @@ After registration, available via DI:
 
 | Variable | Description | Default |
 |---|---|---|
-| `OTEL_HELPER_EXTRA_INSTRUMENTATION` | **No effect.** Nothing in core uses it since SQL/AWS moved to opt-in subpackages (the code option `TelemetryOptions.ExtraInstrumentation` is `[Obsolete]`). Use the subpackages below. | `SQL` |
-| `OTEL_HELPER_SAMPLE_RATIO` | Deprecated alias (0.3, this branch, task C10): a plain decimal in [0, 1] gives `parentbased_traceidratio`; anything else (`2`, `-1`, `abc`, `1e0`) warns `sample ratio is not a number in [0, 1]` and the default applies — not clamped. Ignored while `OTEL_TRACES_SAMPLER` is set or a sampler or ratio is set in code. 0.2.x: clamped, a bare `TraceIdRatioBasedSampler`, invalid values ignored silently. | _(unset)_ |
+| `OTEL_HELPER_EXTRA_INSTRUMENTATION` | **No effect.** Nothing in core uses it since SQL/AWS moved to opt-in subpackages (the code option `TelemetryOptions.ExtraInstrumentation` is `[Obsolete]`). Use the subpackages below. 0.3 (this branch, task C16): a set value warns once ([Deprecated variables](#deprecated-variables-03-this-branch-task-c16)) | — (no effect) |
+| `OTEL_HELPER_SAMPLE_RATIO` | Deprecated alias (0.3, this branch, task C10): a plain decimal in [0, 1] gives `parentbased_traceidratio`; anything else (`2`, `-1`, `abc`, `1e0`) warns `sample ratio is not a number in [0, 1]` and the default applies — not clamped. Ignored while `OTEL_TRACES_SAMPLER` is set or a sampler or ratio is set in code. 0.2.x: clamped, a bare `TraceIdRatioBasedSampler`, invalid values ignored silently. A set value is warned once as deprecated (task C16, [Deprecated variables](#deprecated-variables-03-this-branch-task-c16)). | _(unset)_ |
 
 > Debug mode (`OTEL_HELPER_DEBUG_LEVEL=true`) does **not** enable extra instrumentations; it sets the Debug log level and marks entry spans — spans with no parent or a remote one (`ParentSpanId == default` or `HasRemoteParent`) — with a `debug=true` attribute (see HOW-TO §13). An in-process child started from an explicit context (the Redis instrumentation does this) is not an entry span and is not marked. 0.3 (this branch, task C10, ADR-006): the tracestate is no longer touched; 0.2.x prepended `debug=true` to it, which gave `debug=true,debug=true` under a remote parent. Combine the Collector's `debug=true` policy with an environment allow-list and a rate limit (design D11).
 
 > ⚠️ **`OTEL_HELPER_DEBUG_LEVEL=true` in production causes cost explosion and backend saturation.** Use only for targeted troubleshooting.
+
+### Deprecated variables (0.3, this branch, task C16)
+
+Each deprecated variable that is set writes **one** line on standard error,
+once per container (per diagnostics sink: two hosts in one process each write
+it; Go, Python and Node.js write it once per process), also when a standard
+variable or a code option wins over it. The value is never printed. Empty or
+whitespace-only counts as unset: no line. The variable keeps its effect until
+1.0, which removes it. 0.2.x wrote nothing.
+
+| Variable | Migrate to | Line on standard error |
+|---|---|---|
+| `SERVICE_NAME` | `OTEL_SERVICE_NAME` | `otelhelper: WARN SERVICE_NAME is deprecated and will be removed in 1.0; use OTEL_SERVICE_NAME variable=SERVICE_NAME replacement=OTEL_SERVICE_NAME` |
+| `ENVIRONMENT` | `OTEL_RESOURCE_ATTRIBUTES=deployment.environment.name=<value>` | `otelhelper: WARN ENVIRONMENT is deprecated and will be removed in 1.0; use OTEL_RESOURCE_ATTRIBUTES (deployment.environment.name=<value>) variable=ENVIRONMENT replacement="OTEL_RESOURCE_ATTRIBUTES (deployment.environment.name=<value>)"` |
+| `OTEL_HELPER_SAMPLE_RATIO` | `OTEL_TRACES_SAMPLER=parentbased_traceidratio` + `OTEL_TRACES_SAMPLER_ARG=<ratio>` | `otelhelper: WARN OTEL_HELPER_SAMPLE_RATIO is deprecated and will be removed in 1.0; use OTEL_TRACES_SAMPLER=parentbased_traceidratio with OTEL_TRACES_SAMPLER_ARG variable=OTEL_HELPER_SAMPLE_RATIO replacement="OTEL_TRACES_SAMPLER=parentbased_traceidratio with OTEL_TRACES_SAMPLER_ARG"` |
+| `OTEL_HELPER_DISABLED_SIGNALS` | `OTEL_TRACES_EXPORTER` / `OTEL_METRICS_EXPORTER` / `OTEL_LOGS_EXPORTER` `=none` | `otelhelper: WARN OTEL_HELPER_DISABLED_SIGNALS is deprecated and will be removed in 1.0; use OTEL_TRACES_EXPORTER/OTEL_METRICS_EXPORTER/OTEL_LOGS_EXPORTER=none variable=OTEL_HELPER_DISABLED_SIGNALS replacement="OTEL_TRACES_EXPORTER/OTEL_METRICS_EXPORTER/OTEL_LOGS_EXPORTER=none"` |
+| `OTEL_HELPER_EXTRA_INSTRUMENTATION` (no effect) | the packages `StaffOps.OtelHelper.Sql`, `.AWS`, `.Redis` | `otelhelper: WARN OTEL_HELPER_EXTRA_INSTRUMENTATION has no effect in .NET and is ignored; add the opt-in packages (StaffOps.OtelHelper.Sql, .AWS, .Redis) instead variable=OTEL_HELPER_EXTRA_INSTRUMENTATION` |
+
+The variable's own warnings stay separate: an `OTEL_HELPER_SAMPLE_RATIO` that is
+not a plain decimal in [0, 1] also writes `sample ratio is not a number in
+[0, 1]`, and an unknown `OTEL_HELPER_DISABLED_SIGNALS` entry its `invalid
+OTEL_HELPER_DISABLED_SIGNALS` line. Examples and the migration steps:
+[HOW-TO §10](HOW-TO.md#deprecated-variables-03-this-branch-task-c16).
 
 ### Derived Ports
 
@@ -242,7 +265,7 @@ How the 0.2.x helper treats the standard variables. Some are read by the .NET SD
 |---|---|---|
 | `OTEL_TRACES_EXPORTER`, `OTEL_LOGS_EXPORTER` | Comma-separated: `otlp` (needs an endpoint), `console` (the OpenTelemetry console exporter, on standard output), `none` (the signal is off). `logging` is a deprecated alias of `console` and warns; an unknown entry warns and is dropped; `none` with other entries warns and wins; only unknown entries count as unset. 0.2.x: not read. | `otlp` |
 | `OTEL_METRICS_EXPORTER` | As above plus `prometheus`. `otlp` without a metrics endpoint warns and is dropped; when nothing is left, the default applies (0.2.x failed start). `TelemetryOptions.MetricExporters` wins; there `logging` or an unknown entry fails start. | `otlp` with an endpoint, else `prometheus` |
-| `OTEL_HELPER_DISABLED_SIGNALS` | Deprecated. Disables each listed signal unless that signal's `OTEL_<SIGNAL>_EXPORTER` holds a valid entry (`none` included) or, for metrics, `TelemetryOptions.MetricExporters` is set; an unknown entry warns once, echoing it. `TelemetryOptions.DisabledSignals` wins over every variable. The deprecation warning itself comes with task C16. | _(unset)_ |
+| `OTEL_HELPER_DISABLED_SIGNALS` | Deprecated. Disables each listed signal unless that signal's `OTEL_<SIGNAL>_EXPORTER` holds a valid entry (`none` included) or, for metrics, `TelemetryOptions.MetricExporters` is set; an unknown entry warns once, echoing it. `TelemetryOptions.DisabledSignals` wins over every variable. A set value is warned once as deprecated, also when a standard variable wins (task C16, [Deprecated variables](#deprecated-variables-03-this-branch-task-c16)). | _(unset)_ |
 | `OTEL_METRIC_EXPORT_INTERVAL` | Interval of the OTLP and console metric readers, milliseconds: digits with an optional `+`, any length (`5_000`, `-1`, `0` and non-ASCII digits warn, 30 000 is used); above 2 147 483 647 clamped with a warning. Read from the process environment only: an `IConfiguration`-only value (`appsettings.json`) has no effect and warns once naming the variable. `TelemetryOptions.ExportIntervalMs` wins and fails start outside [1, 2 147 483 647]. 0.2.x: read as an `int`, invalid values ignored silently. | `30000` |
 | `OTEL_METRICS_EXEMPLAR_FILTER` | `always_on`, `always_off`, `trace_based`; anything else warns. Read by the helper, which always sets the filter. | `trace_based` |
 | `OTEL_SDK_DISABLED` | `true` (any case): no-op providers, no exporters, no Prometheus listener, propagators kept, one INFO line. Read from `IConfiguration` (which includes the environment in a host), as the SDK reads it; a value other than `true`/`false` warns and means `false`. 0.2.x: handled by the SDK alone, no line. | `false` |

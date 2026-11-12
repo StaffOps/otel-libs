@@ -18,19 +18,19 @@ namespace StaffOps.OtelHelper
     {
         /// <summary>Environment variable name: OTLP collector endpoint for every signal. Unset: metrics fall back to the Prometheus <c>/metrics</c> endpoint and logs to stdout.</summary>
         public const string CollectorEndpointEnvVar = "OTEL_EXPORTER_OTLP_ENDPOINT";
-        /// <summary>Environment variable name: Deprecated service name variable, read after <see cref="OtelServiceNameEnvVar"/> and <c>service.name</c> in <c>OTEL_RESOURCE_ATTRIBUTES</c>.</summary>
+        /// <summary>Environment variable name: Deprecated service name variable, read after <see cref="OtelServiceNameEnvVar"/> and <c>service.name</c> in <c>OTEL_RESOURCE_ATTRIBUTES</c>; warned once when set (D8).</summary>
         public const string ServiceNameEnvVar = "SERVICE_NAME";
         /// <summary>Environment variable name: Standard OpenTelemetry service name variable; wins over <c>OTEL_RESOURCE_ATTRIBUTES</c> and <see cref="ServiceNameEnvVar"/>.</summary>
         public const string OtelServiceNameEnvVar = "OTEL_SERVICE_NAME";
-        /// <summary>Environment variable name: Deprecated alias of <c>deployment.environment.name</c> in <c>OTEL_RESOURCE_ATTRIBUTES</c>, which wins; see <see cref="DeploymentEnvironments"/>.</summary>
+        /// <summary>Environment variable name: Deprecated alias of <c>deployment.environment.name</c> in <c>OTEL_RESOURCE_ATTRIBUTES</c>, which wins; warned once when set (D8); see <see cref="DeploymentEnvironments"/>.</summary>
         public const string EnvironmentEnvVar = "ENVIRONMENT";
         /// <summary>Environment variable name: Debug mode switch (<c>true</c>/<c>false</c>); see <see cref="DebugLevel"/>.</summary>
         public const string DebugLevelEnvVar = "OTEL_HELPER_DEBUG_LEVEL";
-        /// <summary>Environment variable name: Extra instrumentations; it has no effect in .NET.</summary>
+        /// <summary>Environment variable name: Extra instrumentations; it has no effect in .NET and is warned once when set.</summary>
         public const string ExtraInstrumentationEnvVar = "OTEL_HELPER_EXTRA_INSTRUMENTATION";
-        /// <summary>Environment variable name: Deprecated trace sample ratio, a plain decimal in [0, 1] giving <c>parentbased_traceidratio</c>; read only when no sampler or ratio is set in code and <see cref="TracesSamplerEnvVar"/> is unset; another value is warned and ignored.</summary>
+        /// <summary>Environment variable name: Deprecated trace sample ratio, a plain decimal in [0, 1] giving <c>parentbased_traceidratio</c>; read only when no sampler or ratio is set in code and <see cref="TracesSamplerEnvVar"/> is unset; another value is warned and ignored. Warned once as deprecated when set (D8).</summary>
         public const string SampleRatioEnvVar = "OTEL_HELPER_SAMPLE_RATIO";
-        /// <summary>Environment variable name: Comma-separated signals to disable (<c>traces</c>, <c>metrics</c>, <c>logs</c>); see <see cref="DisabledSignals"/>.</summary>
+        /// <summary>Environment variable name: Deprecated comma-separated signals to disable (<c>traces</c>, <c>metrics</c>, <c>logs</c>), warned once when set (D8); see <see cref="DisabledSignals"/>.</summary>
         public const string DisabledSignalsEnvVar = "OTEL_HELPER_DISABLED_SIGNALS";
         /// <summary>Environment variable name: Comma-separated instrument names or wildcard patterns to drop; see <see cref="DisabledMetrics"/>.</summary>
         public const string DisabledMetricsEnvVar = "OTEL_HELPER_DISABLED_METRICS";

@@ -290,7 +290,7 @@ public sealed class SignalsExportersTests : IDisposable
         var diagnostics = new TestDiagnostics();
         var resolved = diagnostics.Resolve(TestDiagnostics.Identified);
         diagnostics.Resolve(TestDiagnostics.Identified);
-        var line = Assert.Single(diagnostics.Lines);
+        var line = Assert.Single(diagnostics.LinesWithoutDeprecation("OTEL_HELPER_DISABLED_SIGNALS"));
         Assert.Contains("invalid OTEL_HELPER_DISABLED_SIGNALS: unknown signal ignored; valid values: traces, metrics, logs", line);
         Assert.Contains("value=profiles", line);
         Assert.Equal("logs", resolved.DisabledSignals);

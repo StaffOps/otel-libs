@@ -171,6 +171,8 @@ the C4 runner records.
 > `DisabledSignals` entry that is not a signal fails start, as in Go and
 > Python. `config.disabled_signals_standard_var_wins` is `xfail:C16`: its
 > warning is the deprecation of task C16.
+> *Corrected 2026-11-12 (C16):* since the C9 split that case passes; C16 owns
+> `deprecation.disabled_signals_standard_var_set_still_warns` instead.
 
 ### Sampler, propagators, debug — R6, R9, A20, ADR-006 (32 cases → C10)
 
@@ -219,9 +221,27 @@ the C4 runner records.
 
 ### Deprecations — R8, D8 (6 cases → C16)
 
+> *Corrected 2026-11-12 (C16):* 7 cases since the C9 split (the 6 `deprecation.` cases plus `deprecation.disabled_signals_standard_var_set_still_warns`).
+
 `SERVICE_NAME`, `ENVIRONMENT`, `OTEL_HELPER_SAMPLE_RATIO`,
 `OTEL_HELPER_DISABLED_SIGNALS`, `OTEL_HELPER_EXTRA_INSTRUMENTATION`: read
 without any warning (rows above). Cases `deprecation.*` (6).
+
+> *Implemented 2026-11-12 (C16):* each one that is set (blank under the
+> contract trim set = unset) gives one D-NET5 `WARN` line, once per sink, also
+> when a standard variable or code wins; the replacement is named in the
+> message only (no `replacement=` attribute: the sink cuts echoed values at 64
+> code points); `OTEL_HELPER_EXTRA_INSTRUMENTATION` gets the "has no effect in
+> .NET" line. 7 cases with `deprecation.disabled_signals_standard_var_set_still_warns`
+> (tasks.md C16 note).
+>
+> *Fix round 1, 2026-11-12 (C16; owner: parity with Go and Node.js):* supersedes
+> "no `replacement=` attribute" above — the line now ends `variable=<variable>
+> replacement=<replacement>`. The sink gained `ReportOnceWithConstants`: values
+> passed as constants (helper code constants only, never user input) are quoted
+> and escaped but not redacted and not cut at 64 code points; attribute values
+> keep the cut. `OTEL_CONFIG_FILE` / `OTEL_EXPERIMENTAL_CONFIG_FILE` are "set"
+> under the contract trim set (a lone U+00A0 warns).
 
 ### Opt-in packages — A25–A28, R10 database (no fixture kind → integration tests in C14)
 

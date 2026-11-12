@@ -1008,13 +1008,55 @@ namespace StaffOps.OtelHelper
             return disabled;
         }
 
+        /// <summary>
+        /// Deprecated variables (contract design D8, R8) and the replacement each warning names. Same
+        /// message and attributes as Go and Node.js (<c>variable=</c>, <c>replacement=</c>); the
+        /// replacement is a code constant, so the sink writes it whole (not cut at
+        /// <see cref="Diagnostics.DiagnosticText.MaxEchoedValue"/>). Only the variable name is printed,
+        /// never its value.
+        /// </summary>
+        internal static readonly (string Variable, string Replacement)[] DeprecatedEnvVars =
+        {
+            (TelemetryOptions.ServiceNameEnvVar, TelemetryOptions.OtelServiceNameEnvVar),
+            (TelemetryOptions.EnvironmentEnvVar, ResourceAttributesEnvVar + " (deployment.environment.name=<value>)"),
+            (TelemetryOptions.SampleRatioEnvVar,
+                TelemetryOptions.TracesSamplerEnvVar + "=parentbased_traceidratio with " + TelemetryOptions.TracesSamplerArgEnvVar),
+            (TelemetryOptions.DisabledSignalsEnvVar,
+                TracesExporterEnvVar + "/" + TelemetryOptions.MetricsExporterEnvVar + "/" + LogsExporterEnvVar + "=none"),
+        };
+
+        /// <summary>
+        /// Warns, once per diagnostics sink, about every deprecated (D8) or dead variable that is set
+        /// — blank under the contract trim set counts as unset — and about unsupported ones (A19). A
+        /// deprecated variable is warned also when a standard variable or code wins over it, so it can
+        /// be removed before 1.0 (contract row "Deprecated OTEL_HELPER_DISABLED_SIGNALS").
+        /// </summary>
         private static void WarnUnsupported(TelemetryOptions code, IOtelHelperDiagnostics diagnostics)
         {
+            foreach (var (variable, replacement) in DeprecatedEnvVars)
+            {
+                if (ContractText.NonBlank(Env(variable)) is not null)
+                {
+                    diagnostics.ReportOnceWithConstants("deprecated:" + variable, DiagnosticLevel.Warn,
+                        $"{variable} is deprecated and will be removed in 1.0; use {replacement}",
+                        new[] { ("variable", variable) }, new[] { ("replacement", replacement) });
+                }
+            }
+
+            if (ContractText.NonBlank(Env(TelemetryOptions.ExtraInstrumentationEnvVar)) is not null)
+            {
+                // Contract D8 / G9: a dead knob is never accepted silently.
+                diagnostics.ReportOnce("unused:" + TelemetryOptions.ExtraInstrumentationEnvVar, DiagnosticLevel.Warn,
+                    $"{TelemetryOptions.ExtraInstrumentationEnvVar} has no effect in .NET and is ignored; add the opt-in packages (StaffOps.OtelHelper.Sql, .AWS, .Redis) instead",
+                    ("variable", TelemetryOptions.ExtraInstrumentationEnvVar));
+            }
+
             foreach (var variable in new[] { TelemetryOptions.ConfigFileEnvVar, TelemetryOptions.ExperimentalConfigFileEnvVar })
             {
-                if (!string.IsNullOrWhiteSpace(Env(variable)))
+                if (ContractText.NonBlank(Env(variable)) is not null)
                 {
-                    // Contract D1 row "OTEL_CONFIG_FILE" (A19): the name only, never the path.
+                    // Contract D1 row "OTEL_CONFIG_FILE" (A19): the name only, never the path. Set =
+                    // non-blank under the contract trim set (Go trimWS), so a lone U+00A0 counts.
                     diagnostics.ReportOnce("unused:" + variable, DiagnosticLevel.Warn,
                         $"{variable} is not supported by the .NET helper and is ignored; configure it with environment variables or TelemetryOptions",
                         ("variable", variable));
