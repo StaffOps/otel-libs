@@ -586,7 +586,7 @@ An instrument of your own meter with one of these names is kept, and
 
 When an exception occurs in HTTP requests (inbound/outbound) or SQL queries, the lib automatically records a **span event** with `exception.type`, `exception.message`, and `exception.stacktrace`.
 
-0.3 (this branch): database client spans (SqlClient, Npgsql, MySqlConnector, Redis) keep only `exception.type`; the message and stack trace go to a correlated log record — see [Exceptions: traces vs logs](#exceptions-traces-vs-logs) (§14, ADR-014).
+0.3 (this branch): database client spans (SqlClient, Npgsql, MySqlConnector, Redis) and AWS SDK spans (task C14c) keep only `exception.type`; the message and stack trace go to a correlated log record — see [Exceptions: traces vs logs](#exceptions-traces-vs-logs) (§14, ADR-014; AWS examples in [AWS](#aws-spans-failed-calls-and-url-redaction)).
 
 ### Framework Logs Filtered
 
@@ -769,7 +769,7 @@ builder.Services.AddOtelHelperProfiling();
 
 | Package | Extension Method | What it instruments |
 |---------|-----------------|---------------------|
-| `StaffOps.OtelHelper.AWS` | `AddOtelHelperAws()` | AWS SDK calls (S3, SQS, DynamoDB, etc.) |
+| `StaffOps.OtelHelper.AWS` | `AddOtelHelperAws()` | AWS SDK for .NET v4 calls (S3, SQS, SNS, DynamoDB, etc.): one CLIENT span per call ([below](#aws-spans-failed-calls-and-url-redaction)) |
 | `StaffOps.OtelHelper.Redis` | `AddOtelHelperRedis()` | StackExchange.Redis commands |
 | `StaffOps.OtelHelper.Sql` | `AddOtelHelperSql()` | SqlClient, Npgsql and MySqlConnector spans and metrics (below) |
 | `StaffOps.OtelHelper.Profiling` | `AddOtelHelperProfiling()` | .NET CLR profiling via OTel |
@@ -1167,19 +1167,194 @@ builder.Services.Configure<OpenTelemetry.Instrumentation.StackExchangeRedis.Stac
 
 The connection string (and its `password=`) never reaches a span.
 
+### AWS: spans, failed calls and URL redaction
+
+Measured with `OpenTelemetry.Instrumentation.AWS` 1.20.3 and `AWSSDK.Core` 4.0.3.3
+(S3 4.0.14, DynamoDBv2 4.0.10.1, SNS 4.0.2.7, SQS 4.0.2.5) against a local fake
+endpoint, and DynamoDB Local 2.6.1 for DynamoDB's error texts (task C14c,
+2026-11-11; credentials are placeholders, ids are test values).
+
+**Registration.** Build the tracer provider before you create AWS clients
+(resolve them from DI after the host starts, or after `AddOtelHelper` has run):
+
+```csharp
+builder.Services.AddOtelHelper();
+builder.Services.AddOtelHelperAws();
+builder.Services.AddSingleton<IAmazonS3>(_ => new AmazonS3Client());   // created on first use, after start
+```
+
+| Case | Behavior |
+|---|---|
+| spans | one CLIENT span per call, `<Service>.<Operation>` (`S3.PutObject`, `DynamoDB.UpdateItem`, `SQS.SendMessage`), source `AWSSDK.<Service>` |
+| HttpClient span under the call | none: `AddOtelHelperAws()` sets the upstream `SuppressDownstreamInstrumentation`. Without it each call also gives a `System.Net.Http` span whose `url.full` path is the S3 object key (`/orders/<key>`), plus the SDK's internal `HttpRequest` and `CredentialsRetrieval` spans (measured) |
+| your own `AddAWSInstrumentation()` before `AddOtelHelperAws()` | AWSSDK.Core keeps the **first** pipeline customizer registered in the process, so your options win: no suppression unless you set it, and the HttpClient / `HttpRequest` / `CredentialsRetrieval` spans come back. The helper still removes the key from them (child-span rule below) |
+| an AWS client created before the tracer provider is built | gets the SDK's spans but none of the instrumentation's: no `aws.s3.bucket` / table names and **no suppression**, so the HttpClient child span comes back; its URL path is replaced with `/` by the child-span rule (measured on .NET 8 and 10, C14c fix round 1). Create clients after the provider to get the instrumentation's attributes |
+| HttpClient span with an AWS SDK span among its in-process ancestors (fix rounds 1 and 2; up to 16 levels, so a DelegatingHandler or resilience-pipeline span in between is covered) | its `url.full` / `http.url` path is replaced with `/` (scheme, host, port and the redacted query kept), `url.path` becomes `/`, `http.target` `/` plus its query: the path is the bucket and object key. The SDK's internal spans carry no URL (`HttpRequest`: method, status, content lengths; `CredentialsRetrieval`: RPC keys; measured) |
+| span name of `GetObjectMetadata` (an S3 `HEAD`) | `S3.GetObjectMetadata`: the .NET request name, not the AWS operation (`HeadObject` in Go, Python and Node.js) |
+
+**Example: a successful call** (S3 `PutObject`; the key is not recorded):
+
+```csharp
+await s3.PutObjectAsync(new PutObjectRequest { BucketName = "orders", Key = "invoices/2026/inv-42.pdf", ContentBody = pdf });
+```
+
+```text
+span "S3.PutObject"  source=AWSSDK.S3  kind=Client  status=Unset
+  rpc.system=aws-api  rpc.service=S3  rpc.method=PutObject  aws.s3.bucket=orders
+```
+
+The `rpc.*` keys are the **legacy** RPC keys (the instrumentation's `V1_28_0`
+default, the contract default in every language); the current keys behind
+`OTEL_SEMCONV_STABILITY_OPT_IN=rpc` were not measured on .NET and the helper
+does not map them.
+
+**Example: the HttpClient child of an early-built client** (or of your own
+`AddAWSInstrumentation()` registered first), the same `PutObject`, measured:
+
+```text
+raw (the instrumentation without the helper's rules, measured in the C14c probe):
+span "PUT"  source=System.Net.Http  parent=AWSSDK.S3 (HttpRequest)
+  url.full=http://<s3-endpoint>/orders/invoices/2026/inv-42.pdf
+after (0.3, this branch):
+span "PUT"  source=System.Net.Http  parent=AWSSDK.S3 (HttpRequest)
+  url.full=http://<s3-endpoint>/   server.address=<s3-endpoint>  http.response.status_code=200
+```
+
+**Rules on every `AWSSDK.*` span** (core sanitizing processor, also for sources
+the application subscribed itself; contract A27):
+
+| Rule | Effect |
+|---|---|
+| Failed call | status `ERROR` kept, description removed (upstream writes the exception message there) |
+| `error.type` ownership | the helper owns it on AWS spans: a value set by an `Enrich` callback, upstream or another processor before the helper's is replaced by the rule below |
+| `error.type` (upstream writes none) | the AWS error code (`aws.error_code`) when it matches `^[A-Z][A-Za-z0-9]{1,63}$` (`NoSuchKey`, `ValidationException`, `ConditionalCheckFailedException`, `InvalidParameter`); else the modeled exception's name without `Exception` (SQS: code `AWS.SimpleQueueService.NonExistentQueue`, exception `QueueDoesNotExistException` → `QueueDoesNotExist`); else, for an error from outside the SDK, its class name (`HttpRequestException` for a refused connection); else `_OTHER` (an unparseable response, `AmazonUnmarshallingException`; a generic `AmazonS3Exception` without a code). A body-less S3 `HEAD` 404 / 403 / 503 gives `NotFound` / `Forbidden` / `ServiceUnavailable` (the SDK's own code) |
+| `aws.s3.key` | removed (upstream writes the request's `Key`); `aws.s3.copy_source`, `aws.s3.delete` and `aws.dynamodb.item_collection_metrics` are removed too (not written by 1.20.3; measured absent for `CopyObject`, `DeleteObjects` and a `PutItem` whose response had `ItemCollectionMetrics`) |
+| `exception.message`, `exception.stacktrace` **attributes** | removed: AWSSDK.Core writes them on the span as well as in the event (`exception.type` and `aws.error_code` kept) |
+| `exception` event ([ADR-014](../specs/decisions/ADR-014-exception-detail-in-correlated-logs.md)) | keeps only `exception.type`; the message and the stack trace go to one ERROR log record of category `StaffOps.OtelHelper.Aws` with the span's `trace_id` / `span_id` ([Exceptions: traces vs logs](#exceptions-traces-vs-logs)) |
+| SNS publish to a phone number | never on a span (1.20.3 records no destination for a phone publish). The error text of a failed call, which can include the phone number (`Invalid parameter: PhoneNumber Reason: <phone> is not valid to publish to`) or item values, goes to the correlated log record — or to standard output without a logs exporter — by ADR-014's design: **treat the log pipeline as sensitive**. Python and Node.js write `messaging.destination.name=phone_number:**`, Go nothing |
+
+Why the message goes to the log: the SDK copies the service's error message
+verbatim, and DynamoDB quotes request literals in it (DynamoDB Local 2.6.1:
+`UpdateExpression = "SET amount = 98765"` → `Invalid UpdateExpression: Syntax error; token: "98765", near: "= 98765"`;
+`FilterExpression = "card = 'x'"` → `... near: "= 'x"`). A `ConditionalCheckFailed`
+with `ReturnValuesOnConditionCheckFailure = ALL_OLD` keeps the old item out of
+the message and the stack trace (`The conditional request failed`, measured).
+
+**Example: a failed call** (S3 `GetObject` of a missing key; stdout fallback,
+no OTLP endpoint — with OTLP the record carries the same ids as its trace context):
+
+```text
+span "S3.GetObject"  source=AWSSDK.S3  kind=Client  status=Error   (no description)
+  rpc.system=aws-api  rpc.service=S3  rpc.method=GetObject  aws.s3.bucket=orders
+  exception.type=Amazon.S3.AmazonS3Exception  aws.error_code=NoSuchKey  error.type=NoSuchKey
+  http.status_code=404  aws.request_id=<request-id>
+  event "exception" [exception.type=Amazon.S3.AmazonS3Exception]   <- type only
+```
+
+```json
+{"time":"2026-11-11T19:46:29.722Z","level":"ERROR","msg":"The specified key does not exist.","logger":"StaffOps.OtelHelper.Aws","trace_id":"d11b35d9b7dbfe5d9b47d46cd0dc2c5f","span_id":"6954ed7d771d8492","exception.type":"Amazon.S3.AmazonS3Exception","exception.message":"The specified key does not exist.","exception.stacktrace":"Amazon.S3.AmazonS3Exception: The specified key does not exist.\n ---> Amazon.Runtime.Internal.HttpErrorResponseException: ..."}
+```
+
+**Example: a failed SNS publish to a phone number** (a fake `InvalidParameter`
+response quoting the number; span measured, record body asserted by
+`AwsTests.Sns_Publish_To_A_Phone_Number_Records_No_Number`, line shape as
+measured for S3 above; the number is a placeholder):
+
+```text
+span "SNS.Publish"  source=AWSSDK.SNS  kind=Client  status=Error
+  rpc.system=aws-api  rpc.service=SNS  rpc.method=Publish
+  exception.type=Amazon.SimpleNotificationService.Model.InvalidParameterException
+  aws.error_code=InvalidParameter  error.type=InvalidParameter  http.status_code=400
+  event "exception" [exception.type=Amazon.SimpleNotificationService.Model.InvalidParameterException]
+```
+
+```json
+{"time":"…","level":"ERROR","msg":"Invalid parameter: PhoneNumber Reason: <phone> is not valid to publish to","logger":"StaffOps.OtelHelper.Aws","trace_id":"<trace-id>","span_id":"<span-id>","exception.type":"Amazon.SimpleNotificationService.Model.InvalidParameterException","exception.message":"Invalid parameter: PhoneNumber Reason: <phone> is not valid to publish to","exception.stacktrace":"…"}
+```
+
+The phone number is in the log record only: restrict who reads those logs and
+how long they are kept, as for the database records.
+
+**Examples: the `error.type` fallbacks** (measured):
+
+```text
+refused connection (no AWS code):     exception.type=System.Net.Http.HttpRequestException     error.type=HttpRequestException
+unparseable 200 response:             exception.type=Amazon.Runtime.AmazonUnmarshallingException  error.type=_OTHER
+SQS with a dotted query code:         aws.error_code=AWS.SimpleQueueService.NonExistentQueue  error.type=QueueDoesNotExist
+```
+
+The same for DynamoDB (`error.type=ValidationException`, record body
+`Invalid UpdateExpression: Syntax error; token: "98765", near: "= 98765"`) and
+SQS (`aws.error_code=AWS.SimpleQueueService.NonExistentQueue`,
+`error.type=QueueDoesNotExist`, body `The specified queue does not exist.`),
+measured the same way. Count AWS failures from the spans
+(`error.type`, status) and read the text from the record.
+
+**URL query redaction** (contract A28; owner decision O3: keep upstream's text).
+This applies to every HTTP span, not only AWS — typically a presigned S3 URL
+your code fetches with `HttpClient`, or one a client sends to your API:
+
+| Where | Default (upstream redaction on) | Upstream redaction turned off |
+|---|---|---|
+| server `url.query` (ASP.NET Core), every runtime | every value `Redacted`: `?X-Amz-Algorithm=Redacted&X-Amz-Credential=Redacted&…` | `OTEL_DOTNET_EXPERIMENTAL_ASPNETCORE_DISABLE_URL_QUERY_REDACTION=true`: values as sent, the helper writes the ten contract names as `REDACTED` |
+| client `url.full` (HttpClient), .NET 8 runtime | every value `Redacted` | `OTEL_DOTNET_EXPERIMENTAL_HTTPCLIENT_DISABLE_URL_QUERY_REDACTION=true`: values as sent, the ten names `REDACTED` |
+| client `url.full`, .NET 9+ runtime (measured on .NET 10) | the query is `*` (`/download?*`, names dropped) | `DOTNET_SYSTEM_NET_HTTP_DISABLEURIREDACTION=true` or the `System.Net.Http.DisableUriRedaction` switch (read once per process; the contrib variable has no effect there): values as sent, the ten names `REDACTED` |
+
+The ten names (exact, case-sensitive, after percent-decoding the name, as Go,
+Python and Node.js): `sig`, `Signature`, `AWSAccessKeyId`, `X-Goog-Signature`,
+`X-Amz-Signature`, `X-Amz-Credential`, `X-Amz-Security-Token`, `access_token`,
+`X-Goog-Credential`, `GoogleAccessId`. Other names (`X-Amz-Date`, `token`,
+`api_key`), lower-case variants (`x-amz-signature`) and names without `=` are
+kept; every other byte of the query stays as written; a value already
+`Redacted` is left as upstream wrote it. Measured with both switches off
+(.NET 8 runtime):
+
+```text
+span "GET /download"  kind=Server
+  url.query=?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=REDACTED&X-Amz-Date=20261111T120000Z&X-Amz-Expires=300&X-Amz-Security-Token=REDACTED&X-Amz-SignedHeaders=host&X-Amz-Signature=REDACTED
+span "GET"  kind=Client
+  url.full=http://127.0.0.1:<port>/download?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=REDACTED&X-Amz-Date=20261111T120000Z&X-Amz-Expires=300&X-Amz-Security-Token=REDACTED&X-Amz-SignedHeaders=host&X-Amz-Signature=REDACTED
+```
+
+On the .NET 10 runtime HttpClient writes the client query as `?*`, and the
+OpenTelemetry HttpClient switch (`OTEL_DOTNET_EXPERIMENTAL_HTTPCLIENT_DISABLE_URL_QUERY_REDACTION`)
+has no effect there: only the runtime's `DOTNET_SYSTEM_NET_HTTP_DISABLEURIREDACTION`
+(or the `System.Net.Http.DisableUriRedaction` switch) turns it off.
+
+The redaction is on the span attributes `url.full`, `http.url`, `url.query`
+and `http.target` only, also when the value is a `Uri` or another object (its
+text is redacted and written back as a string; fix round 1). It is not a
+free-text rule: an exception message of your own that embeds a URL is not
+rewritten. HttpClient failures (`Connection refused (<host>:<port>)`,
+`The SSL connection could not be established, see inner exception.`) carry no
+URL in their status or exception text (measured), so nothing else is rewritten.
+The AWS SDK's own calls are signed in headers: no signature in any query.
+
+**Warnings you can hit** (the helper's diagnostics sink, standard error, written once):
+
+```text
+otelhelper: WARN span sanitizer failed; the span's status description, query text, connection, URL and AWS payload attributes were removed source=AWSSDK.S3 error=InvalidOperationException
+otelhelper: WARN cannot rewrite span events on this runtime (System.Diagnostics.Activity has no _events field); database and AWS exception events keep their message and stack trace (ADR-014)
+```
+
+The first means a rule threw (a bug: report it); the span is exported without
+those attributes. The second appears only on a runtime whose `Activity` lacks
+the private event list the rewrite uses (the .NET 8 and 10 runtimes have it, canary test); then the
+detail stays on the span and no record is written.
+
 ### Exceptions: traces vs logs
 
 The helper's rule for exceptions whose text can carry data
 ([ADR-014](../specs/decisions/ADR-014-exception-detail-in-correlated-logs.md);
 today the database clients — SqlClient, Npgsql, MySqlConnector, and Redis when
-an `Enrich` callback adds an event):
+an `Enrich` callback adds an event — and the AWS SDK clients, task C14c):
 
 1. **The span keeps the type**: status `ERROR` (no description), `error.type`,
-   `db.response.status_code`, and an `exception` event with only
+   `db.response.status_code` (AWS: `aws.error_code`), and an `exception` event with only
    `exception.type`. That is enough to identify and count failures (span
    metrics, error ratio, tail sampling on `status = error`).
 2. **The detail goes to the log**: one ERROR record, category
-   `StaffOps.OtelHelper.Database`, body = the message, attributes
+   `StaffOps.OtelHelper.Database` (AWS: `StaffOps.OtelHelper.Aws`), body = the message, attributes
    `exception.type`, `exception.message`, `exception.stacktrace`.
 3. **The two are joined by `trace_id` / `span_id`**: the record carries the
    failed span's ids (OTLP trace context, or the `trace_id` / `span_id` fields of
@@ -1232,7 +1407,8 @@ From the span in Tempo, "Logs for this span" opens Loki filtered by its trace
 and span id; from the record in Loki, the `trace_id` link opens the trace. A
 LogQL query for the records of one trace (stdout fallback):
 `{service_name="orders-api"} | json | logger="StaffOps.OtelHelper.Database" | trace_id="<trace_id>"`.
-Examples of both records: SQL above, Redis in the previous subsection.
+Examples of the records: SQL and Redis above, AWS in the previous subsection
+(for AWS use `logger="StaffOps.OtelHelper.Aws"`).
 
 
 ### Profiling Prerequisites

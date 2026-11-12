@@ -233,6 +233,7 @@ namespace StaffOps.OtelHelper.Diagnostics
                 }
 
                 if (!SdkTextSanitizer.IsQuietMeterNotice(eventData.EventName, payload, quiet)
+                    && !SdkTextSanitizer.IsPrivateRuntimeMeterNotice(eventData.EventName, payload)
                     && Format(source, eventData.EventName, eventData.Message, payload, secrets, stopping, invalidContextExpected) is { } text)
                 {
                     sink.ReportSdk(level, source, text, SdkTextSanitizer.OnceKey(source, text));

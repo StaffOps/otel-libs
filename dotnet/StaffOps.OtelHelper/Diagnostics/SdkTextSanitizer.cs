@@ -77,6 +77,21 @@ namespace StaffOps.OtelHelper.Diagnostics
                 && payload[1] is string meter && quietMeters.Any(q => q == meter || (q.EndsWith(".*", StringComparison.Ordinal) && meter.StartsWith(q[..^1], StringComparison.Ordinal)))
                 && payload[2] is string reason && reason.Contains("not subscribed", StringComparison.OrdinalIgnoreCase);
 
+        /// <summary>
+        /// The SDK's event 33 (<c>MetricInstrumentIgnored</c>) with the not-subscribed reason for a
+        /// runtime-private meter (<c>Private.InternalDiagnostics.*</c>, e.g.
+        /// <c>Private.InternalDiagnostics.System.Net.Quic.MsQuic</c>, whose <c>msquic.*</c> instruments
+        /// the .NET 10 runtime creates at start: 32 warnings, measured C14c fix round 1). No provider
+        /// subscribes those meters by design; any other reason is forwarded.
+        /// </summary>
+        internal static bool IsPrivateRuntimeMeterNotice(string? eventName, object?[] payload)
+            => eventName == "MetricInstrumentIgnored"
+                && payload.Length >= 3
+                && payload[1] is string meter && meter.StartsWith(PrivateRuntimeMeterPrefix, StringComparison.Ordinal)
+                && payload[2] is string reason && reason.Contains("not subscribed", StringComparison.OrdinalIgnoreCase);
+
+        internal const string PrivateRuntimeMeterPrefix = "Private.InternalDiagnostics.";
+
         /// <summary>SDK parse warnings repeat once per provider; they are written once per sink.</summary>
         internal static string? OnceKey(string source, string text)
             => text.StartsWith("Configuration key '", StringComparison.Ordinal) ? "sdk:" + source + ":" + text : null;

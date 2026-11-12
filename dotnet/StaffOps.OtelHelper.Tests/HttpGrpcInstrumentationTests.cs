@@ -880,6 +880,21 @@ public sealed class HttpGrpcInstrumentationTests : IDisposable
     public void Quiet_Meter_Notices_Cover_The_Service_Meter_Children(string meter, bool quiet)
         => Assert.Equal(quiet, SdkTextSanitizer.IsQuietMeterNotice("MetricInstrumentIgnored", new object?[] { "x", meter, "Instrument belongs to a Meter not subscribed by the provider." }, new[] { "svc", "svc.*" }));
 
+    [Theory]
+    [InlineData("MetricInstrumentIgnored", "Private.InternalDiagnostics.System.Net.Quic.MsQuic", "Instrument belongs to a Meter not subscribed by the provider.", true)]
+    [InlineData("MetricInstrumentIgnored", "Private.InternalDiagnostics.Other", "Instrument belongs to a Meter not subscribed by the provider.", true)]
+    [InlineData("MetricInstrumentIgnored", "Private.InternalDiagnostics.System.Net.Quic.MsQuic", "Instrument name is invalid.", false)]
+    [InlineData("MetricInstrumentIgnored", "System.Net.Quic", "Instrument belongs to a Meter not subscribed by the provider.", false)]
+    [InlineData("MetricInstrumentIgnored", "Private.InternalDiagnosticsX", "Instrument belongs to a Meter not subscribed by the provider.", false)]
+    [InlineData("OtherEvent", "Private.InternalDiagnostics.System.Net.Quic.MsQuic", "Instrument belongs to a Meter not subscribed by the provider.", false)]
+    public void Runtime_Private_Meter_Not_Subscribed_Notices_Are_Noise(string eventName, string meter, string reason, bool noise)
+    {
+        // C14c fix round 1: the .NET 10 runtime creates msquic.* instruments on
+        // Private.InternalDiagnostics.System.Net.Quic.MsQuic at start (32 SDK warnings, measured).
+        Assert.Equal(noise, SdkTextSanitizer.IsPrivateRuntimeMeterNotice(eventName, new object?[] { "msquic.connection.active", meter, reason }));
+        Assert.False(SdkTextSanitizer.IsPrivateRuntimeMeterNotice(eventName, new object?[] { "x", meter }));
+    }
+
     private static readonly string[] OptInSeries =
     {
         "http.server.active_requests", "http.client.active_requests", "http.client.open_connections", "http.client.request.time_in_queue",

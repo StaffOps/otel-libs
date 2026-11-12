@@ -7,7 +7,8 @@ namespace StaffOps.OtelHelper.Logging
 {
     /// <summary>
     /// The correlated log record of ADR-014 (task C14a round 2): one record per detailed
-    /// <c>exception</c> event of a database client span, through the application's
+    /// <c>exception</c> event of a database client span (category <see cref="Category"/>) or of an AWS
+    /// SDK span (<see cref="AwsCategory"/>, task C14c), through the application's
     /// <see cref="ILogger"/> pipeline (OTLP when a logs exporter is active, else the C13 stdout line;
     /// the helper's level rules apply). Category <see cref="Category"/>, level Error, the message as
     /// the body, attributes <c>exception.type</c>, <c>exception.message</c>,
@@ -21,6 +22,18 @@ namespace StaffOps.OtelHelper.Logging
         /// <summary>The logger category of the records (filter it like any category).</summary>
         internal const string Category = "StaffOps.OtelHelper.Database";
 
+        /// <summary>The logger category of the records of AWS SDK spans (task C14c; the same shape as <see cref="Category"/>).</summary>
+        internal const string AwsCategory = "StaffOps.OtelHelper.Aws";
+
+        /// <summary>The body of a database record whose event has neither message nor type.</summary>
+        internal const string DbFallbackBody = "database client exception";
+
+        /// <summary>The body of an AWS record whose event has neither message nor type.</summary>
+        internal const string AwsFallbackBody = "AWS client exception";
+
+        /// <summary>Whether <paramref name="category"/> is one of the ADR-014 record categories.</summary>
+        internal static bool IsRecordCategory(string? category) => category is Category or AwsCategory;
+
         internal const string TraceIdKey = "trace_id";
         internal const string SpanIdKey = "span_id";
 
@@ -28,7 +41,7 @@ namespace StaffOps.OtelHelper.Logging
         internal const string EventTimeKey = "otelhelper.event_time";
 
         /// <summary>Writes the record for <paramref name="e"/> of <paramref name="span"/> to <paramref name="logger"/>.</summary>
-        internal static void Write(ILogger logger, Activity span, in ActivityEvent e)
+        internal static void Write(ILogger logger, Activity span, in ActivityEvent e, string fallbackBody = DbFallbackBody)
         {
             if (!logger.IsEnabled(LogLevel.Error))
             {
@@ -46,7 +59,7 @@ namespace StaffOps.OtelHelper.Logging
                 new(SpanIdKey, span.SpanId.ToHexString()),
                 new(EventTimeKey, e.Timestamp.UtcDateTime.ToString("O", System.Globalization.CultureInfo.InvariantCulture)),
             };
-            var body = message ?? type ?? "database client exception";
+            var body = message ?? type ?? fallbackBody;
 
             // Not under SuppressInstrumentation on the exporter path: the helper's exporters sanitize
             // before the OTLP exporter enters its suppression scope (OtlpTraceExporter.Export); pinned by
@@ -54,13 +67,13 @@ namespace StaffOps.OtelHelper.Logging
             logger.Log(LogLevel.Error, default, state, null, (_, _) => body);
         }
 
-        /// <summary>The span context and event time a record of <see cref="Category"/> names, when every value is valid.</summary>
+        /// <summary>The span context and event time a record of an ADR-014 category names, when every value is valid.</summary>
         internal static bool TryReadContext(string? category, IEnumerable<KeyValuePair<string, object?>> attributes, out ActivityTraceId traceId, out ActivitySpanId spanId, out DateTime? eventTime)
         {
             traceId = default;
             spanId = default;
             eventTime = null;
-            if (category != Category)
+            if (!IsRecordCategory(category))
             {
                 return false;
             }
@@ -123,7 +136,7 @@ namespace StaffOps.OtelHelper.Logging
         }
 
         /// <summary>
-        /// Gives a record of <see cref="Category"/> the trace context and timestamp named by its
+        /// Gives a record of an ADR-014 category the trace context and timestamp named by its
         /// transport attributes and removes them; other records, and a record whose ids are not valid
         /// lower-case non-zero hex, are left alone. Added before the helper's log exporters.
         /// </summary>

@@ -92,6 +92,16 @@ log, linked to the trace by trace/log correlation (same `trace_id` and
   `db.system` or `db.system.name`; snippet in `dotnet/HOW-TO.md` §14, not
   tested).
 
+- *Added 2026-11-11 (.NET C14c, decision 4 applied):* AWS SDK client spans
+  are in scope for .NET. Measured: the AWS SDK for .NET copies the service's
+  error message verbatim, and DynamoDB (DynamoDB Local 2.6.1) quotes request
+  literals in it (`Invalid UpdateExpression: Syntax error; token: "98765",
+  near: "= 98765"`). The records use the category `StaffOps.OtelHelper.Aws`.
+  Go records no AWS exception event; Python and Node.js still keep the AWS
+  message in theirs (contract A27 residual) until their AWS packages are
+  reviewed against this rule — tracked in contract task A36, whose scope was
+  extended to AWS SDK clients on the same date.
+
 ### Neutral
 - Applications that need the old behavior can record their own events; the
   helper documents how.

@@ -869,6 +869,17 @@ emitted telemetry.
    connects at start. Registering the same multiplexer twice still gives one
    span per command (two drain threads): call once per multiplexer.
 
+17. **`AddOtelHelperAws()` suppresses the HttpClient span under an AWS call**
+   (task C14c). It now calls `AddAWSInstrumentation(o =>
+   o.SuppressDownstreamInstrumentation = true)` (0.2.x: no options) and throws
+   `ArgumentNullException` for a null collection. AWSSDK.Core keeps the first
+   pipeline customizer registered in the process: an `AddAWSInstrumentation()`
+   of your own called before keeps its options. Create AWS clients after the
+   tracer provider is built: a client built before gets no instrumentation
+   attributes and no suppression (measured). In both cases the HttpClient
+   child span may exist, but the helper replaces its URL path with `/`, so it
+   carries no object key (fix round 1).
+
 **Telemetry part.** Each row: before (0.2.x) → after, and what to check in
 dashboards and alerts.
 
@@ -1434,6 +1445,34 @@ dashboards and alerts.
    now see .NET Redis spans by default; Redis error counts cannot come from
    .NET Redis span status (count in the application); span names are the
    command (`SET`), a transaction is one `EXEC` span, batches none.
+
+26. **AWS spans and URL query redaction** (task C14c, contract A27, A28;
+   design O3, D-NET14; ADR-014). `OpenTelemetry.Instrumentation.AWS` 1.15.1 →
+   1.20.3 (task C3; AWS SDK for .NET v4); measured on 1.20.3 with AWSSDK.Core
+   4.0.3.3 against a local fake endpoint and DynamoDB Local 2.6.1; the 0.2.x
+   column is upstream's behavior at 1.20.3 without the helper's rules, not
+   measured on 1.15.1. Before (0.2.x) → after:
+
+   | Input | upstream, no helper rules (not measured on 1.15.1) | 0.3 (this branch) |
+   |---|---|---|
+   | spans of one AWS call | `<Service>.<Operation>` CLIENT span, plus an HttpClient span (its `url.full` path is the S3 key) and the SDK's `HttpRequest` / `CredentialsRetrieval` internal spans | the CLIENT span only (suppression, API item 17) |
+   | failed call status | `ERROR` with the exception message as description | `ERROR` without description |
+   | `error.type` | absent | the AWS error code, else the modeled exception name (`QueueDoesNotExist`), else a non-SDK error's class (`HttpRequestException`), else `_OTHER` |
+   | `aws.s3.key` | the request's `Key` | removed (also `aws.s3.copy_source`, `aws.s3.delete`, `aws.dynamodb.item_collection_metrics` if present) |
+   | `exception.message` / `exception.stacktrace` span attributes (AWSSDK.Core) | present | removed |
+   | `exception` event | message and stack trace | only `exception.type`; the detail in one ERROR record of category `StaffOps.OtelHelper.Aws` with the span's ids (ADR-014) |
+   | HttpClient child of an early-built client or of the app's own first `AddAWSInstrumentation()` | `url.full` path = bucket and object key | path replaced with `/` (scheme, host, port, redacted query kept) |
+   | `error.type` set by an `Enrich` callback on an AWS span | kept | replaced by the helper's value (the helper owns it) |
+   | URL query, upstream redaction on | `Redacted` / `?*` | unchanged (O3) |
+   | URL query, upstream redaction turned off | values as sent | the ten contract names `REDACTED`, the rest as sent (also for a `Uri` value) |
+
+   Check: dashboards or alerts on the AWS span status description, on
+   `aws.s3.key` or on `event.exception.message` of AWS spans find nothing —
+   use `error.type` / `aws.error_code` and the `StaffOps.OtelHelper.Aws`
+   records; traces of AWS calls have one span per call (no HTTP child);
+   log volume grows by one record per failed AWS call, and logs may now hold
+   the request literals DynamoDB quotes, item values or an SNS phone number
+   from a failed publish: treat the log pipeline as sensitive.
 
 ### Collector / platform prerequisites (before rolling 0.3.0 out)
 
@@ -2098,6 +2137,55 @@ Phase C work on this branch (no .NET release yet; the first will be
   rewrites under it, and calls the logger after releasing it (a blocking log
   sink no longer stalls other span ends); the `in_span` parity input is a
   fixed, non-recording span context in the four drivers.
+
+- **.NET: AWS package and URL query redaction (task C14c, contract A27, A28;
+  design O3, DN9, D-NET14; ADR-014; implemented 2026-11-11, awaiting
+  review).** The core sanitizer gains `Tracing/AwsSpanRules.cs` for the
+  `AWSSDK.*` sources (status description removed; `error.type` from
+  `aws.error_code` when it has the code shape, else the modeled exception
+  name, else a non-SDK error's class, else `_OTHER`; `aws.s3.key`,
+  `aws.s3.copy_source`, `aws.s3.delete`, `aws.dynamodb.item_collection_metrics`
+  and AWSSDK.Core's `exception.message` / `exception.stacktrace` span
+  attributes removed) and applies ADR-014 to them: the exception event keeps
+  only `exception.type`, and the detail goes to a correlated ERROR record of
+  the new category `StaffOps.OtelHelper.Aws` (OTLP trace context, or
+  `trace_id` / `span_id` on the stdout line). Measured: the SDK copies the
+  service's error message verbatim, and DynamoDB Local 2.6.1 quotes request
+  literals (`Invalid UpdateExpression: Syntax error; token: "98765", near:
+  "= 98765"`); a `ConditionalCheckFailed` with `ALL_OLD` keeps the item out of
+  the message. `Tracing/UrlQueryRedaction.cs` writes the values of the ten
+  contract names as `REDACTED` in `url.full`, `http.url`, `url.query` and
+  `http.target` of every span, leaving upstream's `Redacted` text alone
+  (O3): it matters when upstream redaction is turned off
+  (`OTEL_DOTNET_EXPERIMENTAL_{ASPNETCORE,HTTPCLIENT}_DISABLE_URL_QUERY_REDACTION`,
+  `DOTNET_SYSTEM_NET_HTTP_DISABLEURIREDACTION`; measured on the .NET 8 and
+  .NET 10 runtimes). `AddOtelHelperAws()` sets
+  `SuppressDownstreamInstrumentation`, so an AWS call is one CLIENT span (the
+  HttpClient span under it had the S3 key in its `url.full` path).
+  Test-only dependencies `AWSSDK.S3` 4.0.14, `AWSSDK.DynamoDBv2` 4.0.10.1,
+  `AWSSDK.SimpleNotificationService` 4.0.2.7, `AWSSDK.SQS` 4.0.2.5
+  (Apache-2.0; resolved `AWSSDK.Core` unchanged at 4.0.3.3). Tests:
+  `AwsTests` (real SDK clients against a local fake endpoint; ASP.NET Core +
+  HttpClient round trip for the URL rule). README AWS section and gap rows,
+  HOW-TO §14 "AWS" with measured success, failure and warning examples.
+  Migration guide: API item 17, telemetry item 26. No parity case (no AWS or
+  HTTP-client fixture kind).
+  Fix round 1 (2026-11-11): a span whose in-process parent is an AWS SDK span
+  (the HttpClient span of a client built before the tracer provider, or of the
+  application's own `AddAWSInstrumentation()` registered first) gets its
+  `url.full` / `http.url` path replaced with `/`, `url.path` `/`,
+  `http.target` `/` plus its query (measured: no key on .NET 8 and 10 in
+  both cases; the SDK's internal spans carry no URL); the URL rule also
+  redacts the text of a `Uri` or other object value and skips a query
+  holding none of the ten names; the helper owns `error.type` on AWS spans;
+  the SDK's "not subscribed" warnings for runtime-private
+  `Private.InternalDiagnostics.*` meters are dropped (32 `msquic.*` lines at
+  start on the .NET 10 runtime, measured, now none). Docs: the correlated
+  log can hold an SNS phone number or item values from a failed call.
+  Round 2 (2026-11-12): the child-span rule walks up to 16 in-process
+  ancestors (a handler span between the AWS span and the HttpClient span is
+  covered), and a URL counts as absolute only when `://` comes before its
+  first `/`, `?` or `#`.
 
 - **.NET: Redis package (task C14b, contract A26, R10; design O8 (b), DN9,
   D-NET15; implemented 2026-11-11, awaiting review).** `AddOtelHelperRedis()`

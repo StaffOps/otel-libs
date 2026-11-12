@@ -22,6 +22,14 @@
          depends on neither (the application brings its driver). -->
     <PackageReference Include="Npgsql" Version="10.0.3" />
     <PackageReference Include="MySqlConnector" Version="2.6.2" />
+    <!-- AWS SDK clients of the StaffOps.OtelHelper.AWS tests (task C14c), test-only (Apache-2.0),
+         against a local fake endpoint. Versions whose AWSSDK.Core range starts at 4.0.3.3, the
+         floor of OpenTelemetry.Instrumentation.AWS 1.20.3, so the resolved core is unchanged;
+         SNS and SQS at the instrumentation's own floor. -->
+    <PackageReference Include="AWSSDK.S3" Version="4.0.14" />
+    <PackageReference Include="AWSSDK.DynamoDBv2" Version="4.0.10.1" />
+    <PackageReference Include="AWSSDK.SimpleNotificationService" Version="4.0.2.7" />
+    <PackageReference Include="AWSSDK.SQS" Version="4.0.2.5" />
   </ItemGroup>
 
   <ItemGroup>

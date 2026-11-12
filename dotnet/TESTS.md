@@ -1,5 +1,11 @@
 # Tests — StaffOps.OtelHelper (.NET)
 
+1992 tests (xUnit) with the parity runner, 0 failed, 0 skipped, 0 warnings (compose `dotnet-tests` on `sdk:8.0` with `sql-postgres`, `sql-mysql` and `redis-test`, 2026-11-12, task C14c round 2; SDK 10 leg not re-run); coverlet total `| Total | 98.65% | 97.11% | 99.44% |`; `StaffOps.OtelHelper.AWS` 100% / 100% / 100%. The fix-round-1 line below is the previous run.
+
+1981 tests (xUnit) with the parity runner, 0 failed, 0 skipped, 0 warnings (compose `dotnet-tests` on `sdk:8.0` with `sql-postgres`, `sql-mysql` and `redis-test`, and on `sdk:10.0` (10.0.403) with `DOTNET_ROLL_FORWARD=Major` on the same network, 2026-11-11, task C14c fix round 1); coverlet total `| Total | 98.71% | 97.17% | 99.44% |` (line, branch, method) on `sdk:8.0`, `| Total | 98.65% | 97.14% | 99.44% |` on SDK 10; `StaffOps.OtelHelper.AWS` 100% / 100% / 100% on both. The C14c line below is the previous run.
+
+1960 tests (xUnit) with the parity runner, 0 failed, 0 skipped, 0 warnings (compose `dotnet-tests` on `sdk:8.0` with `sql-postgres`, `sql-mysql` and `redis-test`, and on `sdk:10.0` (10.0.403) with `DOTNET_ROLL_FORWARD=Major` on the same network, 2026-11-11, task C14c); coverlet total `| Total | 98.63% | 97.06% | 99.43% |` (line, branch, method) on both; `StaffOps.OtelHelper.AWS` 100% / 100% / 100% on both. The C14b fix-round-1 line below is the previous run.
+
 1877 tests (xUnit) with the parity runner, 0 failed, 0 skipped, 0 warnings (compose `dotnet-tests` on `sdk:8.0` with `sql-postgres`, `sql-mysql` and `redis-test`, and on `sdk:10.0` (10.0.403) with `DOTNET_ROLL_FORWARD=Major` on the same network, 2026-11-11, task C14b fix round 1); coverlet total `| Total | 98.59% | 96.88% | 99.41% |` (line, branch, method) on `sdk:8.0`, `| Total | 98.56% | 96.84% | 99.41% |` on SDK 10; `StaffOps.OtelHelper.Redis` 100% / 100% / 100% on both. The C14b line below is the previous run.
 
 1864 tests (xUnit) with the parity runner, 0 failed, 0 skipped, 0 warnings (compose `dotnet-tests` on `sdk:8.0` with `sql-postgres`, `sql-mysql` and `redis-test`, and on `sdk:10.0` (10.0.403) with `DOTNET_ROLL_FORWARD=Major` on the same network, 2026-11-11, task C14b); coverlet total `| Total | 98.62% | 96.84% | 99.41% |` (line, branch, method) on `sdk:8.0`, `| Total | 98.56% | 96.8% | 99.41% |` on SDK 10; `StaffOps.OtelHelper.Redis` 100% / 100% / 100% on both. The C14a round-4 line below is the previous run.
@@ -858,3 +864,77 @@ the span name not used (1), `?` taken as the operation (1), the O8 (c) early
 return restored (6), the 0.2.x DI overload (12), the registration check
 removed (3), the statement kept (8).
 
+
+## AWS and URL redaction (task C14c)
+
+Contract A27, A28 (and the A30 names); design O3, DN9, D-NET14, D-NET15;
+ADR-014. No parity case (no AWS or HTTP-client fixture kind). `AwsTests` is in
+`[Collection("EnvVarTests")]`: the AWS SDK's tracer provider and pipeline
+customizer are process-wide, and the URL tests set the upstream redaction
+variables.
+
+| Area | Tests |
+|---|---|
+| `error.type` rule | `Error_Type_Is_The_Aws_Code_Else_The_Modeled_Name_Else_The_Transport_Class` × 19 (code shape at 1, 2, 64 and 65 characters; SQS dotted code → `QueueDoesNotExist`; modeled names with and without the `Exception` suffix; generic `AmazonS3Exception` and `AmazonUnmarshallingException` → `_OTHER`; `HttpRequestException`, `TaskCanceledException`; nothing → `_OTHER`), `Error_Type_Falls_Back_To_The_Exception_Event_When_The_Span_Has_No_Type_Attribute`, `Error_Type_Ignores_Other_Events`, `An_Error_Type_Set_Elsewhere_Is_Replaced_By_The_Contract_Value` |
+| Sources and the other rules (synthetic spans) | `Aws_Sources_Are_The_Sdk_Sources` × 6, `Failed_Aws_Span_Loses_Description_Payload_Keys_And_Exception_Text` (the AWSSDK.Core span shape, measured: `aws.s3.key`, `aws.s3.copy_source`, `aws.s3.delete`, `aws.dynamodb.item_collection_metrics`, `exception.message` / `exception.stacktrace` attributes gone, one record), `Successful_Aws_Span_Gets_No_Error_Type_But_Loses_The_Object_Key`, `Other_Sources_Keep_Their_Aws_Named_Attributes`, `Aws_Record_Without_Message_Or_Type_Has_The_Aws_Fallback_Body`, `A_Failing_Rule_Still_Removes_The_Aws_Payload_And_Url_Attributes` (exact warning line), `Aws_Record_Category_Is_Correlated_On_Otlp_And_Stdout` |
+| Real SDK clients against a local fake endpoint (`AddOtelHelper` + `AddOtelHelperAws`) | `S3_Put_Is_One_Client_Span_Without_The_Object_Key_Or_Http_Child` (no HttpClient, `HttpRequest` or `CredentialsRetrieval` span), `S3_NoSuchKey_Is_Error_With_The_Code_And_The_Detail_In_A_Correlated_Log`, `S3_Error_Message_Quoting_The_Key_Reaches_Only_The_Log`, `S3_Head_Without_A_Body_Gives_The_Status_Name` × 3 (404, 403, 503), `S3_Copy_And_Delete_Record_No_Copy_Source_Or_Delete_Request`, `DynamoDb_Put_Records_No_Item_Collection_Metrics`, `DynamoDb_Expression_Literal_In_The_Error_Reaches_Only_The_Log` (DynamoDB Local's text), `DynamoDb_Conditional_Check_With_The_Old_Item_Keeps_The_Item_Out_Of_The_Span`, `Sns_Publish_To_A_Phone_Number_Records_No_Number`, `Sqs_Query_Compatible_Code_Gives_The_Modeled_Name`, `Transport_Error_Gives_The_Exception_Class`, `Unparseable_Response_Gives_Other`; every span is swept for the object key, the phone number, the DynamoDB literal and item values and the credentials (access key, secret key, session token); every record is checked for the span's ids (OTLP trace context, transport attributes removed) and the absence of the credentials |
+| URL query rule | `Query_Values_Of_The_Contract_Names_Are_Redacted` × 21 (each of the ten names, percent-encoded name, lower case, valueless, empty value, upstream `Redacted`, `;`, a malformed escape, other names), `Urls_Keep_Everything_But_The_Listed_Values` × 6 (fragment kept for `url.full`, whole query for targets, `?*`), `Url_Query_Value_Keeps_Its_Leading_Question_Mark` × 3, `Url_Rule_Applies_To_Every_Source_And_Every_Url_Key`, `Url_Rule_Leaves_Non_Text_Values_Alone` |
+| URL query, real instrumentations (O3 per runtime) | `Upstream_Redaction_Text_Is_Kept_On_Every_Runtime` (server `url.query` `Redacted`; client `url.full` `Redacted` on .NET 8, `?*` on .NET 9+), `Disabled_Upstream_Redaction_Still_Redacts_The_Contract_Names` (the ASP.NET Core and HttpClient contrib variables; the .NET 9+ client stays `?*`, since only the runtime's switch, read once per process, turns it off) |
+| Registration | `AddOtelHelperAws_Refuses_Null`; `SubpackageExtensionsTests.AddOtelHelperAws_Registers_And_Returns_Services` |
+
+The fake endpoint answers with each service's wire shape (S3 REST-XML, DynamoDB
+and SQS JSON 1.0 with `x-amzn-query-error`, SNS query XML); DynamoDB's
+`ValidationException` text is the one DynamoDB Local 2.6.1 returned for
+`UpdateExpression = "SET card = 98765"` (measured once with
+`amazon/dynamodb-local:2.6.1`, not part of the suite). The runtime's
+`DOTNET_SYSTEM_NET_HTTP_DISABLEURIREDACTION` path is measured in the probe only
+(a static read once per process); the rule itself is the same.
+
+Mutation check (2026-11-11, scripted, one mutant per run on a fresh copy,
+filter `FullyQualifiedName~AwsTests|FullyQualifiedName~DbSpanSanitizer|FullyQualifiedName~StdoutLogging`,
+243 tests): 27 mutants, each fails at least one test — AWS rules not applied
+(17), description kept (12), `aws.s3.key` kept (10), the `exception.message`
+attribute kept (13), code taken without its shape (5), modeled name with its
+suffix (6), transport class → `_OTHER` (4), no `error.type` (15), ADR-014 not
+applied to AWS (13), AWS records on the database logger (6) or category (6),
+no suppression (14), URL rule not applied (2), case-insensitive names (2), no
+percent-decoding (1), upstream `Redacted` rewritten (2), `url.query` leading
+`?` not handled (2), fragment redacted (2), AWS category not a record
+category (6), fail-closed path without the AWS keys (1), a loose source prefix
+(3), the database fallback body for AWS (1), no event fallback for the type
+(1), events of any name read (1), generic `Amazon*Exception` class names
+kept (4), `http.target` fragment kept (1), `http.url` not covered (1). One
+equivalent mutant (an already `REDACTED` value rewritten to the same text) was
+dropped.
+
+*Fix round 1 (2026-11-11):* `Http_Child_Of_An_Aws_Span_Loses_The_Path_In_Every_Url_Key`
+(one processor pass; `url.full` as a `Uri`, `http.url`, `url.path`,
+`http.target`; a second pass unchanged), `Http_Child_Of_Another_Span_And_The_Aws_Span_Itself_Keep_Their_Path`,
+`Child_Url_Loses_Its_Path` × 7, `Real_HttpClient_Span_Under_An_Aws_Span_Records_No_Object_Key`
+(the real HttpClient instrumentation under an `AWSSDK.S3` parent, the shape of
+both residual scenarios), `Url_Rule_Redacts_The_Text_Of_Non_String_Values`
+(replaces `Url_Rule_Leaves_Non_Text_Values_Alone`), `Url_Text_Of_Primitives_Is_None` × 5,
+`HttpGrpcInstrumentationTests.Runtime_Private_Meter_Not_Subscribed_Notices_Are_Noise` × 6.
+`FakeAws` retries its bind on up to three ports; the URL round trip waits up
+to 5 s. The two residual scenarios themselves (a client built before the
+tracer provider; the application's own `AddAWSInstrumentation()` registered
+first) were measured in a separate process on .NET 8 and 10 (the HttpClient
+child's `url.full` is `http://<endpoint>/`), not in the suite: the AWS
+instrumentation is **first registration wins per process** (AWSSDK.Core's
+customizer registry skips a second registration), so tests must register
+only through `AddOtelHelperAws()` — one unsuppressed registration would change
+every later AWS test in the run. The .NET 10 `msquic.*` notices were measured
+the same way: 32 SDK warnings at start before, none after. 13 more mutants
+(child rule off, any parent, `url.path` kept, query dropped, string-only child
+and URL rules, primitives redacted, the `%` pre-check removed, the pre-check
+always skipping, the noise prefix and reason), each fails a test (the
+string-only child mutant after the child test went to one processor pass).
+
+*Round 2 (2026-11-12):* `Http_Grandchild_Under_A_Handler_Span_Loses_The_Path`
+(`AWSSDK.S3` → `c14c-handler` → `System.Net.Http`), `Ancestors_Beyond_The_Depth_Bound_Are_Not_Walked`
+(16 levels walked), `Only_A_Scheme_Before_The_Path_Makes_A_Url_Absolute` × 6,
+`Relative_Child_Url_With_A_Url_In_Its_Query_Loses_Its_Path`, and
+`Child_Url_Loses_Its_Path` rows for an IPv6 host (`https://[::1]:9000/b/k` →
+`https://[::1]:9000/`) and userinfo (`https://u:p@h/b` → `https://u:p@h/`,
+current behavior pinned). The grandchild and relative-URL tests fail with the
+round-1 rule (measured: direct parent only, `://` anywhere).

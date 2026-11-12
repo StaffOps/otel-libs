@@ -106,7 +106,12 @@ namespace StaffOps.OtelHelper.Tracing
             // when the helper exports no traces (an exporter the application adds still sees it). The
             // helper's exporters run its rules again on each batch, for a span changed after it ended.
             var exceptionLogger = new Lazy<Microsoft.Extensions.Logging.ILogger?>(() => ExceptionLogger(sp));
-            var sanitizer = new SanitizingProcessor(sp.GetRequiredService<IOtelHelperDiagnostics>()) { ExceptionLogger = () => exceptionLogger.Value };
+            var awsExceptionLogger = new Lazy<Microsoft.Extensions.Logging.ILogger?>(() => ExceptionLogger(sp, Logging.DbExceptionLog.AwsCategory));
+            var sanitizer = new SanitizingProcessor(sp.GetRequiredService<IOtelHelperDiagnostics>())
+            {
+                ExceptionLogger = () => exceptionLogger.Value,
+                AwsExceptionLogger = () => awsExceptionLogger.Value,
+            };
             builder.AddProcessor(sanitizer);
 
             // "Off" (disabled signal, OTEL_TRACES_EXPORTER=none, or OTEL_SDK_DISABLED): instrumentation
@@ -147,11 +152,11 @@ namespace StaffOps.OtelHelper.Tracing
         /// The ADR-014 logger, or null when the container is already disposed (a late MySqlConnector
         /// event exported during shutdown: its record is best-effort).
         /// </summary>
-        internal static Microsoft.Extensions.Logging.ILogger? ExceptionLogger(IServiceProvider sp)
+        internal static Microsoft.Extensions.Logging.ILogger? ExceptionLogger(IServiceProvider sp, string category = Logging.DbExceptionLog.Category)
         {
             try
             {
-                return sp.GetService<Microsoft.Extensions.Logging.ILoggerFactory>()?.CreateLogger(Logging.DbExceptionLog.Category);
+                return sp.GetService<Microsoft.Extensions.Logging.ILoggerFactory>()?.CreateLogger(category);
             }
             catch (ObjectDisposedException)
             {

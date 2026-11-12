@@ -202,7 +202,7 @@ namespace StaffOps.OtelHelper.Logging
                     seen.Add(SpanIdKey);
                 }
 
-                if (category == DbExceptionLog.Category)
+                if (DbExceptionLog.IsRecordCategory(category))
                 {
                     seen.Add(DbExceptionLog.EventTimeKey);
                 }

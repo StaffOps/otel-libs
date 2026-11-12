@@ -300,8 +300,8 @@ namespace StaffOps.OtelHelper.Tracing
         }
 
         /// <summary>
-        /// Fail-closed path when a rule threw: status description, query text, connection string and
-        /// data source removed.
+        /// Fail-closed path when a rule threw: status description, query text, connection string,
+        /// data source, the AWS payload and exception-text attributes and the URL attributes removed.
         /// </summary>
         internal static void Strip(Activity activity)
         {
@@ -310,11 +310,17 @@ namespace StaffOps.OtelHelper.Tracing
                 activity.SetStatus(ActivityStatusCode.Error);
             }
 
-            foreach (var key in new[] { "otel.status_description", "db.connection_string", "db.query.text", "db.statement", "db.npgsql.data_source" })
+            foreach (var key in StrippedKeys)
             {
                 Remove(activity, key);
             }
         }
+
+        private static readonly string[] StrippedKeys = new[]
+        {
+            "otel.status_description", "db.connection_string", "db.query.text", "db.statement", "db.npgsql.data_source",
+            "url.full", "http.url", "url.query", "http.target",
+        }.Concat(AwsSpanRules.DroppedKeys).ToArray();
 
         private static void SanitizeQuery(Activity activity, string key, SqlDialect dialect)
         {

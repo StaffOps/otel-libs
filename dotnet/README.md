@@ -303,7 +303,7 @@ How the 0.2.x helper treats the standard variables. Some are read by the .NET SD
 | gRPC Client | Outgoing gRPC calls: one CLIENT span per call, `pkg.Svc/Method` (0.3, this branch, task C11; 0.2.x also had the HttpClient `POST` span under it) |
 | gRPC Server | Incoming gRPC calls, through ASP.NET Core: RPC spans only with the upstream key set by the app ([gRPC server spans](#grpc-server-spans)) |
 | SqlClient | SQL queries — only with the `StaffOps.OtelHelper.Sql` subpackage (`AddOtelHelperSql()`) |
-| AWS SDK | S3, SQS, DynamoDB calls, etc. — only with the `StaffOps.OtelHelper.AWS` subpackage (`AddOtelHelperAws()`) |
+| AWS SDK | S3, SQS, SNS, DynamoDB calls, etc. — only with the `StaffOps.OtelHelper.AWS` subpackage (`AddOtelHelperAws()`; one CLIENT span per call, [AWS](#aws)) |
 | Custom Sources | Spans created via `ActivitySource(serviceName)` |
 
 Sampler (0.3, this branch, task C10): `parentbased_always_on` in all environments (ADR-002, as Go, Python and Node.js): roots are sampled, a span with a parent follows the parent's sampled flag, so an unsampled caller stays unsampled. Configurable with `opts.Sampler`, `opts.SampleRatio` or `OTEL_TRACES_SAMPLER`. The sampler is set also when traces are off (`OTEL_TRACES_EXPORTER=none`, a disabled signal): the instrumentations stay registered, and `HttpClient` passes the inbound trace and its sampled flag on. 0.2.x: a bare `AlwaysOnSampler`, which ignored the parent's flag. Tail-based sampling is done in the Collector.
@@ -413,6 +413,31 @@ Redis with explicit connection:
 ```csharp
 services.AddOtelHelperRedis(connectionMultiplexer);
 ```
+
+### AWS
+
+`AddOtelHelperAws()` (task C14c) instruments the AWS SDK for .NET v4 through
+`OpenTelemetry.Instrumentation.AWS` 1.20.3 (verified with `AWSSDK.Core` 4.0.3.3,
+S3 4.0.14, DynamoDBv2 4.0.10.1, SNS 4.0.2.7, SQS 4.0.2.5 against a local fake
+endpoint, and DynamoDB Local 2.6.1). Examples of a successful call, a failed
+call with its correlated log record, the URL redaction and the warnings:
+`HOW-TO.md` §14 "AWS".
+
+| Item | .NET |
+|---|---|
+| Spans | one CLIENT span per call, `<Service>.<Operation>` (`S3.PutObject`, `SQS.SendMessage`), sources `AWSSDK.<Service>`; S3 `HEAD` is `S3.GetObjectMetadata` (the .NET request name) |
+| HttpClient span under an AWS call | none (`SuppressDownstreamInstrumentation`, set by the helper; without it the HttpClient span's `url.full` path is the S3 object key) |
+| AWS client created before the tracer provider is built | SDK spans without the instrumentation's attributes and without the suppression: the HttpClient child span comes back, but the helper replaces its URL path with `/` (no key; fix round 1). Create clients after the provider to get the instrumentation's attributes |
+| Your own `AddAWSInstrumentation()` first | AWSSDK.Core keeps the first registration in the process: your options win; the HttpClient child span, if any, loses its URL path as above |
+| Failed call | status `ERROR` without description; the helper owns `error.type` (a value set by `Enrich` or upstream is replaced): the AWS error code (`NoSuchKey`, `ValidationException`), else the modeled exception name (`QueueDoesNotExist` for SQS's dotted code), else the class of a non-SDK error (`HttpRequestException`), else `_OTHER`; `aws.error_code` and `exception.type` kept |
+| Removed attributes | `aws.s3.key`, `aws.s3.copy_source`, `aws.s3.delete`, `aws.dynamodb.item_collection_metrics`, and the `exception.message` / `exception.stacktrace` attributes AWSSDK.Core writes on the span |
+| `exception` event (ADR-014) | keeps only `exception.type`; message and stack trace in one ERROR log record of category `StaffOps.OtelHelper.Aws` with the span's `trace_id` / `span_id` (DynamoDB quotes request literals in its messages, measured) |
+| SNS phone number | never on a span (1.20.3 records no destination for a phone publish). The error text of a failed call, which can include the phone number or item values, goes to the correlated log (or stdout without an exporter): treat the log pipeline as sensitive |
+| Keys | the legacy RPC keys `rpc.system=aws-api`, `rpc.service`, `rpc.method=<Operation>`, `aws.s3.bucket`, `aws.dynamodb.table_names`, `db.system=dynamodb`, `aws.queue_url`, `aws.request_id`, `http.status_code` (the instrumentation's `V1_28_0` default); no `server.address` / `server.port`, `messaging.system`, `db.system.name` (root `README.md` gap row) |
+| URL query (every HTTP span) | upstream text kept (`Redacted`; .NET 9+ client `?*`); with upstream redaction turned off the ten contract names (`X-Amz-Signature`, `X-Amz-Credential`, `X-Amz-Security-Token`, `access_token`, …) are written `REDACTED` (span URL attributes only, also `Uri` values; not free text) |
+
+Tests: `TESTS.md` "AWS and URL redaction (task C14c)". Gaps: root `README.md`,
+"Known emitted-telemetry gaps" (.NET AWS rows).
 
 ### Redis
 

@@ -16,8 +16,9 @@ namespace StaffOps.OtelHelper.Tracing
     /// a span after it ended — MySqlConnector 2.6 sets the status and <c>error.type</c> of a failed
     /// command after stopping its activity (<c>MySqlDataReader.Dispose</c>, then
     /// <c>CommandExecutor</c>'s catch) — which no processor sees. Rules: <see cref="DbSpanRules"/>
-    /// (task C14a); they are idempotent. A rule that throws never lets the raw values through: the
-    /// span's sensitive attributes are removed and one warning names the exception type.
+    /// (task C14a), <see cref="AwsSpanRules"/> and <see cref="UrlQueryRedaction"/> (task C14c); they
+    /// are idempotent. A rule that throws never lets the raw values through: the span's sensitive
+    /// attributes are removed and one warning names the exception type.
     /// </summary>
     internal sealed class SanitizingProcessor : BaseProcessor<Activity>
     {
@@ -45,6 +46,9 @@ namespace StaffOps.OtelHelper.Tracing
 
         /// <summary>The logger of the ADR-014 records (<see cref="Logging.DbExceptionLog.Category"/>), resolved on first use; null = no record.</summary>
         internal Func<ILogger?> ExceptionLogger { get; init; } = () => null;
+
+        /// <summary>The logger of the ADR-014 records of AWS SDK spans (<see cref="Logging.DbExceptionLog.AwsCategory"/>, task C14c), resolved on first use; null = no record.</summary>
+        internal Func<ILogger?> AwsExceptionLogger { get; init; } = () => null;
 
         /// <summary>Test seam: the private event list of <see cref="Activity"/> (null = this runtime has none).</summary>
         internal FieldInfo? EventsField { get; init; } = DbExceptionEvents.ActivityEventsField;
@@ -81,13 +85,17 @@ namespace StaffOps.OtelHelper.Tracing
                 else
                 {
                     DbSpanRules.Apply(data, LegacyDbKeys);
+                    AwsSpanRules.Apply(data);
+                    AwsSpanRules.ApplyToChild(data);
+                    UrlQueryRedaction.Apply(data);
                 }
 
-                if (DbSpanRules.IsDbSource(data.Source.Name)
-                    && DbExceptionEvents.Handle(data, EventsField, (span, e) => { if (ExceptionLogger() is { } logger) { Logging.DbExceptionLog.Write(logger, span, e); } }) == DbExceptionEvents.Outcome.Unsupported)
+                var aws = AwsSpanRules.IsAwsSource(data.Source.Name);
+                if ((aws || DbSpanRules.IsDbSource(data.Source.Name))
+                    && DbExceptionEvents.Handle(data, EventsField, (span, e) => Log(aws, span, e)) == DbExceptionEvents.Outcome.Unsupported)
                 {
                     _diagnostics.ReportOnce("exception-events-unsupported", DiagnosticLevel.Warn,
-                        "cannot rewrite span events on this runtime (System.Diagnostics.Activity has no _events field); database exception events keep their message and stack trace (ADR-014)");
+                        "cannot rewrite span events on this runtime (System.Diagnostics.Activity has no _events field); database and AWS exception events keep their message and stack trace (ADR-014)");
                 }
             }
             catch (Exception e)
@@ -104,8 +112,16 @@ namespace StaffOps.OtelHelper.Tracing
                 }
 
                 _diagnostics.ReportOnce("sanitizer-failed", DiagnosticLevel.Warn,
-                    "span sanitizer failed; the span's status description, query text and connection attributes were removed",
+                    "span sanitizer failed; the span's status description, query text, connection, URL and AWS payload attributes were removed",
                     ("source", data.Source.Name), ("error", e.GetType().Name));
+            }
+        }
+
+        private void Log(bool aws, Activity span, ActivityEvent e)
+        {
+            if ((aws ? AwsExceptionLogger() : ExceptionLogger()) is { } logger)
+            {
+                Logging.DbExceptionLog.Write(logger, span, e, aws ? Logging.DbExceptionLog.AwsFallbackBody : Logging.DbExceptionLog.DbFallbackBody);
             }
         }
     }
