@@ -359,6 +359,23 @@ services:
       - npm-cache:/root/.npm
     command: ["sh", "run-node.sh"]
 
+  dotnet-smoke:
+    # .NET task C17. Same SDK as dotnet-tests (the helper targets net8.0 on this
+    # branch). run-dotnet.sh packs the helper into a local feed and builds the
+    # smoke program against the package. No NuGet cache volume on purpose: a
+    # cached StaffOps.OtelHelper of the same version from an older tree would be
+    # restored instead of the one just packed.
+    image: mcr.microsoft.com/dotnet/sdk:8.0
+    profiles: ["e2e"]
+    working_dir: /src/testing/e2e
+    environment:
+      DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+      DOTNET_NOLOGO: "1"
+    volumes:
+      - ..:/src:ro
+      - e2e-certs:/certs:ro
+    command: ["sh", "run-dotnet.sh"]
+
 volumes:
   fakeotlp-go-out:
   fakeotlp-py-out:

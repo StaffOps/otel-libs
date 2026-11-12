@@ -23,6 +23,7 @@ builder.Services.AddOtelHelper(opts =>
         "sample-backend.db",
         "sample-backend.external"
     };
+    opts.AdditionalMeters.Add(OrderGrpcService.MeterName);
 });
 builder.Services.AddHttpClient("external");
 

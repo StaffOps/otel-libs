@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Diagnostics.Metrics;
+using Microsoft.Extensions.DependencyInjection;
 using StaffOps.OtelHelper;
 
 /// <summary>
@@ -9,25 +10,24 @@ using StaffOps.OtelHelper;
 public class QueueConsumerWorker : BackgroundService
 {
     private static readonly ActivitySource _activity = new("sample-process.queue-consumer");
-    private static readonly Meter _meter = new(
-        Environment.GetEnvironmentVariable("SERVICE_NAME") ?? "sample-process");
 
-    private static readonly Counter<long> _messagesProcessed = _meter.CreateCounter<long>(
-        "queue.messages_processed_total", "messages", "Total messages processed");
-    private static readonly Counter<long> _messagesFailed = _meter.CreateCounter<long>(
-        "queue.messages_failed_total", "messages", "Total messages failed");
-    private static readonly Histogram<double> _processingDuration = _meter.CreateHistogram<double>(
-        "queue.message_duration_seconds", "s", "Duration of message processing");
+    private readonly Counter<long> _messagesProcessed;
+    private readonly Counter<long> _messagesFailed;
+    private readonly Histogram<double> _processingDuration;
 
     private static int _queueDepth = 0;
 
     private readonly ILogger<QueueConsumerWorker> _logger;
     private readonly TimeSpan _pollInterval = TimeSpan.FromSeconds(30);
 
-    public QueueConsumerWorker(ILogger<QueueConsumerWorker> logger)
+    public QueueConsumerWorker(ILogger<QueueConsumerWorker> logger, [FromKeyedServices(OtelHelperKeys.Instrumentation)] Meter meter)
     {
+        // The helper's Meter, keyed (name = the resolved service.name, so it is always exported).
+        _messagesProcessed = meter.CreateCounter<long>("queue.messages_processed_total", "messages", "Total messages processed");
+        _messagesFailed = meter.CreateCounter<long>("queue.messages_failed_total", "messages", "Total messages failed");
+        _processingDuration = meter.CreateHistogram<double>("queue.message_duration_seconds", "s", "Duration of message processing");
         _logger = logger;
-        _meter.CreateObservableGauge("queue.depth", () => _queueDepth, "messages", "Current queue depth");
+        meter.CreateObservableGauge("queue.depth", () => _queueDepth, "messages", "Current queue depth");
     }
 
     protected override async Task ExecuteAsync(CancellationToken ct)
@@ -63,7 +63,11 @@ public class QueueConsumerWorker : BackgroundService
                 }
                 catch (Exception ex)
                 {
-                    span?.SetStatus(ActivityStatusCode.Error, ex.Message);
+                    // ADR-014: the span carries the failure and its type only; the message
+                    // (here it holds the message id) and the stack trace go to the log record
+                    // below, written in the span's context (same trace_id/span_id).
+                    span?.SetStatus(ActivityStatusCode.Error);
+                    span?.SetTag("error.type", ex.GetType().FullName);
                     _messagesFailed.Add(1);
                     _logger.LogError(ex, "Message {MessageId} processing failed", messageId);
                 }

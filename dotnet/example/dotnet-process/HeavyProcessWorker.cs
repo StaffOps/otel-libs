@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Diagnostics.Metrics;
 using System.Security.Cryptography;
 using System.Text;
+using Microsoft.Extensions.DependencyInjection;
 using StaffOps.OtelHelper;
 
 /// <summary>
@@ -11,19 +12,12 @@ using StaffOps.OtelHelper;
 public class HeavyProcessWorker : BackgroundService
 {
     private static readonly ActivitySource _activity = new("sample-process.heavy-work");
-    private static readonly Meter _meter = new(
-        Environment.GetEnvironmentVariable("SERVICE_NAME") ?? "sample-process");
 
-    private static readonly Counter<long> _batchesTotal = _meter.CreateCounter<long>(
-        "heavy_work.batches_total", "batches", "Total batches processed");
-    private static readonly Counter<long> _itemsTotal = _meter.CreateCounter<long>(
-        "heavy_work.items_total", "items", "Total items processed");
-    private static readonly Counter<long> _errorsTotal = _meter.CreateCounter<long>(
-        "heavy_work.errors_total", "errors", "Total processing errors");
-    private static readonly Histogram<double> _batchDuration = _meter.CreateHistogram<double>(
-        "heavy_work.batch_duration_seconds", "s", "Duration of each batch");
-    private static readonly Histogram<double> _itemDuration = _meter.CreateHistogram<double>(
-        "heavy_work.item_duration_seconds", "s", "Duration of each item");
+    private readonly Counter<long> _batchesTotal;
+    private readonly Counter<long> _itemsTotal;
+    private readonly Counter<long> _errorsTotal;
+    private readonly Histogram<double> _batchDuration;
+    private readonly Histogram<double> _itemDuration;
 
     private static int _activeItems;
     private static readonly object _lock = new();
@@ -31,10 +25,16 @@ public class HeavyProcessWorker : BackgroundService
     private readonly ILogger<HeavyProcessWorker> _logger;
     private readonly TimeSpan _interval = TimeSpan.FromMinutes(2);
 
-    public HeavyProcessWorker(ILogger<HeavyProcessWorker> logger)
+    public HeavyProcessWorker(ILogger<HeavyProcessWorker> logger, [FromKeyedServices(OtelHelperKeys.Instrumentation)] Meter meter)
     {
+        // The helper's Meter, keyed (name = the resolved service.name, so it is always exported).
+        _batchesTotal = meter.CreateCounter<long>("heavy_work.batches_total", "batches", "Total batches processed");
+        _itemsTotal = meter.CreateCounter<long>("heavy_work.items_total", "items", "Total items processed");
+        _errorsTotal = meter.CreateCounter<long>("heavy_work.errors_total", "errors", "Total processing errors");
+        _batchDuration = meter.CreateHistogram<double>("heavy_work.batch_duration_seconds", "s", "Duration of each batch");
+        _itemDuration = meter.CreateHistogram<double>("heavy_work.item_duration_seconds", "s", "Duration of each item");
         _logger = logger;
-        _meter.CreateObservableGauge("heavy_work.items_active", () => _activeItems,
+        meter.CreateObservableGauge("heavy_work.items_active", () => _activeItems,
             "items", "Items currently being processed");
     }
 
@@ -106,7 +106,9 @@ public class HeavyProcessWorker : BackgroundService
         catch (Exception ex)
         {
             _errorsTotal.Add(1);
-            span?.SetStatus(ActivityStatusCode.Error, ex.Message);
+            // ADR-014: type on the span, message and stack trace in the correlated log below.
+            span?.SetStatus(ActivityStatusCode.Error);
+            span?.SetTag("error.type", ex.GetType().FullName);
             _logger.LogError(ex, "Item {ItemId} threw exception", itemId);
         }
         finally

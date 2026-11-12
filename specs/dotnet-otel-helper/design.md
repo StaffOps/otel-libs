@@ -1028,6 +1028,35 @@ registered, one warning at host start (`LoggingSetup.WarnDuplicateConsole`).
 (e) **`[TO VERIFY C13]` resolved**: see the measurement in the task C13 note
 (the built-in JSON console formatter writes its own field names, not the
 contract's), so the custom provider stays.
+(g) **Addition 2026-11-12 (C17 fix round 1): the activity-tracking scope is not
+exported.** Measured in C17: under the generic host (`Host.CreateApplicationBuilder`,
+`WebApplication.CreateBuilder`), whose default `ActivityTrackingOptions` are
+`SpanId | TraceId | ParentId`, every OTLP record written inside an activity carried
+`SpanId`, `TraceId` and `ParentId` attributes (the scope the logger factory adds,
+exported because `IncludeScopes` is on; 0.2.x did the same), repeating the record's
+own trace context; Go, Python and Node.js emit no such attributes. **Choice**: the
+SDK's logger provider gets the factory's scope provider wrapped
+(`Logging/ActivityScopeFilter.cs`), which skips that one scope object and passes
+every other scope unchanged. The OpenTelemetry .NET 1.20 `LogRecord` API cannot
+remove a scope (`ForEachScope` is read-only; the scope provider is internal), so the
+filter sits in front of it: a logger provider registered after the SDK's
+(`ActivityScopeFilterInstaller`, `ISupportExternalScope`, null loggers) receives
+the factory's scope provider after the SDK's provider did, in registration order,
+and hands the SDK's provider the wrapped one (public `ISupportExternalScope.SetScopeProvider`).
+**Rule (by origin, never by key)**: a scope is dropped when it is the object the
+factory stored on the current activity (`Activity.GetCustomProperty("__ActivityLogScope__")`,
+reference equality) or an instance of the runtime's internal type
+`Microsoft.Extensions.Logging.LoggerFactoryScopeProvider+ActivityLogScope`. An
+application scope named `SpanId` is kept; the opt-in `Tags` and `Baggage` scopes are
+kept (the application asked for them). If a future runtime renames both, the scope
+passes again (fail-open: duplicates come back, no application value is dropped);
+the unit tests check both rules on the runtime they run on (.NET 8 and the SDK 10
+roll-forward leg). Other providers (console, third-party) keep the scope: the
+factory's `ActivityTrackingOptions` are not changed. Kept on purpose: ASP.NET
+Core's hosting scope (`ConnectionId`, `RequestId`, `RequestPath`) — application
+data, listed in the root README "Known emitted-telemetry gaps" with a Collector
+recipe. Signal to reopen: a supported way to filter scopes in the SDK, or an
+application that needs the IDs as attributes (none known).
 
 ### D-NET11 — Prometheus: upstream listener on an explicit `+` prefix
 **Choice** (r2 after C1 dev H1/H2, observability H9/M6/M7, refuter H6; r3

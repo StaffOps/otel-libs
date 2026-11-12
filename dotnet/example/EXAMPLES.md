@@ -289,6 +289,13 @@ rate(cache_hits_total[5m]) / (rate(cache_hits_total[5m]) + rate(cache_misses_tot
 
 ## SampleProcess — Workers
 
+The `dotnet-process` (and `dotnet-api`, `dotnet-backend`) metric names keep
+the `_total` / `_seconds` suffixes (`queue.messages_processed_total`,
+`scheduled_job.duration_seconds`, …) that the shipped Grafana dashboards query;
+task C17 kept them for that compatibility. New code should follow
+`dotnet-custom-signals`: dot-separated names, the unit in `unit`, no `_total`
+(the Prometheus exporter adds it to counters).
+
 ### ApiHealthWorker (a cada 1 minuto)
 
 **Objetivo:** Gerar traces distribuídas continuamente, validando a comunicação entre os 3 serviços.
@@ -502,3 +509,71 @@ histogram_quantile(0.95, rate(scheduled_job_duration_seconds_bucket[5m]))
 - `tempo` (type: tempo) — traces
 
 **Variável de filtro** (dashboard 01): `$service` — seleciona entre `sample-api`, `sample-backend`, `sample-process`.
+
+---
+
+## Custom signals (`dotnet-custom-signals`)
+
+Same names as the Go, Python and Node.js twins (`go-custom-signals`,
+`python-custom-signals`, `node-custom-signals`): span, metric and log names,
+attribute keys, units, instrument kinds and trace shape match. One deliberate
+difference: the failed span carries the exception **type** only (ADR-014); the
+message and the stack trace are on the `order failed` log record, which has the
+same `trace_id`/`span_id`.
+
+| Signal | Name | Kind | Attributes |
+|---|---|---|---|
+| span | `orders.process-batch` | root, Internal (`StartRootActivity`) | `batch.size`; status ERROR `1 of 3 orders failed` when an order fails |
+| span | `order.process` | child, one per order (`ActivitySource.StartActivity`) | `order.id`, `order.type`; event `order.validated` (`order.amount`); on failure `error.type` `PaymentDeclinedException`, event `exception` with `exception.type` only, status ERROR `payment declined` |
+| metric | `order.processed` (`{order}`) | Counter, `long` | `order.type`; `error.type` on failure only |
+| metric | `order.duration` (`s`) | Histogram, `double`, buckets 5 ms – 1 s (`InstrumentAdvice<double>.HistogramBucketBoundaries`) | `order.type`; `error.type` on failure only |
+| metric | `order.active` (`{order}`) | UpDownCounter, `long` | `order.type` |
+| metric | `order.queue.depth` (`{order}`) | Observable gauge, `int` | `queue.name` |
+| log | `order processed` (Information) | correlated with its `order.process` | `order.id`, `order.amount` |
+| log | `order failed` (Error) | correlated with the failed `order.process` | `order.id`, `exception.type`, `exception.message`, `exception.stacktrace` |
+| log | `batch finished` (Information) | correlated with `orders.process-batch` | `batch.size`, `orders.failed` |
+
+Tracer and meter scope: `orders` (listed in `AdditionalActivitySources` and
+`AdditionalMeters`: a source or meter named otherwise than `service.name` is
+exported only when listed). Log scope: `dotnet-custom-signals` (the
+`ILoggerFactory.CreateLogger` category).
+
+How the code produces them
+([`dotnet-custom-signals/Program.cs`](https://github.com/StaffOps/otel-libs/blob/main/dotnet/example/dotnet-custom-signals/Program.cs)):
+
+| Signal | What the code does |
+|---|---|
+| Root span | `Source.StartRootActivity("orders.process-batch")` (a new trace whatever is current); `SetStatus(Error, "1 of 3 orders failed")` |
+| Child spans | `Source.StartActivity("order.process")` per order; `AddEvent(new ActivityEvent("order.validated", tags: …))` |
+| Failure | `SetStatus(Error, "payment declined")`, `SetTag("error.type", ex.GetType().Name)` (the short name, as the twins write `PaymentDeclinedError`; the process examples use `FullName`, see [README §4](README.md#4-errors-on-spans-adr-014)), `AddEvent(new ActivityEvent("exception", tags: { exception.type }))`. Not `Activity.AddException(ex)`: that adds `exception.message` and `exception.stacktrace` to the span |
+| Counter | `Meter.CreateCounter<long>("order.processed", "{order}", …)` |
+| Histogram | `Meter.CreateHistogram<double>("order.duration", "s", …, advice: new InstrumentAdvice<double> { HistogramBucketBoundaries = [0.005, …, 1] })` — measured: the Collector shows `ExplicitBounds #0: 0.005000` … `#7: 1.000000` |
+| Up-down counter | `Meter.CreateUpDownCounter<long>("order.active", …)`, `+1` / `-1` around each order |
+| Observable gauge | `Meter.CreateObservableGauge("order.queue.depth", () => new Measurement<int>(depth, queue.name=orders), …)` |
+| Logs | `logger.Log(level, default, state, exception, (_, _) => "order processed")` with `state` a list of key/value pairs: the body is the fixed message, the pairs are the record's attributes on OTLP and fields on the stdout fallback (a logging scope would reach OTLP only). A message template (`"order processed {order.id}"`) would put the placeholder text into the body instead. The `Exception` argument becomes `exception.type` / `exception.message` / `exception.stacktrace` on OTLP and one `exception` field on the stdout fallback |
+
+Ctrl-C / SIGTERM cancel `IHostApplicationLifetime.ApplicationStopping`, which
+the loop checks before each order (`batch interrupted` Warning,
+`orders.pending`); the flush still runs.
+
+Recorded run (trace `ce6529746e6f6a4777d04632aa6ffb84`, 2026-11-12; IDs differ
+on every run), condensed from the Collector's debug output:
+
+```text
+orders.process-batch  Internal  Status Error "1 of 3 orders failed"   batch.size=3
+order.process         Internal  Status Unset   order.id=ord-1 order.type=standard  event order.validated
+order.process         Internal  Status Unset   order.id=ord-2 order.type=express   event order.validated
+order.process         Internal  Status Error   order.id=ord-3 error.type=PaymentDeclinedException
+                                               events order.validated, exception (exception.type only)
+LogRecord  Error  Body "order failed"  Span ID 8999edefbae5aa71 (the ord-3 span)
+           exception.type PaymentDeclinedException, exception.message "card declined by issuer",
+           exception.stacktrace "…at OrderJob.Charge(Order order) …", order.id ord-3
+metrics (scope orders): order.processed, order.duration, order.active, order.queue.depth
+```
+
+The records carry only these attributes: no `{OriginalFormat}` (the state has
+none), and no `SpanId`/`TraceId`/`ParentId` — the generic host's
+activity-tracking scope is not exported (design D-NET10 (g), C17 fix round 1;
+re-measured 2026-11-12, trace `c3aaa7bb80dcb94ce1eacb71ceb1ceaa`; the first
+C17 run above still showed them). Data points of the synchronous instruments
+carry exemplars with the span IDs.

@@ -56,6 +56,13 @@ namespace StaffOps.OtelHelper.Logging
         internal static void RegisterStdoutFallback(IServiceCollection services)
             => services.TryAddEnumerable(ServiceDescriptor.Singleton<ILoggerProvider, JsonLineLoggerProvider>(sp => new JsonLineLoggerProvider(sp)));
 
+        /// <summary>
+        /// The activity-tracking scope filter for the SDK's logger provider (design D-NET10 (g)).
+        /// Registered after the SDK's provider (AddOtelHelper calls this after WithLogging).
+        /// </summary>
+        internal static void RegisterActivityScopeFilter(IServiceCollection services)
+            => services.TryAddEnumerable(ServiceDescriptor.Singleton<ILoggerProvider, ActivityScopeFilterInstaller>(sp => new ActivityScopeFilterInstaller(sp)));
+
         /// <summary>Type name of the framework's console provider (no package reference to it).</summary>
         internal const string ConsoleProviderName = "Microsoft.Extensions.Logging.Console.ConsoleLoggerProvider";
 

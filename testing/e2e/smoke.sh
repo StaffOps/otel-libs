@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # End-to-end smoke against a real otel/opentelemetry-collector-contrib.
 #
-# Per language (Go and Node smoke programs, Python python-process example) and per
+# Per language (Go, Node and .NET smoke programs, Python python-process example) and per
 # combination in combos.sh — gRPC; http/protobuf with an /otlp path prefix; a
 # per-signal traces endpoint; TLS with a generated CA — each signal must
 # arrive at the expected receiver, in a batch whose resource carries the
@@ -10,9 +10,13 @@
 #
 #   testing/e2e/smoke.sh
 #   SMOKE_LANGS=node NODE_VERSION=22.15.0 testing/e2e/smoke.sh   # one language, another Node line
+#   SMOKE_LANGS=dotnet testing/e2e/smoke.sh                       # .NET only (packs the helper, task C17)
 #
-# SMOKE_LANGS (default "go python node") picks the languages run and checked;
+# SMOKE_LANGS (default "go python node dotnet") picks the languages run and checked;
 # NODE_VERSION picks the node-smoke image line (docker-compose.yml, default 24).
+# With dotnet selected, the .NET Prometheus fallback is also scraped from another
+# container (e2e/dotnet-prom-scrape.sh, its own network and containers) and
+# reported as one more row; SMOKE_DOTNET_SCRAPE=0 skips that row.
 #
 # The Collector is stopped at exit only when this run started it. A Collector
 # that was already running is reused as is (not recreated, not stopped) and
@@ -23,15 +27,15 @@ cd "$(dirname "$0")/.."
 . e2e/combos.sh
 compose=(docker compose -f docker-compose.yml --profile e2e)
 # Normalized to " a b c " (tabs, newlines and commas count as separators).
-langs=" $(printf '%s' "${SMOKE_LANGS:-go python node}" | tr -s ' \t\n,' '    ' | sed 's/^ *//; s/ *$//') "
+langs=" $(printf '%s' "${SMOKE_LANGS:-go python node dotnet}" | tr -s ' \t\n,' '    ' | sed 's/^ *//; s/ *$//') "
 if [ "$langs" = "  " ]; then
-  echo "smoke: SMOKE_LANGS names no language (go, python, node)" >&2
+  echo "smoke: SMOKE_LANGS names no language (go, python, node, dotnet)" >&2
   exit 2
 fi
 for lang in $langs; do
   case "$lang" in
-    go | python | node) ;;
-    *) echo "smoke: unknown language in SMOKE_LANGS: $lang (go, python, node)" >&2; exit 2 ;;
+    go | python | node | dotnet) ;;
+    *) echo "smoke: unknown language in SMOKE_LANGS: $lang (go, python, node, dotnet)" >&2; exit 2 ;;
   esac
 done
 
@@ -57,7 +61,7 @@ else
   "${compose[@]}" up -d --force-recreate --quiet-pull collector
   logs_since=()
 fi
-for lang in go python node; do
+for lang in go python node dotnet; do
   case "$langs" in *" $lang "*) "${compose[@]}" run --rm --quiet-pull "$lang-smoke" ;; esac
 done
 sleep 3 # let the debug exporter print the last batches
@@ -144,7 +148,23 @@ node   per-signal  logs    default   ok
 node   tls         traces  tls       ok
 node   tls         metrics tls       ok
 node   tls         logs    tls       ok
-node   all         logs-correlated -     ok'
+node   all         logs-correlated -     ok
+dotnet grpc        traces  default   ok
+dotnet grpc        metrics default   ok
+dotnet grpc        logs    default   ok
+dotnet http-prefix traces  prefix    ok
+dotnet http-prefix metrics prefix    ok
+dotnet http-prefix logs    prefix    ok
+dotnet per-signal  traces  persignal ok
+dotnet per-signal  traces  default   absent
+dotnet per-signal  metrics persignal absent
+dotnet per-signal  logs    persignal absent
+dotnet per-signal  metrics default   ok
+dotnet per-signal  logs    default   ok
+dotnet tls         traces  tls       ok
+dotnet tls         metrics tls       ok
+dotnet tls         logs    tls       ok
+dotnet all         logs-correlated -     ok'
 
 status=0
 while read -r lang combo signal receiver want; do
@@ -167,4 +187,20 @@ while read -r lang combo signal receiver want; do
   case "$want" in absent*) arrow="-/->" ;; *) arrow="->  " ;; esac
   printf '%s %-6s %-11s %-7s %s %-9s %s\n' "$verdict" "$lang" "$combo" "$signal" "$arrow" "$receiver" "${want#ok}"
 done <<<"$expect"
+
+# .NET Prometheus fallback scraped from another container (design D-NET11, task C17).
+case "$langs" in
+  *" dotnet "*)
+    if [ "${SMOKE_DOTNET_SCRAPE:-1}" = 0 ]; then
+      echo "SKIP  dotnet prometheus scrape from another container (SMOKE_DOTNET_SCRAPE=0)"
+    elif scrape=$(e2e/dotnet-prom-scrape.sh 2>&1); then
+      echo "OK    dotnet prometheus scrape from another container (e2e/dotnet-prom-scrape.sh)"
+      grep 'PASS' <<<"$scrape" | sed 's/^/      /'
+    else
+      printf '%s\n' "$scrape" | tail -20 >&2
+      echo "MISS  dotnet prometheus scrape from another container (e2e/dotnet-prom-scrape.sh)"
+      status=1
+    fi
+    ;;
+esac
 exit $status

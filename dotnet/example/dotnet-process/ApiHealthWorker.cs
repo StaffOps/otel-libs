@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Diagnostics.Metrics;
+using Microsoft.Extensions.DependencyInjection;
 using StaffOps.OtelHelper;
 
 /// <summary>
@@ -9,15 +10,10 @@ using StaffOps.OtelHelper;
 public class ApiHealthWorker : BackgroundService
 {
     private static readonly ActivitySource _activity = new("sample-process.api-health");
-    private static readonly Meter _meter = new(
-        Environment.GetEnvironmentVariable("SERVICE_NAME") ?? "sample-process");
 
-    private static readonly Counter<long> _checksTotal = _meter.CreateCounter<long>(
-        "api_health.checks_total", "checks", "Total health checks executed");
-    private static readonly Counter<long> _checksFailedTotal = _meter.CreateCounter<long>(
-        "api_health.checks_failed_total", "checks", "Total failed health checks");
-    private static readonly Histogram<double> _checkDuration = _meter.CreateHistogram<double>(
-        "api_health.check_duration_seconds", "s", "Duration of each health check");
+    private readonly Counter<long> _checksTotal;
+    private readonly Counter<long> _checksFailedTotal;
+    private readonly Histogram<double> _checkDuration;
 
     private readonly IHttpClientFactory _httpFactory;
     private readonly ILogger<ApiHealthWorker> _logger;
@@ -33,8 +29,12 @@ public class ApiHealthWorker : BackgroundService
         ("/error", "process.api-simulate-error")
     };
 
-    public ApiHealthWorker(IHttpClientFactory httpFactory, ILogger<ApiHealthWorker> logger)
+    public ApiHealthWorker(IHttpClientFactory httpFactory, ILogger<ApiHealthWorker> logger, [FromKeyedServices(OtelHelperKeys.Instrumentation)] Meter meter)
     {
+        // The helper's Meter, keyed (name = the resolved service.name, so it is always exported).
+        _checksTotal = meter.CreateCounter<long>("api_health.checks_total", "checks", "Total health checks executed");
+        _checksFailedTotal = meter.CreateCounter<long>("api_health.checks_failed_total", "checks", "Total failed health checks");
+        _checkDuration = meter.CreateHistogram<double>("api_health.check_duration_seconds", "s", "Duration of each health check");
         _httpFactory = httpFactory;
         _logger = logger;
     }
@@ -78,7 +78,9 @@ public class ApiHealthWorker : BackgroundService
                 {
                     _checksTotal.Add(1, new KeyValuePair<string, object?>("endpoint", endpoint));
                     _checksFailedTotal.Add(1, new KeyValuePair<string, object?>("endpoint", endpoint));
-                    check?.SetStatus(ActivityStatusCode.Error, ex.Message);
+                    // ADR-014: type on the span, message and stack trace in the correlated log below.
+                    check?.SetStatus(ActivityStatusCode.Error);
+                    check?.SetTag("error.type", ex.GetType().FullName);
                     _logger.LogError(ex, "Health check error: {Endpoint}", endpoint);
                 }
                 finally

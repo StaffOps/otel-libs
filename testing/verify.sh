@@ -110,7 +110,9 @@ step_dotnet() {
   "${compose[@]}" run --rm dotnet-tests
 }
 
-step_e2e() { "$root/testing/e2e/smoke.sh"; }
+# Every language (.NET included, task C17); the scrape row is skipped here: the
+# dotnet-scrape step runs that script on its own.
+step_e2e() { SMOKE_DOTNET_SCRAPE=0 "$root/testing/e2e/smoke.sh"; }
 
 # .NET Prometheus fallback scraped from another container (design D-NET11).
 step_dotnet_scrape() { "$root/testing/e2e/dotnet-prom-scrape.sh"; }

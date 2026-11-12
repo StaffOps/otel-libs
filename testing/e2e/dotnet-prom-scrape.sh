@@ -4,7 +4,8 @@
 # The 1.20.x Prometheus HttpListener binds `localhost` by default, which no
 # other container or pod can reach; the helper replaces the prefix with
 # `http://+:<port>/metrics/`. This check builds the dotnet-process example (a
-# worker service, no ASP.NET Core pipeline) from source with no OTLP endpoint,
+# worker service, no ASP.NET Core pipeline) against the helper package packed
+# from this tree (task C17) with no OTLP endpoint,
 # then scrapes it by container name from a separate curl container on a
 # private network, once in the Prometheus text format and once asking for
 # OpenMetrics 1.0.0 (what a Prometheus server negotiates first). A
@@ -30,6 +31,16 @@ CURL_IMAGE="curlimages/curl:8.11.1"
 id="otel-libs-dotnet-scrape-$$"
 id2="$id-loopback"
 port=9464
+# The app container's command: a container-local copy without the host's bin/obj
+# (the repo is mounted read-only), then StaffOps.OtelHelper packed into the local
+# feed /packages and the example restored against that .nupkg
+# (example/nuget.packages.config), as its Dockerfile does, never the project
+# reference (task C17).
+app_cmd='mkdir /w && cd /src && tar --exclude=bin --exclude=obj -cf - . | tar -xf - -C /w && cd /w &&
+  dotnet pack StaffOps.OtelHelper/StaffOps.OtelHelper.csproj -c Release -o /packages --nologo -v quiet &&
+  ver=$(ls /packages/StaffOps.OtelHelper.[0-9]*.nupkg | sed "s#.*/StaffOps[.]OtelHelper[.]\(.*\)[.]nupkg#\1#") &&
+  dotnet restore example/dotnet-process --configfile example/nuget.packages.config -p:OtelHelperVersion="$ver" -v quiet &&
+  dotnet run --project example/dotnet-process -c Release --no-restore --property:OtelHelperVersion="$ver"'
 
 cleanup() {
   docker rm -f "$id" "$id2" >/dev/null 2>&1 || true
@@ -39,11 +50,9 @@ trap cleanup EXIT
 trap 'exit 130' INT TERM
 
 docker network create "$id" >/dev/null
-# Container-local copy without the host's bin/obj: the repo is mounted read-only.
 docker run -d --name "$id" --network "$id" -v "$DOTNET_DIR:/src:ro" \
   -e SERVICE_NAME=e2e-dotnet-scrape -e ENVIRONMENT=DEV -e OTEL_HELPER_METRICS_PORT="$port" \
-  "$SDK_IMAGE" sh -c 'mkdir /w && cd /src && tar --exclude=bin --exclude=obj -cf - . | tar -xf - -C /w &&
-    cd /w && dotnet run --project example/dotnet-process -c Release' >/dev/null
+  "$SDK_IMAGE" sh -c "$app_cmd" >/dev/null
 
 # The first attempts are refused while the example builds (up to ~5 min).
 body=$(docker run --rm --network "$id" "$CURL_IMAGE" -sS -f -m 5 \
@@ -90,8 +99,7 @@ for bind in 127.0.0.1 localhost; do
   docker run -d --name "$id2" --network "$id" -v "$DOTNET_DIR:/src:ro" \
     -e SERVICE_NAME=e2e-dotnet-scrape -e ENVIRONMENT=DEV -e OTEL_HELPER_METRICS_PORT="$port" \
     -e OTEL_EXPORTER_PROMETHEUS_HOST="$bind" \
-    "$SDK_IMAGE" sh -c 'mkdir /w && cd /src && tar --exclude=bin --exclude=obj -cf - . | tar -xf - -C /w &&
-      cd /w && dotnet run --project example/dotnet-process -c Release' >/dev/null
+    "$SDK_IMAGE" sh -c "$app_cmd" >/dev/null
   loopback=""
   for _ in $(seq 1 100); do
     loopback=$(docker exec "$id2" bash -c "exec 3<>/dev/tcp/127.0.0.1/$port && printf 'GET /metrics HTTP/1.1\r\nHost: 127.0.0.1:$port\r\nConnection: close\r\n\r\n' >&3 && head -1 <&3" 2>/dev/null || true)

@@ -152,6 +152,7 @@ namespace StaffOps.OtelHelper
             MetricsSetup.ConfigureReaderOptions(services);
             LoggingSetup.ConfigureFilters(services);
             LoggingSetup.RegisterStdoutFallback(services);
+            LoggingSetup.RegisterActivityScopeFilter(services);
             services.ConfigureOpenTelemetryTracerProvider(TracerSetup.ApplyResolved);
             services.ConfigureOpenTelemetryMeterProvider(MetricsSetup.ApplyResolved);
             services.ConfigureOpenTelemetryLoggerProvider(LoggingSetup.ApplyResolved);

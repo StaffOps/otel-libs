@@ -1,5 +1,11 @@
 # Tests — StaffOps.OtelHelper (.NET)
 
+2064 tests (xUnit) with the parity runner, 0 failed, 0 skipped (compose `dotnet-tests` on `sdk:8.0` with `sql-postgres`, `sql-mysql` and `redis-test`, 2026-11-12, task C17 fix round 2: 3 more `ActivityScopeFilterTests`; SDK 10 leg not re-run); coverlet total `| Total | 98.75% | 97.18% | 99.64% |` (line, branch, method). The fix-round-1 line below is the previous run.
+
+2061 tests (xUnit) with the parity runner, 0 failed, 0 skipped (compose `dotnet-tests` on `sdk:8.0` with `sql-postgres`, `sql-mysql` and `redis-test`, and on `sdk:10.0` (10.0.403) with `DOTNET_ROLL_FORWARD=Major` on the same network, 2026-11-12, task C17 fix round 1: the 11 [`ActivityScopeFilterTests`](#activity-tracking-scope-filter-task-c17-fix-round-1)); coverlet total `| Total | 98.74% | 97.2%  | 99.64% |` (line, branch, method) on both. The C17 line below is the previous run.
+
+2050 tests (xUnit) with the parity runner, 0 failed, 0 skipped (compose `dotnet-tests` on `sdk:8.0` with `sql-postgres`, `sql-mysql` and `redis-test`, 2026-11-12, task C17; SDK 10 leg not re-run: C17 changes no library or test code); coverlet total `| Total | 98.74% | 97.19% | 99.63% |` (line, branch, method), unchanged from C16. The e2e smoke rows are in [e2e smoke (task C17)](#e2e-smoke-task-c17). The C16 fix-round-1 line below is the previous run.
+
 2050 tests (xUnit) with the parity runner, 0 failed, 0 skipped, 0 warnings (compose `dotnet-tests` on `sdk:8.0` with `sql-postgres`, `sql-mysql` and `redis-test`, and on `sdk:10.0` (10.0.403) with `DOTNET_ROLL_FORWARD=Major` on the same network, 2026-11-12, task C16 fix round 1); coverlet total `| Total | 98.74% | 97.19% | 99.63% |` (line, branch, method) on both. Before the fix round: 2044 tests, 98.79% (sdk:8.0 only). Parity: .NET 370 `pass`, 0 `xfail`, 17 `skip` of 387 cases. The C15 line below is the previous run.
 
 2025 tests (xUnit) with the parity runner, 0 failed, 0 skipped, 0 warnings (compose `dotnet-tests` on `sdk:8.0` with `sql-postgres`, `sql-mysql` and `redis-test`, and on `sdk:10.0` (10.0.403) with `DOTNET_ROLL_FORWARD=Major` on the same network, 2026-11-12, task C15); coverlet total `| Total | 98.73% | 97.18% | 99.63% |` (line, branch, method) on `sdk:8.0` (a first run, before the ERROR message wording was final, gave 98.78% / 97.21%), `| Total | 98.73% | 97.18% | 99.63% |` on SDK 10 (that earlier tree); `StaffOps.OtelHelper.Profiling` 100% / 98.18% / 100% in all three runs. The C14c round-2 line below is the previous run.
@@ -69,7 +75,7 @@ property.
 (`StaffOps.OtelHelper.ParityDriver`), against the fake OTLP receiver, with the
 `dotnet` status of each case (strict xfail); `ParityHarnessTests` cover the
 matcher and the schema. Rules, environment variables and adapter seams:
-[`parity/README.md`](../parity/README.md#net-runner). Run it with the receiver:
+[`parity/README.md`](https://github.com/StaffOps/otel-libs/blob/main/parity/README.md#net-runner). Run it with the receiver:
 
 ```bash
 docker compose -f testing/docker-compose.yml run --rm dotnet-tests
@@ -1022,3 +1028,92 @@ Fix round 1 (2026-11-12, the classes above plus `DiagnosticsTests` and
 drops `replacement=`, passes it as a (cut) attribute, the config-file check back
 on `IsNullOrWhiteSpace`, constants echoed (redacted and cut), constants not
 escaped, the constant path not once, the constant key not checked.
+
+## e2e smoke (task C17)
+
+Not xUnit: `testing/e2e/smoke.sh` with `SMOKE_LANGS=dotnet` (also in the default
+`go python node dotnet`), against `otel/opentelemetry-collector-contrib:0.160.0`
+(`testing/e2e/collector.yaml`: one receiver per combination, each tags its data
+with `e2e.receiver`). The `dotnet-smoke` compose service (`sdk:8.0`) runs
+`testing/e2e/run-dotnet.sh`: `dotnet pack` of `StaffOps.OtelHelper` from a copy
+of the tree into `/packages`, restore of `testing/e2e/dotnet-smoke` with
+`-p:OtelHelperVersion=<version>` and `dotnet/example/nuget.packages.config`
+(`StaffOps.OtelHelper*` only from `/packages`), then one bounded run (60 s) per
+combination of `testing/e2e/combos.sh` with `OTEL_SERVICE_NAME=e2e-dotnet-<combination>`.
+No NuGet cache volume: a cached package of the same version from an older tree
+would be restored instead of the one just packed.
+
+The program (`Host.CreateApplicationBuilder`, `AddOtelHelper()`) starts the
+keyed `ActivitySource`'s root activity `e2e-smoke-span`, adds 1 to the keyed
+`Meter`'s counter `e2e.smoke.runs` and writes the Warning record `e2e-smoke-log`
+inside it, then `ForceFlushOtelHelper(10000)` (exit 1 when the flush is
+incomplete) and stops the host.
+
+| Combination | Environment | Checked |
+|---|---|---|
+| `grpc` | `OTEL_EXPORTER_OTLP_ENDPOINT=http://collector:4317` | traces, metrics, logs at `default` |
+| `http-prefix` | `…=http://collector:4320/otlp`, `OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf` | the three at `prefix` (`/otlp/v1/<signal>`: the path is kept) |
+| `per-signal` | `…=http://collector:4317`, `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://collector:4319` | traces at `persignal` and not at `default`; metrics and logs at `default` and not at `persignal` |
+| `tls` | `…=https://collector:14317`, `OTEL_EXPORTER_OTLP_CERTIFICATE=/certs/ca.pem` | the three at `tls` (custom CA) |
+| all four | — | `logs-correlated`: every `e2e-smoke-log` record carries the Trace ID of an `e2e-smoke-span` of its service |
+| — | no endpoint | Prometheus fallback scraped from another container (`testing/e2e/dotnet-prom-scrape.sh`, which now also runs the example against the packed helper) |
+
+Measured 2026-11-12: `SMOKE_LANGS=dotnet testing/e2e/smoke.sh` exit 0, 16 `OK`
+rows and `OK … prometheus scrape from another container` (its three `PASS`
+lines: text 20 metric families and OpenMetrics; `HOST=127.0.0.1` and
+`HOST=localhost` answer inside the container and refuse the other one, curl
+exit 7). Go, Python and Node.js rows re-run on the changed script:
+`SMOKE_LANGS="go python node"` exit 0, 48 `OK`.
+
+CI (C17 fix round 1): job `e2e-smoke-dotnet` runs these rows with
+`SMOKE_LANGS=dotnet SMOKE_DOTNET_SCRAPE=0` (the scrape is the separate job
+`dotnet-prom-scrape`); `publish-dotnet` and `publish-dotnet-release` need both.
+The image builds exactly one `StaffOps.OtelHelper.<version>.nupkg`; `run-dotnet.sh`
+and every example Dockerfile fail when `/packages` holds none or more than one.
+
+Examples (not in CI's e2e; `example-images` builds every `Dockerfile.demo`,
+`dotnet-custom-signals` included since fix round 1):
+measured 2026-11-12, the four `Dockerfile` images and `dotnet-process/Dockerfile.demo`
+(with a core packed into `dotnet/packages/`) build; with the Collector,
+`dotnet-process` → `dotnet-api` → `dotnet-backend` is one trace of nine spans
+with an RPC-shaped server span (`order.OrderService/ProcessOrder`), and
+`dotnet-custom-signals` emits the names listed in
+[example/EXAMPLES.md](example/EXAMPLES.md#custom-signals-dotnet-custom-signals).
+
+## Activity-tracking scope filter (task C17 fix round 1)
+
+`ActivityScopeFilterTests` (`[Collection("EnvVarTests")]`, design D-NET10 (g)).
+A capture processor reads each record's scopes with `LogRecord.ForEachScope`,
+the way the OTLP exporter does.
+
+| Test | Description |
+|-------|-----------|
+| `Generic_Host_Activity_Tracking_Scope_Is_Not_On_The_Record` | `Host.CreateApplicationBuilder` (default tracking options SpanId, TraceId, ParentId): no `SpanId`/`TraceId`/`ParentId` entry; the application scope `order.id` is there |
+| `Application_Scope_With_The_Same_Keys_Is_Kept` | An application scope with `SpanId`, `TraceId`, `ParentId` keys keeps its own values (the rule is by origin, not by key) |
+| `Opt_In_Activity_Tags_Scope_Is_Kept` | `ActivityTrackingOptions.Tags`: the activity's tag scope (`tenant`) is exported, the ID scope is not |
+| `Filter_Holds_When_The_Application_Adds_OpenTelemetry_Logging_Again` | `builder.Logging.AddOpenTelemetry()` after `AddOtelHelper`: one SDK provider, still filtered |
+| `Record_Outside_An_Activity_Keeps_Application_Scopes` | No activity: application scopes pass |
+| `The_Factory_Scope_Matches_The_Custom_Property_And_The_Type` | On the running runtime the factory's scope object is the activity's `__ActivityLogScope__` property and of type `LoggerFactoryScopeProvider+ActivityLogScope` (fails if a runtime changes either: then re-check the rule) |
+| `Type_Rule_Alone_Drops_The_Factory_Scope` | The real scope object under another current activity: dropped by the type rule |
+| `Custom_Property_Rule_Alone_Drops_Only_That_Instance` | A stand-in object stored as the property is dropped; an equal-looking list is not; `null` is not |
+| `No_Current_Activity_Matches_Nothing_By_Property` | Without a current activity a plain object is not dropped |
+| `Filter_Delegates_Push_And_Keeps_Other_Scopes` | `Push` reaches the factory's provider; only the tracking scope is skipped |
+| `Installer_Writes_Nothing` | The installer's loggers are the null logger; no SDK provider registered: nothing to do |
+| `A_Provider_That_Takes_No_Scope_Provider_Warns_Once` | A target provider without `ISupportExternalScope`: one `otelhelper: WARN the OpenTelemetry logger provider accepts no scope provider: … (SpanId, TraceId, ParentId) will be exported …` line, once (fix round 2) |
+| `A_Scope_Aware_Provider_Gets_The_Filter_Without_A_Warning` | A scope-aware target gets an `ActivityScopeFilter`; no line |
+| `No_Target_Provider_Is_Silent` | No target provider: no line |
+
+The canary `The_Factory_Scope_Matches_The_Custom_Property_And_The_Type` checks
+only the `Microsoft.Extensions.Logging` version the test project resolves on the
+runtime it runs on; the dev review measured the property and the type by probe
+on 8.0 and 10.0 (C17 fix round 1). A later version is covered when the suite
+runs on it, not before.
+
+Mutants (2026-11-12, each fails at least one test): registration removed (4
+tests fail); the custom-property rule removed (1); the type rule removed (1); the
+installer not handing over the filter (4); a key-based rule (drop any scope with a
+`SpanId` key) (1); `Push` not delegating the state (1). Fix round 2: the warning never written
+(1), written whatever was installed (2), written with no target provider (1);
+an equivalent no-op edit survives, as it must (harness control). End to end: the C17 smoke
+record `e2e-smoke-log` and the `dotnet-custom-signals` records reach the Collector
+without `SpanId`/`TraceId`/`ParentId` (measured 2026-11-12, contrib 0.160.0).

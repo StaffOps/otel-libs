@@ -1536,6 +1536,26 @@ dashboards and alerts.
    The fifth D8 deprecation, a schemeless endpoint with `http/protobuf`, warns
    since task C7a: see item 16.
 
+29. **Log records no longer carry the `SpanId`, `TraceId`, `ParentId`
+   attributes** (task C17, design D-NET10 (g); measured 2026-11-12 with
+   `otel/opentelemetry-collector-contrib` 0.160.0). Under the generic host
+   (`Host.CreateApplicationBuilder`, `WebApplication.CreateBuilder`) the logger
+   factory's activity-tracking scope was exported as attributes, repeating the
+   record's own trace context. Before (0.2.x) → after:
+
+   | Record written inside an activity | 0.2.x | 0.3 (this branch) |
+   |---|---|---|
+   | worker (`Host.CreateApplicationBuilder`) | `{OriginalFormat}`, `SpanId`, `TraceId`, `ParentId` + the record's trace_id/span_id | `{OriginalFormat}` + the record's trace_id/span_id |
+   | ASP.NET Core request | the above + `ConnectionId`, `RequestId`, `RequestPath` | `{OriginalFormat}`, `ConnectionId`, `RequestId`, `RequestPath` + the record's trace_id/span_id |
+   | an application scope with a `SpanId` key | exported | exported (unchanged) |
+   | `ActivityTrackingOptions.Tags` / `Baggage` scopes | exported | exported (unchanged) |
+
+   Check: query the record's own OTLP `trace_id`/`span_id` fields (the log
+   backend's trace correlation) instead of the attributes; Loki
+   structured-metadata or LogQL queries on `SpanId`/`TraceId`/`ParentId` stop
+   matching, and so do Collector rules that read them. Other logging providers
+   (console, third-party) still get the scope.
+
 ### Collector / platform prerequisites (before rolling 0.3.0 out)
 
 Owned outside this repo (design D11); each item blocks the rollout, not the rc:
@@ -2336,6 +2356,83 @@ Phase C work on this branch (no .NET release yet; the first will be
   (`TestDiagnostics.LinesWithoutDeprecation`); 19 mutants each fail a test.
   README "Deprecated variables", HOW-TO §10 "Deprecated variables" (every
   line verbatim, success = no line). Migration guide: telemetry item 28.
+- **.NET: e2e smoke and examples (task C17, requirement "Acceptance" e2e and
+  examples rows; design D-NET11, O7; ADR-014).** New compose service
+  `dotnet-smoke` (`sdk:8.0`, `testing/e2e/run-dotnet.sh`) and 16 .NET rows in
+  `testing/e2e/smoke.sh` (`SMOKE_LANGS` default now `go python node dotnet`):
+  gRPC, http/protobuf with an `/otlp` path prefix, a per-signal traces
+  endpoint, TLS with a custom CA, and the log/span correlation, all against
+  `otel/opentelemetry-collector-contrib:0.160.0` with the markers
+  `e2e-smoke-span`, `e2e.smoke.runs`, `e2e-smoke-log`; with `dotnet` selected
+  the script also runs `testing/e2e/dotnet-prom-scrape.sh` as one more row
+  (`SMOKE_DOTNET_SCRAPE=0` skips it; `testing/verify.sh`'s `e2e` step sets it,
+  its `dotnet-scrape` step runs the script). The smoke program
+  (`testing/e2e/dotnet-smoke/`) and `dotnet-prom-scrape.sh` build against the
+  `StaffOps.OtelHelper` package packed from the tree into a local feed, not
+  the project reference. Measured 2026-11-12: 16 `OK` rows and the scrape row
+  `OK`; Go, Python and Node.js rows 48 `OK` on the changed script.
+  Examples: each csproj takes `-p:OtelHelperVersion=<version>` (then a
+  `PackageReference`; unset, the project reference as before); every
+  `Dockerfile` packs the helper in a `pack` stage and every `Dockerfile.demo`
+  takes CI's packages, both restoring through the new
+  `dotnet/example/nuget.packages.config` (`StaffOps.OtelHelper*` only from
+  `/packages`) instead of rewriting the csproj with `sed`. `dotnet-api` uses
+  the keyed `ActivitySource`/`Meter`, the `dotnet-process` workers inject the
+  keyed `Meter`, `dotnet-backend` subscribes its meter `sample-backend.orders`
+  through `AdditionalMeters` (before: meters named after `SERVICE_NAME`, not
+  exported when `OTEL_SERVICE_NAME` named the service otherwise); the
+  backend keeps the O7 key in `appsettings.json` (RPC-shaped server spans,
+  measured: one trace process → api → backend of nine spans). Spans that
+  recorded an exception message as the status description now set status
+  ERROR without one plus `error.type`, the detail staying in the correlated
+  ERROR/WARN log (ADR-014). New example `dotnet/example/dotnet-custom-signals`
+  with the Go/Python/Node.js names (`orders.process-batch`, `order.process`,
+  `order.processed`, `order.duration`, `order.active`, `order.queue.depth`,
+  `order processed` / `order failed` / `batch finished`); its failed span
+  carries `exception.type` only (Go/Python/Node.js record the message too).
+  Docs: `dotnet/README.md` (examples, e2e smoke), `dotnet/HOW-TO.md` (§8
+  complete example on the keyed source and ADR-014, "Running the examples and
+  the e2e smoke", §4 log scopes: the scopes the helper exports as attributes;
+  the activity-tracking `SpanId`/`TraceId`/`ParentId` are no longer exported
+  since fix round 1, ASP.NET Core's `ConnectionId`/`RequestId`/`RequestPath`
+  still are, as in 0.2.x), `dotnet/TESTS.md`,
+  `dotnet/example/README.md`, `dotnet/example/EXAMPLES.md`, `testing/README.md`.
+- **.NET: C17 fix round 1 (2026-11-12).** **Log records no longer carry
+  `SpanId`, `TraceId`, `ParentId` attributes** (design D-NET10 (g)): the
+  generic host's activity-tracking scope repeated the record's own trace
+  context (0.2.x and the C17 tree exported it; Go, Python and Node.js emit
+  none). The SDK's logger provider gets the factory's scope provider without
+  that one scope object, identified by origin (the activity's
+  `__ActivityLogScope__` property or the runtime's `ActivityLogScope` type),
+  never by key: an application scope named `SpanId` and the opt-in
+  `Tags`/`Baggage` scopes are kept, other logging providers still get the
+  scope. Kept: ASP.NET Core's `ConnectionId`, `RequestId`, `RequestPath` — new
+  root README gap row with a Collector `transform` recipe (validated and run
+  against `dotnet-api`). Tests: `ActivityScopeFilterTests` (11), 6 mutants each
+  fail a test. CI: new job `e2e-smoke-dotnet` (`SMOKE_LANGS=dotnet`,
+  `SMOKE_DOTNET_SCRAPE=0`; same tag gate as `dotnet-prom-scrape`), needed by
+  `publish-dotnet` and `publish-dotnet-release`; `example-images` builds
+  `dotnet-custom-signals/Dockerfile.demo` (new). The example Dockerfiles and
+  `run-dotnet.sh` fail unless `/packages` holds exactly one core package.
+  `dotnet-custom-signals` passes its log attributes as the record's state (the
+  stdout fallback now writes `order.id`, `order.amount`, `batch.size`,
+  `orders.failed`) and prints only the exception type on an unexpected failure.
+  Docs: `dotnet/README.md`, `dotnet/HOW-TO.md` and `dotnet/TESTS.md` links to
+  ADR-014 and `parity/README.md` are absolute (`mkdocs build --strict` passes),
+  HOW-TO §4 (scope filter, Collector recipe, state-based attributes), example
+  README/EXAMPLES (`error.type` `FullName` vs short name, `_total` names kept
+  for the dashboards).
+- **.NET: C17 fix round 2 (2026-11-12).** Migration guide telemetry item 29
+  (the three attributes gone, with the queries to check). The scope-filter
+  installer only hands the filter to a provider that takes a scope provider; if
+  none of the SDK's does, one `otelhelper: WARN the OpenTelemetry logger
+  provider accepts no scope provider: the activity-tracking scope (SpanId,
+  TraceId, ParentId) will be exported as log attributes` line (3 tests, 4
+  mutants). Docs: the Collector recipes for the ASP.NET Core request scope and
+  the database exception detail show the `service.pipelines` wiring (both
+  `otelcol-contrib validate` clean, contrib 0.160.0); HOW-TO §4 warns against a
+  second `LoggerFactory` over the host's providers (scope-aware providers keep
+  only the last scope provider: upstream behavior).
 
 ### Breaking — telemetry output changes (dashboards/alerts)
 

@@ -518,7 +518,7 @@ three sources, also when the application subscribed them itself:
 | `db.npgsql.data_source` | the value of every password key (`SSL Password`, …) written as `REDACTED`; a value that does not parse is removed |
 | `db.query.parameter.*` | removed (SqlClient records bound values with `OTEL_DOTNET_EXPERIMENTAL_SQLCLIENT_ENABLE_TRACE_DB_QUERY_PARAMETERS`) |
 | `db.user`; MySqlConnector `db.name`, `net.peer.name`, `net.peer.port` | `db.user` removed in every mode; the three MySqlConnector legacy keys also give `db.namespace`, `server.address`, `server.port` (removed in the stable mode) |
-| `exception` events ([ADR-014](../specs/decisions/ADR-014-exception-detail-in-correlated-logs.md)) | keep only `exception.type` (and other non-detail attributes); the message and the stack trace go to one ERROR log record, category `StaffOps.OtelHelper.Database`, with the span's `trace_id` / `span_id` (OTLP), through the normal log pipeline and level rules |
+| `exception` events ([ADR-014](https://github.com/StaffOps/otel-libs/blob/main/specs/decisions/ADR-014-exception-detail-in-correlated-logs.md)) | keep only `exception.type` (and other non-detail attributes); the message and the stack trace go to one ERROR log record, category `StaffOps.OtelHelper.Database`, with the span's `trace_id` / `span_id` (OTLP), through the normal log pipeline and level rules |
 | `db.system` / `db.system.name` (R10) | both on every span by default (SqlClient `mssql` / `microsoft.sql_server`, Npgsql and MySqlConnector `postgresql`, `mysql`), only the new key with `OTEL_SEMCONV_STABILITY_OPT_IN=database`; a MySqlConnector `db.statement` also gives `db.query.text`, and is removed in that mode |
 
 On the `Npgsql` and `MySqlConnector` meters a view drops the pool-name attribute
@@ -627,7 +627,27 @@ Coverage: see [TESTS.md](TESTS.md) for the full list.
 
 ### Examples
 
-See [example/README.md](example/README.md) for sample apps with distributed traces.
+See [example/README.md](example/README.md) for sample apps with distributed traces
+(`dotnet-api` HTTP → `dotnet-backend` gRPC, `dotnet-process` workers) and
+`dotnet-custom-signals` (custom spans, metrics and logs with the Go, Python and
+Node.js names). Their Dockerfiles pack `StaffOps.OtelHelper` and restore the
+`.nupkg` from a local feed, as a consumer does; the backend sets the O7 key
+(`OTEL_DOTNET_EXPERIMENTAL_ASPNETCORE_ENABLE_GRPC_INSTRUMENTATION`, RPC-shaped
+server spans).
+
+### End-to-end smoke
+
+```bash
+SMOKE_LANGS=dotnet testing/e2e/smoke.sh
+```
+
+Packs the helper, builds `testing/e2e/dotnet-smoke` against the package and
+exports to a real `otel/opentelemetry-collector-contrib` over gRPC,
+http/protobuf with an `/otlp` path prefix, a per-signal traces endpoint and TLS
+with a custom CA; checks the span `e2e-smoke-span`, the counter
+`e2e.smoke.runs` and the WARN record `e2e-smoke-log` (correlated with the span)
+at the right receiver, then scrapes the Prometheus fallback from another
+container. Rows and failure output: [HOW-TO.md](HOW-TO.md#running-the-examples-and-the-e2e-smoke-task-c17).
 
 ---
 

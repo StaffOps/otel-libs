@@ -288,6 +288,65 @@ logger.LogInformation("Order {OrderId} from customer {CustomerId} processed in {
 logger.LogInformation($"Order {orderId} from customer {customerId} processed in {elapsed}ms");
 ```
 
+The OTLP record's body is the formatted message (`Order 42 from customer 7
+processed in 12ms`); each placeholder is an attribute, and the SDK adds the
+template as `{OriginalFormat}`. A fixed body with attributes is a state of key/value pairs and a formatter —
+the pattern of `example/dotnet-custom-signals`; the pairs are attributes on
+OTLP and fields on the stdout fallback, and no `{OriginalFormat}` is added:
+
+```csharp
+var state = new List<KeyValuePair<string, object?>> { new("order.id", "ord-1") };
+logger.Log(LogLevel.Information, default, state, null, (_, _) => "order processed");
+// body "order processed", attribute order.id
+```
+
+Logging scopes are exported as attributes too (the helper sets
+`IncludeScopes`), on OTLP only: the stdout fallback writes no scopes.
+
+Under the generic host (`Host.CreateApplicationBuilder`,
+`WebApplication.CreateBuilder`) the logger factory adds an activity-tracking
+scope (`SpanId`, `TraceId`, `ParentId`) to every record written inside an
+activity. The helper does **not** export that scope (task C17 fix round 1,
+design D-NET10 (g)): the record's own trace context already says it. The filter
+goes by origin, not by key — your own scope with a `SpanId` key is exported, and
+so are the opt-in `ActivityTrackingOptions.Tags`/`Baggage` scopes. Other logging
+providers (console, third-party) still get the scope.
+
+```text
+before (C17, measured):  attributes order.id, {OriginalFormat}, SpanId, TraceId, ParentId
+after:                   attributes order.id, {OriginalFormat}     (Trace ID / Span ID on the record itself)
+```
+
+In an ASP.NET Core request the hosting scope adds `ConnectionId`, `RequestId`
+and `RequestPath` (the raw path, for example `/order/1`). The helper keeps them
+(application data, as 0.2.x did); they are high cardinality and `RequestPath`
+can carry identifiers, so drop them at the Collector if your log backend
+indexes attributes (validated and run against `dotnet-api`, contrib 0.160.0):
+
+```yaml
+processors:
+  transform/aspnetcore-request-scope:
+    log_statements:
+      - delete_key(log.attributes, "ConnectionId")
+      - delete_key(log.attributes, "RequestId")
+      - delete_key(log.attributes, "RequestPath")
+service:
+  pipelines:
+    logs:
+      receivers: [otlp]
+      processors: [memory_limiter, transform/aspnetcore-request-scope, batch]   # your existing processors around it
+      exporters: [otlphttp/loki]                                                  # your existing exporters
+```
+
+The stdout fallback writes no scopes at all.
+
+Build no second `LoggerFactory` over the host's providers (for example
+`new LoggerFactory(sp.GetServices<ILoggerProvider>())`): a scope-aware provider
+keeps only the last scope provider it was given, so the host's own loggers'
+scopes stop reaching it — application scopes disappear from the records. That
+is upstream `Microsoft.Extensions.Logging` behavior, with or without the
+helper; resolve `ILoggerFactory` from the container instead.
+
 ---
 
 ## 5. Traces
@@ -473,12 +532,13 @@ builder.Services.AddHttpClient("backend", c => c.BaseAddress = new Uri("http://b
 
 var app = builder.Build();
 
-var serviceName = Environment.GetEnvironmentVariable("SERVICE_NAME") ?? "checkout-api";
-var activitySource = new ActivitySource(serviceName);
-var meter = new Meter(serviceName);
+// The helper's keyed ActivitySource and Meter: named after the resolved service.name,
+// so they are always exported (an unkeyed ActivitySource is ASP.NET Core's own here).
+var activitySource = app.Services.GetRequiredKeyedService<ActivitySource>(OtelHelperKeys.Instrumentation);
+var meter = app.Services.GetRequiredKeyedService<Meter>(OtelHelperKeys.Instrumentation);
 
-var ordersTotal = meter.CreateCounter<long>("orders_total", "orders");
-var requestDuration = meter.CreateHistogram<double>("request_duration_seconds", "s");
+var ordersTotal = meter.CreateCounter<long>("orders.completed", "{order}");
+var requestDuration = meter.CreateHistogram<double>("checkout.duration", "s");
 
 app.MapPost("/checkout", async (HttpRequest req, IHttpClientFactory http, ILogger<Program> logger) =>
 {
@@ -499,7 +559,10 @@ app.MapPost("/checkout", async (HttpRequest req, IHttpClientFactory http, ILogge
     }
     catch (Exception ex)
     {
-        activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+        // ADR-014: the type on the span, message and stack trace in the log record
+        // below (written in the span's context: same trace_id/span_id).
+        activity?.SetStatus(ActivityStatusCode.Error);
+        activity?.SetTag("error.type", ex.GetType().FullName);
         logger.LogError(ex, "Checkout failed");
         throw;
     }
@@ -513,6 +576,55 @@ app.Run();
 
 record CheckoutRequest(string Product, int Quantity);
 ```
+
+### Running the examples and the e2e smoke (task C17)
+
+The example apps in [`example/`](example/README.md) — `dotnet-api` (HTTP) →
+`dotnet-backend` (gRPC) ← `dotnet-process` (workers), and the short job
+`dotnet-custom-signals` (custom spans, metrics, logs with the Go/Python/Node.js
+names) — are built from `dotnet/` with their `Dockerfile`, which packs
+`StaffOps.OtelHelper` in a first stage and restores the example against that
+`.nupkg` from a local feed (`example/nuget.packages.config`), as a consumer
+does:
+
+```bash
+docker build -f example/dotnet-custom-signals/Dockerfile -t dotnet-custom-signals .
+```
+
+How to run them against a Collector, and what each one emits:
+[example/README.md](example/README.md#local-test-docker),
+[example/EXAMPLES.md](example/EXAMPLES.md#custom-signals-dotnet-custom-signals).
+From the repository, `dotnet run --project example/<app>` keeps the project
+reference (no `OtelHelperVersion` set).
+
+The end-to-end smoke exports through the packed helper to a real
+`otel/opentelemetry-collector-contrib` and checks where each signal arrived:
+
+```bash
+SMOKE_LANGS=dotnet testing/e2e/smoke.sh          # .NET rows + the Prometheus scrape row
+SMOKE_LANGS=dotnet SMOKE_DOTNET_SCRAPE=0 testing/e2e/smoke.sh   # without the scrape row
+```
+
+Success (recorded 2026-11-12, abridged):
+
+```text
+OK    dotnet grpc        traces  ->   default
+OK    dotnet http-prefix logs    ->   prefix
+OK    dotnet per-signal  traces  -/-> default   absent
+OK    dotnet tls         metrics ->   tls
+OK    dotnet all         logs-correlated ->   -
+OK    dotnet prometheus scrape from another container (e2e/dotnet-prom-scrape.sh)
+```
+
+A signal that did not arrive is `MISS` (exit 1), one that arrived where it must
+not is `LEAK`; for the scrape row the script prints the scrape script's last
+lines (for example `dotnet-prom-scrape: FAIL — http://…:9464/metrics not
+reachable from another container`) before `MISS`. Every run prints the C16
+deprecation warning for `ENVIRONMENT`, which the smoke sets as the other
+languages do. The combinations (gRPC; http/protobuf with an `/otlp` prefix; a
+per-signal traces endpoint; TLS with a generated CA in
+`OTEL_EXPORTER_OTLP_CERTIFICATE`) are in `testing/e2e/combos.sh`; details in
+[TESTS.md](TESTS.md#e2e-smoke-task-c17).
 
 ---
 
@@ -875,7 +987,7 @@ Parameters (`$1`, `@p0`, `?`) are never values and stay as written; send values 
 parameters, not inlined literals. `db.query.parameter.*` attributes (SqlClient with
 `OTEL_DOTNET_EXPERIMENTAL_SQLCLIENT_ENABLE_TRACE_DB_QUERY_PARAMETERS`) are removed.
 
-**Exception detail goes to a correlated log** ([ADR-014](../specs/decisions/ADR-014-exception-detail-in-correlated-logs.md)).
+**Exception detail goes to a correlated log** ([ADR-014](https://github.com/StaffOps/otel-libs/blob/main/specs/decisions/ADR-014-exception-detail-in-correlated-logs.md)).
 A database's error text can quote values (`Duplicate entry 'x' for key …`,
 `invalid input syntax for type integer: "x"`). On a failed SqlClient, Npgsql or
 MySqlConnector span the `exception` event keeps only `exception.type` (and any
@@ -909,7 +1021,8 @@ are. MySqlConnector adds its event after the span ended: only the helper's
 exporters see it in time, so an exporter you add yourself still gets the full
 event for MySqlConnector (and no log record is written for it on that path) —
 an exception to ADR-014. Export through the helper, or delete the detail at the
-Collector (**not tested**):
+Collector (`otelcol-contrib validate` passes with contrib 0.160.0, with the
+wiring below; **not run against traffic**):
 
 ```yaml
 processors:
@@ -922,6 +1035,12 @@ processors:
         statements:
           - delete_key(attributes, "exception.message")
           - delete_key(attributes, "exception.stacktrace")
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, transform/db-exception-detail, batch]   # your existing processors around it
+      exporters: [otlp/tempo]                                               # your existing exporters
 ```
 
 `StaffOps.OtelHelper.Database` is a reserved category: the helper reads the
@@ -1291,7 +1410,7 @@ the application subscribed itself; contract A27):
 | `error.type` (upstream writes none) | the AWS error code (`aws.error_code`) when it matches `^[A-Z][A-Za-z0-9]{1,63}$` (`NoSuchKey`, `ValidationException`, `ConditionalCheckFailedException`, `InvalidParameter`); else the modeled exception's name without `Exception` (SQS: code `AWS.SimpleQueueService.NonExistentQueue`, exception `QueueDoesNotExistException` → `QueueDoesNotExist`); else, for an error from outside the SDK, its class name (`HttpRequestException` for a refused connection); else `_OTHER` (an unparseable response, `AmazonUnmarshallingException`; a generic `AmazonS3Exception` without a code). A body-less S3 `HEAD` 404 / 403 / 503 gives `NotFound` / `Forbidden` / `ServiceUnavailable` (the SDK's own code) |
 | `aws.s3.key` | removed (upstream writes the request's `Key`); `aws.s3.copy_source`, `aws.s3.delete` and `aws.dynamodb.item_collection_metrics` are removed too (not written by 1.20.3; measured absent for `CopyObject`, `DeleteObjects` and a `PutItem` whose response had `ItemCollectionMetrics`) |
 | `exception.message`, `exception.stacktrace` **attributes** | removed: AWSSDK.Core writes them on the span as well as in the event (`exception.type` and `aws.error_code` kept) |
-| `exception` event ([ADR-014](../specs/decisions/ADR-014-exception-detail-in-correlated-logs.md)) | keeps only `exception.type`; the message and the stack trace go to one ERROR log record of category `StaffOps.OtelHelper.Aws` with the span's `trace_id` / `span_id` ([Exceptions: traces vs logs](#exceptions-traces-vs-logs)) |
+| `exception` event ([ADR-014](https://github.com/StaffOps/otel-libs/blob/main/specs/decisions/ADR-014-exception-detail-in-correlated-logs.md)) | keeps only `exception.type`; the message and the stack trace go to one ERROR log record of category `StaffOps.OtelHelper.Aws` with the span's `trace_id` / `span_id` ([Exceptions: traces vs logs](#exceptions-traces-vs-logs)) |
 | SNS publish to a phone number | never on a span (1.20.3 records no destination for a phone publish). The error text of a failed call, which can include the phone number (`Invalid parameter: PhoneNumber Reason: <phone> is not valid to publish to`) or item values, goes to the correlated log record — or to standard output without a logs exporter — by ADR-014's design: **treat the log pipeline as sensitive**. Python and Node.js write `messaging.destination.name=phone_number:**`, Go nothing |
 
 Why the message goes to the log: the SDK copies the service's error message
@@ -1406,7 +1525,7 @@ detail stays on the span and no record is written.
 ### Exceptions: traces vs logs
 
 The helper's rule for exceptions whose text can carry data
-([ADR-014](../specs/decisions/ADR-014-exception-detail-in-correlated-logs.md);
+([ADR-014](https://github.com/StaffOps/otel-libs/blob/main/specs/decisions/ADR-014-exception-detail-in-correlated-logs.md);
 today the database clients — SqlClient, Npgsql, MySqlConnector, and Redis when
 an `Enrich` callback adds an event — and the AWS SDK clients, task C14c):
 

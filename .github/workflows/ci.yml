@@ -428,6 +428,28 @@ jobs:
         if: failure()
         run: docker compose -f testing/docker-compose.yml --profile e2e logs collector || true
 
+  e2e-smoke-dotnet:
+    # .NET rows of the e2e smoke (task C17): the helper packed from this commit,
+    # exported over grpc/http-prefix/per-signal/tls to a real Collector. The
+    # scrape row is skipped here (SMOKE_DOTNET_SCRAPE=0): dotnet-prom-scrape runs
+    # that script. Same tag gate as dotnet-prom-scrape: it gates only the .NET
+    # publish jobs.
+    name: e2e smoke (Collector, .NET, grpc/http-prefix/per-signal/tls)
+    if: ${{ !startsWith(github.ref, 'refs/tags/') || startsWith(github.ref, 'refs/tags/dotnet/v') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - run: testing/e2e/smoke.sh
+        env:
+          SMOKE_LANGS: dotnet
+          SMOKE_DOTNET_SCRAPE: '0'
+      - name: Collector logs
+        if: failure()
+        run: docker compose -f testing/docker-compose.yml --profile e2e logs collector || true
+
   dotnet-prom-scrape:
     # The .NET Prometheus fallback must answer a scrape from another container:
     # the 1.20.x listener binds localhost unless the helper sets the "+"
@@ -611,6 +633,9 @@ jobs:
             dockerfile: dotnet/example/dotnet-backend/Dockerfile.demo
           - context: dotnet
             dockerfile: dotnet/example/dotnet-process/Dockerfile.demo
+          # Task C17: the custom-signals job, on the same prebuilt packages.
+          - context: dotnet
+            dockerfile: dotnet/example/dotnet-custom-signals/Dockerfile.demo
           - context: python
             dockerfile: python/example/python-api/Dockerfile.demo
           - context: python
@@ -681,7 +706,7 @@ jobs:
       contents: read
       packages: write
     runs-on: ubuntu-latest
-    needs: [dotnet-test, dotnet-prom-scrape, go-test, python-test, e2e-smoke]
+    needs: [dotnet-test, dotnet-prom-scrape, e2e-smoke-dotnet, go-test, python-test, e2e-smoke]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     defaults:
       run:
@@ -726,7 +751,7 @@ jobs:
       contents: read
       packages: write
     runs-on: ubuntu-latest
-    needs: [dotnet-test, dotnet-prom-scrape, go-test, python-test, e2e-smoke]
+    needs: [dotnet-test, dotnet-prom-scrape, e2e-smoke-dotnet, go-test, python-test, e2e-smoke]
     # .NET versions diverge from Go/Python (ADR-004): only dotnet/vX.Y.Z publishes NuGet.
     if: startsWith(github.ref, 'refs/tags/dotnet/v')
     defaults:
