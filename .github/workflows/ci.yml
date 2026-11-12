@@ -3,33 +3,103 @@ name: CI
 on:
   push:
     branches: [main]
-    tags: ['v*']
+    # v* = Python release; dotnet/v* = .NET (design D10 A11 ruling); nodejs/v* =
+    # Node.js (task B13, JS10). `*` never matches `/`, so v* misses the prefixed tags.
+    tags: ['v*', 'dotnet/v*', 'nodejs/v*']
   pull_request:
     branches: [main]
 
+# Least privilege: jobs that publish raise their own permissions.
 permissions:
-  contents: write
-  packages: write
+  contents: read
 
 jobs:
   # ─── Test Jobs ───────────────────────────────────────────────────────
 
   go-test:
-    name: Go (test + coverage)
+    name: Go ${{ matrix.go }} (test + parity + coverage)
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # go.mod floor (1.26, ADR-005) and the latest release.
+        go: ['1.26.x', '1.27.x']
     defaults:
       run:
         working-directory: go
+    env:
+      # Parity release gate (parity/README.md): on the joint v* release tag (Go
+      # and Python ship the contract together, ADR-004)
+      # TestParityNoTaskSkipsAtRelease fails while a case is still skipped
+      # pending a task; empty elsewhere (the test skips). A go/v* module tag
+      # does not trigger this workflow (tags above), so it runs no gate.
+      PARITY_RELEASE: ${{ startsWith(github.ref, 'refs/tags/v') && '1' || '' }}
+    # Redis for the A26 real-server tests (testing/docker-compose.yml redis-test).
+    services:
+      redis:
+        image: redis:7.4.12-alpine
+        # A service container takes no command: the throwaway password is set
+        # by the "Redis password" step. The check passes before and after it.
+        ports: ['6379:6379']
+        options: >-
+          --health-cmd "redis-cli ping | grep -qE 'PONG|NOAUTH'"
+          --health-interval 1s --health-timeout 2s --health-retries 60
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/fakeotlp
+      - name: Redis password (throwaway, as testing/docker-compose.yml)
+        working-directory: .
+        run: |
+          docker exec "${{ job.services.redis.id }}" redis-cli CONFIG SET requirepass otel-test-only
+          docker exec "${{ job.services.redis.id }}" redis-cli -a otel-test-only --no-auth-warning ping | grep -q PONG
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.22'
-      - run: go test ./... -coverprofile=coverage.out -covermode=atomic
+          go-version: ${{ matrix.go }}
+          cache-dependency-path: |
+            go/**/go.sum
+            testing/e2e/go-smoke/go.sum
+      # Includes TestParity (parity/cases.json, strict xfail). Parity cases run
+      # in child processes that write coverage to PARITY_GOCOVERDIR; it is
+      # merged into the profile (go tool cover sums duplicate blocks).
+      - name: Test
+        run: |
+          mkdir -p "$RUNNER_TEMP/parity-cov"
+          PARITY_GOCOVERDIR="$RUNNER_TEMP/parity-cov" go test -race -timeout 20m ./... -coverprofile=coverage.out -covermode=atomic
+          go tool covdata textfmt -i="$RUNNER_TEMP/parity-cov" -o parity.out
+          tail -n +2 parity.out >> coverage.out
+      - name: Coverage gate (>= 90%)
+        run: |
+          total=$(go tool cover -func=coverage.out | awk '/^total:/ {sub("%", "", $3); print $3}')
+          echo "Go coverage: ${total}%"
+          awk -v t="$total" 'BEGIN { exit !(t >= 90) }'
+      - name: Ext modules (build + vet + test) and examples (build + vet)
+        env:
+          OTELREDIS_TEST_ADDR: localhost:6379
+          OTELREDIS_TEST_PASSWORD: otel-test-only
+        run: |
+          for d in ext/otelaws ext/otelredis ext/otelsql; do
+            (cd "$d" && go build ./... && go vet ./... && go test ./...)
+          done
+          for d in example/go-api example/go-backend example/go-process example/go-custom-signals ../testing/e2e/go-smoke; do
+            (cd "$d" && go build -o /dev/null ./... && go vet ./...)
+          done
+      - name: govulncheck (reachable vulnerabilities fail the job)
+        # Results don't depend on the toolchain minor; one leg is enough.
+        if: matrix.go == '1.27.x'
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@v1.9.0
+          for d in . ext/otelaws ext/otelredis ext/otelsql example/go-api example/go-backend example/go-process example/go-custom-signals ../testing/e2e/go-smoke; do
+            echo "== $d"; (cd "$d" && "$(go env GOPATH)/bin/govulncheck" ./...)
+          done
+      - name: Fake receiver logs
+        if: failure()
+        run: docker logs fakeotlp || true
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: go-coverage
+          name: go-coverage-${{ matrix.go }}
           path: go/coverage.out
 
   dotnet-test:
@@ -44,14 +114,69 @@ jobs:
         working-directory: dotnet
     env:
       DOTNET_ROLL_FORWARD: Major
+      # vstest kills the test host ~100 ms after the last test, often before
+      # coverlet.msbuild writes its hit files (total drops, gate fails); give
+      # the host 10 s to exit (dotnet/TESTS.md).
+      VSTEST_TESTHOST_SHUTDOWN_TIMEOUT: '10000'
+      # Parity release gate (parity/README.md, DN11): no xfail or skip:C<n> left; runs on a
+      # dotnet/v* release tag only.
+      PARITY_RELEASE: ${{ startsWith(github.ref, 'refs/tags/dotnet/v') && '1' || '' }}
+      # StaffOps.OtelHelper.Sql integration tests (task C14a): the services below, the
+      # throwaway credentials of testing/docker-compose.yml; a missing database fails the run.
+      SQL_TEST_POSTGRES: postgres://otel:otel-test-only@localhost:5432/otel_test
+      SQL_TEST_MYSQL: mysql://otel:otel-test-only@localhost:3306/otel_test
+      SQL_TEST_REQUIRE: '1'
+      # StaffOps.OtelHelper.Redis integration tests (task C14b): the redis service below with the
+      # throwaway password of testing/docker-compose.yml; a missing server fails the run.
+      REDIS_TEST_URL: redis://default:otel-test-only@localhost:6379/0
+      REDIS_TEST_REQUIRE: '1'
+    services:
+      postgres:
+        image: postgres:17.11-alpine
+        env:
+          POSTGRES_USER: otel
+          POSTGRES_PASSWORD: otel-test-only
+          POSTGRES_DB: otel_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -h 127.0.0.1 -U otel -d otel_test"
+          --health-interval 2s --health-timeout 3s --health-retries 60
+      mysql:
+        image: mysql:8.4.11
+        env:
+          MYSQL_RANDOM_ROOT_PASSWORD: 'yes'
+          MYSQL_USER: otel
+          MYSQL_PASSWORD: otel-test-only
+          MYSQL_DATABASE: otel_test
+        ports: ['3306:3306']
+        options: >-
+          --health-cmd "mysql -h 127.0.0.1 -uotel -potel-test-only -e 'SELECT 1' otel_test"
+          --health-interval 2s --health-timeout 3s --health-retries 60 --health-start-period 10s
+      # Redis for the C14b real-server tests (testing/docker-compose.yml redis-test).
+      redis:
+        image: redis:7.4.12-alpine
+        # A service container takes no command: the throwaway password is set
+        # by the "Redis password" step. The check passes before and after it.
+        ports: ['6379:6379']
+        options: >-
+          --health-cmd "redis-cli ping | grep -qE 'PONG|NOAUTH'"
+          --health-interval 1s --health-timeout 2s --health-retries 60
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Redis password (throwaway, as testing/docker-compose.yml)
+        working-directory: .
+        run: |
+          docker exec "${{ job.services.redis.id }}" redis-cli CONFIG SET requirepass otel-test-only
+          docker exec "${{ job.services.redis.id }}" redis-cli -a otel-test-only --no-auth-warning ping | grep -q PONG
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: ${{ matrix.dotnet }}
-      - run: dotnet restore OtelHelper.Tests/OtelHelper.Tests.csproj
+      - uses: ./.github/actions/fakeotlp
+      - run: dotnet restore StaffOps.OtelHelper.Tests/StaffOps.OtelHelper.Tests.csproj
       - run: >
-          dotnet test OtelHelper.Tests
+          dotnet test StaffOps.OtelHelper.Tests
           --configuration Release
           --no-restore
           /p:CollectCoverage=true
@@ -60,36 +185,318 @@ jobs:
           /p:Threshold=90
           /p:ThresholdType=line
           /p:ThresholdStat=total
-          /p:Exclude="[xunit*]*"
+          /p:Exclude="[xunit*]*%2c[StaffOps.OtelHelper.ParityDriver]*"
+      - name: fakeotlp logs
+        if: failure()
+        run: docker logs fakeotlp || true
+        working-directory: .
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: dotnet-coverage-${{ matrix.dotnet }}
-          path: dotnet/OtelHelper.Tests/coverage/
+          path: dotnet/StaffOps.OtelHelper.Tests/coverage/
 
   python-test:
-    name: Python (test + coverage)
+    name: Python ${{ matrix.python }} / ${{ matrix.deps }} deps (test + parity + coverage)
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Full grid: 3.10 = declared floor, 3.11 = org runtime pin, 3.13 = newest.
+        # lower = declared lower bounds (python/ci/lower.txt), latest = newest allowed (P15, D9.a).
+        python: ['3.10', '3.11', '3.13']
+        deps: [lower, latest]
     defaults:
       run:
         working-directory: python
+    env:
+      # Parity driver subprocesses write parallel coverage files that pytest-cov combines.
+      PARITY_COVERAGE_DATA: ${{ github.workspace }}/python/.coverage
+      # Parity release gate (parity/README.md): test_no_task_skips_at_release
+      # runs on a v* release tag only.
+      PARITY_RELEASE: ${{ startsWith(github.ref, 'refs/tags/v') && '1' || '' }}
+      # tests/test_a26_redis.py real-server cases (throwaway password).
+      REDIS_TEST_URL: redis://default:otel-test-only@localhost:6379/0
+    # Redis for the A26 real-server tests (testing/docker-compose.yml redis-test).
+    services:
+      redis:
+        image: redis:7.4.12-alpine
+        # A service container takes no command: the throwaway password is set
+        # by the "Redis password" step. The check passes before and after it.
+        ports: ['6379:6379']
+        options: >-
+          --health-cmd "redis-cli ping | grep -qE 'PONG|NOAUTH'"
+          --health-interval 1s --health-timeout 2s --health-retries 60
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/fakeotlp
+      - name: Redis password (throwaway, as testing/docker-compose.yml)
+        working-directory: .
+        run: |
+          docker exec "${{ job.services.redis.id }}" redis-cli CONFIG SET requirepass otel-test-only
+          docker exec "${{ job.services.redis.id }}" redis-cli -a otel-test-only --no-auth-warning ping | grep -q PONG
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
-      - run: pip install -e ".[dev]" grpcio -q
+          python-version: ${{ matrix.python }}
+          cache: pip
+          cache-dependency-path: python/pyproject.toml
+      - run: pip install -q -c ci/${{ matrix.deps }}.txt -e ".[dev,all]"
+      - run: pip list | grep -E '^opentelemetry-(sdk|instrumentation) '
+      # Includes tests/test_parity.py (parity/cases.json, strict xfail).
       - run: >
-          pytest tests/ --ignore=tests/test_propagation.py -v
+          pytest tests/ -v
+          --cov=staffops_otel_helper
           --cov=otel_helper
           --cov-report=term-missing
           --cov-report=xml:coverage.xml
           --cov-fail-under=90
+      - name: Fake receiver logs
+        if: failure()
+        run: docker logs fakeotlp || true
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: python-coverage
+          name: python-coverage-${{ matrix.python }}-${{ matrix.deps }}
           path: python/coverage.xml
+
+  node-test:
+    name: Node.js ${{ matrix.node }} (lint + build + test + coverage)
+    runs-on: ubuntu-latest
+    # Parity children time out after 120 s each; this bounds a hung leg.
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        # engines floor (spec JS1), latest 22, 24, 26 (upstream OTel JS CI set).
+        node: ['22.15.0', '22', '24', '26']
+    defaults:
+      run:
+        working-directory: nodejs
+    env:
+      # Parity release gate (parity/README.md): on a nodejs/v* tag the runner's
+      # "release gate" test fails while a nodejs case is still skipped pending
+      # a task (skip:B…); empty elsewhere (the test skips).
+      PARITY_RELEASE: ${{ startsWith(github.ref, 'refs/tags/nodejs/v') && '1' || '' }}
+    # Databases for @staffops/otel-helper-sql (task B10a) and Redis for
+    # @staffops/otel-helper-redis (task B10b): the same throwaway credentials
+    # and images as testing/docker-compose.yml.
+    services:
+      postgres:
+        image: postgres:17.11-alpine
+        env:
+          POSTGRES_USER: otel
+          POSTGRES_PASSWORD: otel-test-only
+          POSTGRES_DB: otel_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -h 127.0.0.1 -U otel -d otel_test"
+          --health-interval 2s --health-timeout 3s --health-retries 60
+      mysql:
+        image: mysql:8.4.11
+        env:
+          MYSQL_RANDOM_ROOT_PASSWORD: 'yes'
+          MYSQL_USER: otel
+          MYSQL_PASSWORD: otel-test-only
+          MYSQL_DATABASE: otel_test
+        ports: ['3306:3306']
+        options: >-
+          --health-cmd "mysql -h 127.0.0.1 -uotel -potel-test-only -e 'SELECT 1' otel_test"
+          --health-interval 2s --health-timeout 3s --health-retries 60 --health-start-period 10s
+      redis:
+        image: redis:7.4.12-alpine
+        # A service container takes no command, so the throwaway password
+        # (compose: --requirepass) is set by the "Redis password" step below.
+        ports: ['6379:6379']
+        options: >-
+          --health-cmd "redis-cli ping | grep -qE 'PONG|NOAUTH'"
+          --health-interval 1s --health-timeout 2s --health-retries 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      # Fake OTLP receiver for the parity export cases (test/parity/, design D-JS12).
+      - uses: ./.github/actions/fakeotlp
+      # Node 26 refuses an IP literal as TLS ServerName (design D-JS14, spike B1c F5):
+      # the Node legs reach the receivers by DNS name (in the certificate's SANs),
+      # as testing/docker-compose.yml does with extra_hosts. Go/Python keep the IPs.
+      - name: Receiver DNS names for the Node runner
+        working-directory: .
+        run: |
+          printf '127.0.0.2 fakeotlp\n127.0.0.3 fakeotlp-tls\n' | sudo tee -a /etc/hosts
+          getent hosts fakeotlp fakeotlp-tls
+          { echo "FAKEOTLP_HOST=fakeotlp"; echo "FAKEOTLP_HOST_TLS=fakeotlp-tls"; } >> "$GITHUB_ENV"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+          cache-dependency-path: nodejs/package-lock.json
+      - name: Packages ship the root LICENSE
+        run: for p in packages/*; do cmp ../LICENSE "$p/LICENSE"; done
+      # The AUTH/NOAUTH tests of @staffops/otel-helper-redis need a password (compose: --requirepass).
+      - name: Redis password (throwaway, as testing/docker-compose.yml)
+        working-directory: .
+        run: |
+          docker exec "${{ job.services.redis.id }}" redis-cli CONFIG SET requirepass otel-test-only
+          docker exec "${{ job.services.redis.id }}" redis-cli -a otel-test-only --no-auth-warning ping | grep -q PONG
+      # Dependency lifecycle scripts never run (also set in nodejs/.npmrc).
+      - run: npm ci --ignore-scripts
+      - name: Installed tree is valid (peers, no extraneous)
+        run: npm ls --all > /dev/null
+      - run: npm run lint
+      - run: npm run build
+      - run: npm run typecheck
+      - name: Package checks (publint, @arethetypeswrong/cli)
+        run: npm run check
+      - name: Pack contents (every exports target, LICENSE; no src/ or test/)
+        run: node ci/check-pack.mjs
+      # Includes the parity runner (test/parity/runner.test.cjs, strict xfail), run
+      # by the core package's test script so its children count towards the gate.
+      - name: Test + parity + coverage gate (c8 >= 90% lines, per package)
+        env:
+          SQL_TEST_POSTGRES: postgres://otel:otel-test-only@localhost:5432/otel_test
+          SQL_TEST_MYSQL: mysql://otel:otel-test-only@localhost:3306/otel_test
+          SQL_TEST_REQUIRE: '1'
+          REDIS_TEST_URL: redis://default:otel-test-only@localhost:6379/0
+          REDIS_TEST_REQUIRE: '1'
+        run: npm test
+      - name: Fake receiver logs
+        if: failure()
+        run: docker logs fakeotlp || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: node-coverage-${{ matrix.node }}
+          path: nodejs/packages/*/coverage/lcov.info
+
+  node-api-range:
+    # D-JS2: the core peer-depends on the api range the SDK 3.0 packages declare;
+    # this installs the packed core next to the newest api that range admits.
+    name: Node.js install test (newest @opentelemetry/api in the peer range)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: nodejs
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: nodejs/package-lock.json
+      - run: npm ci --ignore-scripts
+      - run: npm run build
+      - run: sh ci/api-range-install.sh
+
+  e2e-smoke:
+    # Go and Python; the Node rows run in e2e-smoke-node (two Node lines).
+    name: e2e smoke (Collector, Go + Python, grpc/http-prefix/per-signal/tls)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - run: testing/e2e/smoke.sh
+        env:
+          SMOKE_LANGS: go python
+      - name: Collector logs
+        if: failure()
+        run: docker compose -f testing/docker-compose.yml --profile e2e logs collector || true
+
+  e2e-smoke-node:
+    # Node 24 and the engines floor 22.15.0 (spec JS1, task B13).
+    name: e2e smoke (Collector, Node.js ${{ matrix.node }}, grpc/http-prefix/per-signal/tls)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ['24', '22.15.0']
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - run: testing/e2e/smoke.sh
+        env:
+          SMOKE_LANGS: node
+          NODE_VERSION: ${{ matrix.node }}
+      - name: Collector logs
+        if: failure()
+        run: docker compose -f testing/docker-compose.yml --profile e2e logs collector || true
+
+  e2e-smoke-dotnet:
+    # .NET rows of the e2e smoke (task C17): the helper packed from this commit,
+    # exported over grpc/http-prefix/per-signal/tls to a real Collector. The
+    # scrape row is skipped here (SMOKE_DOTNET_SCRAPE=0): dotnet-prom-scrape runs
+    # that script. Same tag gate as dotnet-prom-scrape: it gates only the .NET
+    # publish jobs.
+    name: e2e smoke (Collector, .NET, grpc/http-prefix/per-signal/tls)
+    if: ${{ !startsWith(github.ref, 'refs/tags/') || startsWith(github.ref, 'refs/tags/dotnet/v') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - run: testing/e2e/smoke.sh
+        env:
+          SMOKE_LANGS: dotnet
+          SMOKE_DOTNET_SCRAPE: '0'
+      - name: Collector logs
+        if: failure()
+        run: docker compose -f testing/docker-compose.yml --profile e2e logs collector || true
+
+  dotnet-prom-scrape:
+    # The .NET Prometheus fallback must answer a scrape from another container:
+    # the 1.20.x listener binds localhost unless the helper sets the "+"
+    # prefix (design D-NET11, task C3).
+    name: .NET Prometheus fallback scraped from another container
+    # Gates only the .NET publish jobs: skip it on the Python (v*) and Node.js
+    # (nodejs/v*) tags. Runs on PRs, main (publish-dotnet) and dotnet/v*
+    # (publish-dotnet-release); on the other tags those jobs are skipped by
+    # their own if:, so the skipped need blocks nothing.
+    if: ${{ !startsWith(github.ref, 'refs/tags/') || startsWith(github.ref, 'refs/tags/dotnet/v') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - run: testing/e2e/dotnet-prom-scrape.sh
+
+  spec-checks:
+    # specs/repo-tooling RT7: spec format lint, requirement traceability and
+    # docs/site/index.md freshness. Stdlib-only tools (T-D3), no install step.
+    # Python matrix: 3.10 is the tools' declared floor (T-D3), 3.12 the default.
+    name: Spec checks (lint, traceability, site index) (py ${{ matrix.python }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ['3.10', '3.12']
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Tool tests (hook tests must run, not skip)
+        env:
+          REQUIRE_HOOK_TESTS: '1'
+        run: python -m unittest discover -s tools/tests
+      - name: Spec lint
+        run: python tools/spec_lint.py
+      - name: python/LICENSE matches the root LICENSE
+        run: cmp LICENSE python/LICENSE
+      - name: Traceability (uncovered SHALL requirements fail)
+        run: python tools/trace_matrix.py --check
+      - name: docs/site/index.md is regenerated from README.md
+        run: python tools/regen_index.py --check
 
   # ─── Build Jobs ──────────────────────────────────────────────────────
 
@@ -99,6 +506,8 @@ jobs:
     needs: [go-test, dotnet-test, python-test]
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '8.0.x'
@@ -107,20 +516,113 @@ jobs:
           python-version: '3.11'
       - name: Pack all .NET packages (core + subpackages)
         run: |
-          for proj in OtelHelper OtelHelper.AWS OtelHelper.Redis OtelHelper.Sql OtelHelper.Profiling; do
-            dotnet pack "dotnet/$proj/$proj.csproj" -c Release -o packages
+          for proj in StaffOps.OtelHelper StaffOps.OtelHelper.AWS StaffOps.OtelHelper.Redis StaffOps.OtelHelper.Sql StaffOps.OtelHelper.Profiling; do
+            dotnet pack "dotnet/$proj/$proj.csproj" -c Release -o packages /p:ContinuousIntegrationBuild=true
           done
+          # Exactly the five StaffOps.* packages, no bare OtelHelper* ID (DN10, ADR-011).
+          shopt -s nullglob
+          all=(packages/*.nupkg) ours=(packages/StaffOps.OtelHelper*.nupkg)
+          printf '%s\n' "${all[@]}"
+          if [ "${#all[@]}" -ne 5 ] || [ "${#ours[@]}" -ne 5 ]; then
+            echo "::error::expected exactly the five StaffOps.OtelHelper* packages"; exit 1
+          fi
       - run: pip install build -q && python -m build --outdir packages python
+      - name: Python wheel ships py.typed (P17) and the otel_helper compat module (ADR-011)
+        run: |
+          unzip -l packages/staffops_otel_helper-*.whl | grep -q ' staffops_otel_helper/py.typed'
+          unzip -l packages/staffops_otel_helper-*.whl | grep -q ' otel_helper/__init__.py'
+          unzip -l packages/staffops_otel_helper-*.whl | grep -q ' otel_helper/ext/sql.pyi'
       - uses: actions/upload-artifact@v4
         with:
           name: packages
           path: packages/
           retention-days: 1
 
-  example-images:
-    name: Build example images (consume prebuilt package)
+  build-lib-node:
+    # Its own job, not a build-lib step: build-lib waits for the Go/.NET/Python
+    # tests, and a Node release must not wait on (or be blocked by) another
+    # language's suite — versions diverge per language (ADR-004).
+    name: Build Node.js packages (once; version check + publish dry-run)
     runs-on: ubuntu-latest
-    needs: [build-lib]
+    needs: [node-test]
+    outputs:
+      # sha256sum lines of the six tarballs: the publish jobs check them (M2).
+      sha256: ${{ steps.pack.outputs.sha256 }}
+    defaults:
+      run:
+        working-directory: nodejs
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: nodejs/package-lock.json
+      - run: npm ci --ignore-scripts
+      - name: Version tool tests
+        run: node --test "ci/*.test.mjs"
+      - name: Every version location agrees (package.json, peers, VERSION constants, lockfile, Dockerfile.demo)
+        id: version
+        env:
+          REF: ${{ github.ref }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          version=$(node -p "require('./packages/otel-helper/package.json').version")
+          # On a nodejs/v* tag the tag is the reference; elsewhere the core's own version.
+          case "$REF" in refs/tags/nodejs/v*) version=${REF_NAME#nodejs/v} ;; esac
+          node ci/version.mjs check "$version"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - run: npm run build
+      - name: npm pack every package into tarballs/
+        id: pack
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          rm -rf tarballs && mkdir tarballs
+          npm pack --workspaces --pack-destination tarballs --loglevel=error
+          node ci/version.mjs check "$VERSION" --tarballs tarballs
+          # shellcheck disable=SC2046 # one word per tarball name
+          sums=$(cd tarballs && sha256sum $(node ../ci/version.mjs tarballs "$VERSION"))
+          printf '%s\n' "$sums"
+          { echo 'sha256<<EOF_SHA256'; printf '%s\n' "$sums"; echo 'EOF_SHA256'; } >> "$GITHUB_OUTPUT"
+      # What `npm publish` would send, without a registry login or provenance
+      # (no OIDC token outside the release job). Same dist-tag rule and the same
+      # exists-check as the release: a version already on npmjs (after its
+      # publish) is reported and not dry-run, so the job stays green.
+      # "./": npm reads a bare "tarballs/x.tgz" as a GitHub "user/repo" spec.
+      - name: npm publish --dry-run (every tarball, publish order)
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          reg=https://registry.npmjs.org/
+          tag=$(node ci/version.mjs dist-tag "$VERSION")
+          for t in $(node ci/version.mjs tarballs "$VERSION"); do
+            state=$(node ci/version.mjs registry-state "./tarballs/$t" --registry "$reg")
+            case "$state" in
+              absent) ;;
+              same) echo "::notice::$t: this version is already on npmjs with these bytes; dry-run skipped"; continue ;;
+              different) echo "::warning::$t: npmjs already holds this version with other bytes; bump the version before tagging"; continue ;;
+              *) echo "::error::$t: unexpected registry state '$state'"; exit 1 ;;
+            esac
+            npm publish "./tarballs/$t" --dry-run --access public --tag "$tag" --@staffops:registry="$reg"
+          done
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: node-packages
+          path: nodejs/tarballs/*.tgz
+          if-no-files-found: error
+          # A tag run keeps the tarballs 30 days: the publish jobs wait for the
+          # nodejs-release approval and must download them (re-runs too).
+          retention-days: ${{ startsWith(github.ref, 'refs/tags/nodejs/v') && 30 || 1 }}
+
+  # One job for every language: a matrix cannot carry per-entry needs, and a
+  # separate Node images job would duplicate these steps (review L8, 2026-11-04).
+  example-images:
+    name: Build example images (.NET/Python/Node consume the prebuilt packages; Go builds from source)
+    runs-on: ubuntu-latest
+    needs: [build-lib, build-lib-node]
     strategy:
       fail-fast: false
       matrix:
@@ -131,23 +633,67 @@ jobs:
             dockerfile: dotnet/example/dotnet-backend/Dockerfile.demo
           - context: dotnet
             dockerfile: dotnet/example/dotnet-process/Dockerfile.demo
+          # Task C17: the custom-signals job, on the same prebuilt packages.
+          - context: dotnet
+            dockerfile: dotnet/example/dotnet-custom-signals/Dockerfile.demo
           - context: python
             dockerfile: python/example/python-api/Dockerfile.demo
           - context: python
             dockerfile: python/example/python-backend/Dockerfile.demo
           - context: python
             dockerfile: python/example/python-process/Dockerfile.demo
+          # Go examples build from the helper source in go/ (replace ../../);
+          # they consume no prebuilt package.
+          - context: go
+            dockerfile: go/example/go-api/Dockerfile.demo
+            source: true
+          - context: go
+            dockerfile: go/example/go-backend/Dockerfile.demo
+            source: true
+          - context: go
+            dockerfile: go/example/go-process/Dockerfile.demo
+            source: true
+          # Node examples: npm ci of the published helper locked in each
+          # example's package-lock.json, then the npm pack tarball of
+          # build-lib-node installed over it (downloaded to artifact_path,
+          # HELPER_VERSION from the core's package.json), so the image runs this
+          # commit. Their Dockerfile is the local path (published helper by
+          # default, HELPER_SOURCE=workspace for the local tree); node-custom-signals
+          # is not built here, as python-custom-signals is not (task B13, owner 2026-11-04).
+          - context: nodejs
+            dockerfile: nodejs/example/node-api/Dockerfile.demo
+            artifact: node-packages
+            artifact_path: nodejs/tarballs
+          - context: nodejs
+            dockerfile: nodejs/example/node-backend/Dockerfile.demo
+            artifact: node-packages
+            artifact_path: nodejs/tarballs
+          - context: nodejs
+            dockerfile: nodejs/example/node-process/Dockerfile.demo
+            artifact: node-packages
+            artifact_path: nodejs/tarballs
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
         with:
-          name: packages
-          path: ${{ matrix.context }}/packages
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        if: ${{ !matrix.source }}
+        with:
+          name: ${{ matrix.artifact || 'packages' }}
+          # Node keeps its workspace in packages/: its tarballs go to artifact_path.
+          path: ${{ matrix.artifact_path || format('{0}/packages', matrix.context) }}
+      # Dockerfile.demo copies tarballs/staffops-otel-helper-${HELPER_VERSION}.tgz:
+      # the version comes from the source, never from the Dockerfile default.
+      - name: Helper version (Node)
+        id: helper
+        if: ${{ matrix.context == 'nodejs' }}
+        run: echo "version=$(node -p "require('./nodejs/packages/otel-helper/package.json').version")" >> "$GITHUB_OUTPUT"
       - uses: docker/setup-buildx-action@v3
       - uses: docker/build-push-action@v6
         with:
           context: ${{ matrix.context }}
           file: ${{ matrix.dockerfile }}
+          build-args: ${{ matrix.context == 'nodejs' && format('HELPER_VERSION={0}', steps.helper.outputs.version) || '' }}
           push: false
           cache-from: type=gha
           cache-to: type=gha,mode=max
@@ -156,84 +702,311 @@ jobs:
 
   publish-dotnet:
     name: Publish .NET to GitHub NuGet
+    permissions:
+      contents: read
+      packages: write
     runs-on: ubuntu-latest
-    needs: [dotnet-test]
+    needs: [dotnet-test, dotnet-prom-scrape, e2e-smoke-dotnet, go-test, python-test, e2e-smoke]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     defaults:
       run:
         working-directory: dotnet
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4.3.1
         with:
           dotnet-version: '8.0.x'
       - name: Pack with dev version
         run: |
           SHORT_SHA=${GITHUB_SHA::7}
-          for proj in OtelHelper OtelHelper.AWS OtelHelper.Redis OtelHelper.Sql OtelHelper.Profiling; do
+          for proj in StaffOps.OtelHelper StaffOps.OtelHelper.AWS StaffOps.OtelHelper.Redis StaffOps.OtelHelper.Sql StaffOps.OtelHelper.Profiling; do
             dotnet pack "$proj/$proj.csproj" \
               -c Release \
               -o nupkgs \
               /p:Version="0.1.0-dev-${SHORT_SHA}" \
-              /p:RepositoryUrl="https://github.com/StaffOps/staffops-otel-libs"
+              /p:RepositoryUrl="https://github.com/StaffOps/otel-libs" \
+              /p:ContinuousIntegrationBuild=true
           done
+          # Exactly the five StaffOps.* packages, no bare OtelHelper* ID (DN10, ADR-011).
+          shopt -s nullglob
+          all=(nupkgs/*.nupkg) ours=(nupkgs/StaffOps.OtelHelper*.nupkg)
+          printf '%s\n' "${all[@]}"
+          if [ "${#all[@]}" -ne 5 ] || [ "${#ours[@]}" -ne 5 ]; then
+            echo "::error::expected exactly the five StaffOps.OtelHelper* packages"; exit 1
+          fi
       - name: Push to GitHub Packages
+        env:
+          NUGET_API_KEY: ${{ secrets.GITHUB_TOKEN }}
         run: |
           dotnet nuget push nupkgs/*.nupkg \
             --source "https://nuget.pkg.github.com/StaffOps/index.json" \
-            --api-key ${{ secrets.GITHUB_TOKEN }} \
+            --api-key "$NUGET_API_KEY" \
             --skip-duplicate
 
   publish-dotnet-release:
     name: Publish .NET release to GitHub NuGet
+    permissions:
+      contents: read
+      packages: write
     runs-on: ubuntu-latest
-    needs: [dotnet-test]
-    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [dotnet-test, dotnet-prom-scrape, e2e-smoke-dotnet, go-test, python-test, e2e-smoke]
+    # .NET versions diverge from Go/Python (ADR-004): only dotnet/vX.Y.Z publishes NuGet.
+    if: startsWith(github.ref, 'refs/tags/dotnet/v')
     defaults:
       run:
         working-directory: dotnet
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4.3.1
         with:
           dotnet-version: '8.0.x'
       - name: Extract version from tag
         id: version
-        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
-      - name: Pack release version
+        env:
+          REF_NAME: ${{ github.ref_name }}
+        run: echo "VERSION=${REF_NAME#dotnet/v}" >> "$GITHUB_OUTPUT"
+      # The tag must match the <Version> of every project, so the published
+      # version is the one the source declares (task B13 fix round).
+      - name: Tag matches every project <Version>
+        env:
+          VERSION: ${{ steps.version.outputs.VERSION }}
         run: |
-          for proj in OtelHelper OtelHelper.AWS OtelHelper.Redis OtelHelper.Sql OtelHelper.Profiling; do
+          status=0
+          for proj in StaffOps.OtelHelper StaffOps.OtelHelper.AWS StaffOps.OtelHelper.Redis StaffOps.OtelHelper.Sql StaffOps.OtelHelper.Profiling; do
+            declared=$(sed -n 's:.*<Version>\(.*\)</Version>.*:\1:p' "$proj/$proj.csproj" | head -n 1)
+            if [ "$declared" != "$VERSION" ]; then
+              echo "::error::$proj/$proj.csproj <Version> is '$declared', the tag says '$VERSION'"; status=1
+            fi
+          done
+          exit $status
+      - name: Pack release version
+        env:
+          VERSION: ${{ steps.version.outputs.VERSION }}
+        run: |
+          for proj in StaffOps.OtelHelper StaffOps.OtelHelper.AWS StaffOps.OtelHelper.Redis StaffOps.OtelHelper.Sql StaffOps.OtelHelper.Profiling; do
             dotnet pack "$proj/$proj.csproj" \
               -c Release \
               -o nupkgs \
-              /p:Version="${{ steps.version.outputs.VERSION }}" \
-              /p:RepositoryUrl="https://github.com/StaffOps/staffops-otel-libs"
+              /p:Version="$VERSION" \
+              /p:RepositoryUrl="https://github.com/StaffOps/otel-libs" \
+              /p:ContinuousIntegrationBuild=true
           done
+      # Exactly the five StaffOps.* packages at the tag version, nothing else (DN10, ADR-011).
+      - name: Five StaffOps.OtelHelper* packages at the tag version
+        env:
+          VERSION: ${{ steps.version.outputs.VERSION }}
+        run: |
+          shopt -s nullglob
+          all=(nupkgs/*.nupkg)
+          printf '%s\n' "${all[@]}"
+          status=0
+          for proj in StaffOps.OtelHelper StaffOps.OtelHelper.AWS StaffOps.OtelHelper.Redis StaffOps.OtelHelper.Sql StaffOps.OtelHelper.Profiling; do
+            [ -f "nupkgs/$proj.$VERSION.nupkg" ] || { echo "::error::missing nupkgs/$proj.$VERSION.nupkg"; status=1; }
+          done
+          [ "${#all[@]}" -eq 5 ] || { echo "::error::expected 5 packages, found ${#all[@]}"; status=1; }
+          exit $status
       - name: Push to GitHub Packages
+        env:
+          NUGET_API_KEY: ${{ secrets.GITHUB_TOKEN }}
         run: |
           dotnet nuget push nupkgs/*.nupkg \
             --source "https://nuget.pkg.github.com/StaffOps/index.json" \
-            --api-key ${{ secrets.GITHUB_TOKEN }} \
+            --api-key "$NUGET_API_KEY" \
             --skip-duplicate
 
   publish-python-release:
     name: Publish Python to GitHub Release
+    permissions:
+      contents: write
     runs-on: ubuntu-latest
-    needs: [python-test]
+    needs: [python-test, go-test, e2e-smoke]
     if: startsWith(github.ref, 'refs/tags/v')
     defaults:
       run:
         working-directory: python
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: '3.11'
+      - run: pip install build -q
+      # The tag (SemVer, v0.3.0-rc.3) must name the pyproject.toml version
+      # (PEP 440, 0.3.0rc3): compared after PEP 440 normalization (task B13 fix round).
+      - name: Tag matches pyproject.toml version
+        env:
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          python - <<'EOF'
+          import os, sys, tomllib
+          from packaging.version import InvalidVersion, Version
+          tag = os.environ["REF_NAME"]
+          declared = tomllib.load(open("pyproject.toml", "rb"))["project"]["version"]
+          try:
+              ok = Version(tag.removeprefix("v")) == Version(declared)
+          except InvalidVersion as err:
+              sys.exit(f"::error::tag {tag!r}: {err}")
+          if not ok:
+              sys.exit(f"::error::pyproject.toml version is {declared!r}, the tag {tag!r} says otherwise")
+          print(f"ok: tag {tag} = pyproject.toml {declared}")
+          EOF
       - name: Build wheel and sdist
-        run: pip install build -q && python -m build
+        run: python -m build
       - name: Upload to GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REF_NAME: ${{ github.ref_name }}
         run: |
-          gh release upload "${{ github.ref_name }}" dist/* --clobber \
-            || gh release create "${{ github.ref_name }}" dist/* --generate-notes
+          # A tag with a SemVer pre-release part (v0.3.0-rc.2) must not become "Latest".
+          pre=(); case "$REF_NAME" in *-*) pre=(--prerelease --latest=false);; esac
+          gh release upload "$REF_NAME" dist/* --clobber \
+            || gh release create "$REF_NAME" dist/* --generate-notes "${pre[@]}"
+
+  # Requirement JS10, design D-JS11: the same six tarballs (built once by
+  # build-lib-node) go to npmjs — trusted publishing (OIDC, no token) with
+  # provenance — and then to GitHub Packages (GITHUB_TOKEN), in two jobs so the
+  # OIDC token and the packages token never share a job (security M3). The
+  # first publish of each package is the one-time owner bootstrap in the
+  # release skill ("Node.js first publish", .claude/skills/release/SKILL.md).
+  publish-nodejs-npmjs:
+    name: Publish Node.js release to npmjs (trusted publishing, provenance)
+    permissions:
+      contents: read
+      id-token: write   # npmjs trusted publishing + provenance
+    runs-on: ubuntu-latest
+    needs: [node-test, node-api-range, e2e-smoke-node, build-lib-node]
+    if: startsWith(github.ref, 'refs/tags/nodejs/v')
+    # Required protection (created by the owner, not by this file): the
+    # environment's deployment rule admits only tags matching nodejs/v* and
+    # needs the owner's review; each package's npmjs trusted publisher names
+    # this environment. Check: gh api repos/StaffOps/otel-libs/environments/nodejs-release
+    # (protection_rules: required_reviewers + branch_policy) and
+    # gh api repos/StaffOps/otel-libs/environments/nodejs-release/deployment-branch-policies
+    # (a tag policy named nodejs/v*).
+    environment: nodejs-release
+    defaults:
+      run:
+        working-directory: nodejs
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      # No registry-url: setup-node would write an .npmrc with a placeholder
+      # NODE_AUTH_TOKEN; npmjs trusted publishing needs no token at all.
+      # An exact Node patch: its bundled npm (11.19.1 with 24.22.2) is the one
+      # that publishes; no npm self-upgrade in the OIDC job.
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '24.22.2'
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: node-packages
+          path: nodejs/tarballs
+      # M2: exactly the six tarballs build-lib-node packed, byte for byte, then
+      # the tag against every version location and inside each tarball.
+      - name: Tarballs are the ones build-lib-node recorded; tag matches every version
+        id: version
+        env:
+          REF_NAME: ${{ github.ref_name }}
+          SHA256: ${{ needs.build-lib-node.outputs.sha256 }}
+        run: |
+          printf '%s\n' "$SHA256" > "$RUNNER_TEMP/SHA256SUMS"
+          (cd tarballs && sha256sum --strict -c "$RUNNER_TEMP/SHA256SUMS")
+          # check rejects anything but nodejs/vX.Y.Z[-pre] (SemVer) before comparing.
+          node ci/version.mjs verify-sums "$REF_NAME" --tarballs tarballs --sums "$RUNNER_TEMP/SHA256SUMS"
+          node ci/version.mjs check "$REF_NAME" --tarballs tarballs
+          version=${REF_NAME#nodejs/v}
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=$(node ci/version.mjs dist-tag "$version")" >> "$GITHUB_OUTPUT"
+      - name: npm supports trusted publishing (>= 11.5.1)
+        run: |
+          npm -v
+          node -e "const [a,b,c]=process.argv[1].split('.').map(Number); process.exit(a>11||(a===11&&(b>5||(b===5&&c>=1)))?0:1)" "$(npm -v)"
+      # Core first: every opt-in package peer-depends on it at the same version.
+      # A version already on npmjs with this tarball's sha512 is skipped, so a
+      # re-run completes a partial publish; the same version with other bytes
+      # fails the job (security M1).
+      - name: Publish to npmjs
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          DIST_TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          reg=https://registry.npmjs.org/
+          for t in $(node ci/version.mjs tarballs "$VERSION"); do
+            state=$(node ci/version.mjs registry-state "./tarballs/$t" --registry "$reg")
+            case "$state" in
+              same) echo "skip $t: already on npmjs with the same sha512"; continue ;;
+              different) echo "::error::$t: npmjs already holds $VERSION with other bytes; fix forward with a new version"; exit 1 ;;
+              absent) ;;
+              *) echo "::error::$t: unexpected registry state '$state'"; exit 1 ;;
+            esac
+            npm publish "./tarballs/$t" --provenance --access public --tag "$DIST_TAG" --@staffops:registry="$reg"
+          done
+
+  publish-nodejs-ghp:
+    name: Publish Node.js release to GitHub Packages
+    permissions:
+      contents: read
+      packages: write   # GitHub Packages npm; no id-token here
+    runs-on: ubuntu-latest
+    needs: [publish-nodejs-npmjs, build-lib-node]
+    if: startsWith(github.ref, 'refs/tags/nodejs/v')
+    defaults:
+      run:
+        working-directory: nodejs
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      # No registry-url: this job writes its own userconfig for GitHub Packages
+      # (token from the environment) below.
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '24.22.2'
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: node-packages
+          path: nodejs/tarballs
+      # M2: exactly the six tarballs build-lib-node packed, byte for byte, then
+      # the tag against every version location and inside each tarball.
+      - name: Tarballs are the ones build-lib-node recorded; tag matches every version
+        id: version
+        env:
+          REF_NAME: ${{ github.ref_name }}
+          SHA256: ${{ needs.build-lib-node.outputs.sha256 }}
+        run: |
+          printf '%s\n' "$SHA256" > "$RUNNER_TEMP/SHA256SUMS"
+          (cd tarballs && sha256sum --strict -c "$RUNNER_TEMP/SHA256SUMS")
+          # check rejects anything but nodejs/vX.Y.Z[-pre] (SemVer) before comparing.
+          node ci/version.mjs verify-sums "$REF_NAME" --tarballs tarballs --sums "$RUNNER_TEMP/SHA256SUMS"
+          node ci/version.mjs check "$REF_NAME" --tarballs tarballs
+          version=${REF_NAME#nodejs/v}
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=$(node ci/version.mjs dist-tag "$version")" >> "$GITHUB_OUTPUT"
+      - name: Publish to GitHub Packages
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          DIST_TAG: ${{ steps.version.outputs.tag }}
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          reg=https://npm.pkg.github.com
+          userconfig="$RUNNER_TEMP/npmrc-github-packages"
+          # The file holds the variable name; npm expands ${NODE_AUTH_TOKEN} itself.
+          # shellcheck disable=SC2016
+          printf '%s\n' '//npm.pkg.github.com/:_authToken=${NODE_AUTH_TOKEN}' > "$userconfig"
+          for t in $(node ci/version.mjs tarballs "$VERSION"); do
+            state=$(node ci/version.mjs registry-state "./tarballs/$t" --registry "$reg" --userconfig "$userconfig")
+            case "$state" in
+              same) echo "skip $t: already on GitHub Packages with the same sha512"; continue ;;
+              different) echo "::error::$t: GitHub Packages already holds $VERSION with other bytes"; exit 1 ;;
+              absent) ;;
+              *) echo "::error::$t: unexpected registry state '$state'"; exit 1 ;;
+            esac
+            # No --provenance: GitHub Packages does not store npm provenance.
+            npm publish "./tarballs/$t" --tag "$DIST_TAG" --@staffops:registry="$reg" --userconfig "$userconfig"
+          done

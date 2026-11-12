@@ -1,0 +1,523 @@
+using System.Diagnostics;
+using System.Diagnostics.Metrics;
+using StaffOps.OtelHelper;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
+using Xunit;
+
+namespace StaffOps.OtelHelper.Tests;
+
+[Collection("EnvVarTests")]
+[ResetGlobalPropagation]
+public class TelemetryPipelineTests
+{
+    private static ResolvedTelemetry CreateResolved(Action<TelemetryOptions>? configure = null)
+        => TestDiagnostics.ResolveQuiet(configure);
+
+    private static ServiceProvider BuildProvider(Action<TelemetryOptions>? configure = null)
+    {
+        var services = new ServiceCollection();
+        services.AddOtelHelper(configure ?? (_ => { }));
+        return services.BuildServiceProvider();
+    }
+
+    // --- Tracing: AlwaysOnSampler for all environments (sampling delegated to Collector) ---
+
+    [Theory]
+    [InlineData(DeploymentEnvironments.LOCAL)]
+    [InlineData(DeploymentEnvironments.DEV)]
+    [InlineData(DeploymentEnvironments.HML)]
+    [InlineData(DeploymentEnvironments.PRD)]
+    public void All_Environments_Register_Pipeline_Without_Error(string env)
+    {
+        using var provider = BuildProvider(opts =>
+        {
+            opts.ServiceName = "test";
+            opts.Environment = env;
+            opts.OtelCollectorEndpoint = "http://localhost:4317";
+        });
+        Assert.NotNull(provider);
+    }
+
+    // --- Logging: log level per environment ---
+
+    [Theory]
+    [InlineData(DeploymentEnvironments.LOCAL, LogLevel.Debug)]
+    [InlineData(DeploymentEnvironments.DEV, LogLevel.Information)]
+    [InlineData(DeploymentEnvironments.HML, LogLevel.Information)]
+    [InlineData(DeploymentEnvironments.PRD, LogLevel.Warning)]
+    public void LogLevel_Matches_Environment(string env, LogLevel expectedMinLevel)
+    {
+        using var provider = BuildProvider(opts =>
+        {
+            opts.ServiceName = "test";
+            opts.Environment = env;
+            opts.OtelCollectorEndpoint = "http://localhost:4317";
+        });
+
+        var loggerFactory = provider.GetRequiredService<ILoggerFactory>();
+        var logger = loggerFactory.CreateLogger("TestLogger");
+
+        // The level below minimum should not be enabled
+        if (expectedMinLevel > LogLevel.Trace)
+        {
+            var belowMinimum = (LogLevel)((int)expectedMinLevel - 1);
+            Assert.False(logger.IsEnabled(belowMinimum),
+                $"LogLevel {belowMinimum} should be disabled for {env}");
+        }
+
+        // The minimum level itself should be enabled
+        Assert.True(logger.IsEnabled(expectedMinLevel),
+            $"LogLevel {expectedMinLevel} should be enabled for {env}");
+    }
+
+    [Fact]
+    public void DebugLevel_Forces_Debug_LogLevel()
+    {
+        using var provider = BuildProvider(opts =>
+        {
+            opts.ServiceName = "test";
+            opts.Environment = DeploymentEnvironments.PRD; // normally Warning
+            opts.DebugLevel = true;
+            opts.OtelCollectorEndpoint = "http://localhost:4317";
+        });
+
+        var logger = provider.GetRequiredService<ILoggerFactory>().CreateLogger("Test");
+        Assert.True(logger.IsEnabled(LogLevel.Debug));
+    }
+
+    // --- Endpoint resolution ---
+
+    [Fact]
+    public void Default_Endpoint_Is_Empty_Without_EnvVar()
+    {
+        var opts = CreateResolved();
+        Assert.Equal("", opts.OtelCollectorEndpoint);
+    }
+
+    [Fact]
+    public void Endpoint_Extracts_Host_And_Appends_Port()
+    {
+        System.Environment.SetEnvironmentVariable("OTEL_EXPORTER_OTLP_ENDPOINT", "http://my-collector.svc");
+        try
+        {
+            // Static fields are cached, so test the logic directly
+            var input = "http://my-collector.svc";
+            var uri = new Uri(input);
+            var host = $"{uri.Scheme}://{uri.Host}";
+            Assert.Equal("http://my-collector.svc", host);
+            Assert.Equal("http://my-collector.svc:4317", $"{host}:4317");
+        }
+        finally
+        {
+            System.Environment.SetEnvironmentVariable("OTEL_EXPORTER_OTLP_ENDPOINT", null);
+        }
+    }
+
+    [Fact]
+    public void Endpoint_With_Trailing_Slash_Is_Cleaned()
+    {
+        var input = "http://collector.monitoring/";
+        var uri = new Uri(input.TrimEnd('/'));
+        var host = $"{uri.Scheme}://{uri.Host}";
+        Assert.Equal("http://collector.monitoring", host);
+    }
+
+    // --- Full pipeline integration ---
+
+    [Fact]
+    public void Full_Pipeline_Registers_All_Signals()
+    {
+        using var provider = BuildProvider(opts =>
+        {
+            opts.ServiceName = "integration-test";
+            opts.Environment = DeploymentEnvironments.DEV;
+            opts.OtelCollectorEndpoint = "http://localhost:4317";
+        });
+
+        // Logging registered
+        var loggerFactory = provider.GetService<ILoggerFactory>();
+        Assert.NotNull(loggerFactory);
+
+        // Options registered
+        var options = provider.GetService<Microsoft.Extensions.Options.IOptions<TelemetryOptions>>();
+        Assert.NotNull(options);
+        Assert.Equal("integration-test", options!.Value.ServiceName);
+    }
+
+    // --- Sampler configurability ---
+
+    [Fact]
+    public void Custom_Sampler_Is_Accepted()
+    {
+        using var provider = BuildProvider(opts =>
+        {
+            opts.ServiceName = "test";
+            opts.OtelCollectorEndpoint = "http://localhost:4317";
+            opts.Sampler = new OpenTelemetry.Trace.TraceIdRatioBasedSampler(0.5);
+        });
+        Assert.NotNull(provider);
+    }
+
+    // --- MinimumLogLevel override ---
+
+    [Fact]
+    public void Custom_MinimumLogLevel_Overrides_Environment()
+    {
+        using var provider = BuildProvider(opts =>
+        {
+            opts.ServiceName = "test";
+            opts.Environment = DeploymentEnvironments.PRD; // normally Warning
+            opts.MinimumLogLevel = LogLevel.Information;
+            opts.OtelCollectorEndpoint = "http://localhost:4317";
+        });
+
+        var logger = provider.GetRequiredService<ILoggerFactory>().CreateLogger("Test");
+        Assert.True(logger.IsEnabled(LogLevel.Information));
+    }
+
+    // --- ResourceAttributes ---
+
+    [Fact]
+    public void ResourceAttributes_Default_Is_Empty()
+    {
+        var opts = new TelemetryOptions();
+        Assert.Empty(opts.ResourceAttributes);
+    }
+
+    [Fact]
+    public void ResourceAttributes_Accepted_In_Pipeline()
+    {
+        using var provider = BuildProvider(opts =>
+        {
+            opts.ServiceName = "test";
+            opts.OtelCollectorEndpoint = "http://localhost:4317";
+            opts.ResourceAttributes = new Dictionary<string, object>
+            {
+                ["app.version"] = "1.0.0",
+                ["app.team"] = "devops"
+            };
+        });
+        Assert.NotNull(provider);
+    }
+
+    // --- AdditionalActivitySources ---
+
+    [Fact]
+    public void AdditionalActivitySources_Default_Is_Empty()
+    {
+        var opts = new TelemetryOptions();
+        Assert.Empty(opts.AdditionalActivitySources);
+    }
+
+    [Fact]
+    public void AdditionalActivitySources_Accepted_In_Pipeline()
+    {
+        using var provider = BuildProvider(opts =>
+        {
+            opts.ServiceName = "test";
+            opts.OtelCollectorEndpoint = "http://localhost:4317";
+            opts.AdditionalActivitySources = new List<string> { "MyApp.Orders", "MyApp.Payments" };
+        });
+        Assert.NotNull(provider);
+    }
+
+    // --- GetDefaultLogLevel ---
+
+    [Fact]
+    public void GetDefaultLogLevel_Returns_Correct_Values()
+    {
+        Assert.Equal(LogLevel.Debug, TelemetryOptions.GetDefaultLogLevel(DeploymentEnvironments.LOCAL));
+        Assert.Equal(LogLevel.Information, TelemetryOptions.GetDefaultLogLevel(DeploymentEnvironments.DEV));
+        Assert.Equal(LogLevel.Warning, TelemetryOptions.GetDefaultLogLevel(DeploymentEnvironments.PRD));
+        Assert.Equal(LogLevel.Debug, TelemetryOptions.GetDefaultLogLevel(DeploymentEnvironments.PRD, debug: true));
+    }
+
+    // --- DI: ActivitySource and Meter ---
+
+    [Fact]
+    public void ActivitySource_Registered_Via_DI()
+    {
+        using var provider = BuildProvider(opts =>
+        {
+            opts.ServiceName = "test-svc";
+            opts.OtelCollectorEndpoint = "http://localhost:4317";
+        });
+
+        var source = provider.GetKeyedService<ActivitySource>(OtelHelperKeys.Instrumentation);
+        Assert.NotNull(source);
+        Assert.Equal("test-svc", source!.Name);
+    }
+
+    [Fact]
+    public void Meter_Registered_Via_DI()
+    {
+        using var provider = BuildProvider(opts =>
+        {
+            opts.ServiceName = "test-svc";
+            opts.OtelCollectorEndpoint = "http://localhost:4317";
+        });
+
+        var meter = provider.GetKeyedService<Meter>(OtelHelperKeys.Instrumentation);
+        Assert.NotNull(meter);
+        Assert.Equal("test-svc", meter!.Name);
+    }
+
+    // --- StartRootActivity ---
+
+    [Fact]
+    public void StartRootActivity_Creates_Root_Span_Without_Parent()
+    {
+        var source = new ActivitySource("test-root");
+        var listener = new ActivityListener
+        {
+            ShouldListenTo = _ => true,
+            Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllData
+        };
+        ActivitySource.AddActivityListener(listener);
+
+        try
+        {
+            // Simulate existing Activity.Current (as in a loop)
+            using var parent = source.StartActivity("parent");
+            Assert.NotNull(Activity.Current);
+
+            // StartRootActivity should clear parent and create root
+            using var root = source.StartRootActivity("root-span");
+            Assert.NotNull(root);
+            Assert.Null(root!.Parent);
+            Assert.Equal("root-span", root.OperationName);
+        }
+        finally
+        {
+            listener.Dispose();
+        }
+    }
+
+    [Fact]
+    public void StartRootActivity_Generates_New_TraceId_Each_Call()
+    {
+        var source = new ActivitySource("test-root-ids");
+        var listener = new ActivityListener
+        {
+            ShouldListenTo = _ => true,
+            Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllData
+        };
+        ActivitySource.AddActivityListener(listener);
+
+        try
+        {
+            using var span1 = source.StartRootActivity("op1");
+            var traceId1 = span1?.TraceId;
+
+            using var span2 = source.StartRootActivity("op2");
+            var traceId2 = span2?.TraceId;
+
+            Assert.NotNull(traceId1);
+            Assert.NotNull(traceId2);
+            Assert.NotEqual(traceId1, traceId2);
+        }
+        finally
+        {
+            listener.Dispose();
+        }
+    }
+
+    // --- OTEL_HELPER_SAMPLE_RATIO ---
+
+    [Fact]
+    public void SampleRatio_EnvVar_Sets_TraceIdRatioBasedSampler()
+    {
+        System.Environment.SetEnvironmentVariable("OTEL_HELPER_SAMPLE_RATIO", "0.5");
+        try
+        {
+            var opts = CreateResolved(o => { o.ServiceName = "test"; });
+            Assert.IsType<OpenTelemetry.Trace.ParentBasedSampler>(opts.Sampler);
+            Assert.Equal("parentbased_traceidratio", opts.SamplerName);
+        }
+        finally
+        {
+            System.Environment.SetEnvironmentVariable("OTEL_HELPER_SAMPLE_RATIO", null);
+        }
+    }
+
+    [Fact]
+    public void SampleRatio_Default_Is_ParentBased_AlwaysOn()
+    {
+        var opts = CreateResolved(o => { o.ServiceName = "test"; });
+        Assert.IsType<OpenTelemetry.Trace.ParentBasedSampler>(opts.Sampler);
+        Assert.Equal("parentbased_always_on", opts.SamplerName);
+    }
+
+    [Fact]
+    public void SampleRatio_Invalid_EnvVar_Keeps_The_Default()
+    {
+        System.Environment.SetEnvironmentVariable("OTEL_HELPER_SAMPLE_RATIO", "not_a_number");
+        try
+        {
+            var opts = CreateResolved(o => { o.ServiceName = "test"; });
+            Assert.Equal("parentbased_always_on", opts.SamplerName);
+        }
+        finally
+        {
+            System.Environment.SetEnvironmentVariable("OTEL_HELPER_SAMPLE_RATIO", null);
+        }
+    }
+
+    // --- Double registration guard ---
+
+    [Fact]
+    public void Double_AddOtelHelper_Does_Not_Duplicate_Registration()
+    {
+        var services = new ServiceCollection();
+        services.AddOtelHelper(o => { o.ServiceName = "test"; o.OtelCollectorEndpoint = "http://localhost:4317"; });
+        services.AddOtelHelper(o => { o.ServiceName = "test2"; o.OtelCollectorEndpoint = "http://localhost:4317"; });
+
+        var provider = services.BuildServiceProvider();
+        var validators = provider.GetServices<Microsoft.Extensions.Options.IValidateOptions<TelemetryOptions>>();
+        // Should only have one validator (not duplicated)
+        Assert.Single(validators);
+    }
+
+    // --- Environment PostConfigure ---
+
+    [Fact]
+    public void PostConfigure_Resolves_Environment_From_EnvVar()
+    {
+        System.Environment.SetEnvironmentVariable("ENVIRONMENT", "PRD");
+        try
+        {
+            var opts = CreateResolved();
+            Assert.Equal(DeploymentEnvironments.PRD, opts.Environment);
+        }
+        finally
+        {
+            System.Environment.SetEnvironmentVariable("ENVIRONMENT", null);
+        }
+    }
+
+    [Fact]
+    public void PostConfigure_Resolves_DisabledSignals_From_EnvVar()
+    {
+        System.Environment.SetEnvironmentVariable("OTEL_HELPER_DISABLED_SIGNALS", "metrics,logs");
+        try
+        {
+            var opts = CreateResolved();
+            Assert.Equal("metrics,logs", opts.DisabledSignals);
+            Assert.False(opts.IsSignalEnabled("metrics"));
+            Assert.True(opts.IsSignalEnabled("traces"));
+        }
+        finally
+        {
+            System.Environment.SetEnvironmentVariable("OTEL_HELPER_DISABLED_SIGNALS", null);
+        }
+    }
+
+    [Fact]
+    public void PostConfigure_Resolves_DisabledMetrics_From_EnvVar()
+    {
+        System.Environment.SetEnvironmentVariable("OTEL_HELPER_DISABLED_METRICS", "http.*,system.disk.*");
+        try
+        {
+            var opts = CreateResolved();
+            Assert.Equal("http.*,system.disk.*", opts.DisabledMetrics);
+        }
+        finally
+        {
+            System.Environment.SetEnvironmentVariable("OTEL_HELPER_DISABLED_METRICS", null);
+        }
+    }
+
+    [Fact]
+    public void PostConfigure_DisabledMetrics_Stays_Empty_When_EnvVar_Not_Set()
+    {
+        System.Environment.SetEnvironmentVariable("OTEL_HELPER_DISABLED_METRICS", null);
+        var opts = CreateResolved();
+        Assert.Equal("", opts.DisabledMetrics);
+    }
+
+    // --- Full pipeline with disabled signals ---
+
+    [Fact]
+    public void Pipeline_Registers_When_Metrics_Disabled()
+    {
+        using var provider = BuildProvider(opts =>
+        {
+            opts.ServiceName = "test-disabled";
+            opts.OtelCollectorEndpoint = "http://localhost:4317";
+            opts.DisabledSignals = "metrics";
+        });
+        Assert.NotNull(provider);
+        var loggerFactory = provider.GetService<ILoggerFactory>();
+        Assert.NotNull(loggerFactory);
+    }
+
+    // --- DisabledMetrics glob pattern via pipeline ---
+
+    [Fact]
+    public void Pipeline_Registers_With_DisabledMetrics_Pattern()
+    {
+        using var provider = BuildProvider(opts =>
+        {
+            opts.ServiceName = "test-drop-metrics";
+            opts.OtelCollectorEndpoint = "http://localhost:4317";
+            opts.DisabledMetrics = "http.server.*,system.*";
+        });
+        Assert.NotNull(provider);
+    }
+
+    // --- Disabled traces signal skips tracing setup ---
+
+    [Fact]
+    public void Pipeline_Registers_When_Traces_Disabled()
+    {
+        using var provider = BuildProvider(opts =>
+        {
+            opts.ServiceName = "test-no-traces";
+            opts.OtelCollectorEndpoint = "http://localhost:4317";
+            opts.DisabledSignals = "traces";
+        });
+        Assert.NotNull(provider);
+    }
+
+    [Fact]
+    public void Pipeline_Registers_When_Logs_Disabled()
+    {
+        using var provider = BuildProvider(opts =>
+        {
+            opts.ServiceName = "test-no-logs";
+            opts.OtelCollectorEndpoint = "http://localhost:4317";
+            opts.DisabledSignals = "logs";
+        });
+        Assert.NotNull(provider);
+    }
+
+    [Fact]
+    public void Pipeline_Registers_When_All_Signals_Disabled()
+    {
+        using var provider = BuildProvider(opts =>
+        {
+            opts.ServiceName = "test-no-signals";
+            opts.OtelCollectorEndpoint = "http://localhost:4317";
+            opts.DisabledSignals = "traces,metrics,logs";
+        });
+        Assert.NotNull(provider);
+    }
+
+    // --- ResolveCollectorHost non-URI fallback ---
+
+    [Fact]
+    public void PostConfigure_Endpoint_NonURI_Uses_RawValue()
+    {
+        System.Environment.SetEnvironmentVariable("OTEL_EXPORTER_OTLP_ENDPOINT", "just-a-hostname");
+        try
+        {
+            var opts = CreateResolved();
+            Assert.Contains("just-a-hostname", opts.OtelCollectorEndpoint);
+        }
+        finally
+        {
+            System.Environment.SetEnvironmentVariable("OTEL_EXPORTER_OTLP_ENDPOINT", null);
+        }
+    }
+}

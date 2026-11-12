@@ -1,0 +1,63 @@
+# Specs
+
+Planning artefacts for `otel-libs`. Conventions and principles live in
+[`../AGENTS.md`](../AGENTS.md); what shipped lives in
+[`../CHANGELOG.md`](../CHANGELOG.md).
+
+## Reading order
+
+1. [`config-contract-v0.3/`](config-contract-v0.3/) — **active**. Cross-language
+   config contract, parity harness, Go/Python fixes (Phase A), Node.js (B),
+   .NET (C). [requirements](config-contract-v0.3/requirements.md) ·
+   [design](config-contract-v0.3/design.md) · [tasks](config-contract-v0.3/tasks.md)
+2. [`soak-simulation/`](soak-simulation/) — **active**. Local DEV/HML/PRD soak
+   of the rc (Docker Compose; Kubernetes deferred as Phase K).
+3. [`nodejs-otel-helper/`](nodejs-otel-helper/) — **active**. Phase B: Node.js
+   helper at parity on the 0.3 contract.
+   [`dotnet-otel-helper/`](dotnet-otel-helper/) — **active** (reviewed r3, 2026-11-04). Phase C:
+   .NET helper at parity on the 0.3 contract; C0 (`net10.0` only) last.
+4. [`repo-tooling/`](repo-tooling/) — **active**. Hooks, spec lint,
+   traceability, local verify, skills.
+5. [`decisions/`](decisions/) — decision records (index below).
+6. Shipped (historical, older user-story format; superseded wherever
+   `config-contract-v0.3` differs — e.g. health paths D5, gRPC API ADR-005):
+   [`metrics-exporter-contract/`](metrics-exporter-contract/) (0.1.0),
+   [`go-otel-helper/`](go-otel-helper/) (0.1.0).
+
+## Decision records
+
+| ADR | Decision | Status |
+|-----|----------|--------|
+| [001](decisions/ADR-001-defer-otlp-env-to-sdk.md) | Defer OTLP exporter env handling to the SDK | Accepted |
+| [002](decisions/ADR-002-parentbased-sampler.md) | Default sampler `parentbased_always_on` everywhere | Accepted |
+| [003](decisions/ADR-003-environment-unset-not-local.md) | Missing environment/service name never fall back to `LOCAL`/`my-service` | Accepted |
+| [004](decisions/ADR-004-phased-rollout-go-python-first.md) | Roll out Go + Python first, then Node.js, then .NET | Accepted |
+| [005](decisions/ADR-005-go-1-26-floor-grpc-stats-handlers.md) | Go floor 1.26 and gRPC stats-handler API | Accepted |
+| [006](decisions/ADR-006-debug-span-attribute.md) | Debug marker is the existing span attribute `debug=true`, not tracestate | Accepted |
+| [007](decisions/ADR-007-keep-prometheus-in-core.md) | Keep Prometheus `/metrics` in core | Accepted |
+| [008](decisions/ADR-008-shared-parity-fixture.md) | Enforce parity with a shared JSON fixture | Accepted |
+| [009](decisions/ADR-009-dotnet-retarget-net10-only.md) | Retarget .NET to `net10.0` only, last step of Phase C; the 0.2.x line dual-targets (amended 2026-10-28 and 2026-11-04) | Accepted |
+| [010](decisions/ADR-010-go-module-path-matches-repo.md) | Go module path matches the repository name | Accepted |
+| [011](decisions/ADR-011-owner-prefixed-package-names.md) | Owner-prefixed package names in every language | Accepted |
+| [012](decisions/ADR-012-node-helper-owns-env-resolution.md) | Node.js helper composes the SDK and owns env resolution (amends ADR-001) | Accepted |
+| [013](decisions/ADR-013-dotnet-helper-owns-env-resolution.md) | .NET helper owns env resolution and builds its exporters with explicit values (amends ADR-001) | Accepted |
+| [014](decisions/ADR-014-exception-detail-in-correlated-logs.md) | Exception detail goes to a correlated log; spans carry only the exception type | Accepted |
+| [015](decisions/ADR-015-dotnet-profiles-push-to-pyroscope.md) | .NET continuous profiles push directly to Pyroscope (second exception to "everything via Collector") | Accepted |
+
+## Format
+
+- Feature specs: `<feature>/requirements.md` (WHEN … THEN … SHALL, acceptance
+  checklist, out of scope), `design.md` (each decision: choice, justification,
+  trade-offs, when it would be wrong, **reversal action**, alternatives),
+  `tasks.md` (status table, dependencies, promotion triggers for deferred work).
+  Reference sections (tables, fixture formats, checklists) inside `design.md`
+  are exempt from the decision format; decisions inside them are not.
+- Decision records: `decisions/ADR-NNN-<imperative-title>.md` — context with
+  checkable evidence (file:line, quoted errors, measured values), decision,
+  rationale, consequences, when wrong, alternatives.
+- No invented numbers: write `unmeasured` when a figure wasn't measured.
+- Every spec set gets an independent adversarial review before commit. An
+  owner decision recorded without a completed review says so explicitly
+  (e.g. ADR-007).
+- Corrections are recorded in the document (dated note saying what was wrong),
+  never applied silently.

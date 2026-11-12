@@ -1,10 +1,96 @@
-# Tests — OtelHelper (.NET)
+# Tests — StaffOps.OtelHelper (.NET)
 
-179 unit tests (xUnit), 0 failed, 0 warnings.
+> **Reading this page (2026-11-12, task C18).** The first paragraph below is
+> the latest full run; the paragraphs after it are the earlier runs, kept as a
+> record. A table row that names a test renamed or removed by a later task is
+> marked *(renamed)* or *(removed)* and followed by a dated note naming its
+> replacement. Run the suite: [README "Run unit tests"](README.md#run-unit-tests).
+
+2064 tests (xUnit) with the parity runner, 0 failed, 0 skipped (compose `dotnet-tests` on `sdk:8.0` with `sql-postgres`, `sql-mysql` and `redis-test`, 2026-11-12, task C17 fix round 2: 3 more `ActivityScopeFilterTests`; SDK 10 leg not re-run); coverlet total `| Total | 98.75% | 97.18% | 99.64% |` (line, branch, method). The fix-round-1 line below is the previous run.
+
+2061 tests (xUnit) with the parity runner, 0 failed, 0 skipped (compose `dotnet-tests` on `sdk:8.0` with `sql-postgres`, `sql-mysql` and `redis-test`, and on `sdk:10.0` (10.0.403) with `DOTNET_ROLL_FORWARD=Major` on the same network, 2026-11-12, task C17 fix round 1: the 11 [`ActivityScopeFilterTests`](#activity-tracking-scope-filter-task-c17-fix-round-1)); coverlet total `| Total | 98.74% | 97.2%  | 99.64% |` (line, branch, method) on both. The C17 line below is the previous run.
+
+2050 tests (xUnit) with the parity runner, 0 failed, 0 skipped (compose `dotnet-tests` on `sdk:8.0` with `sql-postgres`, `sql-mysql` and `redis-test`, 2026-11-12, task C17; SDK 10 leg not re-run: C17 changes no library or test code); coverlet total `| Total | 98.74% | 97.19% | 99.63% |` (line, branch, method), unchanged from C16. The e2e smoke rows are in [e2e smoke (task C17)](#e2e-smoke-task-c17). The C16 fix-round-1 line below is the previous run.
+
+2050 tests (xUnit) with the parity runner, 0 failed, 0 skipped, 0 warnings (compose `dotnet-tests` on `sdk:8.0` with `sql-postgres`, `sql-mysql` and `redis-test`, and on `sdk:10.0` (10.0.403) with `DOTNET_ROLL_FORWARD=Major` on the same network, 2026-11-12, task C16 fix round 1); coverlet total `| Total | 98.74% | 97.19% | 99.63% |` (line, branch, method) on both. Before the fix round: 2044 tests, 98.79% (sdk:8.0 only). Parity: .NET 370 `pass`, 0 `xfail`, 17 `skip` of 387 cases. The C15 line below is the previous run.
+
+2025 tests (xUnit) with the parity runner, 0 failed, 0 skipped, 0 warnings (compose `dotnet-tests` on `sdk:8.0` with `sql-postgres`, `sql-mysql` and `redis-test`, and on `sdk:10.0` (10.0.403) with `DOTNET_ROLL_FORWARD=Major` on the same network, 2026-11-12, task C15); coverlet total `| Total | 98.73% | 97.18% | 99.63% |` (line, branch, method) on `sdk:8.0` (a first run, before the ERROR message wording was final, gave 98.78% / 97.21%), `| Total | 98.73% | 97.18% | 99.63% |` on SDK 10 (that earlier tree); `StaffOps.OtelHelper.Profiling` 100% / 98.18% / 100% in all three runs. The C14c round-2 line below is the previous run.
+
+1992 tests (xUnit) with the parity runner, 0 failed, 0 skipped, 0 warnings (compose `dotnet-tests` on `sdk:8.0` with `sql-postgres`, `sql-mysql` and `redis-test`, 2026-11-12, task C14c round 2; SDK 10 leg not re-run); coverlet total `| Total | 98.65% | 97.11% | 99.44% |`; `StaffOps.OtelHelper.AWS` 100% / 100% / 100%. The fix-round-1 line below is the previous run.
+
+1981 tests (xUnit) with the parity runner, 0 failed, 0 skipped, 0 warnings (compose `dotnet-tests` on `sdk:8.0` with `sql-postgres`, `sql-mysql` and `redis-test`, and on `sdk:10.0` (10.0.403) with `DOTNET_ROLL_FORWARD=Major` on the same network, 2026-11-11, task C14c fix round 1); coverlet total `| Total | 98.71% | 97.17% | 99.44% |` (line, branch, method) on `sdk:8.0`, `| Total | 98.65% | 97.14% | 99.44% |` on SDK 10; `StaffOps.OtelHelper.AWS` 100% / 100% / 100% on both. The C14c line below is the previous run.
+
+1960 tests (xUnit) with the parity runner, 0 failed, 0 skipped, 0 warnings (compose `dotnet-tests` on `sdk:8.0` with `sql-postgres`, `sql-mysql` and `redis-test`, and on `sdk:10.0` (10.0.403) with `DOTNET_ROLL_FORWARD=Major` on the same network, 2026-11-11, task C14c); coverlet total `| Total | 98.63% | 97.06% | 99.43% |` (line, branch, method) on both; `StaffOps.OtelHelper.AWS` 100% / 100% / 100% on both. The C14b fix-round-1 line below is the previous run.
+
+1877 tests (xUnit) with the parity runner, 0 failed, 0 skipped, 0 warnings (compose `dotnet-tests` on `sdk:8.0` with `sql-postgres`, `sql-mysql` and `redis-test`, and on `sdk:10.0` (10.0.403) with `DOTNET_ROLL_FORWARD=Major` on the same network, 2026-11-11, task C14b fix round 1); coverlet total `| Total | 98.59% | 96.88% | 99.41% |` (line, branch, method) on `sdk:8.0`, `| Total | 98.56% | 96.84% | 99.41% |` on SDK 10; `StaffOps.OtelHelper.Redis` 100% / 100% / 100% on both. The C14b line below is the previous run.
+
+1864 tests (xUnit) with the parity runner, 0 failed, 0 skipped, 0 warnings (compose `dotnet-tests` on `sdk:8.0` with `sql-postgres`, `sql-mysql` and `redis-test`, and on `sdk:10.0` (10.0.403) with `DOTNET_ROLL_FORWARD=Major` on the same network, 2026-11-11, task C14b); coverlet total `| Total | 98.62% | 96.84% | 99.41% |` (line, branch, method) on `sdk:8.0`, `| Total | 98.56% | 96.8% | 99.41% |` on SDK 10; `StaffOps.OtelHelper.Redis` 100% / 100% / 100% on both. The C14a round-4 line below is the previous run.
+
+1840 tests (xUnit) with the parity runner, 0 failed, 0 skipped, 0 warnings (compose `dotnet-tests` on `sdk:8.0` with `sql-postgres` and `sql-mysql`, and on `sdk:10.0` (10.0.403) with `DOTNET_ROLL_FORWARD=Major` on the same network, 2026-11-11, task C14a round 4); coverlet total `| Total | 98.52% | 96.81% | 99.41% |` on `sdk:8.0`, `| Total | 98.49% | 96.77% | 99.41% |` on SDK 10. Go, Python and Node.js re-run green (Node.js on the second run: the first timed out in the unrelated cluster test `D4 A24 an env-provided id …`, 20 s deadline). The round-3 line below is the previous run.
+
+1840 tests (xUnit) with the parity runner, 0 failed, 0 skipped, 0 warnings (compose `dotnet-tests` on `sdk:8.0` with `sql-postgres` and `sql-mysql`, and on `sdk:10.0` (10.0.403) with `DOTNET_ROLL_FORWARD=Major` on the same network, 2026-11-11, task C14a round 3); coverlet total `| Total | 98.54% | 96.81% | 99.41% |` (line, branch, method) on both. Go, Python (1546 passed, 3 xfailed, 97.43%) and Node.js suites re-run green with the new parity case. The round-2 line below is the previous run.
+
+1823 tests (xUnit) with the parity runner, 0 failed, 0 skipped, 0 warnings (compose `dotnet-tests` on `sdk:8.0` with `sql-postgres` and `sql-mysql`, and on `sdk:10.0` (10.0.403) with `DOTNET_ROLL_FORWARD=Major` on the same network, 2026-11-11, task C14a round 2); coverlet total `| Total | 98.58% | 96.79% | 99.4% |` (line, branch, method) on both. The round-1 line below is the previous run.
+
+1810 tests (xUnit) with the parity runner, 0 failed, 0 skipped, 0 warnings (compose `dotnet-tests` on `sdk:8.0` with `sql-postgres` and `sql-mysql`, and on `sdk:10.0` (10.0.403) with `DOTNET_ROLL_FORWARD=Major` on the same network, 2026-11-11, task C14a fix round 1); coverlet total `| Total | 98.58% | 96.87% | 99.4% |` (line, branch, method) on both. Before the fix round: 1781 tests. The C13 line below is the previous task's run.
+
+1689 tests (xUnit) with the parity runner, 0 failed, 0 warnings (compose `dotnet-tests` on `sdk:8.0`, and on `sdk:10.0` (10.0.403) with `DOTNET_ROLL_FORWARD=Major`, 2026-11-11, task C13 fix round 1); coverlet total `| Total | 98.44% | 96.48% | 99.35% |` (line, branch, method) on both. Before the fix round: 1671 tests, 98.45% / 98.52%. The C12 line below is the previous task's run.
+
+1615 tests (xUnit) with the parity runner, 0 failed, 0 warnings (compose `dotnet-tests` on `sdk:8.0`, and on `sdk:10.0` (10.0.403) with `DOTNET_ROLL_FORWARD=Major`, 2026-11-11, task C12 fix round 1); coverlet total `| Total | 98.47% | 96.37% | 99.3% |` (line, branch, method) on `sdk:8.0`, `| Total | 98.4% | 96.32% | 99.3% |` on SDK 10. Before the fix round (C12): 1598 tests, 98.41% / 98.44%. The C11 line below is the previous task's run.
+
+1502 tests (xUnit) with the parity runner, 0 failed, 0 warnings (compose `dotnet-tests` on `sdk:8.0`, and on `sdk:10.0` (10.0.403) with `DOTNET_ROLL_FORWARD=Major`, 2026-11-10, task C11 fix round 2); coverlet total `| Total | 98.39% | 96.37% | 99.27% |` (line, branch, method) on `sdk:8.0`, `| Total | 98.31% | 96.32% | 99.27% |` on SDK 10. The total varies by about ±0.1 point between runs; the cause was not investigated.
+
+From `dotnet/`; the repository root is mounted because the parity runner reads
+`parity/cases.json` (and `specs/dotnet-otel-helper/tasks.md`) from it:
 
 ```bash
-docker run --rm -v "$(pwd):/src" -w /src mcr.microsoft.com/dotnet/sdk:8.0 dotnet test OtelHelper.Tests
+docker run --rm -v "$(git rev-parse --show-toplevel):/src" -w /src/dotnet mcr.microsoft.com/dotnet/sdk:8.0 dotnet test StaffOps.OtelHelper.Tests
 ```
+
+Every project builds with warnings as errors (`Directory.Build.props`), so a
+new compiler warning or a public member without an XML doc comment (`CS1591`)
+fails the build. NuGet warnings that depend on the network or on advisory data
+stay warnings, so the tree also builds offline from a filled package cache:
+`NU1801`, `NU1900`–`NU1905`, and `NU5104` (prerelease dependencies, DN1).
+
+With coverage and the 90% gate, as CI runs it, on a container-local copy (the
+source mount stays read-only):
+
+```bash
+docker run --rm -e VSTEST_TESTHOST_SHUTDOWN_TIMEOUT=10000 -v "$(git rev-parse --show-toplevel):/src:ro" mcr.microsoft.com/dotnet/sdk:8.0 sh -c '
+  mkdir /w && cd /src && tar --exclude=bin --exclude=obj --exclude=coverage --exclude=node_modules -cf - dotnet parity specs | tar -xf - -C /w
+  cd /w/dotnet && dotnet test StaffOps.OtelHelper.Tests -c Release \
+    /p:CollectCoverage=true /p:CoverletOutputFormat=cobertura /p:CoverletOutput=./coverage/ \
+    /p:Threshold=90 /p:ThresholdType=line /p:ThresholdStat=total /p:Exclude="[xunit*]*%2c[StaffOps.OtelHelper.ParityDriver]*"'
+```
+
+`VSTEST_TESTHOST_SHUTDOWN_TIMEOUT=10000` is required for a stable number:
+vstest kills the test host about 100 ms after the last test, often before
+`coverlet.msbuild` writes its hit files, and the total then drops (81.86%, or
+0%) and fails the gate while every test passed. CI's `dotnet-test` job sets
+the same variable. Long-term option: `coverlet.collector` (a data collector
+inside vstest's own shutdown sequence) instead of `coverlet.msbuild`; it needs
+a different threshold step, because the collector has no `Threshold`
+property.
+
+---
+
+## ParityTests (shared fixture)
+
+`ParityTests` runs every case of `parity/cases.json` in its own process
+(`StaffOps.OtelHelper.ParityDriver`), against the fake OTLP receiver, with the
+`dotnet` status of each case (strict xfail); `ParityHarnessTests` cover the
+matcher and the schema. Rules, environment variables and adapter seams:
+[`parity/README.md`](https://github.com/StaffOps/otel-libs/blob/main/parity/README.md#net-runner). Run it with the receiver:
+
+```bash
+docker compose -f testing/docker-compose.yml run --rm dotnet-tests
+```
+
+Without the receiver (the plain `dotnet test` above), every case with a
+`{receiver…}` placeholder, and every export case, is reported as passed with a
+"not run" line. Without the repository root mounted, `Fixture_is_found` fails
+with "parity/cases.json not found; mount the repo root or set PARITY_CASES".
 
 ---
 
@@ -14,11 +100,11 @@ Validate defaults and env var resolution.
 
 | Test | Description |
 |-------|-----------|
-| `Default_ServiceName_Is_MyService` | Default ServiceName is "my-service" |
+| `Default_ServiceName_Is_The_Sdk_Unknown_Service` | No service name anywhere → `unknown_service:<process>`, not configured (task C6) |
 | `Default_CollectorEndpoint_Is_Empty_When_No_EnvVar` | Default endpoint stays empty (Prometheus fallback) |
 | `Default_DebugLevel_Is_False` | Debug disabled by default |
 | `ResolveEnvironment_Parses_Correctly` × 6 | LOCAL, DEV, HML, PRD, prd, dev |
-| `ResolveEnvironment_Invalid_Falls_Back_To_LOCAL` × 3 | Invalid values → LOCAL |
+| `ResolveEnvironment_Unknown_Is_Verbatim_And_Blank_Is_Absent` × 5 | Unknown `ENVIRONMENT` values kept as written (trimmed), blank → absent (task C6; 0.2.x: `LOCAL`) |
 
 ## RegistrationTests
 
@@ -42,16 +128,6 @@ Validate defaults and env var resolution.
 |-------|-----------|
 | `LogLevel_Matches_Environment` × 4 | LOCAL=Debug, DEV/HML=Info, PRD=Warning |
 | `DebugLevel_Forces_Debug_LogLevel` | Debug mode forces LogLevel.Debug in PRD |
-
-### Extra Instrumentation
-
-| Test | Description |
-|-------|-----------|
-| `ExtraInstrumentation_Default_Has_SQL` | SQL enabled, AWS disabled by default |
-| `ExtraInstrumentation_Multiple_Values` | SQL,AWS enables both |
-| `ExtraInstrumentation_Case_Insensitive` | sql,aws works |
-| `ExtraInstrumentation_Empty_Disables_All` | Empty string disables all |
-| `DebugLevel_Enables_All_Extra_Instrumentation` | Debug mode enables all |
 
 ### Endpoint Resolution
 
@@ -99,20 +175,13 @@ Validate defaults and env var resolution.
 | `StartRootActivity_Creates_Root_Span_Without_Parent` | Clears parent, creates root |
 | `StartRootActivity_Generates_New_TraceId_Each_Call` | Each call generates new traceId |
 
-### DebugTraceStateProcessor
-
-| Test | Description |
-|-------|-----------|
-| `DebugMode_Sets_TraceState_And_Attribute_On_Root_Span` | Sets tracestate + attribute debug=true |
-| `DebugMode_Does_Not_Set_On_Child_Span` | Does not set on child spans |
-
 ### OTEL_HELPER_SAMPLE_RATIO
 
 | Test | Description |
 |-------|-----------|
-| `SampleRatio_EnvVar_Sets_TraceIdRatioBasedSampler` | 0.5 → TraceIdRatioBased |
-| `SampleRatio_Default_Keeps_AlwaysOn` | No env var → AlwaysOn |
-| `SampleRatio_Invalid_EnvVar_Keeps_AlwaysOn` | Invalid value → AlwaysOn |
+| `SampleRatio_EnvVar_Sets_TraceIdRatioBasedSampler` | 0.5 → `ParentBased(TraceIdRatioBased)` (task C10; the name is kept) |
+| `SampleRatio_Default_Is_ParentBased_AlwaysOn` | No env var → `parentbased_always_on` |
+| `SampleRatio_Invalid_EnvVar_Keeps_The_Default` | Invalid value → `parentbased_always_on` (warned; see the C10 section) |
 
 ### Double Registration
 
@@ -120,30 +189,20 @@ Validate defaults and env var resolution.
 |-------|-----------|
 | `Double_AddOtelHelper_Does_Not_Duplicate_Registration` | Second call is no-op |
 
-### PostConfigure
+### Environment resolution (`TelemetryResolver`)
 
 | Test | Description |
 |-------|-----------|
-| `PostConfigure_Resolves_Environment_From_EnvVar` | ENVIRONMENT=PRD → DeploymentEnvironment.PRD |
+| `PostConfigure_Resolves_Environment_From_EnvVar` | ENVIRONMENT=PRD → resolved `PRD` (`DeploymentEnvironments.PRD`) |
 | `PostConfigure_Resolves_DisabledSignals_From_EnvVar` | OTEL_HELPER_DISABLED_SIGNALS resolves the list |
 | `PostConfigure_Resolves_DisabledMetrics_From_EnvVar` | OTEL_HELPER_DISABLED_METRICS resolves wildcard patterns |
 | `PostConfigure_DisabledMetrics_Stays_Empty_When_EnvVar_Not_Set` | Stays empty when unset |
-
-### Validator
-
-| Test | Description |
-|-------|-----------|
-| `Validator_Fails_On_Empty_ServiceName` | Empty ServiceName fails |
-| `Validator_Succeeds_On_Empty_Endpoint_Prometheus_Mode` | Empty endpoint is valid (Prometheus fallback mode) |
-| `Validator_Fails_On_Invalid_URI` | Invalid URI fails |
-| `Validator_Fails_On_Zero_Timeout` | ExportTimeoutMs ≤ 0 fails |
 
 ### IsSignalEnabled
 
 | Test | Description |
 |-------|-----------|
 | `IsSignalEnabled_Returns_True_When_DisabledSignals_Empty` | All signals enabled when DisabledSignals is empty |
-| `IsSignalEnabled_Returns_False_When_Signal_In_DisabledSignals` | Signal in DisabledSignals → disabled |
 | `IsSignalEnabled_Is_Case_Insensitive` | Case-insensitive matching |
 
 ### Disabled Signals — Full Pipeline
@@ -156,23 +215,9 @@ Validate defaults and env var resolution.
 | `Pipeline_Registers_When_Logs_Disabled` | Logs disabled, pipeline still registers |
 | `Pipeline_Registers_When_All_Signals_Disabled` | All three disabled at once |
 
-### HasInstrumentation("REDIS")
-
-| Test | Description |
-|-------|-----------|
-| `HasInstrumentation_Redis_Works_Like_SQL_AWS` | REDIS enables like SQL/AWS |
-| `HasInstrumentation_Redis_Case_Insensitive` | "redis" (lowercase) works |
-
-### Opt-in Extra Instrumentation — Full Pipeline
-
-| Test | Description |
-|-------|-----------|
-| `Pipeline_Registers_With_AWS_Instrumentation` | ExtraInstrumentation=SQL,AWS registers cleanly |
-| `Pipeline_Registers_With_Redis_Instrumentation` | ExtraInstrumentation=SQL,REDIS registers cleanly |
-
 ## TracingAndOptionsHelperTests
 
-Tracing helpers (`StartRootActivity`, `DebugTraceStateProcessor`) and `TelemetryOptions` helper methods, tested directly (not through `AddOtelHelper`).
+Tracing helpers (`StartRootActivity`) and `TelemetryOptions` helper methods, tested directly (not through `AddOtelHelper`). The debug marker tests moved to the C10 section (`SamplerPropagatorDebugTests`).
 
 ### StartRootActivity
 
@@ -180,13 +225,6 @@ Tracing helpers (`StartRootActivity`, `DebugTraceStateProcessor`) and `Telemetry
 |-------|-----------|
 | `StartRootActivity_Creates_Root_Span_Without_Parent` | Clears parent, creates root |
 | `StartRootActivity_Generates_New_TraceId_Each_Call` | Each call generates a new traceId |
-
-### DebugTraceStateProcessor
-
-| Test | Description |
-|-------|-----------|
-| `DebugMode_Sets_TraceState_And_Attribute_On_Root_Span` | Sets tracestate + attribute debug=true |
-| `DebugMode_Does_Not_Set_On_Child_Span` | Does not set on child spans |
 
 ### IsSignalEnabled
 
@@ -196,30 +234,11 @@ Tracing helpers (`StartRootActivity`, `DebugTraceStateProcessor`) and `Telemetry
 | `IsSignalEnabled_Returns_False_When_Signal_Disabled` | Disabled signal reports false |
 | `IsSignalEnabled_Is_Case_Insensitive` | Case-insensitive matching |
 
-### HasInstrumentation
-
-| Test | Description |
-|-------|-----------|
-| `HasInstrumentation_Default_Has_SQL` | SQL enabled, AWS/REDIS disabled by default |
-| `HasInstrumentation_Multiple_Values` | SQL,AWS,REDIS all enable |
-| `HasInstrumentation_Case_Insensitive` | Mixed case works |
-| `HasInstrumentation_Empty_Disables_All` | Empty string disables all |
-| `DebugLevel_Enables_All_Instrumentation` | Debug mode bypasses the list check entirely |
-
 ### GetDefaultLogLevel
 
 | Test | Description |
 |-------|-----------|
 | `GetDefaultLogLevel_Returns_Correct_Values` | LOCAL=Debug, DEV/HML=Info, PRD=Warning, debug override |
-
-### Validator
-
-| Test | Description |
-|-------|-----------|
-| `Validator_Fails_On_Empty_ServiceName` | Empty ServiceName fails |
-| `Validator_Succeeds_On_Empty_Endpoint_Prometheus_Mode` | Empty endpoint is valid |
-| `Validator_Fails_On_Invalid_URI` | Invalid URI fails |
-| `Validator_Fails_On_Zero_Timeout` | ExportTimeoutMs ≤ 0 fails |
 
 ## SignalIntegrationTests
 
@@ -231,8 +250,6 @@ Integration tests verifying signals are actually collected or dropped via in-mem
 | `ActivitySource_Name_Matches_ServiceName` | DI-resolved ActivitySource name equals ServiceName |
 | `Custom_Metrics_Via_DI_Meter_Are_Collected` | A counter created via the DI Meter is exported |
 | `Traces_Via_DI_ActivitySource_Are_Collected` | A span created via the DI ActivitySource is exported with its tags |
-| `ValidateOnStart_Throws_With_Empty_ServiceName` | Invalid ServiceName fails fast inside `AddOtelHelper()` (P9) |
-| `ValidateOnStart_Throws_With_Invalid_Endpoint` | Invalid endpoint URI fails fast inside `AddOtelHelper()` (P9) |
 | `LogLevel_Above_Minimum_Are_Enabled` × 3 | LOCAL/DEV/PRD minimum log level enabled, level below disabled |
 | `Full_Pipeline_Registers_All_Signals` | Logging, Options, ActivitySource, Meter all resolve from the built provider |
 | `DebugLevel_Forces_Debug_LogLevel` | Debug mode forces Debug level even in PRD |
@@ -252,7 +269,7 @@ Opt-in subpackage extensions (AWS, SQL, Redis) — each verifies the fluent `ISe
 
 ## TlsEndpointResolutionTests
 
-`TelemetryOptionsPostConfigure`'s TLS scheme resolution — secure by default, `OTEL_EXPORTER_OTLP_INSECURE` override, explicit scheme always wins. Uses `[Collection("EnvVarTests")]`.
+`TelemetryResolver`'s TLS scheme resolution — secure by default, `OTEL_EXPORTER_OTLP_INSECURE` override, explicit scheme always wins. Uses `[Collection("EnvVarTests")]`.
 
 | Test | Description |
 |-------|-----------|
@@ -264,33 +281,63 @@ Opt-in subpackage extensions (AWS, SQL, Redis) — each verifies the fluent `ISe
 | `Schemeless_HostOnly_Defaults_Port_4317_And_Https` | Host-only (no port) → `https://host:4317` |
 | `HttpsScheme_Preserves_Custom_Port` | `https://gw:4318` keeps the custom port |
 | `Schemeless_With_Custom_Port_And_Insecure` | `gw:4318` + INSECURE=true → `http://gw:4318` |
-| `ConsumerSet_Endpoint_Not_Overridden` | Endpoint set in code is not overwritten by PostConfigure |
+| `ConsumerSet_Endpoint_Not_Overridden` | Endpoint set in code is not overwritten by the environment |
 | `Insecure_EnvVar_Ignored_When_Scheme_Explicit_Https` | Explicit `https://` scheme wins over INSECURE=true |
-| `HttpsScheme_DefaultPort_Gets_4317` | `https://gw` (no port) normalizes to :4317 |
-| `ResolveEndpoint_Unit_Schemeless_Host_Port` | `ResolveEndpoint` static helper: schemeless host:port |
-| `ResolveEndpoint_Unit_Schemeless_Host_Only` | `ResolveEndpoint` static helper: schemeless host only |
-| `ResolveEndpoint_Unit_Http_Explicit` | `ResolveEndpoint` static helper: explicit http:// |
+| `HttpsScheme_DefaultPort_Gets_4317` | `https://gw` (no port, gRPC) dials :4317 (portless gRPC rule, warned since task C7a) |
+| `EndpointResolver_Unit_Grpc` × 4 | `EndpointResolver.Resolve` (task C7a, replaces the 0.2 `ResolveEndpoint` helper): schemeless `host:port` and `host`, schemeless + insecure, explicit `http://` |
+| `Http_Code_Endpoint_Keeps_Its_Path_For_Http_Protobuf` | Task C7a: an HTTP URL keeps its path (`/v1/<signal>` appended for the generic value); gRPC dials `host:4317` |
 
 ## ProfilingTests
 
-`OtelHelper.Profiling`'s `ProfilingPrerequisites` and extension registration. Uses `[Collection("EnvVarTests")]`.
+`StaffOps.OtelHelper.Profiling` (task C15, N11): the prerequisite rules, the
+start at host start, the warning through the diagnostics sink (D-NET5) and the
+span processor wiring. Rules pinned here were measured 2026-11-12 against the
+native Pyroscope 0.14.5 profiler on `linux/amd64` (dotnet `HOW-TO.md` §14
+"Profiling"); the unit tests do not load the native profiler. Uses
+`[Collection("EnvVarTests")]`.
 
 | Test | Description |
 |-------|-----------|
-| `ProfilingPrerequisites_FromEnvironment_AllSet_IsSatisfied` | All required env vars set → satisfied |
-| `ProfilingPrerequisites_Missing_ServerAddress_NotSatisfied` | Missing server address → not satisfied |
-| `ProfilingPrerequisites_Missing_ClrProfiler_NotSatisfied` | Missing CLR profiler env var → not satisfied |
-| `ProfilingPrerequisites_Missing_ProfilingEnabled_NotSatisfied` | Missing "profiling enabled" var → not satisfied |
-| `ProfilingPrerequisites_DescribeMissing_ListsMissingVars` | `DescribeMissing()` lists all missing vars when nothing is set |
-| `ProfilingPrerequisites_DescribeMissing_OnlyListsMissing` | `DescribeMissing()` omits vars that are already set |
-| `ProfilingPrerequisites_DescribeMissing_ReturnsNull_When_Satisfied` | `DescribeMissing()` returns null when fully satisfied |
-| `ProfilingPrerequisites_Truthy_AcceptsBothOneAndTrue` × 4 | "1", "true", "True", "TRUE" all count as enabled |
-| `ProfilingPrerequisites_NotTruthy_Rejects_InvalidValues` × 5 | "0", "false", "", "yes", "on" are all rejected |
-| `ProfilingPrerequisites_ApplicationName_IsRead` | ApplicationName read from its env var |
-| `ProfilingPrerequisites_IsSatisfied_Without_ApplicationName` | ApplicationName is optional — not required for `IsSatisfied` |
-| `AddOtelHelperProfiling_Registers_HostedService_When_Prerequisites_Missing` | Missing prerequisites → `ProfilingPrerequisiteWarning` hosted service registered |
-| `ProfilingPrerequisiteWarning_LogsWarning_OnStart` | The warning hosted service starts/stops without exception |
-| `AddOtelHelperProfiling_Registers_IProfilingProvider` | `IProfilingProvider` resolves from DI after registration |
+| `Complete_Environment_Is_Satisfied` | Every prerequisite as the README snippet → satisfied, `Unmet` empty, `DescribeMissing()` null |
+| `One_Unmet_Prerequisite_Is_Named` × 14 | Each check alone names exactly its item: `CORECLR_ENABLE_PROFILING` unset, `0` or `true` (measured: the runtime needs `1`); `CORECLR_PROFILER` unset, blank, another CLSID, no braces; profiler path unset or a missing file; `LD_PRELOAD` unset or without the API wrapper; `PYROSCOPE_PROFILING_ENABLED` unset; `PYROSCOPE_SERVER_ADDRESS` unset or blank |
+| `Clsid_Comparison_Ignores_Case` | The lowercase CLSID passes (measured: the runtime loads it) |
+| `Nothing_Set_Lists_Every_Prerequisite_In_Check_Order` | Order of `Unmet` and the `DescribeMissing()` text |
+| `Preload_Is_Not_Required_Off_Linux` | `LD_PRELOAD` is checked on Linux only |
+| `Architecture_Specific_Path_Wins_Over_The_Generic_One` × 4 | `_64` / `_32` / `_ARM64` / `_ARM32` before `CORECLR_PROFILER_PATH` |
+| `Architecture_Specific_Path_To_A_Missing_File_Is_Named_Even_With_A_Valid_Generic_Path` | The variable the runtime reads is the one checked and named |
+| `Path_Variable_Of_Another_Architecture_Is_Ignored` | `_64` does not count on Arm64 |
+| `Unknown_Architecture_Reads_Only_The_Generic_Path` | No specific variable for other architectures |
+| `Pyroscope_Switch_Follows_Pyroscope_Boolean_Rule` × 6 | `1`, `t`, `Y`, `true`, `TRUE`, `yes` enable (Pyroscope 1.2.0's rule) |
+| `Pyroscope_Switch_Rejects_Other_Values` × 5 | `0`, `false`, empty, `on`, `" 1"` do not |
+| `FromEnvironment_Reads_The_Process_Environment` | The real process environment and file system |
+| `ApplicationName_Is_Optional` | `PYROSCOPE_APPLICATION_NAME` is not required |
+| `Profiler_Starts_When_The_Host_Starts_Not_At_Registration` | `Start()` not called by registration or by building the container; once by the hosted service; no diagnostic on success |
+| `Generic_Host_Start_Starts_The_Profiler_Once` | The same through `Host.CreateApplicationBuilder` start and stop |
+| `Unmet_Prerequisites_Warn_Once_Through_The_Sink_And_Do_Not_Start` | The exact `otelhelper: WARN` line, once per sink over two starts; `Start()` not called |
+| `Warning_Writes_No_Logger_Record` | No `ILogger` record of any `*Profiling*` category (decision 2026-11-12: the `OtelHelper.Profiling` category is gone) |
+| `Warning_Names_Variables_Never_Values` | Server address with credentials, `PYROSCOPE_AUTH_TOKEN` and a path value never appear in the line |
+| `Start_That_Throws_Reports_One_Error_And_The_Host_Keeps_Starting` | The exact `otelhelper: ERROR` line with `error.type` only (no message, no path), once per sink |
+| `Without_AddOtelHelper_The_Warning_Goes_To_The_Fallback_Sink` | No container sink → the registration-time fallback |
+| `Calling_Twice_Registers_The_Profiler_Once` | One state, one provider, one hosted service |
+| `Registration_Resolves_The_Pyroscope_Provider` | The default provider and its span processor |
+| `Synchronous_Container_Dispose_Does_Not_Throw` | The container-created provider is also `IDisposable` (an `IAsyncDisposable`-only service makes `ServiceProvider.Dispose()` throw) |
+| `Null_Services_Throws` | `ArgumentNullException` |
+| `Met_Prerequisites_Add_The_Span_Processor` | A root span gets `pyroscope.profile.id` = its span id |
+| `Unmet_Prerequisites_Leave_The_Span_Processor_Out` | No `pyroscope.profile.id` |
+| `Two_Registrations_Add_One_Span_Processor` | One `pyroscope.profile.id` tag |
+| `Pyroscope_Provider_Disposes_Without_Error` | `DisposeAsync` of the default provider |
+| `State_Reads_The_Prerequisites_Once` | One read per container (host start and tracer build agree) |
+| `Default_State_Reads_The_Process_Environment` | The default `ProfilingState` uses `FromEnvironment` |
+
+Mutation check (2026-11-12, a container-local copy, `ProfilingTests` only):
+13 mutants each fail at least one test — starting despite unmet checks, adding
+the span processor without the check, accepting `CORECLR_ENABLE_PROFILING=true`,
+the generic path before the architecture-specific one, catching only
+`DllNotFoundException`, no double-registration guard, no `IDisposable`, no
+fallback sink, an ordinal CLSID comparison, `LD_PRELOAD` required off Linux,
+`Report` instead of `ReportOnce`, no file-exists check, any `LD_PRELOAD` accepted.
+`PyroscopeProfilingProvider.Start()` stays `[ExcludeFromCodeCoverage]` (it calls
+the native library); it was run against the real profiler in the measurement.
 
 ## MetricsContractTests
 
@@ -307,9 +354,6 @@ Opt-in subpackage extensions (AWS, SQL, Redis) — each verifies the fluent `ISe
 | `None_DisablesMetrics` | `none` → empty resolved list |
 | `CaseAndWhitespace_Tolerated` | " OTLP , Prometheus " parses correctly |
 | `ExplicitOption_BeatsEnv` | `MetricExporters` property wins over the env var |
-| `UnknownValue_FailsValidation` | Unknown value → validation error listing valid values |
-| `OtlpWithoutEndpoint_FailsValidation` | `otlp` without an endpoint → validation error |
-| `NoneCombined_FailsValidation` | `none,prometheus` → validation error |
 
 ### Export interval
 
@@ -335,17 +379,43 @@ Opt-in subpackage extensions (AWS, SQL, Redis) — each verifies the fluent `ISe
 | `ConfigureMetrics_PrometheusOnly_WithEndpoint_Builds` | `prometheus`-only with an endpoint set builds cleanly and serves `/metrics` |
 | `ConfigureMetrics_PortZero_SkipsListener` | Port 0 builds without binding any listener |
 
-## SamplerPrecedenceTests
+## PrometheusListenerTests
 
-`OTEL_TRACES_SAMPLER` (standard SDK var) precedence over `OTEL_HELPER_SAMPLE_RATIO` (US-2). Verified against the real `Sdk.CreateTracerProviderBuilder()` behavior (empirically confirmed, not assumed — see `ANALISE-PROBLEMAS.md` P9). Uses `[Collection("EnvVarTests")]`.
+The Prometheus fallback on `OpenTelemetry.Exporter.Prometheus.HttpListener`
+1.20.x keeps the 0.2.x listener behavior (task C3, design D-NET11). Uses
+`[Collection("EnvVarTests")]`. *Corrected 2026-11-11 (C12 fix round 1):* these
+tests need no network, but two `PrometheusFallbackC12Tests` facts
+(`[NonLoopbackFact]`) need a non-loopback IPv4 address of the container and
+are skipped, with the reason, without one (`--network none`). Reachability
+from another container, in the text and OpenMetrics formats, and the
+loopback-bind refusal are checked by `testing/e2e/dotnet-prom-scrape.sh`.
 
 | Test | Description |
 |-------|-----------|
-| `HelperVarOnly_AppliesRatio` | Only `OTEL_HELPER_SAMPLE_RATIO` set → ratio applied, `TraceIdRatioBasedSampler` |
-| `StandardVarOnly_Wins` | Only `OTEL_TRACES_SAMPLER=always_off` set → span not sampled |
+| `ListenerPrefix_IsWildcardHostMetricsPath` *(renamed, note below)* | The bind prefix is `http://+:<port>/metrics/` |
+| `ConfigurePrometheusListener_SetsHostPortCacheAndPrefixDelegate` | `Host` reset to `localhost`, helper port, response cache 0, and a delegate that replaces the listener prefixes with the `+` prefix only |
+| `Scrape_IsFresh_NoResponseCache` | Two scrapes back to back see the new value (upstream caches 300 ms by default) |
+| `PrometheusEnvVars_HaveNoEffect_HelperPortServed` *(renamed, note below)* | `OTEL_EXPORTER_PROMETHEUS_HOST=*` does not abort the build and `OTEL_EXPORTER_PROMETHEUS_PORT` does not move the listener: `OTEL_HELPER_METRICS_PORT` is served |
+
+*Changed 2026-11-11 (task C12):* `ListenerPrefix_IsWildcardHostMetricsPath`
+became `ListenerPrefix_FollowsResolvedHost` × 4 (`""` and `0.0.0.0` → `+`, an
+IPv4 literal, `::1` → `[::1]`); `ConfigurePrometheusListener_Host_ReplacesThePrefix`
+is new; `PrometheusEnvVars_HaveNoEffect_HelperPortServed` became
+`PrometheusPortEnvVar_BeatsHelperPort_AndHostStarDoesNotAbort` (the standard
+port is served, the helper port is not, `*` warns once); the inactive-prefix
+test is gone (no listener reader is registered then, see below).
+
+## SamplerPrecedenceTests
+
+`OTEL_TRACES_SAMPLER` (standard SDK var) precedence over `OTEL_HELPER_SAMPLE_RATIO` (US-2). Since task C10 the helper parses the variable and always sets the sampler; the SDK never reads it. Uses `[Collection("EnvVarTests")]`.
+
+| Test | Description |
+|-------|-----------|
+| `HelperVarOnly_AppliesRatio` | Only `OTEL_HELPER_SAMPLE_RATIO` set → ratio applied, `ParentBasedSampler` (`parentbased_traceidratio`) |
+| `StandardVarOnly_Wins` | Only `OTEL_TRACES_SAMPLER=always_off` set → `AlwaysOffSampler`, span not sampled |
 | `StandardVarBeatsHelperVar` | Both set → standard var wins, helper ratio ignored |
 | `ExplicitRatioBeatsStandardVar` | Explicit `Sampler` in code wins over the standard env var |
-| `NoEnvNoOverride_DefaultsToAlwaysOn` | Neither set → `AlwaysOnSampler`, span sampled |
+| `NoEnvNoOverride_DefaultsToParentBasedAlwaysOn` | Neither set → `ParentBasedSampler(AlwaysOnSampler)` (ADR-002), span sampled |
 
 ## OtlpProtocolTests
 
@@ -369,13 +439,687 @@ OTLP wire protocol selection (grpc vs http/protobuf) — tracing and metrics. Cr
 
 | Test | Description |
 |-------|-----------|
-| `UnknownValue_FailsValidation` | Unknown protocol value → validation error |
-| `HttpJson_RejectedEvenThoughSpecValid` | `http/json` is a valid OTel spec value but unsupported here → fails validation |
 | `GrpcAndHttpProtobuf_PassValidation` × 2 | `grpc` and `http/protobuf` both pass validation |
 
 ### Live integration — HTTP protocol delivers to /v1/{signal}
 
 | Test | Description |
 |-------|-----------|
-| `Tracing_Http_DeliversToV1Traces` | `ConfigureTracing` with http/protobuf sends the request to `/v1/traces` on a real `HttpListener` |
-| `Metrics_Http_DeliversToV1Metrics` | `ConfigureMetrics` with http/protobuf sends the request to `/v1/metrics` on a real `HttpListener` |
+| `Tracing_Http_DeliversToV1Traces` | `AddOtelHelper` with http/protobuf sends the request to `/v1/traces` on a real `HttpListener` |
+| `Metrics_Http_DeliversToV1Metrics` | `AddOtelHelper` with http/protobuf sends the request to `/v1/metrics` on a real `HttpListener` |
+
+## Resolver core (task C5)
+
+`DiagnosticsTests`, `ResolverCoreTests`, `ResolverCoreFixRoundTests` (helpers in
+`TestDiagnostics.cs`: a sink of its own per test, never `Console.SetError`;
+`TestEventSources.cs`). They cover the diagnostics sink (record format,
+escaping of control, separator and bidi characters, 64-code-point cut, once
+per sink, URL rendering, free-text redaction), the SDK `EventSource`
+forwarding (one listener per process, the latest sink, masked code and env
+secrets, response bodies dropped by payload position, noise rules), the
+`IConfiguration` neutralization of the exporter options (DN2), bound options
+as code (DN4), keyed `ActivitySource`/`Meter` (DN5), env-warns / code-fails
+validation naming the option, `OTEL_SDK_DISABLED` from `IConfiguration`, the
+config-file warnings, the metric temporality, header parsing (malformed and
+control-character items skipped; warned by position since task C8), TLS files and a custom root
+with an intermediate, client disposal, the SDK `User-Agent`, the drop-all view
+when no metric exporter is active, and an invalid code value reported once
+when a provider is built before start.
+
+## Identity and resource (task C6)
+
+`IdentityResourceTests` (contract R4, R5, D4, A16, A24; design D-NET7):
+
+| Area | Tests |
+|---|---|
+| `OTEL_RESOURCE_ATTRIBUTES` parser | `Parser_Blank_Items_Are_Ignored_Without_A_Position`, `Parser_Skips_Items_Without_Equals_Or_With_An_Empty_Key_By_Position`, `Parser_Decodes_Strictly_Then_Trims_With_The_Contract_Set` × 8 (`+` stays `+`, `=` in a value, UTF-8 escapes, a leading U+00A0 kept), `Parser_Keeps_An_Undecodable_Value_Literal_By_Position` × 6, `Parser_Unpaired_Surrogates_Make_A_Key_Malformed_And_A_Value_Replaced`, `Parser_Keeps_A_Unicode_Space_In_The_Key_And_A_Later_Duplicate_Wins` |
+| Diagnostics of the parse | `Env_Resource_Attribute_Problems_Warn_Once_By_Position_Never_The_Value`, `Blank_Env_Resource_Attributes_Warn_Nothing` |
+| `service.name` | `ServiceName_Otel_Variable_Beats_The_Deprecated_One`, `ServiceName_Resource_Attributes_Beat_The_Deprecated_Variable_And_Lose_To_The_Otel_One`, `ServiceName_Code_Option_Beats_Code_Attribute_Which_Beats_Env`, `ServiceName_Blank_Resource_Attribute_Falls_Back_To_The_Deprecated_Variable`, `ServiceName_Unset_Is_The_Sdk_Default_With_One_Warning`, `ServiceName_From_A_Code_Attribute_Only_Warns_Nothing` |
+| Environment and log level | `Environment_Unset_Is_Absent_Info_And_Warned_Once`, `Environment_Alias_Canonicalizes_Known_Names_And_Keeps_Others` × 3, `Environment_Resource_Attributes_Beat_The_Alias_And_Are_Verbatim`, `Environment_Code_Option_Beats_Code_Attribute_Which_Beats_Env`, `Environment_Blank_In_Resource_Attributes_Is_Absent_And_Warned`, `LogLevel_Code_Environment_Matches_Case_Insensitively`; `OptionsTests.GetDefaultLogLevel_By_Environment_Name` (ASCII case, trim, U+0130 and U+00A0 not folded) |
+| `service.instance.id` | `InstanceId_Code_Beats_Env_Which_Beats_The_Process_Id`, `InstanceId_Is_The_One_The_Sdk_AddService_Generates_In_This_Process` |
+| Rebuilt resource | `Resource_Carries_The_Resolved_Identity_On_Every_Provider_With_The_Contract_Schema_Url`, `Resource_Code_Attributes_Beat_Env_Per_Key`, `Resource_Drops_The_Sdk_Env_Detector_Parse`, `Resource_Ignores_Otel_Service_Name_Set_Only_In_IConfiguration` (a guard), `Resource_Ignores_Otel_Resource_Attributes_Set_Only_In_IConfiguration`, `Resource_Blank_Env_Service_Name_Is_The_Explicit_Sdk_Default`, `Resource_Telemetry_Sdk_Comes_From_The_Sdk_Env_Silently_Code_Warned_Once_Per_Key`, `Resource_Keeps_Earlier_App_Attributes_Between_Env_And_Code`, `Resource_App_AddService_Name_Is_Replaced_With_One_Warning_Its_Instance_Id_Agrees`, `Resource_App_Environment_Stays_When_None_Is_Resolved`, `Resource_An_Earlier_Factory_Detector_Is_Kept_Without_Clearing_And_Warned_Once`, `Resource_App_Attributes_Equal_To_The_Sdk_Defaults_Are_Not_Kept` |
+| Application resource configuration (fix round 1) | `Later_ConfigureResource_Is_Reported_At_Start_For_Every_Signal_With_The_Schema_Conflict_As_Helper_Text` (tracer, meter, logger resources), `Later_SetResourceBuilder_On_Tracing_Only_Is_Reported_Naming_Traces`, `Earlier_ConfigureResource_Is_Not_Reported_As_A_Later_Change`, `Each_Earlier_Detector_Runs_Exactly_Once_Per_Provider`, `Each_Later_Detector_Runs_Exactly_Once_Per_Provider`, `Sdk_Disabled_Skips_The_Later_Change_Check`, `Host_App_Environment_On_Tracing_Only_Names_The_Lacking_Signals_Without_Not_Set`, `Host_Without_Any_Environment_Warns_Not_Set_Exactly_Once`, `App_Environment_Is_Used_When_None_Is_Resolved_And_Picks_The_Log_Level`, `App_Identity_Values_Replaced_By_Resolved_Ones_Are_Warned_Once_Per_Key`, `App_Explicit_Instance_Id_Is_Kept_When_The_Helper_Has_Only_The_Process_Id`, `Factory_Detector_Path_Names_An_Unresolved_Environment_Whose_Blank_Sdk_Value_Stays` |
+| Code validation | `TracingAndOptionsHelperTests.Validator_Blank_Identity_Options_Fail_Naming_The_Option` × 2, `SignalIntegrationTests.Blank_Code_ServiceName_Fails_Naming_The_Option`, `Validator_Empty_Code_Key_Fails_At_Start` × 2, `Validator_Unicode_Space_Key_Is_Valid`, `Validator_Unsupported_Values_Fail_Naming_The_Key`, `Validator_Null_Resource_Attributes_Fail` |
+
+Tests about another row set a service name and an environment in code
+(`TestDiagnostics.Identified`), so they see only their own diagnostics.
+
+## Endpoint parsing (task C7a)
+
+`EndpointGrammarTests` (the grammar and one value, no environment) and
+`EndpointResolutionTests` (`[Collection("EnvVarTests")]`: environment, code,
+the validator) cover contract R1, R2, D1.a–c and the D1 edge-case rulings of
+A17:
+
+| Area | Tests |
+|---|---|
+| RFC 3986 split and ports | `Split_Follows_Rfc3986` × 9, `Split_Rejects_A_Malformed_Authority` × 8, `Ports_Compare_Numerically` × 11, `A_Port_Of_Thousands_Of_Digits_Never_Throws`, `Endpoint_Port_Is_Read_As_The_Resolver_Reads_It` × 7 |
+| Host rules and IDN | `Valid_Hosts_Normalize` × 11 (lowercase, IPv6, trailing dot, punycode, deviation character, ideographic full stop), `Invalid_Hosts_Are_Rejected` × 25 (space, `%`, reg-name, one host rule, IPv6 literal, U+FFFD, ZWJ, fullwidth digits, empty label; hosts `System.Uri` refuses: `a!b`, `a$b`, `a~b`, `a=b`, `a..b`, `1.2.3.4..`), `An_Unescaped_Zone_Id_Is_Reported_As_Such`, `A_Non_Ascii_Host_Longer_Than_253_After_Punycode_Is_Invalid`, `Without_Uts46_A_Non_Ascii_Host_Is_Invalid_And_Says_Why` (globalization-invariant mode fails closed), `Invalid_Escapes_Are_Found` × 5 |
+| Rendering | `Render_Matches_The_Resolver` × 11; `DiagnosticsTests.Endpoints_Render_Without_Credentials` (unchanged, now through the grammar) |
+| One value | `Unparseable_Env_Values_Warn_The_Constant_And_Fall_Back` × 18, `Unparseable_Code_Values_Fail_Naming_The_Option` × 5, `Unsupported_Schemes_Leave_The_Signal_Unconfigured_Rendered_Redacted` × 3, `An_Invalid_Http_Path_Escape_Is_Invalid_For_Http_Only`, `Schemeless_Values_Are_Rewritten` × 7, `A_Schemeless_Value_With_An_At_In_The_Path_Renders_The_Constant`, `Portless_Grpc_Urls_Get_4317_With_A_Warning` × 3, `Http_Urls_Keep_Their_Path_And_Default_Port` × 4, `Grpc_Urls_Drop_The_Path`, `Userinfo_Query_And_Fragment_Are_Removed_With_A_Warning` × 5, `An_At_In_The_Path_Warns_Naming_The_Variable_Only`, `Env_Failures_Use_Gos_Wording_And_Warn_Once_Per_Raw_Value`, `The_Userinfo_Using_Is_The_Url_The_Signal_Uses`, `An_Env_Insecure_Contradicting_The_Scheme_Warns_And_The_Scheme_Wins` × 2, `A_Code_Insecure_Contradicting_A_Code_Url_Fails_Only_When_Both_Are_Code` |
+| Resolution order and fallback | `An_Unparseable_Per_Signal_Value_Falls_Back_To_The_Generic_One`, `An_Unsupported_Per_Signal_Scheme_Leaves_Only_That_Signal_Unconfigured`, `A_Per_Signal_Env_Value_Is_Used_As_Written_And_Drives_The_Inference`, `Code_Code_Per_Signal_Env_Generic_Env_Is_The_Order`, `Generic_Endpoint_Reports_Empty_When_The_Env_Value_Is_Unusable`, `An_Idn_Host_Reaches_The_Exporter_Punycoded` |
+| INSECURE | `An_Unparseable_Insecure_Warns_Without_An_Endpoint` × 2, `A_Shadowed_Insecure_Stays_Silent`, `The_Per_Signal_Insecure_Beats_The_Generic_One_For_Schemeless_Values`, `An_Unparseable_Insecure_Means_False` |
+| Protocol | `Per_Signal_Protocol_Beats_The_Generic_One_And_Bad_Values_Fall_Through`, `A_Bad_Generic_Protocol_Is_Warned_Once_And_Grpc_Is_Used` × 2, `A_Code_Protocol_Beats_Every_Variable_And_The_Inference`, `The_4318_Inference_Is_Logged_Once_For_Three_Signals` |
+| gRPC path warning (task C7b, A29) | `A_Grpc_Path_Warns_Naming_The_Variable_Only` × 7 (URL, schemeless, `//`; not `/`, empty or query-only), `An_Http_Path_Is_Not_Warned_And_The_Grpc_Path_Key_Ignores_The_Value`, `The_Grpc_Path_Warning_Is_Written_Once_Per_Variable` × 2, `A_Skipped_Per_Signal_Value_With_A_Path_Is_Not_Warned`, `A_Code_Grpc_Path_Warns_And_Does_Not_Fail_Start` |
+| Exporter targets (task C7b audit) | `Exporter_Options_Carry_Each_Signals_Target` × 3 (per-signal HTTP for every signal, used as written also without a path; the others generic + `/v1/<signal>`), `A_Signal_Without_A_Target_Gets_No_Exporter_Options` |
+| Warning cadence | `The_Userinfo_Warning_Is_Written_Once_Per_Variable_And_Value`, `A_Generic_Http_Query_Is_Stripped_Before_The_Signal_Path` (also on `OtlpExporters.OptionsFor`), `Code_Warnings_Reach_The_Sink_At_Start` |
+| Code validation | `Invalid_Code_Endpoints_Fail_At_Start` × 5, `A_Code_Http_Path_Escape_Fails_Only_For_Http_Protobuf`, `A_Code_Insecure_Contradicting_A_Code_Url_Fails`, `The_Same_Error_Is_Listed_Once_And_A_Shadowed_Generic_Value_Is_Not_Checked`, `Schemeless_And_Credential_Bearing_Code_Values_Are_Accepted` × 3; `TracingAndOptionsHelperTests.Validator_Fails_On_Unsupported_Endpoint_Redacted` and `Validator_Per_Signal_Endpoints_Need_An_Http_Url` (schemeless per-signal code values are accepted since C7a, as in Go and Python) |
+
+The IDN tests need ICU (the SDK images have it). Under
+`DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=1` the tests that expect a punycode
+conversion fail by design (the helper rejects non-ASCII hosts there) and the
+invalid-host tests still pass; measured 2026-11-10: 10 of 283 endpoint and
+diagnostics tests fail in that mode, all of them IDN conversions or their
+reason text.
+
+`DiagnosticsTests.Sdk_Text_Is_Redacted` also covers the exception-message
+exemption (fix round 2): a pair is kept only when the name is a type name
+(`^[A-Z][A-Za-z0-9]*(Exception|Error)$`), the separator is `:` plus whitespace
+and the value starts like prose (`AuthenticationException: Cannot …`);
+`TokenError: eyJ…`, `AuthError=x`, `X-Auth-Error: x` and `session_token_error: x`
+are masked.
+
+Endpoint warnings use Go's wording (`<why>; ignored`, the variable as an
+attribute); the other environment warnings keep the .NET form
+`invalid <VAR>: …` (task C5).
+
+## Exporter settings (task C8)
+
+`ExporterSettingsTests` (`[Collection("EnvVarTests")]`; contract A18, R2, R8,
+G10; ADR-013) — each rule was checked to fail its test when the rule is
+removed (mutation run, 2026-11-10):
+
+| Area | Tests |
+|---|---|
+| Headers | `Header_Grammar` × 17 (key set, keys not decoded, whole-value literal on an invalid escape or non-UTF-8 bytes, non-ASCII and control characters skipped, trim after decoding, last key wins, empty items), `Header_Warnings_Name_The_Variable_And_The_Position_Never_A_Value`, `Per_Signal_Headers_Replace_The_Generic_Ones_And_An_Unusable_Per_Signal_Value_Falls_Back`, `Bin_Header_Values_Are_Base64_On_Grpc_Only` × 3, `Content_Header_Rejected_By_The_Client_Is_Warned_By_Key` |
+| Timeout | `Timeout_Grammar` × 18 (decimal grammar, 0, sign, exponent, bare dot, hex, clamps at 1 and 86 400 000), `Per_Signal_Timeout_Falls_Back_To_The_Generic_One_And_Code_Wins`, `Timeout_Bounds_The_Exporter_The_Client_The_Batch_Processors_And_The_Reader` (also the three ignored `*_EXPORT_TIMEOUT` warnings), `A_Hanging_Collector_Ends_The_Export_At_The_Deadline`, `Grpc_Timeout_Header_Encoding` × 6, `Handler_Sends_Grpc_Timeout_On_Grpc_Only_And_Forwards_Send_And_SendAsync` |
+| Compression | `Compression_Defaults_To_Gzip_Per_Signal_With_Fallback_And_Code_Wins` |
+| TLS files | `Plaintext_Target_Ignores_The_Tls_Files_With_One_Warning_Naming_Them`, `Ca_Per_Signal_Unreadable_Or_Not_Pem_Falls_Back_To_Generic_Then_The_System_Roots`, `Client_Pair_Incomplete_Or_Rejected_Uses_Server_Authentication_And_A_Good_Pair_Is_Presented`; `ResolverCoreTests.Tls_Files_From_The_Environment_Are_Loaded_Or_Warned` |
+| Client duties | `One_Client_Per_Exporter_Instance_With_The_Sdk_Response_Bound_And_No_Redirects`, `A_Redirect_Is_Refused_And_Reported_Naming_The_Signal_And_The_Status` × 12 (traces, metrics, logs × 301, 302, 307, 308 on a local `HttpListener`: one ERROR naming signal and status, the `Location` never requested nor printed) |
+| Fix round 1 | `Application_Set_Export_Timeouts_Are_Warned_Naming_The_Option`, `Untouched_Sdk_Options_Or_A_Set_Variable_Give_No_Option_Warning`, `Histogram_Path_Deadline_Beats_A_Later_Named_Configure`, `Oversized_Or_Device_Tls_Files_Are_Refused_As_Unreadable`; `ResolverCoreFixRoundTests.Only_The_Resolved_Otlp_Keys_Are_Dropped` (per-signal keys) |
+| Batch size, value length | `Batch_Size_Above_The_Queue_Size_Warns_Naming_Both` × 6, `Batch_Size_Above_The_Queue_Size_In_The_Options_Is_Clamped`, `Env_Batch_Size_Above_The_Queue_Size_Builds_And_The_Processors_Use_The_Queue_Size`, `Zero_Value_Length_Limit_Warns_Naming_Only_That_Variable` × 5 |
+
+The wire side is the parity fixture: every C8 case runs through the helper
+client on both protocols (`export.*headers*`, `export.*timeout*` via the
+receiver's `grpc-timeout`, `export.*compression*`, and the gRPC TLS cases on
+the receiver's TLS port 14317 — `export.grpc_certificate_*`,
+`export.grpc_client_*` — so gRPC TLS through the helper handler is measured,
+no `skip:no-upstream-dotnet-grpc-tls-files` is needed). The processor and
+reader timeouts are read from SDK internals by reflection (test only).
+
+## Signals and exporters (task C9)
+
+`SignalsExportersTests` (`[Collection("EnvVarTests")]`; contract A19, R2, R8;
+ADR-013) — each rule was checked to fail its test when the rule is removed
+(13 mutants, 2026-11-10; fix round 1: 6 more, every one caught by a unit test
+— the `otlp`-guard and logs-`none` mutants, parity-only in the first round, now
+fail `Otlp_Is_Exported_Only_When_Listed` too, without the fake receiver):
+
+| Area | Tests |
+|---|---|
+| Traces and logs exporter lists | `Trace_And_Log_Exporters_Default_To_Otlp` × 2, `Traces_Exporter_List_Is_Parsed` × 5 (case, trim, de-duplication, `none`), `Logging_Is_A_Warned_Alias_Of_Console` × 3 (traces, logs, metrics), `Logging_And_Console_Together_Are_One_Console_Exporter`, `Unknown_Trace_Exporter_Warns_And_Only_Unknown_Uses_The_Default`, `Prometheus_Is_Not_A_Logs_Exporter`, `None_Combined_Warns_And_Wins` × 2, `Blank_Or_Separator_Only_Exporter_Variable_Is_Unset`, `Sdk_Disabled_Leaves_No_Signal_Exporter` |
+| Metric exporters | `Console_Metric_Exporter_Is_Accepted_From_Env_And_Code`, `Code_Logging_Metric_Exporter_Fails_Naming_It`, `Env_Otlp_Alone_Without_Endpoint_Warns_And_Falls_Back_To_Prometheus`, `Env_Otlp_And_Console_Without_Endpoint_Keeps_Console`, `Env_Otlp_With_A_Metrics_Endpoint_Is_Kept` |
+| Deprecated disabled signals | `A_Set_Standard_Exporter_Variable_Wins_Over_Disabled_Signals` × 4, `Standard_None_Counts_As_Set_And_Turns_The_Signal_Off`, `Standard_Variable_With_Only_Unknown_Entries_Counts_As_Unset`, `Env_Otlp_Dropped_For_No_Endpoint_Still_Counts_As_Set`, `Code_Metric_Exporters_Win_Over_Disabled_Signals_For_Metrics_Only`, `Code_Disabled_Signals_Win_Over_A_Set_Standard_Variable`, `Unknown_Disabled_Signal_Entry_Warns_Once_Echoing_It`, `Unknown_Code_Disabled_Signal_Fails_Naming_The_Option` |
+| Export interval | `Interval_Valid_Values_Are_Used_Without_A_Warning` × 6, `Interval_Invalid_Values_Warn_And_Use_30000` × 12 (`0`, `+0`, `5_000`, `-5000`, `++5000`, `5e3`, non-ASCII digits, …), `Interval_Above_The_Maximum_Is_Clamped_With_A_Warning` × 4, `Interval_Of_Thousands_Of_Digits_Is_Clamped_And_Echoed_Truncated`, `Interval_Code_Value_Beats_An_Invalid_Env_Value_Silently`, `Interval_Only_In_IConfiguration_Is_Not_Read_And_Warns_Once` × 2 (round 2), `Interval_In_The_Environment_Seen_Through_IConfiguration_Gives_No_Not_Read_Line`, `Interval_In_Code_Gives_No_Not_Read_Line` |
+| `OTEL_SDK_DISABLED` | `Sdk_Disabled_Unparseable_Warns_Naming_The_Variable_And_Means_False` × 4, `Sdk_Disabled_Booleans_Do_Not_Warn` × 3, `Sdk_Disabled_Unparseable_In_IConfiguration_Warns_Too` |
+| Exemplar filter | `Exemplar_Filter_Is_Parsed` × 4, `Exemplar_Filter_Unknown_Warns_And_Is_Trace_Based`, `ExemplarFilter_DefaultsToTraceBased_AndHonorsEnv` × 4 (the test ADR-013 names: exemplars counted by a reader on the built provider, under and without a sampled span), `An_Application_SetExemplarFilter_Registered_Later_Wins` |
+| Built pipeline | `Traces_None_Leaves_The_Service_Source_Without_A_Listener`, `Console_Exporters_Write_Spans_Logs_And_Metrics_To_Standard_Output` (redirects `Console.Out` for the test; the parity export cases check the same output per process), `Otlp_Is_Exported_Only_When_Listed` × 4 (a local `TcpListener` as the OTLP endpoint: `console` traces and `none` logs open no connection, `otlp` does) |
+| Fix round 1 | `Code_Empty_Disabled_Signals_Are_Set_And_Win_Over_The_Env` × 2, `Code_Empty_Metric_Exporters_Are_Set_Mean_None_And_Win` × 2, `Code_Empty_Metric_Exporters_Say_So_Once_At_Info` (round 2), `Unknown_Entry_And_None_Combined_Each_Get_Their_Own_Line`, `Plus_Prefixed_Interval_Gives_No_Sdk_Line`, `Unparseable_Sdk_Disabled_Is_Warned_Once_By_The_Helper_Only`, `Sdk_Parse_Warnings_Of_Helper_Owned_Rows_Are_Noise` × 3; `DiagnosticsTests.Known_Noise_Is_Not_Forwarded` now treats the SDK's `OTEL_SDK_DISABLED` parse line as noise |
+
+The wire side is the parity fixture: `export.{traces,logs}_exporter_{none,console,logging_alias,none_list}`,
+`metrics.exporter_*`, `metrics.interval_*`, `config.disabled_signals_*` and
+`config.sdk_disabled_*`, `config.code_disabled_signals_empty_wins` and
+`metrics.exemplar_filter_*` pass; since fix round 1
+`config.disabled_signals_standard_var_wins` asserts only the precedence
+(`pass`) and `deprecation.disabled_signals_standard_var_set_still_warns` the
+deprecation (`xfail:C16`). The driver reads `exemplar_filter` from the built
+`MeterProviderSdk` by reflection (driver only).
+
+---
+
+## Sampler, propagators and debug (task C10)
+
+`SamplerPropagatorDebugTests` (`[Collection("EnvVarTests")]`; contract R6, R8,
+R9, A20; ADR-002, ADR-006; design D-NET9, N2, N3). Each rule was checked to
+fail its test when the rule is removed (16 mutants, 2026-11-10: bare
+`AlwaysOn` default, bare ratio alias, alias clamped, unknown name or argument
+silent, runtime propagator not replaced or not undone, an application
+propagator replaced, `Activity.Parent == null` as the debug test, no restore
+in `StartRootActivity`, sampler set only when traces are on, a single
+propagator wrapped in a composite (caught by the type test only: the wire is
+the same), no install at resolution, `none` not winning, unsupported tokens
+reported as unknown, the `IConfiguration` sampler warning removed). The
+`IConfiguration` propagator warning was not mutation-checked (two mutant forms
+did not compile); `Value_Only_In_IConfiguration_Is_Not_Read_And_Warns_Once`
+covers it. Fix round 1 (2026-11-10): 9 more mutants, each failing a test — the container's propagator not replaced, `Current` not set, no pass-through for disabled traces, no continuation listener, the disabled-traces sampler, no OpenTelemetry pass-through wrapper, extraction ignoring the settings, Activity baggage injected unfiltered (caught after `Runtime_Propagator_Fields_And_Extraction_Follow_The_Settings` gained an injection check).
+
+| Area | Tests |
+|---|---|
+| Sampler names | `Each_Spec_Name_Builds_Its_Sampler` × 9 (the six names, ARG 0 and 1, case and trim, each decided for a root, a sampled and an unsampled remote parent), `Default_Is_ParentBased_Always_On`, `Unknown_Or_Unsupported_Name_Warns_Once_And_Uses_The_Default` × 5 (unknown, U+0130, the three unsupported spec names) |
+| Sampler argument | `Invalid_Sampler_Argument_Warns_And_Uses_One` × 9 (`2`, `-0.5`, `+0.5`, `1e-1`, `0x1`, `NaN`, `.5`, `0,5`, Arabic-Indic digit), `Sampler_Argument_Is_A_Plain_Decimal` × 3, `Argument_Of_A_Non_Ratio_Sampler_Is_Ignored_Silently` |
+| Ratio alias | `Ratio_Alias_Is_ParentBased`, `Invalid_Ratio_Alias_Warns_And_Is_Ignored_Not_Clamped` × 5, `Ratio_Alias_Is_Not_Read_While_The_Standard_Variable_Is_Set`, `Code_Sampler_And_Ratio_Win_Over_Every_Variable_Without_A_Line` |
+| `IConfiguration` only | `Value_Only_In_IConfiguration_Is_Not_Read_And_Warns_Once` × 3 (`OTEL_TRACES_SAMPLER`, `_ARG`, `OTEL_PROPAGATORS`), `Values_In_The_Environment_Seen_Through_IConfiguration_Give_No_Not_Read_Line`, `Sampler_In_IConfiguration_With_A_Code_Sampler_Gives_No_Line`, `The_Sdk_Does_Not_Apply_A_Sampler_Set_Only_In_IConfiguration` (a host with `always_off` in `IConfiguration` still samples) |
+| Propagator parsing | `Propagators_Are_Parsed_Per_Token` × 15 (exact diagnostic lines: per-token "not supported"/"unknown", `none` combined, `using=` the effective list, case, empty tokens, duplicates, U+0130) |
+| Propagator install | `The_Default_TextMap_Propagator_Is_The_Resolved_List` × 4, `A_Lone_TraceContext_Is_The_Sdk_TraceContext_Propagator`, `Propagators_Are_Installed_Under_Sdk_Disabled` × 2, `Hostless_Sdk_Disabled_Installs_Once_The_Helper_Settings_Resolve` |
+| `HttpClient` on the wire | `HttpClient_Sends_Only_The_Configured_Context` × 4 (default, `tracecontext`, `baggage`, `none`; one `traceparent` at most), `HttpClient_Follows_The_List_Under_Sdk_Disabled` × 2 (a root sends nothing, a continued trace its inbound `traceparent`), `The_Runtime_Propagator_Follows_The_Last_Container`, `An_Application_Runtime_Propagator_Is_Kept_And_Warned_When_It_Matters` × 2 (a local `TcpListener` records the request headers) |
+| Web host, both directions (fix round 1) | `Web_Host_Extracts_And_Injects_Only_The_Configured_Context` × 4 (inbound `traceparent …-01` + `baggage: user.id=42`; the server span's trace id and parent, the headers its `HttpClient` call sends, for `none`, `baggage`, `tracecontext` and the default), `The_Helper_Runtime_Propagator_Wins_In_Every_Host_Registration_Order` (`WebApplication`, `HostBuilder` with `AddOtelHelper` before and after `ConfigureWebHostDefaults`), `An_Application_Registered_Runtime_Propagator_Service_Is_Kept` × 2 (warned when the settings are not the default; fix round 2), `Runtime_Propagator_Fields_And_Extraction_Follow_The_Settings` × 4 (fields, extraction, injection of Activity baggage) |
+| Early handlers (fix round 2) | `HttpClient_Created_Before_Build_Follows_The_List` × 3 (`none`, `tracecontext` with Activity baggage, default), `A_Current_Set_By_The_Application_After_AddOtelHelper_Is_Kept_And_Warned`, `Invalid_Context_Injection_Is_Noise_Only_When_Expected` × 2; `Disabled_Traces_Root_With_Default_Logging_Sends_No_Context` also checks that the SDK's "invalid context" line is not forwarded, and `Pass_Through_Injection_Uses_The_Local_Root_Remote_Parent` that a local explicit-context child carries nothing |
+| Disabled traces (fix round 1) | `Disabled_Traces_Propagate_As_A_No_Op_Tracer` × 8 (env and code disabled signals, `OTEL_SDK_DISABLED` without logging providers, `none`: a root sends nothing, a continued trace its inbound `traceparent` and `tracestate` unchanged, `none` starts a sampled trace), `Disabled_Traces_Root_With_Default_Logging_Sends_No_Context`, `Disabled_Traces_Sampler_Does_Not_Sample_Roots` × 2, `Pass_Through_Injection_Uses_The_Local_Root_Remote_Parent` |
+| Traces off | `Traces_Off_Server_Passes_The_Inbound_Trace_On` × 3: an ASP.NET Core app with `OTEL_TRACES_EXPORTER=none` forwards the inbound trace id and flag (`01` → `01`, `00` → `00`); with an `AlwaysOffSampler` it would forward `00` (the rejected alternative) |
+| Debug marker (N2) | `Debug_Marks_A_Root_Without_Touching_The_TraceState`, `Debug_Marks_A_Remote_Parent_Entry_Span_And_Keeps_Its_TraceState_Once`, `Debug_Does_Not_Mark_An_In_Process_Child`, `Debug_Does_Not_Mark_A_Child_Started_From_An_Explicit_Local_Context`, `Debug_Is_Installed_Only_In_Debug_Mode` (also: never from an inbound `debug=true` tracestate) |
+| `StartRootActivity` (N3) | `StartRootActivity_Restores_The_Previous_Activity_When_Disposed`, `StartRootActivity_Without_A_Previous_Activity_Leaves_None`, `StartRootActivity_That_Creates_Nothing_Leaves_The_Current_Activity`, `StartRootActivity_Restore_Needs_The_Runtime_Field` |
+
+The wire side is the parity fixture: the 37 cases of the C10 group (five added in fix round 1, with the `http_server` field `server_continues_inbound`)
+(`sampler.*`, `debug.*`, `propagation.*`, `config.code_sample_ratio_*`) pass.
+The ParentBased default also makes `http.health_child_span_dropped` (C11 group)
+pass: a child of a dropped health span now follows the drop.
+
+## HTTP/gRPC instrumentation and health (task C11)
+
+`HttpGrpcInstrumentationTests` (`[Collection("EnvVarTests")]`; contract R7,
+R10, D5, A22, A30; requirements DN5, DN7; design D-NET8, N1, N5), 131 cases.
+The web-host tests run Kestrel on a loopback port (HTTP/1.1, or HTTP/2 for
+gRPC with raw-byte methods, no protoc) and select spans by `server.port`,
+because every ASP.NET Core host in the process reports to the same
+instrumentation; raw HTTP requests go over a socket so the target reaches
+Kestrel as written. Each rule was checked to fail a test when removed (11
+mutants, 2026-11-10: no `SuppressDownstreamInstrumentation`, no gRPC client
+filter, HttpClient filter without the gRPC health service, no percent-decoding,
+no HTTP opt-in view, the gRPC check on `ApplicationStopped` instead of
+`ApplicationStarted`, the key ignored, the invalid-boolean warning removed,
+the `HealthPaths` validation removed, the 0.2.x server filter on
+`HttpRequest.Path` without the gRPC health service; the last one is caught
+only by the uninstrumented-client tests `The_Server_Filter_Drops_Grpc_Health_Calls_Of_An_Uninstrumented_Client`
+and `Grpc_Health_Service_Is_Dropped_Whatever_The_Health_List` — with an
+instrumented client the filtered client span sends an unsampled parent, which
+ParentBased drops on its own; since fix round 1 also by the parity cases
+`grpc.health_check_no_span` and `grpc.health_watch_no_span`).
+Fix round 1 (2026-11-10): 3 more mutants, each failing a test — no header
+removal in the HttpClient health filter, no health check in the runtime
+propagator (both needed: the instrumentation injects with the OpenTelemetry
+propagator before its filter, the runtime injects through
+`DistributedContextPropagator.Current`), the absolute-form fallback decoded twice. Fix round 2 (2026-11-10): 3 more mutants, each failing a test — every
+context header removed (the application's own lost), no header removal, no
+health check in the pass-through propagator. Not mutation-checked: the runtime
+propagator keeping baggage on a health request (no test sets Activity baggage
+there).
+
+| Area | Tests |
+|---|---|
+| Normalization | `Normalize_Follows_The_Contract` × 15 (query, fragment, trailing slashes, `%68`, `%2f`, a decoded `?`/`#`, malformed escapes, non-UTF-8 bytes, UTF-8, ASCII-only folding), `The_Grpc_Health_Service_Is_Matched_Whole_And_Case_Sensitive` × 9, `The_Default_List_Is_The_Contract_List` × 11, `Default_List_Matches_Go` |
+| `HealthPaths` validation | `Invalid_Code_Health_Path_Fails_Start` × 6, `Null_Code_Health_Path_Fails_Start`, `Valid_Code_Health_Paths_Pass` |
+| Server | `Server_Health_Requests_Get_No_Span_And_Are_Counted` × 9 (still counted in `http.server.request.duration`), `Server_Paths_That_Only_Contain_A_Health_Path_Are_Traced` × 4, `Code_Health_Paths_Replace_The_Default_List`, `An_Empty_Health_List_Traces_Every_Path`, `Children_Of_A_Health_Request_Are_Dropped_And_Of_Others_Kept` |
+| HttpClient | `HttpClient_Health_Requests_Get_No_Client_Span` (also `/grpc.health.v1.Health/Check`), `HttpClient_Follows_Code_Health_Paths`, `HttpClient_Health_Requests_Send_No_Context` × 12 (fix rounds 1 and 2: a local `TcpListener` records the headers; health paths get no `traceparent` or `tracestate` inside a sampled request and as a root, with the default list and a lone `tracecontext`; an application's own `baggage` and `tracestate` survive; with traces disabled a health call carries nothing and `/orders` the inbound `traceparent`; `/orders` keeps the context) |
+| Server (fix round 1) | `Absolute_Form_Targets_Are_Decoded_Once` × 3 (`GET http://host/%2568ealth` is traced), `An_Application_Filter_Registered_After_AddOtelHelper_Replaces_The_Health_Filter` × 2 |
+| gRPC | `One_Client_Span_Per_Grpc_Call_And_The_Server_Continues_It` (the only CLIENT span is GrpcNetClient's `parity.v1.Echo/Ping`, the parent of the server span `parity.v1.Echo/Ping` under scope `Microsoft.AspNetCore` with `rpc.system.name=grpc`), `Grpc_Not_Found_Is_Unset_On_The_Server`, `Grpc_Health_Calls_Get_No_Server_Or_Client_Span` × 2 (Check, Watch), `The_Server_Filter_Drops_Grpc_Health_Calls_Of_An_Uninstrumented_Client` × 2 (with and without the key), `Grpc_Health_Service_Is_Dropped_Whatever_The_Health_List`, `Without_The_Key_Grpc_Server_Spans_Are_Http_Shaped` (`POST …`, status 200, UNSET for NOT_FOUND) |
+| O7 (b) warning | `Mapped_Grpc_Endpoints_Without_The_Key_Warn_Once` × 8 (environment and `IConfiguration` values, `bool.TryParse` reading, exact line), `No_Grpc_Endpoint_No_Warning`, `No_Warning_When_Traces_Are_Off` × 3, `The_Grpc_Metadata_Type_Name_Is_The_Pinned_One` (the D-NET8 TO VERIFY at Grpc.AspNetCore.Server 2.62.0) |
+| Keyed DI (N1) | `In_A_Web_Host_Unkeyed_ActivitySource_Is_AspNetCore_And_Server_Spans_Keep_Its_Scope`, `In_A_Worker_Unkeyed_Instrumentation_Is_Null` |
+| Meters (N5) | `Service_Meter_Children_And_Additional_Meters_Are_Exported` (`svc`, `svc.x`, `svc.a.b`, `svc.` and `AdditionalMeters`; not `svcx`, a child of an additional meter, or an unrelated meter), `Idle_Metrics_Drop_The_Service_Meter_Children_Too`, `Quiet_Meter_Notices_Cover_The_Service_Meter_Children` × 4 |
+| HTTP opt-in metrics (A30) | `Http_Opt_In_Metrics_From_The_Environment` × 7, `Http_Opt_In_Metrics_Code_Wins_And_The_Variable_Is_Not_Read` × 3, `The_Opt_In_View_Is_Scoped_To_The_Framework_Http_Meters` × 9, `Http_Opt_In_Metrics_Switch_Controls_The_Framework_Series` × 2 (with the INFO line), `An_Application_Instrument_With_An_Opt_In_Name_Is_Kept`, `Disabled_Metrics_Still_Drop_A_Switched_On_Series` |
+
+The wire side is the parity fixture: the C11 group (`http.*`, `grpc.*`,
+`metrics.http_server_duration_histogram_name`, 30 cases) has 25 `pass`; the
+two `grpc.health_*_counted_in_metrics` (`skip:no-upstream-rpc-metrics`) and
+three body-size cases (`skip:no-upstream-dotnet-http-body-size`) stay skipped.
+
+## Prometheus fallback (task C12)
+
+`PrometheusFallbackC12Tests` (`[Collection("EnvVarTests")]`; contract A21,
+A29, N8; design D-NET11, D-NET3), 104 cases with `PrometheusListenerTests` (120 after fix round 1).
+The bind tests need the container's own non-loopback IPv4 address (compose
+`dotnet-tests` has one, `eth0`); since fix round 1 `LoopbackHost_RefusesANonLoopbackConnect`
+and `UnspecifiedIpv4Host_BindsEveryIpv4Interface` are skipped with a reason
+without it, and the loopback tests check the refusal only when one exists. Each rule was checked to fail a test when
+broken (7 mutants, 2026-11-11: glob case-insensitive again, the bind ignoring
+the host, the listener reader registered with OTLP too, the two port
+variables swapped, IPv4 leading zeros accepted, the push readers not tracked
+for `ForceFlushOtelHelper`, the invalid-host warning removed).
+
+| Area | Tests |
+|---|---|
+| Port grammar (A21) | `PortGrammar_Valid` × 6, `PortGrammar_Invalid` × 12, `UnparseableHelperPort_Warns_And_Uses9464` (silent before C12), `HelperPort_IsTrimmedWithTheContractSet` (U+00A0 kept) |
+| Port precedence (A29) | `StandardPort_BeatsHelperPort_WithoutWarning`, `InvalidStandardPort_Warns_And_FallsToHelperPort`, `BothPortsInvalid_EachWarnsOnce_9464`, `StandardPortZero_IsNoListener_NotTheNextLevel`, `EmptyStandardPort_IsUnset`, `CodePort_Beats_BothVariables_AndThey_AreNotRead`, `InvalidPortEcho_LosesUserinfoAndQuery` |
+| Host grammar (A29) | `HostGrammar_Valid` × 15, `HostGrammar_Invalid` × 19, `InvalidHost_WarnsOnce_FailsOpen_And_RedactsTheEcho`, `Host_IsTrimmed_AndBlankIsUnset`, `Host_IsParsedAndWarned_EvenWhenTheListenerDoesNotRun` |
+| Bind | `LoopbackHost_RefusesANonLoopbackConnect` (the negative control: with `127.0.0.1`, a connect to the container's `eth0` address is refused; unset, the same connect gets 200), `SpecificHost_AnswersOnlyRequestsNamingIt` *(renamed, note below)* (`Host: localhost` → 404 on a `127.0.0.1` bind), `UnspecifiedIpv4Host_BindsEveryIpv4Interface`, `Ipv6Host_FailsTheBuild_WithOneHelperError`, `Ipv6Host_WithoutListener_IsNotAnError`, `UnownedHost_FailsTheBuild_LikeABusyPort` (TEST-NET-1 `192.0.2.1`, and a busy port) |
+| Reader registration | `ListenerReader_IsRegistered_OnlyWhenItBinds` × 5, `ApplicationListener_KeepsItsOptions_WhenTheHelperListenerIsInactive` |
+| Flush | `OtlpOnly_SdkForceFlushAndShutdown_ReportTheRealResult` (both `true`; `false` before C12), `DualMode_SdkForceFlushIsFalse_HelperFlushIsTrue`, `HelperFlush_IsFalse_WhenTheOtlpExportFails` (receiver answering 500), `HelperFlush_FlushesTracesAndLogs` (a 500 still gives `true` there: batch-processor semantics), `HelperFlush_HistogramPath_UsesTheMeterProvider`, `HelperFlush_ArgumentsAndNoHelper`, `HelperFlush_SdkDisabled_IsTrue` |
+| Disabled-metric glob (A21) | `DisabledMetricGlob` × 11, `DisabledMetricGlob_ItemsTrimmedWithTheContractSet`, `DisabledMetrics_CaseSensitive_OnTheScrape` |
+
+*Fix round 1 (2026-11-11):* `PrometheusFallbackC12Tests` has 112 cases (120 with `PrometheusListenerTests`); 7 more mutants each fail a test (no `localhost` prefix, no `::1` mapping, other IPv6 widened, default-named options, no SDK noise entry, no bind-failure ERROR, `$` instead of `\z`).
+`SpecificHost_AnswersOnlyRequestsNamingIt` became
+`LoopbackHost_AnswersLocalhostAnd127_StillLoopbackOnly` × 3 and
+`OtherIpv4Host_RoutesByHostHeader` (127.0.0.2: 404 for `Host: localhost`); the
+IPv6 tests became `Ipv6LoopbackHost_Binds127001_WithOneWarning` × 3,
+`OtherIpv6Host_NoListener_OneError_StartSucceeds` × 2,
+`UnspecifiedIpv6Host_EveryIpv4Interface_OneWarning` × 2 and
+`Ipv6Host_WithoutListener_IsNotReported`; the bind failures
+`UnownedHost_FailsTheBuild_AfterOneHelperError` and
+`BusyPort_FailsTheBuild_AfterOneHelperError_NamingThePortSource`; new
+`HelperAndApplicationListeners_BothActive_OnTheirOwnPorts` (named options),
+`PrometheusPortVariable_IsWarnedByTheHelperOnly` × 2 (SDK noise),
+`HelperFlush_DisposedProvider_Throws`,
+`OtlpOnly_SdkResults_AfterA500_OnlyTheHelperFlushIsFalse`, and a `\z` glob row.
+
+A test that builds a provider expecting the build to fail goes through
+`BuildMetricsOnly`, which disposes the container: a `TracerProvider` left
+alive by a failed build keeps sampling other tests' activities (it made two
+`SamplerPropagatorDebugTests` cases fail in a full run).
+
+The wire side is the parity fixture: of the 26 `xfail:C12` cases 23 pass;
+`metrics.scrape_gauge_unit_one_ratio` and `metrics.scrape_ratio_inside_name`
+are `skip:no-upstream-dotnet-prom-ratio`, `metrics.scrape_colliding_label_values_sorted`
+`skip:no-upstream-dotnet-prom-label-order`. Across containers:
+`testing/e2e/dotnet-prom-scrape.sh` (the second app, bound to `127.0.0.1`,
+refuses the curl container).
+
+## Logging (task C13)
+
+`StdoutLoggingTests` (`[Collection("EnvVarTests")]`; contract D6, R4, A23;
+design D-NET10, requirement DN8, N9). The stdout provider's `Output` and
+`Clock` are internal seams: the container tests point `Output` at a
+`StringWriter`, so no test redirects the process-wide `Console.Out`. Parity
+cases: `logging.*` (6; `logging.stdout_line_shape` and
+`logging.stdout_reserved_keys_dropped` added with this task, with the
+`logging` kind input `attributes`; `logging.stdout_logger_field` in fix round 1).
+
+| Area | Tests |
+|---|---|
+| Line shape (A23) | `Line_Has_The_Contract_Fields_In_Order_Compact_And_One_Line`, `Time_Is_Utc_With_Z_And_Truncated_Milliseconds_Whatever_The_Offset`, `Level_Uses_The_Four_Contract_Words` × 6, `Control_Characters_Are_Escaped_Non_Ascii_And_Html_Characters_Are_Not` |
+| Fields and values | `Reserved_Keys_Are_Dropped_And_Other_Attributes_Follow_Logger`, `Reserved_Keys_Are_Case_Sensitive`, `Template_Values_Become_Attributes_Without_The_Original_Format_And_Duplicates_Keep_The_First`, `Exception_Is_The_Last_Field_And_Replaces_An_Attribute_Of_That_Name`, `An_Exception_Attribute_Is_Kept_When_The_Record_Has_None`, `Values_Keep_Their_Json_Type_And_The_Rest_Becomes_Text`, `Hostile_Values_Never_Lose_The_Record`, `A_State_That_Is_Not_Pairs_Gives_Only_The_Message_And_A_Null_Formatter_Uses_Its_Text` |
+| Provider | `Logger_Writes_Through_Output_Only_When_Active_And_Never_Throws`, `Default_Output_Is_The_Current_Console_Out`, `A_Second_AddOtelHelper_Registers_No_Second_Stdout_Provider`, `Host_Writes_The_Line_And_Keeps_The_App_Console_Provider` |
+| When it writes (D6) | `Fallback_Writes_Exactly_When_No_Logs_Exporter_Is_Active` × 9 (no endpoint, endpoint, `none`, `console`, `otlp,console`, `otlp` without endpoint, logs or traces disabled; the idle provider held at `None`), `Sdk_Disabled_Writes_The_Fallback`, `Unusable_Endpoint_Writes_The_Fallback`, `Fallback_Line_Written_Through_The_Container_Has_The_Category_And_The_State` |
+| Level (R4) | `Stdout_Level_Follows_R4_And_Code_Wins` × 8, `Debug_Mode_Gives_Debug_And_Keeps_Framework_Categories`, `Level_Reapplies_When_The_App_Environment_Arrives` |
+| N9 (helper's providers only) | `App_Provider_Keeps_Its_Level_And_Framework_Warnings_While_The_Helper_Holds_Its_Own`, `App_Category_Rules_Without_Provider_Still_Apply_To_The_Helper_Providers_Also_When_Registered_Later`, `App_Rule_For_A_Framework_Category_Replaces_The_Helper_Error_Rule`, `Longer_App_Category_Beats_The_Helper_Framework_Rule`, `App_Filter_Without_Level_Leaves_R4_And_Still_Runs`, `Provider_Specific_App_Configuration_Wins_For_That_Provider` × 3 (a lower-case alias is not applied, as in the framework), `Otel_Provider_Alias_Is_Read_From_The_Sdk`, `Apply_Helper_Rules_Without_App_Rules`, `Apply_Helper_Rules_Leaves_Slots_The_App_Set_By_Alias` |
+| Profiling category (kept 2026-11-11; gone 2026-11-12, task C15) | removed with the warning's move to the diagnostics sink; `ProfilingTests.Warning_Writes_No_Logger_Record` replaces `Profiling_Prerequisite_Warning_Keeps_The_OtelHelper_Profiling_Category` |
+
+The parity driver's `log_level` now reads the lowest level a `parity` logger
+enables (only the helper's providers remain after `ClearProviders()`), not
+`LoggerFilterOptions.MinLevel`, which the helper no longer sets; the C6
+`IdentityResourceTests` that asserted `MinLevel` read `LoggingSetup.HelperLevel`.
+
+*Fix round 1 (2026-11-11, owner decision: the application's explicit level wins):*
+`Template_Appsettings_In_Prd_Exports_Information_The_App_Default_Wins` (the
+ASP.NET Core template `appsettings.json` in PRD exports Information, framework
+Information still dropped), `App_Default_Through_AddFilter_Wins_Over_R4`,
+`App_SetMinimumLevel_Wins_Over_R4` × 2, `App_SetMinimumLevel_Is_Detected`,
+`Code_MinimumLogLevel_Wins_Over_The_App_Default_And_The_Provider_Slot`,
+`Apply_Helper_Rules_App_MinLevel_Gives_No_Default_Rule`,
+`Host_Console_Provider_With_The_Fallback_Warns_Once` × 3,
+`Lone_Surrogates_In_Message_Value_And_Key_Become_Replacement_Characters`,
+`Characters_Outside_The_Bmp_Are_Written_Raw_And_A_Literal_Backslash_U_Stays_Escaped`,
+`Collections_Are_Capped`, `A_Failure_Outside_Format_Guards_Writes_The_Minimal_Line`.
+8 more mutants: 7 each fail a test (app default ignored, `SetMinimumLevel`
+ignored, code not winning over the provider slot, no duplicate-console warning,
+no raw supplementary characters, cap doubled, no minimal line); dropping
+`Clean` on the message survives, because `Utf8JsonWriter` already writes U+FFFD
+for a lone surrogate (an equivalent mutant, measured).
+
+## Sql and the database sanitizer (task C14a)
+
+Contract A25, R10; design D-NET14, DN9, O5. No parity case: the fixture has
+no database kind. `DbSpanSanitizerTests` and `SqlDriverIntegrationTests` are
+in `[Collection("EnvVarTests")]` (driver-named test sources, one test swaps
+`Console.Out`).
+
+| Area | Tests |
+|---|---|
+| Literal sanitizer, both dialects (`DbQuerySanitizerTests`) | `String_Literals_Become_Placeholders_In_Both_Dialects` × 3, `Numbers_Become_Placeholders` × 5, `Comments_Are_Dropped_In_Both_Dialects` × 5, `Parameters_Keywords_And_Identifiers_With_Digits_Are_Kept` × 2, `Empty_And_Literal_Free_Text_Is_Unchanged`, `Non_Ascii_Identifiers_Are_Kept`, `Identifier_Adjacent_To_A_Quote_Is_Not_A_Prefix_Unless_Listed` |
+| PostgreSQL rules | `PostgreSql_Escape_String_Honors_Backslash` × 2, `PostgreSql_Double_Quoted_Text_Is_An_Identifier_And_Kept`, `PostgreSql_Prefixed_Strings_Become_Placeholders` × 2, `PostgreSql_Unicode_Identifier_Is_Kept`, `PostgreSql_Dollar_Quoted_Strings_Become_Placeholders` × 3, `PostgreSql_Parameters_And_Dollar_In_Identifiers_Are_Kept` × 4, `PostgreSql_Block_Comments_Nest`, `Backtick_Is_Ordinary_Text_In_PostgreSql`, `Underscore_Introducer_Is_MySql_Only`, `PostgreSql_Unterminated_Text_Drops_The_Rest` × 6 |
+| MySQL rules | `MySql_Backslash_Escapes_In_Every_Quoted_String`, `MySql_Double_Quoted_Text_Is_A_String`, `MySql_Backtick_Identifier_Is_Kept_Even_With_A_Quote_Inside`, `MySql_Prefixed_Strings_And_Introducers_Become_Placeholders` × 2, `E_Prefix_Is_PostgreSql_Only`, `Dollar_Is_Not_A_Quote_In_MySql`, `MySql_Block_Comments_Do_Not_Nest`, `Hash_Starts_A_Comment_In_MySql_Only`, `MySql_Unterminated_Text_Drops_The_Rest` × 4 |
+| Span rules (`DbSpanSanitizerTests`) | `Failed_Db_Span_Keeps_Error_Without_The_Description` × 3, `Other_Sources_Keep_Their_Status_And_Attributes`, `Unset_Or_Ok_Status_Is_Left_Alone`, `Npgsql_Query_Text_Uses_The_PostgreSql_Rules`, `MySqlConnector_Query_Text_Uses_The_MySql_Rules`, `SqlClient_Query_Text_Is_Left_To_Upstream`, `Non_String_Query_Text_Is_Left_Alone`, `Connection_String_Attribute_Is_Removed` × 3, `Npgsql_Data_Source_Password_Keys_Are_Redacted` × 4, `Npgsql_Data_Source_Without_Password_Is_Unchanged` × 2, `Npgsql_Data_Source_That_Does_Not_Parse_Is_Removed`, `Data_Source_Rule_Is_Npgsql_Only` |
+| Processor and exporters | `Spans_Without_Recorded_Data_Are_Not_Touched`, `A_Failing_Rule_Strips_The_Sensitive_Attributes_And_Warns_Once`, `A_Failing_Rule_Leaves_An_Unfailed_Status_Alone`, `The_Helper_Console_Exporter_Sees_The_Sanitized_Span`, `Sanitize_Reads_The_Batch_Once_And_Returns_Every_Span_Sanitized`, `Sanitized_Exporter_Behind_A_Batch_Processor_Exports_Every_Span`, `Helper_Otlp_Exporter_Sanitizes_A_Span_Changed_After_It_Ended`, `Helper_Console_Exporter_Sanitizes_A_Span_Changed_After_It_Ended`, `Sanitizer_Runs_When_The_Helper_Exports_No_Traces`, `Rules_Apply_To_A_Driver_Source_The_Application_Subscribed_Without_The_Sql_Package` |
+| `AddOtelHelperSql()` | `Sql_Package_Subscribes_The_Driver_Sources`, `Sql_Package_Keeps_Its_Names_Over_A_Later_Configure_And_Adds_No_Duplicate`, `Driver_Sources_Are_Not_Subscribed_While_The_Helper_Exports_No_Traces`, `Sql_Package_Exports_The_Driver_Meters_And_The_SqlClient_Meter`, `Driver_Meters_Are_Dropped_While_The_Helper_Exports_No_Metrics` |
+| Real drivers (`SqlDriverIntegrationTests`) | `Npgsql_Spans_Are_Sanitized_And_Metrics_Exported` (Npgsql 10.0.3 on `sql-postgres`: literal, comment, `CAST` error text, `SSL Password` and the password absent from every attribute and the status; `22P02` as `error.type`; `db.system` absent; `Npgsql` `db.client.operation.duration` exported), `MySqlConnector_Spans_Are_Sanitized_And_Metrics_Exported` (MySqlConnector 2.6.2 on `sql-mysql`: single-, double-quoted and comment literals, `Certificate Password` and the password absent; the late status seen by a processor, removed by the helper's OTLP exporter at shutdown; legacy keys only) |
+
+The integration tests need `SQL_TEST_POSTGRES` / `SQL_TEST_MYSQL`
+(`postgres://` / `mysql://` URLs, as the Node.js suite); compose
+`dotnet-tests` sets them and `SQL_TEST_REQUIRE=1`, so a missing database fails
+the run. Without the variables they are skipped. Stop the databases afterwards:
+`docker compose -f testing/docker-compose.yml stop sql-postgres sql-mysql`.
+
+Mutation check (2026-11-11, scripted, one mutant per run on a fresh copy, the
+three C14a classes as the filter): 45 mutants — 23 of the span rules,
+processor, exporters and `AddOtelHelperSql()`, 22 of the sanitizer's lexical
+rules — 44 each fail at least one test; the survivor is equivalent (an
+unterminated literal that sets the index to the end instead of leaving the
+loop). Two first-round survivors were fixed: a batch read twice (test
+`Sanitized_Exporter_Behind_A_Batch_Processor_Exports_Every_Span` added) and
+`$` inside an identifier (case `SELECT x$tag$y FROM t` added); a dead
+key-compaction step in the password-key match was removed.
+
+*Fix round 1 (2026-11-11):* `PostgreSql_Standard_String_With_A_Backslash_Drops_The_Rest`
+× 4 (`'C:\'`, `'it\'s secret'`, `N'it\'s secret'`, `'C:\\'`) and
+`PostgreSql_Standard_String_Without_A_Backslash_Keeps_The_Rest` replace the
+standard-string backslash test; `Legacy_Keys_Follow_The_Opt_In_As_Go` × 11,
+`Stable_Only_Drivers_Get_The_Legacy_System_By_Default` × 2,
+`MySqlConnector_Legacy_Span_Gets_The_New_Keys_And_Keeps_The_Legacy_By_Default`,
+`MySqlConnector_Legacy_Span_Keeps_Only_The_New_Keys_In_The_Stable_Mode`,
+`Existing_Query_Text_Is_Not_Replaced_By_The_Statement`,
+`Spans_Without_A_System_Key_Get_None`,
+`Processor_Reads_The_Opt_In_When_The_Provider_Is_Built`,
+`Default_Pipeline_Adds_The_Legacy_System`, `Query_Parameters_Are_Removed` × 2,
+`SqlClient_Exception_Events_Can_Be_Turned_Off_After_AddOtelHelperSql`,
+`Driver_Meters_Lose_The_Pool_Name_And_Keep_The_Other_Keys`,
+`Driver_Meters_Subscribed_By_The_Application_Lose_The_Pool_Name_Too`,
+`Disabled_Metric_Patterns_Still_Drop_A_Driver_Instrument`. The integration
+tests also assert that no Npgsql or MySqlConnector metric point carries the
+pool name, the `SSL Password` / `Certificate Password` value or the password,
+and the helper-added `db.system` / `db.system.name` / `db.query.text`. 20 new
+mutants (backslash drop in both string branches, opt-in parse — dup, folding,
+trimming —, each key addition and removal, the SqlClient legacy value,
+parameter removal, the meter views, the helper's drop rules inside the view,
+the env read) each fail a test. Writing a tag only when it changes has no
+observable effect to test (an equivalent mutant by construction).
+
+Quick run without the databases and Redis (fakeotlp only; the SQL and Redis integration tests skip):
+
+```bash
+docker compose -f testing/docker-compose.yml up -d --wait fakeotlp-dotnet
+docker compose -f testing/docker-compose.yml run --rm --no-deps \
+  -e SQL_TEST_POSTGRES= -e SQL_TEST_MYSQL= -e SQL_TEST_REQUIRE=0 \
+  -e REDIS_TEST_URL= -e REDIS_TEST_REQUIRE=0 dotnet-tests
+docker compose -f testing/docker-compose.yml stop fakeotlp-dotnet
+```
+
+CI's `dotnet-test` job now has `postgres` and `mysql` services and
+`SQL_TEST_REQUIRE: '1'` (fix round 1), so the integration tests run there too.
+
+*Round 2 (2026-11-11, ADR-014: exception detail to a correlated log):*
+`Activity_Still_Has_The_Private_Event_List_The_Rewrite_Uses` (canary for
+`Activity._events`), `Exception_Event_Keeps_Only_The_Type_And_The_Detail_Goes_To_One_Correlated_Log`
+× 3 (SqlClient, Npgsql, MySqlConnector; processor and exporter pass, one
+record), `An_Exception_Event_Added_After_The_Span_Ended_Is_Handled_By_The_Helper_Exporter`
+(MySqlConnector's late event), `Other_Sources_Keep_Their_Exception_Events`,
+`Without_The_Private_Event_List_Nothing_Changes_And_One_Warning_Is_Written`,
+`A_Failing_Rule_Still_Removes_The_Exception_Detail`,
+`No_Record_When_The_Logger_Is_Off_Or_Absent_And_The_Detail_Still_Leaves_The_Span`,
+`Otlp_Log_Record_Carries_The_Span_Context_From_Any_Thread`,
+`Correlation_Processor_Leaves_Other_Records_Alone`,
+`Stdout_Fallback_Line_Has_The_Detail_And_The_Ids`, and
+`On_The_Wire_The_Span_Has_No_Detail_And_The_Log_Has_The_Span_Ids` (an in-test
+OTLP/HTTP receiver: `/v1/traces` without the literal or `exception.stacktrace`,
+`/v1/logs` with the literal and the span's trace and span id bytes). The
+integration tests use `pgcastsecret` (Npgsql `CAST`) and `mydupsecret`
+(MySqlConnector duplicate key): the literal is in no span attribute or event,
+and one record per failed span has the span's ids, the message and the stack
+trace. 16 mutants: 15 fail a test; the survivor (lifting
+`SuppressInstrumentation` around the write) was dead code — the helper's
+exporters sanitize before `OtlpTraceExporter.Export` enters its suppression
+scope — and was removed.
+
+*Round 3 (2026-11-11):* `Two_Exporter_Passes_On_Two_Threads_Log_Once_And_Keep_Every_Event`
+(50 barrier rounds), `Ids_Are_Lower_Case_Non_Zero_Hex` × 7,
+`Invalid_Ids_Leave_The_Record_Unchanged_And_Do_Not_Throw`,
+`Otlp_Record_Timestamp_Is_The_Exception_Event_Time`,
+`Late_Event_Record_Reaches_The_Log_Pipeline_Through_The_Helper_Exporter` (pins
+that the record is not written under `SuppressInstrumentation`),
+`Stdout_Line_Has_The_Current_Span_Ids_After_Logger_And_No_Duplicate`,
+`Stdout_Line_Without_A_Span_Has_No_Ids_And_Keeps_An_App_Trace_Id`,
+`Stdout_Database_Record_Uses_Its_Span_And_Event_Time_Not_The_Current_Span`,
+`MySqlConnector_Legacy_Name_And_Peer_Keys_Get_The_Current_Names`,
+`Exception_Logger_Is_Null_When_The_Container_Is_Disposed`; the MySqlConnector
+integration test also asserts `db.namespace`, `server.address` and no
+`db.user`. Parity: new case `logging.stdout_span_context` (`logging` input
+`in_span`), `pass` on .NET.
+
+*Round 4 (2026-11-11):* `A_Blocked_Log_Sink_Stalls_No_Other_Span_And_A_Concurrent_Pass_Logs_Nothing`
+replaces the 50-round barrier test: the first pass blocks in the logger (inside
+`Handle`, after the lock), and while it is blocked a second pass over the same
+span and the end of another failed DB span must finish within 10 s; then one
+record for the late span, one for the other, events intact. With the logger
+called under the lock (the round-3 code) it times out.
+
+## Redis (task C14b)
+
+Contract A26, R10; design O8 (b) (reversed from (c) on 2026-11-11), DN9, D-NET15; ADR-014. No parity case (no
+database fixture kind). Both classes are in `[Collection("EnvVarTests")]`
+(a test source named after the instrumentation; the dup-mode test sets
+`OTEL_SEMCONV_STABILITY_OPT_IN`).
+
+| Area | Tests |
+|---|---|
+| `AddOtelHelperRedis()` (C1 dev B1) | `FromDI_Builds_The_Tracer_Provider_And_Instruments_The_Registered_Multiplexer` (0.2.x threw `NotSupportedException`; the mock's `RegisterProfiler` is called once), `FromDI_Multiplexer_Registered_After_The_Call_Is_Instrumented`, `FromDI_Without_A_Multiplexer_Fails_When_The_Provider_Is_Built`, `FromDI_Without_A_Multiplexer_Fails_Also_With_Traces_Off`, `FromDI_Keyed_Only_Multiplexer_Fails_Like_A_Missing_One`, `FromDI_Instruments_Only_The_Last_Registered_Multiplexer`, `Registering_The_Same_Multiplexer_Twice_Instruments_It_Twice` (two `RegisterProfiler` calls), `Explicit_Connection_Is_Instrumented_Without_A_Registration`, `Null_Arguments_Are_Refused_At_The_Call` |
+| Statement rule (`RedisTests`) | `Redis_Statement_Keeps_The_Command_And_One_Placeholder` × 11 (key, channel, Lua script, `CONFIG GET maxmemory` → `CONFIG ?`, newline and tab separators, trailing and leading whitespace, empty), `Redis_Verbose_Statement_And_Query_Text_Lose_The_Key`, `Redis_Default_Statement_Is_Unchanged` |
+| Key rule on the Redis source (O8 (b), fix round 1) | `Redis_Default_Mode_Adds_The_New_Keys_Next_To_The_Legacy_Ones`, `Redis_Stable_Mode_Keeps_Only_The_New_Keys`, `Redis_Keys_The_Instrumentation_Wrote_Are_Kept` × 2, `Redis_Operation_Falls_Back_To_The_Span_Name_But_Not_The_Unnamed_Fallback`, `Redis_Span_Without_A_System_Key_Gets_None`, `An_Unknown_Source_Never_Gets_A_System_Key` (exhaustive switch) |
+| Other rules on the Redis source | `Redis_Failed_Status_Loses_Its_Description`, `Redis_Exception_Event_Keeps_Only_The_Type_And_The_Detail_Goes_To_A_Correlated_Log` |
+| Real server (`RedisIntegrationTests`) | `Default_Spans_Get_The_New_Keys_Next_To_The_Legacy_Ones`, `Verbose_Statements_Keep_The_Command_And_One_Placeholder`, `Database_Dup_Opt_In_Adds_The_New_Keys_From_The_Process_Environment`, `Stable_Opt_In_Keeps_Only_The_New_Keys` (`database` and `DATABASE`; both read by the instrumentation), `Registering_The_Same_Multiplexer_Twice_Gives_One_Span_Per_Command`, `Batch_Commands_Produce_No_Span` (only the following `UNLINK`): StackExchange.Redis 2.6.122 on `redis-test` through `AddOtelHelper` + `AddOtelHelperRedis()`; WRONGTYPE, a Lua `error_reply` quoting `ARGV[1]`, a Lua runtime error over a literal, an unknown command with an argument, a transaction and a wrong `AUTH` password; span names `SET`, `HSET`, `LPUSH`, `EVAL` × 2, `C14BNOSUCHCMD`, `EXEC` (no `MULTI`), `UNLINK`, `AUTH`; every span `Unset`, no `error.type`, no `exception` event, no `StaffOps.OtelHelper.Database` record; no key, value, argument, literal or password in any attribute, event, name or status |
+
+The integration tests need `REDIS_TEST_URL` (`redis://user:password@host:port/db`,
+the Python suite's variable); compose `dotnet-tests` sets it and
+`REDIS_TEST_REQUIRE=1`, so a missing server fails the run. Without the variable
+they are skipped; CI's `dotnet-test` job sets both against its `redis`
+service (fix round 1). For a quick run without Redis, use the "Quick run"
+recipe in the C14a section above (`-e REDIS_TEST_URL= -e REDIS_TEST_REQUIRE=0`):
+the integration tests skip. Stop the server afterwards:
+`docker compose -f testing/docker-compose.yml stop redis-test`.
+
+Mutation check (2026-11-11, scripted, one mutant per run on a fresh copy,
+filter `FullyQualifiedName~Redis`, 26 tests): 7 mutants, each fails at least
+one test — the Redis source left out of `IsDbSource` (5 tests, the verbose and
+dup integration tests among them), the semantic-convention rule applied to
+Redis (3), the statement rule removed (3), the 0.2.x DI overload restored (6),
+the registration check removed (1), the rest of the statement kept (9), a
+leading-whitespace statement kept (1).
+
+*Fix round 1 (2026-11-11, O8 (b)):* 12 more mutants on the filter
+`FullyQualifiedName~Redis|FullyQualifiedName~DbSpanSanitizer` (128 tests),
+each fails a test: Redis left out of the system-key switch (6), an unknown
+source mapped to `mysql` (1, after `ApplySemconvKeys` became testable
+directly), no `db.operation.name` (5), an existing one overwritten (2), no
+Redis `db.query.text` (4), the unnamed fallback used as the operation (1),
+the span name not used (1), `?` taken as the operation (1), the O8 (c) early
+return restored (6), the 0.2.x DI overload (12), the registration check
+removed (3), the statement kept (8).
+
+
+## AWS and URL redaction (task C14c)
+
+Contract A27, A28 (and the A30 names); design O3, DN9, D-NET14, D-NET15;
+ADR-014. No parity case (no AWS or HTTP-client fixture kind). `AwsTests` is in
+`[Collection("EnvVarTests")]`: the AWS SDK's tracer provider and pipeline
+customizer are process-wide, and the URL tests set the upstream redaction
+variables.
+
+| Area | Tests |
+|---|---|
+| `error.type` rule | `Error_Type_Is_The_Aws_Code_Else_The_Modeled_Name_Else_The_Transport_Class` × 19 (code shape at 1, 2, 64 and 65 characters; SQS dotted code → `QueueDoesNotExist`; modeled names with and without the `Exception` suffix; generic `AmazonS3Exception` and `AmazonUnmarshallingException` → `_OTHER`; `HttpRequestException`, `TaskCanceledException`; nothing → `_OTHER`), `Error_Type_Falls_Back_To_The_Exception_Event_When_The_Span_Has_No_Type_Attribute`, `Error_Type_Ignores_Other_Events`, `An_Error_Type_Set_Elsewhere_Is_Replaced_By_The_Contract_Value` |
+| Sources and the other rules (synthetic spans) | `Aws_Sources_Are_The_Sdk_Sources` × 6, `Failed_Aws_Span_Loses_Description_Payload_Keys_And_Exception_Text` (the AWSSDK.Core span shape, measured: `aws.s3.key`, `aws.s3.copy_source`, `aws.s3.delete`, `aws.dynamodb.item_collection_metrics`, `exception.message` / `exception.stacktrace` attributes gone, one record), `Successful_Aws_Span_Gets_No_Error_Type_But_Loses_The_Object_Key`, `Other_Sources_Keep_Their_Aws_Named_Attributes`, `Aws_Record_Without_Message_Or_Type_Has_The_Aws_Fallback_Body`, `A_Failing_Rule_Still_Removes_The_Aws_Payload_And_Url_Attributes` (exact warning line), `Aws_Record_Category_Is_Correlated_On_Otlp_And_Stdout` |
+| Real SDK clients against a local fake endpoint (`AddOtelHelper` + `AddOtelHelperAws`) | `S3_Put_Is_One_Client_Span_Without_The_Object_Key_Or_Http_Child` (no HttpClient, `HttpRequest` or `CredentialsRetrieval` span), `S3_NoSuchKey_Is_Error_With_The_Code_And_The_Detail_In_A_Correlated_Log`, `S3_Error_Message_Quoting_The_Key_Reaches_Only_The_Log`, `S3_Head_Without_A_Body_Gives_The_Status_Name` × 3 (404, 403, 503), `S3_Copy_And_Delete_Record_No_Copy_Source_Or_Delete_Request`, `DynamoDb_Put_Records_No_Item_Collection_Metrics`, `DynamoDb_Expression_Literal_In_The_Error_Reaches_Only_The_Log` (DynamoDB Local's text), `DynamoDb_Conditional_Check_With_The_Old_Item_Keeps_The_Item_Out_Of_The_Span`, `Sns_Publish_To_A_Phone_Number_Records_No_Number`, `Sqs_Query_Compatible_Code_Gives_The_Modeled_Name`, `Transport_Error_Gives_The_Exception_Class`, `Unparseable_Response_Gives_Other`; every span is swept for the object key, the phone number, the DynamoDB literal and item values and the credentials (access key, secret key, session token); every record is checked for the span's ids (OTLP trace context, transport attributes removed) and the absence of the credentials |
+| URL query rule | `Query_Values_Of_The_Contract_Names_Are_Redacted` × 21 (each of the ten names, percent-encoded name, lower case, valueless, empty value, upstream `Redacted`, `;`, a malformed escape, other names), `Urls_Keep_Everything_But_The_Listed_Values` × 6 (fragment kept for `url.full`, whole query for targets, `?*`), `Url_Query_Value_Keeps_Its_Leading_Question_Mark` × 3, `Url_Rule_Applies_To_Every_Source_And_Every_Url_Key`, `Url_Rule_Leaves_Non_Text_Values_Alone` |
+| URL query, real instrumentations (O3 per runtime) | `Upstream_Redaction_Text_Is_Kept_On_Every_Runtime` (server `url.query` `Redacted`; client `url.full` `Redacted` on .NET 8, `?*` on .NET 9+), `Disabled_Upstream_Redaction_Still_Redacts_The_Contract_Names` (the ASP.NET Core and HttpClient contrib variables; the .NET 9+ client stays `?*`, since only the runtime's switch, read once per process, turns it off) |
+| Registration | `AddOtelHelperAws_Refuses_Null`; `SubpackageExtensionsTests.AddOtelHelperAws_Registers_And_Returns_Services` |
+
+The fake endpoint answers with each service's wire shape (S3 REST-XML, DynamoDB
+and SQS JSON 1.0 with `x-amzn-query-error`, SNS query XML); DynamoDB's
+`ValidationException` text is the one DynamoDB Local 2.6.1 returned for
+`UpdateExpression = "SET card = 98765"` (measured once with
+`amazon/dynamodb-local:2.6.1`, not part of the suite). The runtime's
+`DOTNET_SYSTEM_NET_HTTP_DISABLEURIREDACTION` path is measured in the probe only
+(a static read once per process); the rule itself is the same.
+
+Mutation check (2026-11-11, scripted, one mutant per run on a fresh copy,
+filter `FullyQualifiedName~AwsTests|FullyQualifiedName~DbSpanSanitizer|FullyQualifiedName~StdoutLogging`,
+243 tests): 27 mutants, each fails at least one test — AWS rules not applied
+(17), description kept (12), `aws.s3.key` kept (10), the `exception.message`
+attribute kept (13), code taken without its shape (5), modeled name with its
+suffix (6), transport class → `_OTHER` (4), no `error.type` (15), ADR-014 not
+applied to AWS (13), AWS records on the database logger (6) or category (6),
+no suppression (14), URL rule not applied (2), case-insensitive names (2), no
+percent-decoding (1), upstream `Redacted` rewritten (2), `url.query` leading
+`?` not handled (2), fragment redacted (2), AWS category not a record
+category (6), fail-closed path without the AWS keys (1), a loose source prefix
+(3), the database fallback body for AWS (1), no event fallback for the type
+(1), events of any name read (1), generic `Amazon*Exception` class names
+kept (4), `http.target` fragment kept (1), `http.url` not covered (1). One
+equivalent mutant (an already `REDACTED` value rewritten to the same text) was
+dropped.
+
+*Fix round 1 (2026-11-11):* `Http_Child_Of_An_Aws_Span_Loses_The_Path_In_Every_Url_Key`
+(one processor pass; `url.full` as a `Uri`, `http.url`, `url.path`,
+`http.target`; a second pass unchanged), `Http_Child_Of_Another_Span_And_The_Aws_Span_Itself_Keep_Their_Path`,
+`Child_Url_Loses_Its_Path` × 7, `Real_HttpClient_Span_Under_An_Aws_Span_Records_No_Object_Key`
+(the real HttpClient instrumentation under an `AWSSDK.S3` parent, the shape of
+both residual scenarios), `Url_Rule_Redacts_The_Text_Of_Non_String_Values`
+(replaces `Url_Rule_Leaves_Non_Text_Values_Alone`), `Url_Text_Of_Primitives_Is_None` × 5,
+`HttpGrpcInstrumentationTests.Runtime_Private_Meter_Not_Subscribed_Notices_Are_Noise` × 6.
+`FakeAws` retries its bind on up to three ports; the URL round trip waits up
+to 5 s. The two residual scenarios themselves (a client built before the
+tracer provider; the application's own `AddAWSInstrumentation()` registered
+first) were measured in a separate process on .NET 8 and 10 (the HttpClient
+child's `url.full` is `http://<endpoint>/`), not in the suite: the AWS
+instrumentation is **first registration wins per process** (AWSSDK.Core's
+customizer registry skips a second registration), so tests must register
+only through `AddOtelHelperAws()` — one unsuppressed registration would change
+every later AWS test in the run. The .NET 10 `msquic.*` notices were measured
+the same way: 32 SDK warnings at start before, none after. 13 more mutants
+(child rule off, any parent, `url.path` kept, query dropped, string-only child
+and URL rules, primitives redacted, the `%` pre-check removed, the pre-check
+always skipping, the noise prefix and reason), each fails a test (the
+string-only child mutant after the child test went to one processor pass).
+
+*Round 2 (2026-11-12):* `Http_Grandchild_Under_A_Handler_Span_Loses_The_Path`
+(`AWSSDK.S3` → `c14c-handler` → `System.Net.Http`), `Ancestors_Beyond_The_Depth_Bound_Are_Not_Walked`
+(16 levels walked), `Only_A_Scheme_Before_The_Path_Makes_A_Url_Absolute` × 6,
+`Relative_Child_Url_With_A_Url_In_Its_Query_Loses_Its_Path`, and
+`Child_Url_Loses_Its_Path` rows for an IPv6 host (`https://[::1]:9000/b/k` →
+`https://[::1]:9000/`) and userinfo (`https://u:p@h/b` → `https://u:p@h/`,
+current behavior pinned). The grandchild and relative-URL tests fail with the
+round-1 rule (measured: direct parent only, `://` anywhere).
+
+---
+
+## Deprecations (task C16)
+
+Contract D8, R8; requirement DN3; design D-NET5 (one line through the
+diagnostics sink, "once" per sink). Parity: the 7 `deprecation.*` cases
+(`deprecation.disabled_signals_standard_var_set_still_warns` included).
+`DeprecationTests` is in `[Collection("EnvVarTests")]`.
+
+| Test | Checks |
+|---|---|
+| `Each_Variable_Warns_Once_Verbatim_Without_Its_Value` × 5 | Each of `SERVICE_NAME`, `ENVIRONMENT`, `OTEL_HELPER_SAMPLE_RATIO`, `OTEL_HELPER_DISABLED_SIGNALS`, `OTEL_HELPER_EXTRA_INSTRUMENTATION`: after two resolutions on one sink, exactly one line, equal to the documented text; the value (a sentinel) is not in it |
+| `All_Set_Together_Give_One_Line_Each_In_A_Fixed_Order` | All five set: exactly the five lines, in table order (one once-key per variable) |
+| `Unset_Or_Blank_Is_Silent` × 5 | Unset, empty and contract-trim-set-only values write nothing |
+| `Service_Name_Warns_While_The_Standard_Variable_Wins` | `OTEL_SERVICE_NAME` wins, `SERVICE_NAME` still warns |
+| `Environment_Warns_While_Resource_Attributes_Win` | `deployment.environment.name` in `OTEL_RESOURCE_ATTRIBUTES` wins, `ENVIRONMENT` still warns |
+| `Disabled_Signals_Warns_While_The_Standard_Exporter_Variable_Wins` | `OTEL_TRACES_EXPORTER=otlp` keeps traces on; the deprecation still warns |
+| `Sample_Ratio_Warns_While_The_Standard_Sampler_Wins` | `OTEL_TRACES_SAMPLER` wins; the only line is the deprecation |
+| `Deprecated_Variables_Keep_Their_Effect` | The four deprecated variables still apply when nothing wins (name, canonical environment, ratio sampler, disabled signal) |
+| `Extra_Instrumentation_Adds_No_Source_Or_Meter` | `SQL,REDIS,AWS` changes neither `AdditionalActivitySources` nor `AdditionalMeters` |
+| `Once_Is_Per_Sink_A_Second_Container_Warns_Again` | Two sinks, one line each (design C6 note (n)) |
+| `A_Built_Pipeline_Writes_Each_Warning_Once_Through_The_Container_Sink` | `AddOtelHelper` with the providers built: one line per variable on the container's sink |
+| `Replacement_Is_Written_Whole_Beyond_The_Echo_Limit` | A replacement longer than 64 code points is not cut (`replacement=` is a sink constant) |
+| `Config_File_Variable_Holding_Only_A_No_Break_Space_Is_Set` × 2 | `OTEL_CONFIG_FILE` / `OTEL_EXPERIMENTAL_CONFIG_FILE`: U+00A0 alone warns, ASCII whitespace alone does not (contract trim set) |
+| `A_Lone_No_Break_Space_Counts_As_Set_For_A_Deprecated_Variable` | The same rule for `SERVICE_NAME` |
+| `Sink_Constants_Are_Whole_And_Escaped_While_Attributes_Stay_Cut` | `ReportOnceWithConstants`: exact line — user attribute cut at 64 + `…`, constant whole, a constant with a space and a newline quoted and escaped; second call with the same key writes nothing |
+| `Sink_Constant_Key_Is_Checked_Like_An_Attribute_Key` | An invalid constant key throws `ArgumentException` |
+
+Six earlier tests about another behavior of a deprecated variable
+(`Ratio_Alias_Is_ParentBased`, `Invalid_Ratio_Alias_Warns_And_Is_Ignored_Not_Clamped`,
+`Ratio_Alias_Is_Not_Read_While_The_Standard_Variable_Is_Set`,
+`Code_Sampler_And_Ratio_Win_Over_Every_Variable_Without_A_Line`,
+`Unknown_Disabled_Signal_Entry_Warns_Once_Echoing_It`,
+`Blank_Env_Resource_Attributes_Warn_Nothing`) now leave that one deprecation
+line out (`TestDiagnostics.LinesWithoutDeprecation`, which fails unless exactly
+one such line was written) and still assert every other line.
+
+Mutation check (2026-11-12, a container-local copy, the four affected test
+classes): 11 mutants each fail at least one test — a blank value counted as
+set (deprecated and no-effect checks), one once-key shared by all variables,
+`Report` instead of `ReportOnce` (both warnings), `Info` instead of `Warn`, a
+dropped `ENVIRONMENT` row, the no-effect warning removed, a wrong replacement
+text, the value echoed, and no warning while a standard variable is set.
+Fix round 1 (2026-11-12, the classes above plus `DiagnosticsTests` and
+`ResolverCoreTests`): 8 more mutants each fail at least one test — the resolver
+drops `replacement=`, passes it as a (cut) attribute, the config-file check back
+on `IsNullOrWhiteSpace`, constants echoed (redacted and cut), constants not
+escaped, the constant path not once, the constant key not checked.
+
+## e2e smoke (task C17)
+
+Not xUnit: `testing/e2e/smoke.sh` with `SMOKE_LANGS=dotnet` (also in the default
+`go python node dotnet`), against `otel/opentelemetry-collector-contrib:0.160.0`
+(`testing/e2e/collector.yaml`: one receiver per combination, each tags its data
+with `e2e.receiver`). The `dotnet-smoke` compose service (`sdk:8.0`) runs
+`testing/e2e/run-dotnet.sh`: `dotnet pack` of `StaffOps.OtelHelper` from a copy
+of the tree into `/packages`, restore of `testing/e2e/dotnet-smoke` with
+`-p:OtelHelperVersion=<version>` and `dotnet/example/nuget.packages.config`
+(`StaffOps.OtelHelper*` only from `/packages`), then one bounded run (60 s) per
+combination of `testing/e2e/combos.sh` with `OTEL_SERVICE_NAME=e2e-dotnet-<combination>`.
+No NuGet cache volume: a cached package of the same version from an older tree
+would be restored instead of the one just packed.
+
+The program (`Host.CreateApplicationBuilder`, `AddOtelHelper()`) starts the
+keyed `ActivitySource`'s root activity `e2e-smoke-span`, adds 1 to the keyed
+`Meter`'s counter `e2e.smoke.runs` and writes the Warning record `e2e-smoke-log`
+inside it, then `ForceFlushOtelHelper(10000)` (exit 1 when the flush is
+incomplete) and stops the host.
+
+| Combination | Environment | Checked |
+|---|---|---|
+| `grpc` | `OTEL_EXPORTER_OTLP_ENDPOINT=http://collector:4317` | traces, metrics, logs at `default` |
+| `http-prefix` | `…=http://collector:4320/otlp`, `OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf` | the three at `prefix` (`/otlp/v1/<signal>`: the path is kept) |
+| `per-signal` | `…=http://collector:4317`, `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://collector:4319` | traces at `persignal` and not at `default`; metrics and logs at `default` and not at `persignal` |
+| `tls` | `…=https://collector:14317`, `OTEL_EXPORTER_OTLP_CERTIFICATE=/certs/ca.pem` | the three at `tls` (custom CA) |
+| all four | — | `logs-correlated`: every `e2e-smoke-log` record carries the Trace ID of an `e2e-smoke-span` of its service |
+| — | no endpoint | Prometheus fallback scraped from another container (`testing/e2e/dotnet-prom-scrape.sh`, which now also runs the example against the packed helper) |
+
+Measured 2026-11-12: `SMOKE_LANGS=dotnet testing/e2e/smoke.sh` exit 0, 16 `OK`
+rows and `OK … prometheus scrape from another container` (its three `PASS`
+lines: text 20 metric families and OpenMetrics; `HOST=127.0.0.1` and
+`HOST=localhost` answer inside the container and refuse the other one, curl
+exit 7). Go, Python and Node.js rows re-run on the changed script:
+`SMOKE_LANGS="go python node"` exit 0, 48 `OK`.
+
+CI (C17 fix round 1): job `e2e-smoke-dotnet` runs these rows with
+`SMOKE_LANGS=dotnet SMOKE_DOTNET_SCRAPE=0` (the scrape is the separate job
+`dotnet-prom-scrape`); `publish-dotnet` and `publish-dotnet-release` need both.
+The image builds exactly one `StaffOps.OtelHelper.<version>.nupkg`; `run-dotnet.sh`
+and every example Dockerfile fail when `/packages` holds none or more than one.
+
+Examples (not in CI's e2e; `example-images` builds every `Dockerfile.demo`,
+`dotnet-custom-signals` included since fix round 1):
+measured 2026-11-12, the four `Dockerfile` images and `dotnet-process/Dockerfile.demo`
+(with a core packed into `dotnet/packages/`) build; with the Collector,
+`dotnet-process` → `dotnet-api` → `dotnet-backend` is one trace of nine spans
+with an RPC-shaped server span (`order.OrderService/ProcessOrder`), and
+`dotnet-custom-signals` emits the names listed in
+[example/EXAMPLES.md](example/EXAMPLES.md#custom-signals-dotnet-custom-signals).
+
+## Activity-tracking scope filter (task C17 fix round 1)
+
+`ActivityScopeFilterTests` (`[Collection("EnvVarTests")]`, design D-NET10 (g)).
+A capture processor reads each record's scopes with `LogRecord.ForEachScope`,
+the way the OTLP exporter does.
+
+| Test | Description |
+|-------|-----------|
+| `Generic_Host_Activity_Tracking_Scope_Is_Not_On_The_Record` | `Host.CreateApplicationBuilder` (default tracking options SpanId, TraceId, ParentId): no `SpanId`/`TraceId`/`ParentId` entry; the application scope `order.id` is there |
+| `Application_Scope_With_The_Same_Keys_Is_Kept` | An application scope with `SpanId`, `TraceId`, `ParentId` keys keeps its own values (the rule is by origin, not by key) |
+| `Opt_In_Activity_Tags_Scope_Is_Kept` | `ActivityTrackingOptions.Tags`: the activity's tag scope (`tenant`) is exported, the ID scope is not |
+| `Filter_Holds_When_The_Application_Adds_OpenTelemetry_Logging_Again` | `builder.Logging.AddOpenTelemetry()` after `AddOtelHelper`: one SDK provider, still filtered |
+| `Record_Outside_An_Activity_Keeps_Application_Scopes` | No activity: application scopes pass |
+| `The_Factory_Scope_Matches_The_Custom_Property_And_The_Type` | On the running runtime the factory's scope object is the activity's `__ActivityLogScope__` property and of type `LoggerFactoryScopeProvider+ActivityLogScope` (fails if a runtime changes either: then re-check the rule) |
+| `Type_Rule_Alone_Drops_The_Factory_Scope` | The real scope object under another current activity: dropped by the type rule |
+| `Custom_Property_Rule_Alone_Drops_Only_That_Instance` | A stand-in object stored as the property is dropped; an equal-looking list is not; `null` is not |
+| `No_Current_Activity_Matches_Nothing_By_Property` | Without a current activity a plain object is not dropped |
+| `Filter_Delegates_Push_And_Keeps_Other_Scopes` | `Push` reaches the factory's provider; only the tracking scope is skipped |
+| `Installer_Writes_Nothing` | The installer's loggers are the null logger; no SDK provider registered: nothing to do |
+| `A_Provider_That_Takes_No_Scope_Provider_Warns_Once` | A target provider without `ISupportExternalScope`: one `otelhelper: WARN the OpenTelemetry logger provider accepts no scope provider: … (SpanId, TraceId, ParentId) will be exported …` line, once (fix round 2) |
+| `A_Scope_Aware_Provider_Gets_The_Filter_Without_A_Warning` | A scope-aware target gets an `ActivityScopeFilter`; no line |
+| `No_Target_Provider_Is_Silent` | No target provider: no line |
+
+The canary `The_Factory_Scope_Matches_The_Custom_Property_And_The_Type` checks
+only the `Microsoft.Extensions.Logging` version the test project resolves on the
+runtime it runs on; the dev review measured the property and the type by probe
+on 8.0 and 10.0 (C17 fix round 1). A later version is covered when the suite
+runs on it, not before.
+
+Mutants (2026-11-12, each fails at least one test): registration removed (4
+tests fail); the custom-property rule removed (1); the type rule removed (1); the
+installer not handing over the filter (4); a key-based rule (drop any scope with a
+`SpanId` key) (1); `Push` not delegating the state (1). Fix round 2: the warning never written
+(1), written whatever was installed (2), written with no target provider (1);
+an equivalent no-op edit survives, as it must (harness control). End to end: the C17 smoke
+record `e2e-smoke-log` and the `dotnet-custom-signals` records reach the Collector
+without `SpanId`/`TraceId`/`ParentId` (measured 2026-11-12, contrib 0.160.0).

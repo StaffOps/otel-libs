@@ -3,38 +3,76 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "otel-helper"
-version = "0.2.0"
+name = "staffops-otel-helper"
+version = "0.3.0rc3"
 description = "OpenTelemetry instrumentation helper for Python"
 requires-python = ">=3.10"
+license = "Apache-2.0"
 dependencies = [
-    "opentelemetry-api>=1.42,<2",
-    "opentelemetry-sdk>=1.42,<2",
-    "opentelemetry-exporter-otlp-proto-grpc>=1.42,<2",
-    "opentelemetry-exporter-otlp-proto-http>=1.42,<2",
-    "opentelemetry-exporter-prometheus>=0.63b0",
+    # Lockstep bounds (design D9.a): contrib betas pin semconv/instrumentation
+    # exactly, which couples them to one SDK minor (0.63b0 -> 1.42, 0.66b1 ->
+    # 1.45), so both ranges are capped at the newest pair CI has tested. Raise both caps together, in a PR that
+    # runs the "latest" leg.
+    "opentelemetry-api>=1.42,<1.46",
+    "opentelemetry-sdk>=1.42,<1.46",
+    "opentelemetry-exporter-otlp-proto-grpc>=1.42,<1.46",
+    "opentelemetry-exporter-otlp-proto-http>=1.42,<1.46",
+    "opentelemetry-exporter-prometheus>=0.63b0,<0.67b0",
     "prometheus-client>=0.20.0",
-    # Always-on instrumentations (web/HTTP frameworks + runtime metrics).
-    # SQL/Redis/AWS live in the optional extras below.
-    "opentelemetry-instrumentation-fastapi>=0.63b0",
-    "opentelemetry-instrumentation-httpx>=0.63b0",
-    "opentelemetry-instrumentation-requests>=0.63b0",
-    "opentelemetry-instrumentation-grpc>=0.63b0",
-    "opentelemetry-instrumentation-system-metrics>=0.63b0",
+    # Endpoint IDN hosts: UTS #46 non-transitional + IDNA 2008 (design D1 IDN row, task A17).
+    # 3.7 is the first release without CVE-2024-3651 (quadratic encode).
+    "idna>=3.7,<4",
+    # Always-on instrumentations (web/HTTP frameworks + runtime metrics + the
+    # stdlib logging bridge). SQL/Redis/AWS live in the optional extras below.
+    "opentelemetry-instrumentation-fastapi>=0.63b0,<0.67b0",
+    "opentelemetry-instrumentation-httpx>=0.63b0,<0.67b0",
+    "opentelemetry-instrumentation-requests>=0.63b0,<0.67b0",
+    "opentelemetry-instrumentation-grpc>=0.63b0,<0.67b0",
+    "opentelemetry-instrumentation-system-metrics>=0.63b0,<0.67b0",
+    "opentelemetry-instrumentation-logging>=0.63b0,<0.67b0",
 ]
 
 [project.optional-dependencies]
-aws = ["opentelemetry-instrumentation-botocore>=0.63b0"]
-redis = ["opentelemetry-instrumentation-redis>=0.63b0"]
-sql = ["opentelemetry-instrumentation-sqlalchemy>=0.63b0"]
-all = ["otel-helper[aws,redis,sql]"]
+aws = ["opentelemetry-instrumentation-botocore>=0.63b0,<0.67b0"]
+redis = ["opentelemetry-instrumentation-redis>=0.63b0,<0.67b0"]
+sql = ["opentelemetry-instrumentation-sqlalchemy>=0.63b0,<0.67b0"]
+all = ["staffops-otel-helper[aws,redis,sql]"]
 dev = [
     "pytest>=7.0",
     "pytest-cov>=4.0",
+    # Test-only: parity fixture http_server / grpc_server kinds and propagation tests.
+    "fastapi>=0.110",
+    "httpx>=0.27",
+    "grpcio>=1.60",
+    # Test-only (approved 2026-10-28): real SQLAlchemy spans for the R10 db semconv
+    # matrix. Capped at the contrib sqlalchemy range (< 2.1.0, P18). Floor 2.0.31:
+    # the first release that imports on Python 3.13 (TypingOnly __firstlineno__).
+    "sqlalchemy>=2.0.31,<2.1",
+    # Test-only (A26, 2026-11-03): real redis-py spans for the DB error-status rule
+    # (tests/test_a26_redis.py, against an in-process RESP fake). MIT.
+    "redis>=5.0,<9",
+    # Test-only (A27, 2026-11-03): real botocore spans for the AWS error-status rule
+    # (tests/test_a27_aws.py, against an in-process fake endpoint). Apache-2.0.
+    "botocore>=1.34,<2",
 ]
 
 [tool.hatch.build.targets.wheel]
-packages = ["otel_helper"]
+# otel_helper: deprecated compatibility module + .pyi stubs (ADR-011), removed in 1.0.
+packages = ["staffops_otel_helper", "otel_helper"]
+
+[tool.hatch.build.targets.sdist]
+# Local test/build leftovers never ship (they are gitignored, but a build from a
+# copy without .git does not see the root .gitignore).
+exclude = [
+    ".coverage*",
+    "coverage.xml",
+    "htmlcov",
+    ".pytest_cache",
+    "__pycache__",
+    "*.pyc",
+    "dist",
+    "packages",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

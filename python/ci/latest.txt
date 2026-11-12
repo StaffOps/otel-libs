@@ -1,0 +1,3 @@
+# Constraints for the "latest" CI leg: intentionally empty — resolve the newest
+# versions allowed by pyproject.toml's lockstep caps (api/sdk/exporters <1.46,
+# contrib <0.67b0; design D9.a). Raising a cap is a PR that runs this leg.

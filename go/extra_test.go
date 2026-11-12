@@ -8,7 +8,6 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"go.opentelemetry.io/otel"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
@@ -25,8 +24,8 @@ func TestDefaultLogLevel(t *testing.T) {
 		{HML, false, slog.LevelInfo},
 		{PRD, false, slog.LevelWarn},
 		{PRD, true, slog.LevelDebug},   // debug overrides everything
-		{LOCAL, true, slog.LevelDebug},  // debug + LOCAL = Debug
-		{DEV, true, slog.LevelDebug},    // debug overrides DEV
+		{LOCAL, true, slog.LevelDebug}, // debug + LOCAL = Debug
+		{DEV, true, slog.LevelDebug},   // debug overrides DEV
 	}
 	for _, tt := range tests {
 		t.Run(string(tt.env), func(t *testing.T) {
@@ -79,19 +78,6 @@ func TestNewHTTPTransportFiltersHealthPaths(t *testing.T) {
 
 	if len(exp.GetSpans()) == 0 {
 		t.Error("Non-health path should create a client span")
-	}
-}
-
-func TestGRPCHealthFilter(t *testing.T) {
-	// Test that the filter function correctly identifies health check methods
-	healthInfo := &otelgrpc.InterceptorInfo{Method: "/grpc.health.v1.Health/Check"}
-	if grpcHealthFilter(healthInfo) {
-		t.Error("grpcHealthFilter should return false for health check method")
-	}
-
-	normalInfo := &otelgrpc.InterceptorInfo{Method: "/myservice.MyService/DoWork"}
-	if !grpcHealthFilter(normalInfo) {
-		t.Error("grpcHealthFilter should return true for non-health methods")
 	}
 }
 

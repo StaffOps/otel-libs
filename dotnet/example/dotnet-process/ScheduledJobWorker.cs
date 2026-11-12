@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Diagnostics.Metrics;
-using OtelHelper;
+using Microsoft.Extensions.DependencyInjection;
+using StaffOps.OtelHelper;
 
 /// <summary>
 /// Simulates a scheduled job with timeout detection.
@@ -9,15 +10,10 @@ using OtelHelper;
 public class ScheduledJobWorker : BackgroundService
 {
     private static readonly ActivitySource _activity = new("sample-process.scheduled-job");
-    private static readonly Meter _meter = new(
-        Environment.GetEnvironmentVariable("SERVICE_NAME") ?? "sample-process");
 
-    private static readonly Counter<long> _jobsTotal = _meter.CreateCounter<long>(
-        "scheduled_job.runs_total", "jobs", "Total job runs");
-    private static readonly Counter<long> _jobsTimedOut = _meter.CreateCounter<long>(
-        "scheduled_job.timeouts_total", "jobs", "Total job timeouts");
-    private static readonly Histogram<double> _jobDuration = _meter.CreateHistogram<double>(
-        "scheduled_job.duration_seconds", "s", "Duration of each job run");
+    private readonly Counter<long> _jobsTotal;
+    private readonly Counter<long> _jobsTimedOut;
+    private readonly Histogram<double> _jobDuration;
 
     // Circuit breaker state: 0=closed, 1=open, 2=half-open
     private static int _circuitState = 0;
@@ -29,11 +25,15 @@ public class ScheduledJobWorker : BackgroundService
     private readonly TimeSpan _interval = TimeSpan.FromMinutes(3);
     private readonly TimeSpan _jobTimeout = TimeSpan.FromSeconds(5);
 
-    public ScheduledJobWorker(IHttpClientFactory httpFactory, ILogger<ScheduledJobWorker> logger)
+    public ScheduledJobWorker(IHttpClientFactory httpFactory, ILogger<ScheduledJobWorker> logger, [FromKeyedServices(OtelHelperKeys.Instrumentation)] Meter meter)
     {
+        // The helper's Meter, keyed (name = the resolved service.name, so it is always exported).
+        _jobsTotal = meter.CreateCounter<long>("scheduled_job.runs_total", "jobs", "Total job runs");
+        _jobsTimedOut = meter.CreateCounter<long>("scheduled_job.timeouts_total", "jobs", "Total job timeouts");
+        _jobDuration = meter.CreateHistogram<double>("scheduled_job.duration_seconds", "s", "Duration of each job run");
         _httpFactory = httpFactory;
         _logger = logger;
-        _meter.CreateObservableGauge("circuit_breaker.state", () => _circuitState,
+        meter.CreateObservableGauge("circuit_breaker.state", () => _circuitState,
             description: "Circuit breaker state: 0=closed, 1=open, 2=half-open");
     }
 
@@ -91,7 +91,9 @@ public class ScheduledJobWorker : BackgroundService
             }
             catch (Exception ex) when (!ct.IsCancellationRequested)
             {
-                span?.SetStatus(ActivityStatusCode.Error, ex.Message);
+                // ADR-014: type on the span, message and stack trace in the correlated log below.
+                span?.SetStatus(ActivityStatusCode.Error);
+                span?.SetTag("error.type", ex.GetType().FullName);
                 _jobsTotal.Add(1, new KeyValuePair<string, object?>("result", "error"));
                 _logger.LogError(ex, "Scheduled job failed");
                 HandleFailure();

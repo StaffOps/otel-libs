@@ -1,28 +1,26 @@
 """Notification Process — Background workers for queue consumption, retries, and cleanup."""
 
+# staffops_otel_helper first: it must run before any opentelemetry import so unsupported
+# OTEL_PROPAGATORS values are skipped instead of raising (isort would move it).
+import staffops_otel_helper  # isort: skip  # noqa: F401
+
 import os
 import asyncio
+import contextlib
+import signal
 import time
 import random
 import logging
 
 import httpx
-from opentelemetry import trace, context
-from opentelemetry.propagate import inject
+from opentelemetry import trace
 
-from otel_helper import setup_telemetry, get_tracer, get_meter, TelemetryOptions
-from otel_helper.tracing import start_root_span
+from staffops_otel_helper import setup_telemetry, shutdown_telemetry, get_tracer, get_meter, TelemetryOptions
+from staffops_otel_helper.tracing import start_root_span
 
 logger = logging.getLogger(__name__)
 
 API_URL = os.getenv("API_URL", "http://python-api-stable:8000")
-
-
-def _propagation_headers() -> dict:
-    """Inject W3C trace context into headers for distributed tracing."""
-    headers = {}
-    inject(headers, context=context.get_current())
-    return headers
 
 
 # --- Health server (for liveness/readiness probes) ---
@@ -58,7 +56,7 @@ async def queue_consumer(tracer, queue_depth):
                         item_span.set_attribute("notification.channel", channel)
 
                         try:
-                            response = await client.post(f"{API_URL}/notify", headers=_propagation_headers(), json={
+                            response = await client.post(f"{API_URL}/notify", json={
                                 "recipient": recipient,
                                 "channel": channel,
                                 "template_id": random.choice(["default", "welcome", "alert"]),
@@ -89,7 +87,7 @@ async def retry_worker(tracer, retries_total):
                         retries_total.add(1)
 
                         try:
-                            await client.post(f"{API_URL}/notify", headers=_propagation_headers(), json={
+                            await client.post(f"{API_URL}/notify", json={
                                 "recipient": f"retry-{random.randint(100, 999)}@example.com",
                                 "channel": "email",
                                 "template_id": "alert",
@@ -123,7 +121,7 @@ async def health_checker(tracer):
         while True:
             with start_root_span(tracer, "process.health-check") as span:
                 try:
-                    response = await client.get(f"{API_URL}/health", headers=_propagation_headers())
+                    response = await client.get(f"{API_URL}/health")
                     span.set_attribute("health.status_code", response.status_code)
                     if response.status_code != 200:
                         span.set_status(trace.StatusCode.ERROR, "API unhealthy")
@@ -144,15 +142,39 @@ async def main():
     retries_total = meter.create_counter("notifications.retries_total")
     cleanup_total = meter.create_counter("notifications.cleaned_total")
 
+    # Python's default SIGTERM handler kills the process without running finally
+    # blocks or atexit, so `docker stop` / a Kubernetes rollout would drop the
+    # spans, logs and metrics still buffered. Turn SIGTERM/SIGINT into an event
+    # that cancels the workers; the shutdown in __main__ then flushes.
+    stop = asyncio.Event()
+    loop = asyncio.get_running_loop()
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        loop.add_signal_handler(sig, stop.set)
+
     logger.info("Starting notification workers")
     await start_health_server()
-    await asyncio.gather(
+    workers = asyncio.gather(
         queue_consumer(tracer, queue_depth),
         retry_worker(tracer, retries_total),
         cleanup_worker(tracer, cleanup_total),
         health_checker(tracer),
     )
+    stopper = asyncio.ensure_future(stop.wait())
+    await asyncio.wait({workers, stopper}, return_when=asyncio.FIRST_COMPLETED)
+    stopper.cancel()
+    workers.cancel()
+    # Re-raises a worker's exception; a cancellation is the normal stop path.
+    with contextlib.suppress(asyncio.CancelledError):
+        await workers
+    logger.info("Notification workers stopped")
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    finally:
+        try:
+            # 5 s flush: well inside docker stop's default 10 s grace period.
+            shutdown_telemetry(timeout_ms=5_000)
+        except RuntimeError as e:
+            logger.warning("telemetry shutdown incomplete: %s", e)

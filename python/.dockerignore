@@ -50,7 +50,7 @@ tests/
 **/.venv/
 **/venv/
 
-# Exception: prebuilt otel-helper wheel consumed by Dockerfile.demo (CI artifact)
+# Exception: prebuilt staffops-otel-helper wheel consumed by Dockerfile.demo (CI artifact)
 !packages/
 !packages/*.whl
 
