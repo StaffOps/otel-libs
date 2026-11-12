@@ -17,7 +17,7 @@ engineers who run the Collector it exports to.
 |----------|-----------|---------|---------|----------|
 | Go | [`go/`](go/README.md) | `github.com/staffops/otel-libs/go` + `ext/*` modules | `0.3.0` (unreleased, this branch); latest release `go/v0.2.1` | 0.3 |
 | Python | [`python/`](python/README.md) | `staffops-otel-helper` (extras `aws`, `redis`, `sql`) | `0.3.0` (unreleased, this branch); latest release `0.2.0` | 0.3 |
-| .NET | [`dotnet/`](dotnet/README.md) | `StaffOps.OtelHelper` + `.AWS` / `.Redis` / `.Sql` / `.Profiling` (NuGet; on this branch, not published yet — released `0.2.x` is `OtelHelper*`, ADR-011) | latest release `0.2.1` (`OtelHelper*`, tag `dotnet/v0.2.1`) | 0.2.x — the 0.3 contract lands in Phase C |
+| .NET | [`dotnet/`](dotnet/README.md) | `StaffOps.OtelHelper` + `.AWS` / `.Redis` / `.Sql` / `.Profiling` (NuGet; on this branch, not published yet — released `0.2.x` is `OtelHelper*`, ADR-011) | `0.3.0` (unreleased, this branch); release candidate `0.3.0-rc.1` (tag `dotnet/v0.3.0-rc.1`) after the final validation (task C19); latest release `0.2.1` (`OtelHelper*`, tag `dotnet/v0.2.1`) | 0.3 (Phase C; the released `0.2.1` is 0.2) |
 | Node.js | [`nodejs/`](nodejs/README.md) | `@staffops/otel-helper` + `-sql` / `-redis` / `-aws` / `-pino` / `-winston` (npm) | `0.3.0` (unreleased); release candidate `0.3.0-rc.1` (tag `nodejs/v0.3.0-rc.1`, npm dist-tag `next`; install the exact version) | 0.3 |
 
 The rollout order is Go + Python, then Node.js, then .NET
@@ -55,11 +55,11 @@ logs as JSON on stdout, traces not exported.
    ([ADR-007](https://github.com/StaffOps/otel-libs/blob/main/specs/decisions/ADR-007-keep-prometheus-in-core.md)).
 3. **Sampling at the Collector** — tail sampling at the gateway. The SDK
    default is `parentbased_always_on`
-   ([ADR-002](https://github.com/StaffOps/otel-libs/blob/main/specs/decisions/ADR-002-parentbased-sampler.md); .NET 0.2.x uses
-   a bare AlwaysOn sampler).
+   ([ADR-002](https://github.com/StaffOps/otel-libs/blob/main/specs/decisions/ADR-002-parentbased-sampler.md); the released .NET
+   0.2.x uses a bare AlwaysOn sampler).
 4. **Resource attributes at the Collector** — the helper sets only
    `service.name`, `deployment.environment.name` (never the legacy
-   `deployment.environment`) and, in Go/Python/Node.js 0.3, a per-process
+   `deployment.environment`) and, in 0.3, a per-process
    `service.instance.id` when none is configured. `k8sattributes` adds the rest.
 5. **TLS by default** — `https://` and schemeless endpoints use TLS (system CA).
    The scheme decides; `OTEL_EXPORTER_OTLP_INSECURE=true` only turns a
@@ -125,11 +125,19 @@ import { shutdown } from '@staffops/otel-helper'; // CommonJS: require('@staffop
 process.once('SIGTERM', () => { shutdown().finally(() => process.exit(0)); });
 ```
 
-### .NET (0.2.x)
+### .NET
 
 ```csharp
+using StaffOps.OtelHelper; // 0.2.x: using OtelHelper;
+
+builder.Logging.ClearProviders(); // optional, before AddOtelHelper(): see below
 builder.Services.AddOtelHelper();
 ```
+
+Without an OTLP endpoint the helper writes each log record as a JSON line on
+stdout; keep the host's console provider and every record appears twice, with
+`otelhelper: WARN no logs exporter is active, so each record is written to standard output twice: …`
+on stderr — `ClearProviders()` before `AddOtelHelper()` avoids it.
 
 Then configure the service from the environment:
 
@@ -149,7 +157,12 @@ shutdown):
 | Node.js | [README](nodejs/README.md) | [HOW-TO](nodejs/HOW-TO.md) | [examples](nodejs/example/README.md) |
 | .NET | [README](dotnet/README.md) | [HOW-TO](dotnet/HOW-TO.md) | [examples](dotnet/example/README.md) |
 
-## Environment variables (0.3 contract — Go, Python and Node.js)
+## Environment variables (0.3 contract)
+
+Every language on this branch resolves the rows below (.NET from Phase C; the
+released .NET `0.2.1` keeps the 0.2 rules, listed row by row in the .NET
+migration guide of [`CHANGELOG.md`](CHANGELOG.md)). Language-specific rows:
+[Node.js notes](#nodejs-notes), [.NET notes](#net-notes).
 
 Precedence for every setting: **explicit code > standard `OTEL_*` env >
 legacy / `OTEL_HELPER_*` env > library default**. Per-signal variables fall
@@ -186,9 +199,9 @@ rulings are in [design D1](https://github.com/StaffOps/otel-libs/blob/main/specs
 | `OTEL_TRACES_EXPORTER`, `OTEL_LOGS_EXPORTER` | `otlp` when configured | `otlp`, `console`, `none` (or a list); `logging` = deprecated `console` (env only: in code `logging` is an unknown exporter and fails). Wins over `OTEL_HELPER_DISABLED_SIGNALS` for its signal |
 | `OTEL_METRICS_EXPORTER` | OTLP if an endpoint is configured, else `prometheus` | `otlp`, `prometheus`, `otlp,prometheus`, `console`, `none`. Env `otlp` without an endpoint warns and falls back |
 | `OTEL_EXPORTER_PROMETHEUS_PORT` | _(unset)_ | Port of the standalone `/metrics` listener, beats `OTEL_HELPER_METRICS_PORT` (code still wins). Same grammar; `0` = no listener (not an ephemeral port); invalid → warned, next level (A29) |
-| `OTEL_EXPORTER_PROMETHEUS_HOST` | every interface | Bind address of the listener: an IPv4 or IPv6 literal (brackets allowed, no zone id) or `localhost` (= `127.0.0.1`); `::` = every interface. **Unset binds every interface, not the spec default `localhost`**, so other pods can scrape it. Another value (a host name, `*`) is warned and **every interface** is used — wider than the restriction it was meant to set (owner decision). Never turns the listener on by itself (A29) |
+| `OTEL_EXPORTER_PROMETHEUS_HOST` | every interface | Bind address of the listener: an IPv4 or IPv6 literal (brackets allowed, no zone id) or `localhost` (= `127.0.0.1`); `::` = every interface. **Unset binds every interface, not the spec default `localhost`**, so other pods can scrape it. Another value (a host name, `*`) is warned and **every interface** is used — wider than the restriction it was meant to set (owner decision). Never turns the listener on by itself (A29). .NET: no IPv6 bind — "every interface" is every IPv4 interface, `::1` binds `127.0.0.1`, `::` every IPv4 interface (both warned), another IPv6 address gets no listener (one ERROR) ([known gaps](#known-emitted-telemetry-gaps)) |
 | `OTEL_METRIC_EXPORT_INTERVAL` | `30000` | Milliseconds (helper default 30 s; SDK default 60 s): ASCII digits with an optional `+` (any length), > 0, else warned and the default; above 2 147 483 647 clamped with a warning. A code interval outside [1, 2 147 483 647] fails |
-| `OTEL_CONFIG_FILE`, `OTEL_EXPERIMENTAL_CONFIG_FILE` | _(unset)_ | Declarative configuration is **not supported**: set, it is ignored with one warning per process naming the variable (never the path); `OTEL_EXPERIMENTAL_CONFIG_FILE` is the deprecated name |
+| `OTEL_CONFIG_FILE`, `OTEL_EXPERIMENTAL_CONFIG_FILE` | _(unset)_ | Declarative configuration is **not supported**: set, it is ignored with one warning per process (.NET: per container, [known gaps](#known-emitted-telemetry-gaps)) naming the variable (never the path); `OTEL_EXPERIMENTAL_CONFIG_FILE` is the deprecated name |
 | `OTEL_TRACES_SAMPLER` / `OTEL_TRACES_SAMPLER_ARG` | `parentbased_always_on` | The six spec samplers (ASCII case-insensitive). Unknown names warn and use the default. With services in several languages use `parentbased_traceidratio`, not bare `traceidratio`: the SDKs (Node.js and .NET in particular) derive the ratio decision from the trace id differently, so bare ratio decisions are not consistent across a trace |
 | `OTEL_PROPAGATORS` | `tracecontext,baggage` | Supported: `tracecontext`, `baggage`, `none`. Others (`b3`, `jaeger`, `xray`, …) are warned (one warning each, naming the effective list) and skipped; `none` with other values warns and disables propagation |
 | `OTEL_SEMCONV_STABILITY_OPT_IN` | Python: `http,database/dup` | Python sets this default before instrumenting (stable HTTP semconv, both DB keys); a user value wins for HTTP. DB keys in every language: both `db.system.name` and the legacy `db.system` unless the value holds `database` without `database/dup` (A25; dup emits the full new and legacy sets). Python treats an empty value as unset, ASCII-folds every token (`HTTP/DUP` = `http/dup`) and writes the normalized value back to the environment (inherited by child processes). Go instrumentations emit stable HTTP semconv natively AWS RPC keys (A30): legacy by default in every language; `http,rpc` gives the current keys, `http,rpc/dup` both (a bare `rpc` has no `http` token: Python then uses the old HTTP conventions and Node.js warns). In Go `rpc/dup` also switches otelgrpc to dup, doubling the RPC metric series |
@@ -198,9 +211,9 @@ rulings are in [design D1](https://github.com/StaffOps/otel-libs/blob/main/specs
 | Variable | Default | Behavior |
 |----------|---------|----------|
 | `OTEL_HELPER_DEBUG_LEVEL` | `false` | Debug log level and `debug=true` on entry spans (no parent or a remote parent) for Collector tail-sampling policies ([ADR-006](https://github.com/StaffOps/otel-libs/blob/main/specs/decisions/ADR-006-debug-span-attribute.md)); the Collector policy needs an environment allow-list and a rate limit ([prerequisites](#collector-and-platform-prerequisites)). Python debug mode also turns on every installed `ext` instrumentor (SQL, Redis, AWS). Do not leave on in production |
-| `OTEL_HELPER_METRICS_PORT` | `9464` | Standalone Prometheus `/metrics` listener port when `OTEL_EXPORTER_PROMETHEUS_PORT` is unset or invalid: ASCII digits with an optional `+`, in [0, 65535] (else warned, 9464); dual-stack, `GET`/`HEAD /metrics` only. `0` disables the listener (the mountable handler keeps working) |
+| `OTEL_HELPER_METRICS_PORT` | `9464` | Standalone Prometheus `/metrics` listener port when `OTEL_EXPORTER_PROMETHEUS_PORT` is unset or invalid: ASCII digits with an optional `+`, in [0, 65535] (else warned, 9464); dual-stack, `GET`/`HEAD /metrics` only (.NET: IPv4 only, any method and `/metrics/*`, [known gaps](#known-emitted-telemetry-gaps)). `0` disables the listener (the mountable handler keeps working; .NET has none — mount the upstream ASP.NET Core endpoint, [.NET HOW-TO §15](dotnet/HOW-TO.md#aspnet-core-mounting-metrics-on-your-own-pipeline)) |
 | `OTEL_HELPER_DISABLED_METRICS` | _(unset)_ | Comma list of case-sensitive instrument-name globs to drop from every exporter: `*` any run of characters, `?` one character, everything else literal |
-| `OTEL_HELPER_HTTP_OPT_IN_METRICS` | `false` | `true` also records the HTTP metrics semconv makes opt-in: `http.server.active_requests` and the request/response body sizes (code: Go `WithHTTPOptInMetrics`, Python `http_opt_in_metrics`, Node.js `httpOptInMetrics`; code wins). By default only `http.server.request.duration` and `http.client.request.duration` are recorded. Go has no active-requests metric upstream; Node.js records none of them (A30, [design D1](https://github.com/StaffOps/otel-libs/blob/main/specs/config-contract-v0.3/design.md) "HTTP opt-in metrics") |
+| `OTEL_HELPER_HTTP_OPT_IN_METRICS` | `false` | `true` also records the HTTP metrics semconv makes opt-in: `http.server.active_requests` and the request/response body sizes (code: Go `WithHTTPOptInMetrics`, Python `http_opt_in_metrics`, Node.js `httpOptInMetrics`, .NET `TelemetryOptions.HttpOptInMetrics`; code wins). By default only `http.server.request.duration` and `http.client.request.duration` are recorded. Go has no active-requests metric upstream; Node.js records none of them; .NET records `http.server.active_requests` and its client connection metrics, no body sizes ([known gaps](#known-emitted-telemetry-gaps)) (A30, [design D1](https://github.com/StaffOps/otel-libs/blob/main/specs/config-contract-v0.3/design.md) "HTTP opt-in metrics") |
 | `OTEL_HELPER_SAMPLE_RATIO` | `1.0` | **Deprecated** → `OTEL_TRACES_SAMPLER=parentbased_traceidratio` + `OTEL_TRACES_SAMPLER_ARG`. Used only while `OTEL_TRACES_SAMPLER` is unset; builds `ParentBased(TraceIdRatioBased(x))`; a value that is not a plain decimal in [0, 1] warns and is ignored |
 | `OTEL_HELPER_DISABLED_SIGNALS` | _(unset)_ | **Deprecated** → `OTEL_{TRACES,METRICS,LOGS}_EXPORTER=none`. A signal whose `OTEL_<SIGNAL>_EXPORTER` holds a valid entry (`none` included; only unknown entries count as unset) is not disabled by it, nor are metrics when code sets the metric exporters; unknown entries warn once |
 | `OTEL_HELPER_EXTRA_INSTRUMENTATION` | Python: `SQL` | **Go and Node.js: removed** (no effect, warns; Node.js: pass `sqlInstrumentation()` / `redisInstrumentation()` / `awsInstrumentation()` in `setup({ instrumentations })`). **Python: deprecated** — call `staffops_otel_helper.ext.instrument_sql()` / `instrument_redis()` / `instrument_aws()` before `setup_telemetry()`. .NET branch (task C16): no effect, warns once — add `StaffOps.OtelHelper.Sql` / `.AWS` / `.Redis` |
@@ -210,8 +223,9 @@ Health checks are configured in code, not env: by default server spans for
 case-insensitive) and the `grpc.health.v1.Health` service are not traced, but
 they **are counted** in the HTTP server metrics (and, in Go,
 `rpc.server.call.duration`) — exclude them in SLI queries. Override with
-`WithHealthPaths(...)` (Go), `TelemetryOptions(health_paths=[...])` (Python)
-or `setup({ healthPaths: [...] })` (Node.js).
+`WithHealthPaths(...)` (Go), `TelemetryOptions(health_paths=[...])` (Python),
+`setup({ healthPaths: [...] })` (Node.js) or `TelemetryOptions.HealthPaths`
+(.NET).
 
 ### Node.js notes
 
@@ -227,17 +241,40 @@ the helper; `OTEL_METRICS_EXEMPLAR_FILTER` is not honored (no exemplars).
 `Resolved.inactiveSignals` and `replaceGlobals` handle globals another SDK
 registered first. Full table: [`nodejs/README.md`](nodejs/README.md#environment-variables).
 
-### .NET 0.2.x differences
+### .NET notes
 
-.NET still implements the 0.2 contract: `SERVICE_NAME` beats `OTEL_SERVICE_NAME`
-and defaults to `my-service`; `ENVIRONMENT` defaults to `LOCAL` and unknown
-values become `LOCAL`; per-signal OTLP variables, `OTEL_PROPAGATORS`,
-`OTEL_EXPORTER_OTLP_TIMEOUT` and `OTEL_{TRACES,LOGS}_EXPORTER` are not honored;
-`http/json` fails startup validation; the sampler is a bare AlwaysOn; the health
-filter is `/ping /health /healthz /ready` (traces only; metrics still count
-those requests). `OTEL_HELPER_EXTRA_INSTRUMENTATION` has no effect. See
-[`dotnet/README.md`](dotnet/README.md) and the Phase C backlog in
-[`specs/config-contract-v0.3/tasks.md`](https://github.com/StaffOps/otel-libs/blob/main/specs/config-contract-v0.3/tasks.md).
+The .NET helper resolves the rows above itself and builds its own OTLP
+exporters ([ADR-013](https://github.com/StaffOps/otel-libs/blob/main/specs/decisions/ADR-013-dotnet-helper-owns-env-resolution.md)).
+.NET only:
+
+- **Where values are read.** The helper's rows are read from the **process
+  environment**; a value only in `appsettings.json` (another `IConfiguration`
+  source) has no effect — the sampler, propagator and interval variables say so
+  in one warning, the OTLP endpoint, protocol, headers, timeout and compression
+  are ignored silently. `OTEL_SDK_DISABLED` and
+  `OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE` are read from
+  `IConfiguration`, as the SDK reads them; the attribute limits and the batch
+  sizes (`OTEL_BSP_*`, `OTEL_BLRP_*`) stay with the SDK. `TelemetryOptions`
+  bound from a configuration section count as code (they win over the
+  environment). Details: [.NET HOW-TO §2](dotnet/HOW-TO.md).
+- **Not honored:** `OTEL_BSP_EXPORT_TIMEOUT`, `OTEL_BLRP_EXPORT_TIMEOUT` and
+  `OTEL_METRIC_EXPORT_TIMEOUT` (the OTLP timeout is every signal's deadline;
+  each warns once). `OTEL_EXPORTER_OTLP_METRICS_DEFAULT_HISTOGRAM_AGGREGATION`
+  is applied only for `base2_exponential_bucket_histogram` set in the process
+  environment ([.NET HOW-TO §15](dotnet/HOW-TO.md#exponential-histograms-on-otlp)).
+- **gRPC server spans** are RPC-shaped only when the application sets the
+  upstream key `OTEL_DOTNET_EXPERIMENTAL_ASPNETCORE_ENABLE_GRPC_INSTRUMENTATION=true`
+  (the helper never sets it and warns once when gRPC endpoints are mapped
+  without it).
+- **"Once" warnings** are once per diagnostics sink (service provider), not
+  per process.
+- **Do not combine `UseOtlpExporter()` with `AddOtelHelper()`**: every signal is
+  exported twice (warned once).
+
+The released `0.2.1` still implements the 0.2 contract (`SERVICE_NAME` before
+`OTEL_SERVICE_NAME`, `LOCAL` / `my-service` defaults, a bare AlwaysOn sampler,
+no per-signal variables); every change is in the .NET migration guide of
+[`CHANGELOG.md`](CHANGELOG.md).
 
 ## Opt-in extensions
 
@@ -258,7 +295,7 @@ profiling, no counterpart in the other languages; see the gap row below).
 ## Cross-language parity
 
 Parity is enforced, not promised. [`parity/cases.json`](https://github.com/StaffOps/otel-libs/blob/main/parity/cases.json) is a
-hand-maintained, language-neutral fixture (342 cases: 187 after A13, 17 added by the Node B3 review, 6 by A16, 40 by Node B4a and its rulings, 16 by A17, 2 by Node B4b, 13 by A18, 14 by A19 and its fix round, 1 by Node B5, 5 by A20, 3 by Node B7, 11 by A21, 6 by the B7/A21 fix rounds, 2 by A22 from the Node B6 fix round, 1 by A23 from Node B8, 18 by A29)
+hand-maintained, language-neutral fixture (387 cases on 2026-11-12: 45 added by later contract and .NET tasks to the 342 counted at A29 — 187 after A13, 17 added by the Node B3 review, 6 by A16, 40 by Node B4a and its rulings, 16 by A17, 2 by Node B4b, 13 by A18, 14 by A19 and its fix round, 1 by Node B5, 5 by A20, 3 by Node B7, 11 by A21, 6 by the B7/A21 fix rounds, 2 by A22 from the Node B6 fix round, 1 by A23 from Node B8, 18 by A29)
 that every language's test suite runs — config resolution, wire-level export
 against a fake OTLP receiver, sampling, propagation, health exclusion, logging
 and `/metrics` status
@@ -278,9 +315,9 @@ always identical:
 | Node.js gRPC handler that throws synchronously | Its SERVER span is never ended or exported (upstream `@opentelemetry/instrumentation-grpc`); Go and Python record the call with status UNKNOWN. Return errors through the callback or a rejected promise |
 | Node.js routers created before `setup()` | An express app or router built before `setup()` gets a truncated `http.route` (`GET /api`) or none; require routes modules after `setup()` (the helper warns when express or grpc-js was loaded first) |
 | Node.js HTTP/2 | `node:http2` servers and clients (h2c included) are not instrumented: there is no official HTTP/2 instrumentation |
-| HTTP opt-in metrics | By default the instrumentation the helper installs records, in every language, only `http.server.request.duration` and `http.client.request.duration` (A30). With `OTEL_HELPER_HTTP_OPT_IN_METRICS=true` Python adds `http.server.active_requests` and the server body sizes (no client body sizes), Go the body sizes only (otelhttp has no active-requests metric), Node.js nothing (instrumentation-http records only the durations) ([design D1](https://github.com/StaffOps/otel-libs/blob/main/specs/config-contract-v0.3/design.md), "HTTP opt-in metrics") The drop applies to the contrib instrumentations' scopes only, so an application's own instrument of those names is kept (Python: the FastAPI, ASGI, requests and httpx scopes, a closed list; another contrib instrumentation the app adds keeps its series) |
+| HTTP opt-in metrics | By default the instrumentation the helper installs records, in every language, only `http.server.request.duration` and `http.client.request.duration` (A30). With `OTEL_HELPER_HTTP_OPT_IN_METRICS=true` Python adds `http.server.active_requests` and the server body sizes (no client body sizes), Go the body sizes only (otelhttp has no active-requests metric), Node.js nothing (instrumentation-http records only the durations), .NET (branch, task C11) `http.server.active_requests` and its client metrics `http.client.active_requests`, `http.client.open_connections`, `http.client.connection.duration`, `http.client.request.time_in_queue` (ASP.NET Core and `System.Net.Http` have no body-size instrument; parity `skip:no-upstream-dotnet-http-body-size`) ([design D1](https://github.com/StaffOps/otel-libs/blob/main/specs/config-contract-v0.3/design.md), "HTTP opt-in metrics") The drop applies to the contrib instrumentations' scopes only, so an application's own instrument of those names is kept (Python: the FastAPI, ASGI, requests and httpx scopes, a closed list; another contrib instrumentation the app adds keeps its series) |
 | .NET framework metrics (branch, task C11) | Besides the two HTTP durations, the .NET helper exports the series of the framework meters its instrumentations subscribe: `kestrel.*` (`active_connections`, `connection.duration`, `queued_connections`, `queued_requests`), `aspnetcore.routing.match_attempts`, `dns.lookup.duration` and the runtime `process.runtime.dotnet.*` (measured 2026-11-10 after one HTTP request, one HttpClient call and one gRPC call; other meters of the ASP.NET Core instrumentation, such as `Microsoft.AspNetCore.Diagnostics`, may add series in other code paths — not measured); Go, Python and Node.js have no counterpart. Drop what you do not need with `OTEL_HELPER_DISABLED_METRICS` |
-| .NET gRPC metrics | No RPC metric (`rpc.server.*`, `rpc.client.*`) exists in the .NET instrumentations: a gRPC server call is counted in `http.server.request.duration` with status 200 even when the RPC fails, and a gRPC client call in `http.client.request.duration` as `POST` with status 200 and `network.protocol.version=2`. Go records `rpc.server.call.duration` / `rpc.client.call.duration` and no HTTP metric for gRPC |
+| .NET gRPC metrics | No RPC metric (`rpc.server.*`, `rpc.client.*`) exists in the .NET instrumentations: a gRPC server call is counted in `http.server.request.duration` with status 200 even when the RPC fails, and a gRPC client call in `http.client.request.duration` as `POST` with status 200 and `network.protocol.version=2`. Go records `rpc.server.call.duration` / `rpc.client.call.duration` and no HTTP metric for gRPC. Parity `skip:no-upstream-rpc-metrics` |
 | .NET log scope attributes (branch, task C17) | The .NET helper exports `ILogger` scopes as log attributes (`IncludeScopes`, as 0.2.x). In an ASP.NET Core request that includes the hosting scope `ConnectionId`, `RequestId` and `RequestPath` — the raw request path (e.g. `/order/1`), which is high cardinality and can carry identifiers; Go, Python and Node.js emit none of them. The activity-tracking scope (`SpanId`, `TraceId`, `ParentId`) is not exported (design D-NET10 (g)). To drop the hosting scope at the Collector (`transform` processor, contrib 0.160.0; validated and run against `dotnet-api` 2026-11-12: the three attributes gone): processor `transform/aspnetcore-request-scope` with `log_statements: [delete_key(log.attributes, "ConnectionId"), delete_key(log.attributes, "RequestId"), delete_key(log.attributes, "RequestPath")]`, listed in `service.pipelines.logs.processors` of the pipeline that exports the .NET logs (full YAML: [`dotnet/HOW-TO.md`](dotnet/HOW-TO.md) §4) |
 | .NET HttpClient health calls | Not traced and sent without trace context (as Go), but still counted in `http.client.request.duration`: the `System.Net.Http` meter has no path attribute to filter on |
 | Node.js `http.route` | Only with express; a plain `node:http` server has no route on its spans or its server metric |
@@ -296,7 +333,7 @@ always identical:
 | Python with `OTEL_PROPAGATORS=none` | Fixed on this branch (task A34, 2026-11-10); **affected release `0.3.0rc3`**: every FastAPI request answers 500 under `none`, with or without trace headers. On `0.3.0rc3` leave `OTEL_PROPAGATORS` unset or use `tracecontext` / `baggage` until the next Python release candidate |
 | Node.js with traces disabled | `OTEL_HELPER_DISABLED_SIGNALS=traces` still injects a root span's `traceparent`; Go, Python and the .NET branch send none (no-op tracer) and pass an inbound context on unchanged (task A35; case `propagation.traces_disabled_root_no_traceparent`) |
 | OTLP redirects in Go, Python and Node.js | The contract refuses redirects (owner decision 2026-11-10, task A31): a `3xx` on an OTLP export is a failed export with a loud diagnostic. Until A31, Go and Python follow 307/308 (Go also forwards the custom OTLP headers to the new host), and Node.js fails the export but writes no helper line; the .NET helper (branch, task C8) already refuses them with an ERROR line ([design D1](https://github.com/StaffOps/otel-libs/blob/main/specs/config-contract-v0.3/design.md), "OTLP export redirects") |
-| .NET value-length limit 0 (branch, task C8) | `OTEL_ATTRIBUTE_VALUE_LENGTH_LIMIT=0` (or the span or log record variant) is invalid by contract; the .NET helper warns, but the OTLP exporter reads the variable itself (no public override) and sends those values empty ([design D1](https://github.com/StaffOps/otel-libs/blob/main/specs/config-contract-v0.3/design.md), "Value-length limits") |
+| .NET value-length limit 0 (branch, task C8) | `OTEL_ATTRIBUTE_VALUE_LENGTH_LIMIT=0` (or the span or log record variant) is invalid by contract; the .NET helper warns, but the OTLP exporter reads the variable itself (no public override) and sends those values empty; parity `skip:no-upstream-dotnet-attribute-limit` ([design D1](https://github.com/StaffOps/otel-libs/blob/main/specs/config-contract-v0.3/design.md), "Value-length limits") |
 | Python `/metrics` scope labels on the lower bound | With `opentelemetry-exporter-prometheus` 0.63b0 (sdk 1.42) series carry no `otel_scope_name` / `otel_scope_version` labels; from 0.64b0 (sdk 1.43) they are written as in Go and Node.js (case `metrics.scrape_target_info_and_scope_label`, `python@sdk>=1.43`) |
 | Go Prometheus names with a unit word, `total` or `ratio` inside | Go's exporter (`otlptranslator`) removes those words wherever they appear in the name: `probe.bytes-sent` in `By` → `probe_bytes_sent_total`, `req.total.count` → `req_count_total`, a Gauge `ratio.load` in `1` → `load_ratio`. Python and Node.js add a suffix only when the name does not already end with it (`probe_bytes_sent_bytes_total`, `req_total_count_total`, `ratio_load_ratio`) ([design D1](https://github.com/StaffOps/otel-libs/blob/main/specs/config-contract-v0.3/design.md), "Suffix semantics") |
 | Go scrape with an `otel.scope.*` data-point attribute | A data-point attribute named `otel.scope.name` (or `_version`, `_schema_url`) makes Go's `/metrics` fail (`duplicate label names`); Python and Node.js keep the data-point value. Don't use those attribute names |
@@ -326,9 +363,11 @@ always identical:
 | .NET AWS client spans (branch, task C14c) | One CLIENT span per call: `AddOtelHelperAws()` suppresses the HttpClient span under it, whose `url.full` path would be the S3 object key. An AWS client built before the tracer provider, or an `AddAWSInstrumentation()` of the application's own registered first (AWSSDK.Core keeps the first), gets that HttpClient span back; the helper replaces its URL path with `/` (scheme, host, port and redacted query kept), so the child span may exist but carries no key (fix round 1, measured on .NET 8 and 10) |
 | .NET URL query redaction (branch, task C14c, owner decision O3) | .NET keeps upstream's text, stricter than the contract list: server `url.query` and the .NET 8 client `url.full` write every value as `Redacted`, the .NET 9+ client `url.full` writes the query as `*`. With upstream redaction turned off (`OTEL_DOTNET_EXPERIMENTAL_ASPNETCORE_DISABLE_URL_QUERY_REDACTION`, `OTEL_DOTNET_EXPERIMENTAL_HTTPCLIENT_DISABLE_URL_QUERY_REDACTION` on .NET 8, `DOTNET_SYSTEM_NET_HTTP_DISABLEURIREDACTION` on .NET 9+) the helper writes the ten contract names as `REDACTED`, as Go, Python and Node.js, and keeps the rest. Scope: the span URL attributes (`url.full`, `http.url`, `url.query`, `http.target`, also as `Uri` values), not free text — HttpClient error texts carry no URL (measured), but an application exception message embedding a URL is not covered ([dotnet HOW-TO §14](dotnet/HOW-TO.md#aws-spans-failed-calls-and-url-redaction)) |
 | Stdout `trace_id` / `span_id` (contract A23 amendment 2026-11-11) | A stdout fallback line for a record emitted in a span context carries `trace_id` and `span_id` right after `logger`: .NET does (branch, task C14a; the database exception record uses its span's ids and the event time); Go, Python and Node.js write neither until task A36 (case `logging.stdout_span_context`, `xfail:A36`) |
-| .NET warning cadence (branch, tasks C6, C16) | Helper warnings that are "once" — the deprecations (`SERVICE_NAME`, `ENVIRONMENT`, `OTEL_HELPER_SAMPLE_RATIO`, `OTEL_HELPER_DISABLED_SIGNALS`, `OTEL_HELPER_EXTRA_INSTRUMENTATION`) and the identity warnings — are written once per diagnostics sink (container): two hosts in one process each write them; Go, Python and Node.js write them once per process |
+| .NET warning cadence (branch, tasks C6, C16) | Helper warnings that are "once" — the deprecations (`SERVICE_NAME`, `ENVIRONMENT`, `OTEL_HELPER_SAMPLE_RATIO`, `OTEL_HELPER_DISABLED_SIGNALS`, `OTEL_HELPER_EXTRA_INSTRUMENTATION`), the `OTEL_CONFIG_FILE` / `OTEL_EXPERIMENTAL_CONFIG_FILE` warning (task C5) and the identity warnings — are written once per diagnostics sink (container): two hosts in one process each write them; Go, Python and Node.js write them once per process |
 | .NET profiling (branch, task C15) | Only .NET has a profiling package (`StaffOps.OtelHelper.Profiling`, Grafana Pyroscope's native CLR profiler); Go, Python and Node.js have none. Its profiles go from the native profiler straight to `PYROSCOPE_SERVER_ADDRESS`, not through the Collector, and root spans get `pyroscope.profile.id`. The helper starts it at host start only when the `CORECLR_*`, `LD_PRELOAD` and `PYROSCOPE_*` prerequisites are met, else one `otelhelper: WARN profiling prerequisites not met (…)` line on standard error; measured on `linux/amd64` only ([`dotnet/HOW-TO.md`](dotnet/HOW-TO.md#profiling-pyroscope)) |
-| .NET | Still on the 0.2.x contract and instrumentation set until Phase C ([differences](#net-02x-differences)); the Prometheus variables, the gRPC path warning and the SDK error text rule (A29) land in Phase C (C12, C7b, C8) |
+| HTTP and gRPC exception detail on spans | ADR-014 covers database and AWS spans (.NET today, Go, Python and Node.js with A36); HTTP, gRPC and messaging spans are left to contract task A37 (ADR-014 decision 4), so their error detail still reaches the span, in a different place per language (checked in the instrumentation sources, 2026-11-12): **.NET** ASP.NET Core (gRPC server calls included) and HttpClient record an `exception` event with `exception.message` and `exception.stacktrace` (`RecordException`, set by the helper: `TracerSetup.cs:49,78`); **Python** (instrumentations 0.66b2, SDK 1.45.2) the FastAPI middleware records the event and sets the status description `<Type>: <message>` (`fastapi/__init__.py:364-370`), requests and httpx do the same through `start_as_current_span`'s defaults (`sdk/trace/__init__.py:1012-1022`), and the gRPC server records an uncaught exception (`grpc/_server.py:290,311`) and puts the status details in the description (`_server.py:141-155`); **Node.js** instrumentation-http, -undici and -express call `recordException` and put the message in the status description (`utils.cjs:57-64`, `undici.cjs:217-223`, express `instrumentation.cjs:142-146,164-168`; 0.300.0 / 0.34.0 / 0.72.0), instrumentation-grpc records no event but writes the message to the status description and to `grpc.error_message` (and `grpc.error_name`) (`serverUtils.cjs:35-43,55-60`, `clientUtils.cjs:58-66`); **Go** (v0.72.0) records no `exception` event: the otelhttp client transport puts the error text in the status description (`transport.go:301-302`), the otelhttp server handler sets a 5xx status without a description, and otelgrpc puts the gRPC status message in the description for `Unknown`, `DeadlineExceeded`, `Unimplemented`, `Internal`, `Unavailable` and `DataLoss` (`interceptor.go:86-97`). Messaging instrumentations were not checked. Until A37, treat traces as possibly holding request data: a Collector scrub must cover `span.status.message` as well as the `exception` events (and `grpc.error_message` for Node.js) |
+| .NET `/metrics` requests (branch, task C12) | The .NET listener (upstream `HttpListener`) answers any HTTP method and any path under `/metrics/`; Go, Python and Node.js answer only `GET` / `HEAD /metrics` (404 or 405 otherwise). With Prometheus inactive there is no listener and no mounted handler. Parity `skip:no-upstream-dotnet-prom-listener`, `skip:no-upstream-dotnet-prom-mounted-handler` |
+| .NET resource detectors | There is no detector-selection variable in .NET (`OTEL_NODE_RESOURCE_DETECTORS` has no counterpart; parity `skip:no-detector-variable`), and no prefork server model (`skip:no-prefork-model`, as Go). An earlier `ConfigureResource` with a detector factory (`AddDetector(sp => …)`) keeps the SDK's own `OTEL_RESOURCE_ATTRIBUTES` parse for the keys the helper does not set (the SDK reads `+` as a space) and its schema URL 1.44.0, with one warning ([`dotnet/README.md`](dotnet/README.md#library-options-telemetryoptions)) |
 
 ## Collector and platform prerequisites
 
@@ -341,9 +380,9 @@ the reason for each item, is
    `deployment.environment.name`, at the PRD rate.
 2. The `debug=true` policy combined (`and`) with an environment allow-list and
    a `rate_limiting` sub-policy. Debug mode marks every entry span in every
-   language — Go, Python and Node.js spans with no parent or a remote parent, .NET spans
-   with no in-process parent (which also prepend `debug=true` to the propagated
-   tracestate) — so a debug-enabled service marks every inbound request.
+   language — spans with no parent or a remote parent (the released .NET 0.2.x
+   also prepended `debug=true` to the propagated tracestate; 0.3 no longer does)
+   — so a debug-enabled service marks every inbound request.
 3. Gateway `loadbalancingexporter` routed by trace ID; `decision_wait` ≥ the
    observed p99 trace duration, and the sampled-decision cache enabled for late
    spans.

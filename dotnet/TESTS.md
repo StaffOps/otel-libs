@@ -1,5 +1,11 @@
 # Tests — StaffOps.OtelHelper (.NET)
 
+> **Reading this page (2026-11-12, task C18).** The first paragraph below is
+> the latest full run; the paragraphs after it are the earlier runs, kept as a
+> record. A table row that names a test renamed or removed by a later task is
+> marked *(renamed)* or *(removed)* and followed by a dated note naming its
+> replacement. Run the suite: [README "Run unit tests"](README.md#run-unit-tests).
+
 2064 tests (xUnit) with the parity runner, 0 failed, 0 skipped (compose `dotnet-tests` on `sdk:8.0` with `sql-postgres`, `sql-mysql` and `redis-test`, 2026-11-12, task C17 fix round 2: 3 more `ActivityScopeFilterTests`; SDK 10 leg not re-run); coverlet total `| Total | 98.75% | 97.18% | 99.64% |` (line, branch, method). The fix-round-1 line below is the previous run.
 
 2061 tests (xUnit) with the parity runner, 0 failed, 0 skipped (compose `dotnet-tests` on `sdk:8.0` with `sql-postgres`, `sql-mysql` and `redis-test`, and on `sdk:10.0` (10.0.403) with `DOTNET_ROLL_FORWARD=Major` on the same network, 2026-11-12, task C17 fix round 1: the 11 [`ActivityScopeFilterTests`](#activity-tracking-scope-filter-task-c17-fix-round-1)); coverlet total `| Total | 98.74% | 97.2%  | 99.64% |` (line, branch, method) on both. The C17 line below is the previous run.
@@ -386,10 +392,10 @@ loopback-bind refusal are checked by `testing/e2e/dotnet-prom-scrape.sh`.
 
 | Test | Description |
 |-------|-----------|
-| `ListenerPrefix_IsWildcardHostMetricsPath` | The bind prefix is `http://+:<port>/metrics/` |
+| `ListenerPrefix_IsWildcardHostMetricsPath` *(renamed, note below)* | The bind prefix is `http://+:<port>/metrics/` |
 | `ConfigurePrometheusListener_SetsHostPortCacheAndPrefixDelegate` | `Host` reset to `localhost`, helper port, response cache 0, and a delegate that replaces the listener prefixes with the `+` prefix only |
 | `Scrape_IsFresh_NoResponseCache` | Two scrapes back to back see the new value (upstream caches 300 ms by default) |
-| `PrometheusEnvVars_HaveNoEffect_HelperPortServed` | `OTEL_EXPORTER_PROMETHEUS_HOST=*` does not abort the build and `OTEL_EXPORTER_PROMETHEUS_PORT` does not move the listener: `OTEL_HELPER_METRICS_PORT` is served |
+| `PrometheusEnvVars_HaveNoEffect_HelperPortServed` *(renamed, note below)* | `OTEL_EXPORTER_PROMETHEUS_HOST=*` does not abort the build and `OTEL_EXPORTER_PROMETHEUS_PORT` does not move the listener: `OTEL_HELPER_METRICS_PORT` is served |
 
 *Changed 2026-11-11 (task C12):* `ListenerPrefix_IsWildcardHostMetricsPath`
 became `ListenerPrefix_FollowsResolvedHost` × 4 (`""` and `0.0.0.0` → `+`, an
@@ -674,7 +680,7 @@ for `ForceFlushOtelHelper`, the invalid-host warning removed).
 | Port grammar (A21) | `PortGrammar_Valid` × 6, `PortGrammar_Invalid` × 12, `UnparseableHelperPort_Warns_And_Uses9464` (silent before C12), `HelperPort_IsTrimmedWithTheContractSet` (U+00A0 kept) |
 | Port precedence (A29) | `StandardPort_BeatsHelperPort_WithoutWarning`, `InvalidStandardPort_Warns_And_FallsToHelperPort`, `BothPortsInvalid_EachWarnsOnce_9464`, `StandardPortZero_IsNoListener_NotTheNextLevel`, `EmptyStandardPort_IsUnset`, `CodePort_Beats_BothVariables_AndThey_AreNotRead`, `InvalidPortEcho_LosesUserinfoAndQuery` |
 | Host grammar (A29) | `HostGrammar_Valid` × 15, `HostGrammar_Invalid` × 19, `InvalidHost_WarnsOnce_FailsOpen_And_RedactsTheEcho`, `Host_IsTrimmed_AndBlankIsUnset`, `Host_IsParsedAndWarned_EvenWhenTheListenerDoesNotRun` |
-| Bind | `LoopbackHost_RefusesANonLoopbackConnect` (the negative control: with `127.0.0.1`, a connect to the container's `eth0` address is refused; unset, the same connect gets 200), `SpecificHost_AnswersOnlyRequestsNamingIt` (`Host: localhost` → 404 on a `127.0.0.1` bind), `UnspecifiedIpv4Host_BindsEveryIpv4Interface`, `Ipv6Host_FailsTheBuild_WithOneHelperError`, `Ipv6Host_WithoutListener_IsNotAnError`, `UnownedHost_FailsTheBuild_LikeABusyPort` (TEST-NET-1 `192.0.2.1`, and a busy port) |
+| Bind | `LoopbackHost_RefusesANonLoopbackConnect` (the negative control: with `127.0.0.1`, a connect to the container's `eth0` address is refused; unset, the same connect gets 200), `SpecificHost_AnswersOnlyRequestsNamingIt` *(renamed, note below)* (`Host: localhost` → 404 on a `127.0.0.1` bind), `UnspecifiedIpv4Host_BindsEveryIpv4Interface`, `Ipv6Host_FailsTheBuild_WithOneHelperError`, `Ipv6Host_WithoutListener_IsNotAnError`, `UnownedHost_FailsTheBuild_LikeABusyPort` (TEST-NET-1 `192.0.2.1`, and a busy port) |
 | Reader registration | `ListenerReader_IsRegistered_OnlyWhenItBinds` × 5, `ApplicationListener_KeepsItsOptions_WhenTheHelperListenerIsInactive` |
 | Flush | `OtlpOnly_SdkForceFlushAndShutdown_ReportTheRealResult` (both `true`; `false` before C12), `DualMode_SdkForceFlushIsFalse_HelperFlushIsTrue`, `HelperFlush_IsFalse_WhenTheOtlpExportFails` (receiver answering 500), `HelperFlush_FlushesTracesAndLogs` (a 500 still gives `true` there: batch-processor semantics), `HelperFlush_HistogramPath_UsesTheMeterProvider`, `HelperFlush_ArgumentsAndNoHelper`, `HelperFlush_SdkDisabled_IsTrue` |
 | Disabled-metric glob (A21) | `DisabledMetricGlob` × 11, `DisabledMetricGlob_ItemsTrimmedWithTheContractSet`, `DisabledMetrics_CaseSensitive_OnTheScrape` |

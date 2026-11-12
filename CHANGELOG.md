@@ -25,6 +25,13 @@ ADR-008). **.NET is unchanged and stays on 0.2.x**: it adopts the same contract
 in Phase C (ADR-004); until then its differences are `xfail` cases in
 `parity/cases.json`.
 
+*Note 2026-11-12 (.NET task C18):* superseded for .NET on this branch — .NET
+implements the same 0.3 contract (Phase C, tasks C4–C17; every `dotnet`
+parity status is `pass` or a recorded D-NET15 skip). Its first release
+candidate, `0.3.0-rc.1` (tag `dotnet/v0.3.0-rc.1`, packages
+`StaffOps.OtelHelper*`), follows the final validation, task C19; the released
+.NET `0.2.1` keeps the 0.2 behavior.
+
 **Node.js release candidate: `0.3.0-rc.1`** (2026-11-04) — tag
 `nodejs/v0.3.0-rc.1`, the first npm release of the six packages
 `@staffops/otel-helper`, `-sql`, `-redis`, `-aws`, `-pino` and `-winston`,
@@ -623,6 +630,15 @@ It has two parts, API and telemetry (requirement DN4). The telemetry part
 starts when the first behavior task lands; the rename below changes no
 emitted telemetry.
 
+> **Status 2026-11-12 (task C18).** The guide is complete for tasks C1–C17 —
+> the content of the release candidate `0.3.0-rc.1` — so "in progress" in the
+> heading and "grows with each Phase C task" above are superseded; task C0
+> (`net10.0` only, after the soak) adds its own section. Read **API item 2**
+> (unkeyed `ActivitySource` injection) first: it compiles and silently changes
+> where custom spans go. Items 19 and 20 of the API part and item 30 of the
+> telemetry part were added by C18 from the design's "Migration guide inputs";
+> items that a later task changed carry a dated note.
+
 **API part.**
 
 1. **The packages and the namespace were renamed** ([ADR-011](https://github.com/StaffOps/otel-libs/blob/main/specs/decisions/ADR-011-owner-prefixed-package-names.md), task C2).
@@ -644,6 +660,9 @@ emitted telemetry.
    environment variable name. The Profiling package's logger category stays
    `OtelHelper.Profiling` (its prerequisite warning still names it): do not
    rename `Logging:LogLevel` filters for that category.
+   *Superseded 2026-11-12 (task C15; note added by C18): the category no
+   longer exists — the prerequisite warning is an `otelhelper:` line on
+   standard error; see item 18.*
 
 2. **The helper's `ActivitySource` and `Meter` are keyed DI services** (task
    C5, requirement DN5, N1). 0.2.x registered them unkeyed, which replaced the
@@ -899,6 +918,30 @@ emitted telemetry.
    delete them. Install `StaffOps.OtelHelper.Profiling` at the same version as
    `StaffOps.OtelHelper` (it uses the core's internal diagnostics channel).
 
+19. **`appsettings.json` no longer configures the helper's `OTEL_*` rows**
+   (ADR-013; added 2026-11-12, task C18). 0.2.x left the OTLP exporter, the
+   resource detectors and the sampler to the SDK, which read `IConfiguration`,
+   so an `OTEL_*` key in `appsettings.json` (or on the command line, or as a
+   `DOTNET_`/`ASPNETCORE_` variable) worked. The helper now reads its rows from
+   the **process environment**: endpoint, protocol, insecure, headers,
+   timeout, compression and TLS files (no warning), the identity and resource
+   variables, the exporter lists and the exemplar filter have no effect from
+   `appsettings.json`; the sampler, propagator and interval variables warn
+   once (`… is set only in IConfiguration and is not read`). Read from
+   `IConfiguration` as before: `OTEL_SDK_DISABLED`,
+   `OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE`, and the rows the SDK
+   keeps (attribute limits, `OTEL_BSP_*` / `OTEL_BLRP_*` batch and queue
+   sizes). Move the keys to the environment, or bind `TelemetryOptions` from
+   the section (item 5). Table: `dotnet/HOW-TO.md` §2.
+20. **The helper's `HttpClient` replaces the exporter clients** (ADR-013,
+   task C5/C8; added 2026-11-12, task C18, from telemetry item 8). The named
+   `IHttpClientFactory` clients `OtlpTraceExporter`, `OtlpMetricExporter` and
+   `OtlpLogExporter`, and an `HttpClientFactory` or `Headers` an application
+   set on `OtlpExporterOptions`, no longer reach the helper's exporters:
+   headers, TLS files, timeout and compression come from the variables or
+   `TelemetryOptions` (telemetry item 17). Do not add `UseOtlpExporter()` next
+   to `AddOtelHelper()`: every signal is exported twice (warned once).
+
 **Telemetry part.** Each row: before (0.2.x) → after, and what to check in
 dashboards and alerts.
 
@@ -985,6 +1028,9 @@ dashboards and alerts.
    be fixed before the .NET release (task C8: the helper's own client refuses
    redirects loudly, with a diagnostic); until then point endpoints at the
    final URL.
+   *Resolved 2026-11-10 (task C8; note added 2026-11-12 by C18): the helper's
+   own client refuses every redirect with one ERROR line per signal and status
+   code — item 17.*
 6. Upstream fixes now included, visible only in the affected cases:
    - ASP.NET Core server spans and `http.server.request.duration` get
      `error.type` for a 5xx answer without an unhandled exception
@@ -1101,6 +1147,9 @@ dashboards and alerts.
    not a usable `http(s)` URL (another scheme, a port out of range, no host)
    is warned and configures no OTLP endpoint (0.2.x rewrote it into a
    schemeless `https://http://…` target).
+   *Superseded in part 2026-11-10 (task C8; note added 2026-11-12 by C18):
+   compression defaults to `gzip`, the timeout is the helper's, and redirects
+   are refused with an ERROR line (no longer silent) — item 17.*
 9. **"Off" is no exporter, not no instrumentation** (design D-NET3): with a
    signal in `OTEL_HELPER_DISABLED_SIGNALS` (or `DisabledSignals`) the
    instrumentations are still registered and spans are still created; only
@@ -1160,6 +1209,10 @@ dashboards and alerts.
    when the environment is unset or unknown (0.2.x: Debug, through `LOCAL`).
    Check queries on `deployment_environment_name="LOCAL"` and services that
    relied on the Debug level without setting `ENVIRONMENT=LOCAL`.
+   *Added 2026-11-12 (task C18, design "Migration guide inputs" item 1):* a
+   value with `-` is kept as written: `ENVIRONMENT=PRD-BATCH` gives
+   `PRD-BATCH`, which 0.2.x emitted as `PRD_BATCH`; check queries on
+   `PRD_BATCH`.
 13. **`OTEL_RESOURCE_ATTRIBUTES` parsed by the helper, the SDK detectors
    cleared** (task C6, A16, design D-NET7): 0.2.x left the SDK's
    `OtelEnvResourceDetector`, which trims Unicode whitespace, decodes `+` as a
@@ -1356,6 +1409,8 @@ dashboards and alerts.
    | `MeterProvider.ForceFlush()` / `Shutdown()`, dual mode `otlp,prometheus` | `false` | still `false` (upstream: a pull-only reader fails every collection outside a scrape); new `IServiceProvider.ForceFlushOtelHelper(timeoutMilliseconds)` flushes the helper's traces and logs providers and collects only the push metric readers the helper built, and returns their result (a collector answering 500 → `false`) |
    | an application `AddPrometheusHttpListener()` next to an inactive helper listener | its options left alone | left alone (on this branch before C12 the helper's options cleared its prefixes) |
    | an application `AddPrometheusHttpListener()` next to an active helper listener | (0.2.x: the helper's own options delegate only) | both run on their own ports: the helper's reader and options are named `StaffOps.OtelHelper.Prometheus` (fix round 1; before, both got the helper's prefix and the second start failed) |
+
+   *Corrected 2026-11-12 (C18):* in the OTLP-only row above, `ForceFlush()` returns the OTLP result; `Shutdown()` returns `true` whatever the export result (upstream, measured; the Check text below).
 
    Check: a deployment that set `OTEL_EXPORTER_PROMETHEUS_PORT` (or `_HOST`)
    for another purpose now moves (or restricts) the listener; scrape configs
@@ -1555,6 +1610,19 @@ dashboards and alerts.
    structured-metadata or LogQL queries on `SpanId`/`TraceId`/`ParentId` stop
    matching, and so do Collector rules that read them. Other logging providers
    (console, third-party) still get the scope.
+
+30. **Moving to the .NET 9+ runtime** (added 2026-11-12, task C18; design
+   "Migration guide inputs" item 14). Not a helper change: it follows the
+   runtime, for any helper version (a `net8.0` app under roll-forward
+   included), and is already listed in the `0.2.1` notes. On the .NET 9+
+   runtime the runtime metrics come from the built-in `System.Runtime` meter
+   (`dotnet.*`, e.g. `dotnet.gc.collections`, instead of
+   `process.runtime.dotnet.*`); the HttpClient `url.full` query is redacted as
+   `?*` (the .NET 8 runtime writes `?key=Redacted`), userinfo removed; ASP.NET
+   Core 10 adds the `Microsoft.AspNetCore.Authorization`, `.Authentication`,
+   `.Identity` and `.MemoryPool` meters. The `0.3.0-rc.1` packages target
+   `net8.0` (`dotnet/README.md` ".NET 10 Note"); task C0 retargets to
+   `net10.0` and adds the section for consumers still on the .NET 8 runtime.
 
 ### Collector / platform prerequisites (before rolling 0.3.0 out)
 
@@ -2433,6 +2501,25 @@ Phase C work on this branch (no .NET release yet; the first will be
   `otelcol-contrib validate` clean, contrib 0.160.0); HOW-TO §4 warns against a
   second `LoggerFactory` over the host's providers (scope-aware providers keep
   only the last scope provider: upstream behavior).
+- **.NET: documentation pass (task C18, 2026-11-12).** No code change.
+  `dotnet/README.md`, `HOW-TO.md`, `TESTS.md`, `example/EXAMPLES.md` (now in
+  English) and `example/README.md` describe the 0.3 contract as the branch
+  implements it: version notes rewritten, every measured C4–C17 behavior in
+  the user docs with the exact `otelhelper:` lines from the code (a new README
+  section "Helper diagnostics (standard error)"; HOW-TO §2 on where settings
+  are read — environment, `appsettings.json`, code — bound options, keyed DI
+  and `ClearProviders`), the exception rule (ADR-014) stated wherever a span
+  can carry an exception (the HOW-TO "Mark Span with Error" sample no longer
+  puts `ex.Message` on the span; HTTP and gRPC spans still record the message
+  and stack trace, now said). Corrected against the code: the stale "the
+  Prometheus variables have no effect" text, the OTLP-only `Shutdown()` result,
+  the gRPC portless and TLS warning texts, the batch-size defaults. Root
+  `README.md` (contract heading for every language, ".NET notes" replacing
+  ".NET 0.2.x differences", new gap rows for the `/metrics` requests and the
+  resource detectors, the stale ".NET still on 0.2.x" row replaced),
+  `AGENTS.md`, `CONSUMING.md` (the `0.3.0-rc.1` install), and the `release` and
+  `parity-case` skills (.NET steps). Migration guide: a status note, API items
+  19–20, telemetry item 30 and dated notes on items superseded by later tasks.
 
 ### Breaking — telemetry output changes (dashboards/alerts)
 

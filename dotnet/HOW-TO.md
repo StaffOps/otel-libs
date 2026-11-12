@@ -2,10 +2,16 @@
 
 Practical guide for developers. One line configures everything — traces, metrics, and correlated logs.
 
-> **Version note.** This guide describes the shipped **0.2.x** .NET behavior.
-> The `0.3.0` config contract ships in Go and Python first; .NET adopts it in
-> Phase C ([tasks](https://github.com/StaffOps/otel-libs/blob/main/specs/config-contract-v0.3/tasks.md),
-> ADR-004). See the [root README](https://github.com/StaffOps/otel-libs/blob/main/README.md) for the cross-language matrix.
+> **Version note.** This guide describes the `0.3` contract as the .NET helper
+> implements it on this branch (Phase C of
+> [`specs/dotnet-otel-helper/`](https://github.com/StaffOps/otel-libs/blob/main/specs/dotnet-otel-helper/tasks.md),
+> tasks C4–C17), first published as the release candidate `0.3.0-rc.1` (tag
+> `dotnet/v0.3.0-rc.1`) after the final validation, task C19. Notes marked
+> "0.3 (this branch, task C<n>)" say what changed from the released `0.2.x`;
+> "0.2.x:" gives the released behavior. The whole list of changes, in two parts
+> (API; telemetry), is the .NET migration guide in
+> [`CHANGELOG.md`](https://github.com/StaffOps/otel-libs/blob/main/CHANGELOG.md).
+> See the [root README](https://github.com/StaffOps/otel-libs/blob/main/README.md) for the cross-language matrix.
 
 ---
 
@@ -51,7 +57,69 @@ builder.Services.AddOtelHelper(opts =>
 });
 ```
 
-> No need to configure endpoints, sampling, or exporters. The lib resolves everything via environment variables injected by infrastructure (`SERVICE_NAME`, `ENVIRONMENT`, `OTEL_EXPORTER_OTLP_ENDPOINT`).
+> No need to configure endpoints, sampling, or exporters. The lib resolves everything via environment variables injected by infrastructure (`OTEL_SERVICE_NAME`, `OTEL_RESOURCE_ATTRIBUTES`, `OTEL_EXPORTER_OTLP_ENDPOINT`; the 0.2 names `SERVICE_NAME` and `ENVIRONMENT` still work and warn once, §10).
+
+### Where the helper reads its settings: environment, `appsettings.json`, code (0.3, this branch, ADR-013)
+
+The helper resolves every contract row itself and builds its own OTLP exporters
+(ADR-013), so the SDK's own reading of `IConfiguration` no longer applies to them.
+
+| Setting | Read from | A value only in `appsettings.json` (or another `IConfiguration` source) |
+|---|---|---|
+| Identity and resource: `OTEL_SERVICE_NAME`, `OTEL_RESOURCE_ATTRIBUTES`, `SERVICE_NAME`, `ENVIRONMENT` | process environment | no effect (the SDK detectors that read `IConfiguration` are replaced by the helper's resource) |
+| OTLP export: `OTEL_EXPORTER_OTLP[_<SIGNAL>]_ENDPOINT`, `_PROTOCOL`, `_INSECURE`, `_HEADERS`, `_TIMEOUT`, `_COMPRESSION`, `_CERTIFICATE`, `_CLIENT_KEY`, `_CLIENT_CERTIFICATE` | process environment | no effect, **no warning** |
+| `OTEL_TRACES_SAMPLER`, `OTEL_TRACES_SAMPLER_ARG`, `OTEL_PROPAGATORS`, `OTEL_METRIC_EXPORT_INTERVAL` | process environment | no effect, one warning (below) |
+| `OTEL_{TRACES,METRICS,LOGS}_EXPORTER`, `OTEL_METRICS_EXEMPLAR_FILTER`, `OTEL_HELPER_*`, `OTEL_EXPORTER_PROMETHEUS_*` | process environment | no effect |
+| `OTEL_EXPORTER_OTLP_METRICS_DEFAULT_HISTOGRAM_AGGREGATION` | process environment, or an `IConfiguration` **instance** registered before `AddOtelHelper()` | a host's `appsettings.json` value: one warning at provider build, not applied (§15) |
+| SDK-owned rows: `OTEL_SDK_DISABLED`, `OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE` | `IConfiguration` (which, in a host, includes the environment) — the helper reads the same key the SDK reads | applied |
+| SDK-owned rows: attribute limits (`OTEL_ATTRIBUTE_VALUE_LENGTH_LIMIT`, `OTEL_SPAN_*`, `OTEL_LOGRECORD_*`), batch sizes and queues (`OTEL_BSP_*`, `OTEL_BLRP_*`) | read by the SDK (environment or `IConfiguration`) | applied by the SDK |
+| `OTEL_DOTNET_EXPERIMENTAL_ASPNETCORE_ENABLE_GRPC_INSTRUMENTATION` (upstream key, §3) | application configuration (environment or `appsettings.json`) | applied |
+
+The warning for the four rows that say so (example for the sampler; the
+propagator line ends `set it in the process environment`, the interval line
+`… or TelemetryOptions.ExportIntervalMs, using 30000`):
+
+```text
+otelhelper: WARN OTEL_TRACES_SAMPLER is set only in IConfiguration and is not read; set it in the process environment or TelemetryOptions.Sampler variable=OTEL_TRACES_SAMPLER using=parentbased_always_on
+```
+
+**Moving from 0.2.x:** the 0.2 helper let the SDK read `OTEL_*` keys from
+`appsettings.json` (for example `OTEL_EXPORTER_OTLP_HEADERS` or
+`OTEL_SERVICE_NAME`). Move those keys to the process environment (Helm values,
+container env), or set the matching `TelemetryOptions` property.
+
+### Options bound from configuration count as code
+
+`TelemetryOptions` values bound from a configuration section are **code
+values**: they win over the environment, and an invalid one fails host start
+(the environment only warns, §10):
+
+```csharp
+// appsettings.json: { "Telemetry": { "ServiceName": "checkout-api", "HttpOptInMetrics": true } }
+builder.Services.Configure<TelemetryOptions>(builder.Configuration.GetSection("Telemetry"));
+builder.Services.AddOtelHelper();
+```
+
+A `Configure<TelemetryOptions>` registered after `AddOtelHelper()` is honored
+too (values are read when the providers are built). Leave a property unset
+(`null`) to let the environment decide.
+
+### Keyed `ActivitySource` and `Meter`
+
+The helper registers its `ActivitySource` and `Meter` as **keyed** services,
+key `OtelHelperKeys.Instrumentation` (§5, §6). An unkeyed parameter still
+compiles but gets something else: in a web host an unkeyed `ActivitySource` is
+ASP.NET Core's own source (your spans are exported under the `Microsoft.AspNetCore`
+scope) and an unkeyed `Meter` is null; in a worker both are null. Always inject
+with `[FromKeyedServices(OtelHelperKeys.Instrumentation)]`.
+
+### Your logging providers (`ClearProviders`)
+
+The helper adds its own logging providers (OTLP; the stdout JSON line when no
+logs exporter is active) and never removes yours. Call
+`builder.Logging.ClearProviders()` **before** `AddOtelHelper()` to drop the
+host's console provider (after it, it removes the helper's providers too) — see
+§4 "Stdout fallback".
 
 ### Your own resource configuration
 
@@ -157,9 +225,13 @@ or in `appsettings.json`:
 | Status of a failed RPC | from the HTTP status: 200, so UNSET | ERROR for `UNKNOWN`, `DEADLINE_EXCEEDED`, `UNIMPLEMENTED`, `INTERNAL`, `UNAVAILABLE`, `DATA_LOSS`; UNSET for the other codes (`NOT_FOUND` included) |
 | `grpc.health.v1.Health/*` | no span | no span |
 
-When gRPC endpoints are mapped and the key is not `true`, the helper writes
-one line at start:
-`otelhelper: WARN gRPC endpoints are mapped but OTEL_DOTNET_EXPERIMENTAL_ASPNETCORE_ENABLE_GRPC_INSTRUMENTATION is not true in the application configuration: … variable=OTEL_DOTNET_EXPERIMENTAL_ASPNETCORE_ENABLE_GRPC_INSTRUMENTATION`.
+At application start, when gRPC endpoints are mapped, traces are exported and
+the key is not `true`, the helper writes one line on standard error:
+
+```text
+otelhelper: WARN gRPC endpoints are mapped but OTEL_DOTNET_EXPERIMENTAL_ASPNETCORE_ENABLE_GRPC_INSTRUMENTATION is not true in the application configuration: gRPC server spans are HTTP-shaped (POST /pkg.Svc/Method, status from the HTTP status 200), without the RPC conventions; set it to true to trace them as RPC spans variable=OTEL_DOTNET_EXPERIMENTAL_ASPNETCORE_ENABLE_GRPC_INSTRUMENTATION
+```
+
 The value is read as the instrumentation reads it (`bool.TryParse`, so `True`
 works and `1` does not).
 
@@ -254,6 +326,7 @@ of standard output, the same line Go and Python write (contract D6, A23):
 | `level` | `DEBUG` (Trace, Debug), `INFO`, `WARN`, `ERROR` (Error **and** Critical: the four words Go, Python and Node.js write; Python maps CRITICAL to ERROR, Go and Node.js have no fifth level) |
 | `msg` | the formatted message |
 | `logger` | the category (`ILogger<T>`: the full type name) |
+| `trace_id`, `span_id` | right after `logger`, only for a record written while a span is current (32 / 16 lower-case hex digits); a state value with either name is then dropped (contract A23 amendment of 2026-11-11; Go, Python and Node.js add them with task A36) |
 | the state values | after `logger`, in template order; numbers and booleans as JSON, non-finite numbers and other values as text, a collection as an array of at most 1000 items (then `"…"`); `{OriginalFormat}` left out; the first of duplicate names kept; a value named `time`, `level`, `msg` or `logger` is dropped |
 | `exception` | last, the exception's `ToString()` (one line: the line breaks are escaped) |
 
@@ -262,13 +335,22 @@ ILogger scopes are not written on this line. It is written synchronously, one
 Linux and container default); with another console encoding, characters outside the
 BMP stay `\uXXXX\uXXXX` escapes (still valid JSON) instead of becoming `?`; a lone
 surrogate becomes U+FFFD. A value whose `ToString()` recurses without end cannot be
-guarded (a stack overflow ends the process in .NET). The provider writes nothing while a logs exporter
+guarded (a stack overflow ends the process in .NET). `AddJsonConsole()` is no
+substitute: it writes `Timestamp` (`+00:00`), `LogLevel`, `Category` and `State`
+(measured with Microsoft.Extensions.Logging.Console 8.0.1, task C13), not the
+contract field names or level words. The provider writes nothing while a logs exporter
 is active (no tee), and `OTEL_LOGS_EXPORTER=console` gives the OpenTelemetry
 console exporter instead (§15), not this line.
 
 The helper does not remove the host's console provider: an app that keeps it gets
-each record twice on stdout, and the helper warns once at host start
-(`… written to standard output twice …`). To keep only the JSON line:
+each record twice on stdout, and the helper writes once at host start, on
+standard error:
+
+```text
+otelhelper: WARN no logs exporter is active, so each record is written to standard output twice: as the helper's JSON line and by the console logging provider; call builder.Logging.ClearProviders() before AddOtelHelper(), or remove only the console provider, to keep one
+```
+
+To keep only the JSON line:
 
 ```csharp
 var builder = WebApplication.CreateBuilder(args);
@@ -310,7 +392,13 @@ activity. The helper does **not** export that scope (task C17 fix round 1,
 design D-NET10 (g)): the record's own trace context already says it. The filter
 goes by origin, not by key — your own scope with a `SpanId` key is exported, and
 so are the opt-in `ActivityTrackingOptions.Tags`/`Baggage` scopes. Other logging
-providers (console, third-party) still get the scope.
+providers (console, third-party) still get the scope. If the OpenTelemetry
+logger provider takes no scope provider (not the case with OpenTelemetry 1.20),
+the helper cannot apply the filter and writes once:
+
+```text
+otelhelper: WARN the OpenTelemetry logger provider accepts no scope provider: the activity-tracking scope (SpanId, TraceId, ParentId) will be exported as log attributes
+```
 
 ```text
 before (C17, measured):  attributes order.id, {OriginalFormat}, SpanId, TraceId, ParentId
@@ -423,10 +511,21 @@ try
 }
 catch (Exception ex)
 {
-    activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+    // The type stays on the span; the message and stack trace go to a log record
+    // correlated by trace_id / span_id (written inside the activity), never the span.
+    activity?.SetStatus(ActivityStatusCode.Error);
+    activity?.SetTag("error.type", ex.GetType().FullName);
+    logger.LogError(ex, "critical-operation failed");
     throw;
 }
 ```
+
+> Keep exception detail out of spans (ADR-014): no `ex.Message` in the status
+> description or in a tag. The `ILogger` record written while the activity is
+> current carries its `trace_id` and `span_id` (OTLP, and the stdout fallback
+> line), so Grafana links the trace to the detail. `activity.AddException(ex)`
+> would copy the message and stack trace into a span event — avoid it for
+> errors whose text can hold data.
 
 ### Traces in Workers / Background Services
 
@@ -447,7 +546,8 @@ while (!ct.IsCancellationRequested)
 }
 ```
 
-> `StartRootActivity` ignores the current activity and creates a root span (new traceId). Use whenever you want an independent trace per iteration. 0.3 (this branch, task C10): while the root runs it is `Activity.Current`; when it is disposed, the activity that was current before the call is current again (0.2.x left `Activity.Current` null). When no activity is created (no listener, or the sampler drops it) the call returns `null` and leaves `Activity.Current` as it was.
+> `StartRootActivity` ignores the current activity and creates a root span (new traceId). Use whenever you want an independent trace per iteration. 0.3 (this branch, task C10): while the root runs it is `Activity.Current`; when it is disposed, the activity that was current before the call is current again (0.2.x left `Activity.Current` null). When no activity is created (no listener, or the sampler drops it) the call returns `null` and leaves `Activity.Current` as it was. The restore uses a private runtime field; on a runtime without it the helper writes once on standard error and `Activity.Current` is null after the root stops:
+> `otelhelper: WARN StartRootActivity cannot restore the previous Activity.Current on this runtime; it is null after the root stops`
 
 ---
 
@@ -508,7 +608,7 @@ Interlocked.Decrement(ref queueItems);
 
 Exemplars are automatic. When a metric is recorded during an active trace, the SDK links the metric to the trace. In Grafana, clicking a metric point lets you jump directly to the corresponding trace.
 
-The helper sets the exemplar filter itself, because the .NET SDK default is `AlwaysOff` while the OpenTelemetry specification's is `trace_based`. 0.3 (this branch, task C9): `OTEL_METRICS_EXEMPLAR_FILTER` chooses it — `trace_based` (default: only measurements taken under a sampled span), `always_on`, `always_off`; any other value warns and `trace_based` is used. To set it in code, register your own call after `AddOtelHelper()`, which wins (a call registered before `AddOtelHelper()` is overridden by the helper's, without a warning):
+The helper sets the exemplar filter itself, because the .NET SDK default is `AlwaysOff` while the OpenTelemetry specification's is `trace_based`. 0.3 (this branch, task C9): `OTEL_METRICS_EXEMPLAR_FILTER` chooses it — `trace_based` (default: only measurements taken under a sampled span), `always_on`, `always_off`; any other value warns and `trace_based` is used (`otelhelper: WARN invalid OTEL_METRICS_EXEMPLAR_FILTER: unsupported exemplar filter, using trace_based; valid values: always_on, always_off, trace_based variable=OTEL_METRICS_EXEMPLAR_FILTER value=sometimes`). To set it in code, register your own call after `AddOtelHelper()`, which wins (a call registered before `AddOtelHelper()` is overridden by the helper's, without a warning):
 
 ```csharp
 builder.Services.AddOtelHelper();
@@ -646,7 +746,8 @@ stripped of trailing slashes, then compared exactly — `/Health/`,
 `/healthz?probe=1`, `/%68ealth` and `/HEALTH%2f` match `/health`;
 `/users/ping`, `/healthcare` and `/health/live` do not. The gRPC health
 service `grpc.health.v1.Health` (Check, Watch, List) is never traced, on the
-server or the client. Health requests are still counted in
+server or the client (the service name is matched case-sensitively, as gRPC
+method paths are). Health requests are still counted in
 `http.server.request.duration` (so probe failures stay visible; exclude health
 routes in SLI queries) and spans started inside a health request are dropped
 too. 0.2.x: `/ping`, `/health`, `/healthz`, `/ready` only, no trailing-slash,
@@ -670,6 +771,10 @@ must be ASCII, start with `/` and have no `?`, `#` or `,`, or start fails):
 builder.Services.AddOtelHelper(opts => opts.HealthPaths = new List<string> { "/status", "/internal/ready" });
 ```
 
+An invalid item fails host start; the ERROR line on standard error ends with
+the validation message, for example
+`… host start fails: TelemetryOptions.HealthPaths item #2 (health) must be ASCII, start with "/" and have no query, fragment or comma.`
+
 **Your own instrumentation options.** The helper sets `Filter` and
 `RecordException` on `AspNetCoreTraceInstrumentationOptions`,
 `FilterHttpRequestMessage` and `RecordException` on
@@ -690,15 +795,22 @@ keeps what ASP.NET Core and `System.Net.Http` record besides:
 `http.server.active_requests`, `http.client.active_requests`,
 `http.client.open_connections`, `http.client.connection.duration` and
 `http.client.request.time_in_queue` (one INFO line says so; .NET records no
-body sizes). 0.2.x exported them always: dashboards on them need the switch.
+body sizes):
+
+```text
+otelhelper: INFO HTTP opt-in metrics on: ASP.NET Core and System.Net.Http record the active requests and the client connection metrics, and have no body-size instruments
+```
+ 0.2.x exported them always: dashboards on them need the switch.
 An instrument of your own meter with one of these names is kept, and
 `OTEL_HELPER_DISABLED_METRICS` still drops a switched-on one.
 
 ### Exceptions Recorded in Spans
 
-When an exception occurs in HTTP requests (inbound/outbound) or SQL queries, the lib automatically records a **span event** with `exception.type`, `exception.message`, and `exception.stacktrace`.
+When an exception occurs in an HTTP request (inbound ASP.NET Core, which also carries gRPC server calls, or outbound HttpClient), the lib records a **span event** (`RecordException`) with `exception.type`, `exception.message` and `exception.stacktrace`.
 
 0.3 (this branch): database client spans (SqlClient, Npgsql, MySqlConnector, Redis) and AWS SDK spans (task C14c) keep only `exception.type`; the message and stack trace go to a correlated log record — see [Exceptions: traces vs logs](#exceptions-traces-vs-logs) (§14, ADR-014; AWS examples in [AWS](#aws-spans-failed-calls-and-url-redaction)).
+
+**HTTP and gRPC spans are not covered by that rule yet** (ADR-014 decision 4: their review is contract task A37, all languages): their `exception` event still holds the message and the stack trace, so treat traces as possibly holding data. For your own code, follow the rule by hand — the type on the span, the detail in a log record correlated by `trace_id` / `span_id` (§5 "Mark Span with Error"). To drop the event text from the framework spans, set `RecordException = false` in a `Configure<AspNetCoreTraceInstrumentationOptions>` / `Configure<HttpClientTraceInstrumentationOptions>` registered after `AddOtelHelper()` (not measured by the helper's tests).
 
 ### Framework Logs Filtered
 
@@ -801,6 +913,16 @@ An unknown `OTEL_HELPER_DISABLED_SIGNALS` entry is echoed **lowercased**
 (`Profiles` → `value=profiles`), as in Go and Node.js: the list is trimmed and
 ASCII-lowercased before it is checked.
 
+The obsolete code option and the unsupported declarative-configuration
+variables warn the same way, once per container (the value or path is never
+printed):
+
+```text
+otelhelper: WARN TelemetryOptions.ExtraInstrumentation has no effect in .NET; add the opt-in packages (StaffOps.OtelHelper.Sql, .AWS, .Redis) instead
+otelhelper: WARN OTEL_CONFIG_FILE is not supported by the .NET helper and is ignored; configure it with environment variables or TelemetryOptions variable=OTEL_CONFIG_FILE
+otelhelper: WARN OTEL_EXPERIMENTAL_CONFIG_FILE is not supported by the .NET helper and is ignored; configure it with environment variables or TelemetryOptions variable=OTEL_EXPERIMENTAL_CONFIG_FILE
+```
+
 ### Configuration Priority
 
 1. **Code** (override in `AddOtelHelper(opts => ...)`) — highest priority
@@ -847,7 +969,7 @@ Yes. The lib works with any app that uses `IServiceCollection`. Workers, console
 
 ### You do NOT control sampling in code
 
-Sampling is done by the OTel Collector (Agent). The lib sends **all** spans to the Collector, which decides what to keep.
+Sampling is done by the OTel Collector (Agent). The lib records every root span and every span whose parent is sampled (`parentbased_always_on`, below) and sends them to the Collector, which decides what to keep; a child of an unsampled caller is not recorded. Change the head sampler (`opts.Sampler`, `OTEL_TRACES_SAMPLER`) only with a reason.
 
 ### Debug mode — force 100% sampling
 
@@ -876,7 +998,24 @@ The helper always sets the SDK sampler (ADR-002), also when traces are off, so t
 | anything else (also a non-ASCII spelling) | `unknown sampler (valid: …)`, default |
 | `OTEL_HELPER_SAMPLE_RATIO=0.1` | `parentbased_traceidratio` 0.1; `2` or `abc` → `sample ratio is not a number in [0, 1]`, default (0.2.x clamped and used a bare ratio sampler) |
 
-The sampler variables are read from the process environment only: a value only in `appsettings.json` (`IConfiguration`) is not read and warns once (`… is set only in IConfiguration and is not read`). 0.2.1 already ignored such a value (it checked the process environment before leaving the sampler to the SDK), silently.
+The lines on standard error (one each per value; examples):
+
+```text
+otelhelper: WARN sampler is unsupported by this helper variable=OTEL_TRACES_SAMPLER value=xray using=parentbased_always_on
+otelhelper: WARN unknown sampler (valid: always_on, always_off, traceidratio, parentbased_always_on, parentbased_always_off, parentbased_traceidratio) variable=OTEL_TRACES_SAMPLER value=foo using=parentbased_always_on
+otelhelper: WARN sampler argument is not a number in [0, 1] for traceidratio variable=OTEL_TRACES_SAMPLER_ARG value=2 using=1.0
+otelhelper: WARN sample ratio is not a number in [0, 1] variable=OTEL_HELPER_SAMPLE_RATIO value=abc using=parentbased_always_on
+```
+
+A valid value writes no line.
+
+The sampler variables are read from the process environment only: a value only in `appsettings.json` (`IConfiguration`) is not read and warns once (§2):
+
+```text
+otelhelper: WARN OTEL_TRACES_SAMPLER is set only in IConfiguration and is not read; set it in the process environment or TelemetryOptions.Sampler variable=OTEL_TRACES_SAMPLER using=parentbased_always_on
+```
+
+0.2.1 already ignored such a value (it checked the process environment before leaving the sampler to the SDK), silently.
 
 With `OTEL_TRACES_EXPORTER=none` the ParentBased sampler stays, as Go and Python keep an SDK provider there: a request that arrives with a sampled `traceparent` is passed on by `HttpClient` with the same trace id and the sampled flag, and a root request starts a sampled trace (measured by `Traces_Off_Server_Passes_The_Inbound_Trace_On`). An `AlwaysOffSampler` there would forward `00` and make every ParentBased service downstream drop the trace.
 
@@ -884,7 +1023,16 @@ With traces **disabled** (`OTEL_HELPER_DISABLED_SIGNALS=traces`, `opts.DisabledS
 
 ### Propagators (0.3, this branch, task C10)
 
-`OTEL_PROPAGATORS` is read per token: `tracecontext`, `baggage`, `none`. Other tokens warn once each and are skipped (`propagator not supported by the .NET helper, ignored` for `b3`, `b3multi`, `jaeger`, `xray`, `ottrace`; `unknown propagator, ignored` otherwise); each line names the effective list as `using=`. `none` disables propagation and wins over other tokens (warned when combined). The list is installed process-wide with `Sdk.SetDefaultTextMapPropagator`, also under `OTEL_SDK_DISABLED=true` (no span context then, baggage still propagates).
+`OTEL_PROPAGATORS` is read per token: `tracecontext`, `baggage`, `none`. Other tokens warn once each and are skipped (`propagator not supported by the .NET helper, ignored` for `b3`, `b3multi`, `jaeger`, `xray`, `ottrace`; `unknown propagator, ignored` otherwise); each line names the effective list as `using=`. `none` disables propagation and wins over other tokens (warned when combined). Examples:
+
+```text
+otelhelper: WARN propagator not supported by the .NET helper, ignored variable=OTEL_PROPAGATORS value=b3 using="tracecontext, baggage"
+otelhelper: WARN unknown propagator, ignored variable=OTEL_PROPAGATORS value=foo using="tracecontext, baggage"
+otelhelper: WARN "none" combined with other propagators; propagation disabled variable=OTEL_PROPAGATORS value=none,tracecontext using=none
+otelhelper: WARN OTEL_PROPAGATORS is set only in IConfiguration and is not read; set it in the process environment variable=OTEL_PROPAGATORS using="tracecontext, baggage"
+```
+
+ The list is installed process-wide with `Sdk.SetDefaultTextMapPropagator`, also under `OTEL_SDK_DISABLED=true` (no span context then, baggage still propagates).
 
 .NET carries context in three places, and all three follow the list in both directions: the OpenTelemetry propagator above; the runtime's `DistributedContextPropagator.Current`, with which `HttpClient` writes `traceparent`, `tracestate` and `baggage` on its own; and the `DistributedContextPropagator` service ASP.NET Core extracts inbound context with. The helper sets the first two at resolution and replaces the third in the container (`AddOtelHelper`; the web host adds the runtime default with `TryAddSingleton`, before or after the application's services — both orders are tested). Its propagator delegates to the runtime default and drops what is not listed:
 
@@ -898,10 +1046,15 @@ With traces **disabled** (`OTEL_HELPER_DISABLED_SIGNALS=traces`, `opts.DisabledS
 Notes:
 
 - `AddOtelHelper` already sets `DistributedContextPropagator.Current` (from `OTEL_PROPAGATORS`, which is read from the environment only), so an `HttpClient` created during configuration or before the host starts follows the list too; the traces-disabled and SDK-disabled settings are added when the host starts (the handler reads them per request). An `HttpClient` created before `AddOtelHelper` runs keeps the runtime default.
-- A runtime propagator the application set (`DistributedContextPropagator.Current = …`), before or after `AddOtelHelper`, is kept for handlers created afterwards; one warning when the configuration needs another. A `DistributedContextPropagator` service it registered is kept too, with one warning that ASP.NET Core extracts inbound context with it, not as `OTEL_PROPAGATORS` says.
+- A runtime propagator the application set (`DistributedContextPropagator.Current = …`), before or after `AddOtelHelper`, is kept for handlers created afterwards; one warning when the configuration needs another. A `DistributedContextPropagator` service it registered is kept too, with one warning that ASP.NET Core extracts inbound context with it, not as `OTEL_PROPAGATORS` says:
+
+  ```text
+  otelhelper: WARN the application replaced DistributedContextPropagator.Current; HttpClient keeps writing context with it, not as OTEL_PROPAGATORS and the disabled signals say variable=OTEL_PROPAGATORS
+  otelhelper: WARN the application registered its own DistributedContextPropagator service; ASP.NET Core extracts inbound context with it, not as OTEL_PROPAGATORS says variable=OTEL_PROPAGATORS
+  ```
 - Under `OTEL_SDK_DISABLED=true` with `tracecontext`, the helper's activity listener is process-wide: ASP.NET Core then creates a propagation-only (non-recorded) activity for every request that carries a `traceparent`, in every host of the process, until the container that started it is disposed.
 - With traces or the SDK disabled, only an activity with a **remote** parent (`HasRemoteParent`, as ASP.NET Core and the instrumentations create) passes its inbound context on; an activity an application starts with `SetParentId(string)` or with a local context counts as started here and carries nothing. The SDK's expected "Failed to inject activity context … 'Invalid context'" line is not forwarded then.
-- The settings are process-wide: the last container resolved wins, and nothing is restored when it is disposed.
+- The settings are process-wide: the last container resolved wins, and nothing is restored when it is disposed. Known open item (C10 code review, carried to task C19): each `AddOtelHelper` call writes these settings, so a second host's `AddOtelHelper` briefly resets an earlier container's traces-disabled pass-through until the second container resolves.
 - The HttpClient health list the runtime propagator checks (no trace context on a health request, §9) is process-wide too: the last container whose HttpClient instrumentation options were built wins (C11 fix round 2).
 - A `SocketsHttpHandler` takes the runtime propagator when it is created: an `HttpClient` created before the host starts keeps the earlier one. `IHttpClientFactory` handlers are created later and follow the setting.
 - Without a host (a bare `ServiceProvider`) the propagators are installed when the helper's settings are first resolved: when a provider is built, or the keyed `ActivitySource`/`Meter` (`OtelHelperKeys.Instrumentation`) is resolved. Under `OTEL_SDK_DISABLED=true` the no-op providers run no helper code, so resolve the keyed `ActivitySource` once, or use a host (it resolves the settings at start).
@@ -1017,7 +1170,8 @@ builder.Services.Configure<OpenTelemetry.Instrumentation.SqlClient.SqlClientTrac
 `System.Diagnostics.Activity` has no API to remove an event, so the helper
 rebuilds the event list through a private field; if a future runtime lacks it,
 the helper writes one warning on standard error and leaves the events as they
-are. MySqlConnector adds its event after the span ended: only the helper's
+are:
+`otelhelper: WARN cannot rewrite span events on this runtime (System.Diagnostics.Activity has no _events field); database and AWS exception events keep their message and stack trace (ADR-014)`. MySqlConnector adds its event after the span ended: only the helper's
 exporters see it in time, so an exporter you add yourself still gets the full
 event for MySqlConnector (and no log record is written for it on that path) —
 an exception to ADR-014. Export through the helper, or delete the detail at the
@@ -1486,7 +1640,10 @@ Python and Node.js): `sig`, `Signature`, `AWSAccessKeyId`, `X-Goog-Signature`,
 `X-Goog-Credential`, `GoogleAccessId`. Other names (`X-Amz-Date`, `token`,
 `api_key`), lower-case variants (`x-amz-signature`) and names without `=` are
 kept; every other byte of the query stays as written; a value already
-`Redacted` is left as upstream wrote it. Measured with both switches off
+`Redacted` is left as upstream wrote it. The rule changes query values only:
+userinfo in a span URL is left as written (HttpClient already removes it from
+`url.full`), and IPv6 hosts (`http://[::1]:8080/?sig=x`) are handled like any
+other host. Measured with both switches off
 (.NET 8 runtime):
 
 ```text
@@ -1759,7 +1916,7 @@ When `OTEL_EXPORTER_OTLP_ENDPOINT` is **not set**, the library automatically fal
 | Traces | In-process only (context propagation works, no export) |
 | Logs | stdout: one JSON object per line (§4 "Stdout fallback"; no OTel export) |
 
-The port is configurable via `OTEL_HELPER_METRICS_PORT` env var (default: `9464`).
+The port is configurable (default `9464`; precedence and bind address below).
 
 This enables the standard Kubernetes scrape pattern: deploy without a Collector, and let Prometheus/VictoriaMetrics scrape `/metrics` directly from the pod.
 
@@ -1768,15 +1925,15 @@ managed `HttpListener` maps `+` to `IPAddress.Any`, as it did 0.2.x's `*`), so
 a scraper in another pod or container reaches it — and answers each scrape
 with a fresh collection (no response cache). There is no IPv6 bind: on an
 IPv6-only cluster a scrape of the pod IP fails (known limitation, unchanged
-from 0.2.x). The upstream exporter's own
-`OTEL_EXPORTER_PROMETHEUS_HOST` / `OTEL_EXPORTER_PROMETHEUS_PORT` have no
-effect; set the port with `OTEL_HELPER_METRICS_PORT`.
+from 0.2.x). 0.2.x ignored `OTEL_EXPORTER_PROMETHEUS_HOST` /
+`OTEL_EXPORTER_PROMETHEUS_PORT`; the helper honors them now (below).
 `testing/e2e/dotnet-prom-scrape.sh` checks the scrape from another container.
 
 ### Port, bind address and flushing (0.3, this branch, task C12)
 
-The paragraph above describes 0.2.x and the branch before task C12. Now the
-helper honors the standard variables (contract A29):
+The helper honors the standard variables (contract A29); the lines it writes
+for invalid values, IPv6 hosts and a failed bind are listed in
+[README "Prometheus fallback"](README.md#prometheus-fallback-03-this-branch):
 
 ```bash
 # Port: code PrometheusMetricsPort > OTEL_EXPORTER_PROMETHEUS_PORT > OTEL_HELPER_METRICS_PORT > 9464
@@ -1880,8 +2037,31 @@ OTEL_LOGS_EXPORTER=none
 - `console` is the OpenTelemetry console exporter (package `OpenTelemetry.Exporter.Console`): a multi-line, human-readable dump per span, log record or metric on `Console.Out`, meant for local debugging, not for a log pipeline. Each language prints its SDK's native format (JSON in Go, one object per line, and indented JSON in Python; `console.dir` objects in Node.js), so console output is not comparable across languages.
 - `none` turns the signal off: no exporter, and for traces no `ActivitySource` of the helper is listened to. With `none` and other entries (`none,otlp`) the helper warns and `none` wins.
 - `logging` is a deprecated alias of `console` in the variables (one warning); unknown entries (`zipkin`, `jaeger`) warn and are dropped; a variable with only unknown entries is treated as unset.
+- `OTEL_METRICS_EXPORTER=otlp` without a metrics endpoint warns and is dropped; when nothing is left the default (`prometheus`) applies. In code, `MetricExporters = "logging"` or an unknown entry fails start.
+
+The lines (examples):
+
+```text
+otelhelper: WARN deprecated exporter value 'logging' in OTEL_TRACES_EXPORTER; use 'console' variable=OTEL_TRACES_EXPORTER value=logging using=console
+otelhelper: WARN invalid OTEL_TRACES_EXPORTER: unknown exporter ignored; valid values: otlp, console, none variable=OTEL_TRACES_EXPORTER value=zipkin,otlp
+otelhelper: WARN invalid OTEL_LOGS_EXPORTER: 'none' combined with other exporters: the signal is not exported variable=OTEL_LOGS_EXPORTER value=none,otlp
+otelhelper: WARN metric exporter 'otlp' has no endpoint and is ignored; set OTEL_EXPORTER_OTLP_ENDPOINT or OTEL_EXPORTER_OTLP_METRICS_ENDPOINT variable=OTEL_METRICS_EXPORTER
+otelhelper: WARN invalid OTEL_HELPER_DISABLED_SIGNALS: unknown signal ignored; valid values: traces, metrics, logs variable=OTEL_HELPER_DISABLED_SIGNALS value=spans
+```
+
+A code value fails start with the validation message after `host start fails: `,
+for example `Unknown metric exporter(s) zipkin in TelemetryOptions.MetricExporters. Valid values: otlp, prometheus, console, none.`
+(`DisabledSignals`: `Unknown signal(s) spans in TelemetryOptions.DisabledSignals. Valid values: traces, metrics, logs.`).
 - The deprecated `OTEL_HELPER_DISABLED_SIGNALS` disables a signal only when that signal's `OTEL_<SIGNAL>_EXPORTER` is unset (or holds only unknown entries); for metrics a code `MetricExporters` wins too. `TelemetryOptions.DisabledSignals` (code) wins over all of them, and an unknown signal there fails start. Set in code means not null: `DisabledSignals = ""` disables nothing and still beats the variable, and `MetricExporters = ""` means no metric exporter (as Go, Python and Node.js treat an empty list; .NET also writes one INFO line, `TelemetryOptions.MetricExporters is empty: no metric exporter`, because a blank `appsettings.json` placeholder counted as unset before 0.3).
 - `OTEL_SDK_DISABLED=true` overrides everything: no exporter at all.
+- With metrics disabled or no metric exporter active, a view drops the helper's
+  instrumentation meters (the service meter and `<service>.*`,
+  `AdditionalMeters`, `Microsoft.AspNetCore.*`, `System.Net.*`, `System.Runtime`,
+  `OpenTelemetry.Instrumentation.*`) so they cost nothing. The view is on the
+  provider, so it also drops your own `AddAspNetCoreInstrumentation()` /
+  `AddHttpClientInstrumentation()` metrics and the meters named after the
+  service on a reader you add yourself. `prometheus` with `PrometheusMetricsPort = 0`
+  counts as active (task C5). No line is written.
 
 ### ASP.NET Core: mounting `/metrics` on your own pipeline
 
@@ -1922,12 +2102,33 @@ before calling `AddOtelHelper`): the OTLP metrics then carry exponential
 histograms. A value only in `appsettings.json` (or another host configuration
 source) is warned, not applied: the host registers its configuration as a
 factory, which `AddOtelHelper` cannot read. `explicit_bucket_histogram` is the
-default; any other value (also a padded one) is warned and ignored.
+default; any other value (also a padded one) is warned and ignored. With the
+variable set but OTLP metrics inactive, its reader stays idle. The lines:
+
+```text
+otelhelper: WARN invalid OTEL_EXPORTER_OTLP_METRICS_DEFAULT_HISTOGRAM_AGGREGATION: unsupported aggregation (values are compared as written, without trimming), using explicit_bucket_histogram; valid values: explicit_bucket_histogram, base2_exponential_bucket_histogram variable=… value=…
+otelhelper: WARN OTEL_EXPORTER_OTLP_METRICS_DEFAULT_HISTOGRAM_AGGREGATION is set only in IConfiguration, which is registered as a factory that AddOtelHelper cannot read, so it is not applied; set it in the process environment variable=…
+otelhelper: WARN OTEL_EXPORTER_OTLP_METRICS_DEFAULT_HISTOGRAM_AGGREGATION differs between IConfiguration and the process environment; AddOtelHelper used the process environment value, so base2_exponential_bucket_histogram is not applied variable=… used=explicit_bucket_histogram
+otelhelper: WARN OTEL_EXPORTER_OTLP_METRICS_DEFAULT_HISTOGRAM_AGGREGATION is set but OTLP metrics are not active: its OTLP reader stays idle and sends nothing variable=…
+```
+
+(`…`: the variable name is 66 characters, so its echo is cut at 64 with `…`.)
+The "differs" line appears only when a source that outranks the environment
+(the command line) holds `base2_exponential_bucket_histogram`.
 
 **Do not combine `UseOtlpExporter()` with `AddOtelHelper()`.** Both export, so
-every signal is sent twice; the helper warns once. With the histogram variable
-set as well, a `UseOtlpExporter()` called after `AddOtelHelper()` makes the SDK
-fail the `MeterProvider` build (the helper writes one ERROR line first).
+every signal is sent twice; the helper warns once (only when it has an OTLP
+target itself). With the histogram variable set as well: a `UseOtlpExporter()`
+called **before** `AddOtelHelper()` applies the variable through its own reader
+and the helper registers none (warned); one called **after** makes the SDK fail
+the `MeterProvider` build with `NotSupportedException`, and the helper writes one
+ERROR line first:
+
+```text
+otelhelper: WARN UseOtlpExporter() with AddOtelHelper exports every signal twice; drop one
+otelhelper: WARN UseOtlpExporter() is registered: its own reader applies OTEL_EXPORTER_OTLP_METRICS_DEFAULT_HISTOGRAM_AGGREGATION, so AddOtelHelper registers no second reader for it variable=…
+otelhelper: ERROR OTEL_EXPORTER_OTLP_METRICS_DEFAULT_HISTOGRAM_AGGREGATION made AddOtelHelper register the SDK's AddOtlpExporter reader, and UseOtlpExporter() was called after AddOtelHelper: the SDK refuses both and fails the MeterProvider build; drop UseOtlpExporter() or call it before AddOtelHelper variable=…
+```
 
 ### Scoping down what gets scraped
 
@@ -1939,7 +2140,13 @@ fail the `MeterProvider` build (the helper writes one ERROR line first).
 
 Metrics are exported every **30 seconds** (not the SDK default of 60s). This applies to both OTLP export and the Prometheus `/metrics` fallback.
 
-0.3 (this branch, task C9): `OTEL_METRIC_EXPORT_INTERVAL` or `TelemetryOptions.ExportIntervalMs` changes it for the OTLP and console readers; the Prometheus endpoint is pull-based and collects on each scrape. Grammar and clamping: §15 ("Running OTLP push AND `/metrics` at the same time").
+0.3 (this branch, task C9): `OTEL_METRIC_EXPORT_INTERVAL` or `TelemetryOptions.ExportIntervalMs` changes it for the OTLP and console readers; the Prometheus endpoint is pull-based and collects on each scrape. Grammar and clamping: §15 ("Running OTLP push AND `/metrics` at the same time"). The lines:
+
+```text
+otelhelper: WARN invalid OTEL_METRIC_EXPORT_INTERVAL: not a positive integer number of milliseconds, using 30000 variable=OTEL_METRIC_EXPORT_INTERVAL value=5_000
+otelhelper: WARN invalid OTEL_METRIC_EXPORT_INTERVAL: above 2147483647 ms, clamped to 2147483647 variable=OTEL_METRIC_EXPORT_INTERVAL value=9999999999
+otelhelper: WARN OTEL_METRIC_EXPORT_INTERVAL is set only in IConfiguration and is not read; set it in the process environment or TelemetryOptions.ExportIntervalMs, using 30000 variable=OTEL_METRIC_EXPORT_INTERVAL
+```
 
 ---
 
@@ -1970,6 +2177,7 @@ and is warned once, even with no endpoint configured. A contradiction with an
 explicit scheme is warned and the scheme wins:
 
 ```text
+otelhelper: WARN invalid OTEL_EXPORTER_OTLP_INSECURE: not a boolean (true or false), using false variable=OTEL_EXPORTER_OTLP_INSECURE value=yes
 otelhelper: WARN INSECURE setting contradicts the endpoint scheme; the scheme wins variable=OTEL_EXPORTER_OTLP_INSECURE value=true using=https://
 ```
 
@@ -1987,15 +2195,23 @@ the files go to the helper's own HTTP client:
 
 | Situation | What happens |
 |---|---|
-| a file cannot be read | `otelhelper: WARN a TLS file cannot be read and is ignored variable=OTEL_EXPORTER_OTLP_TRACES_CERTIFICATE using="the generic variable"`, then the next level (for the CA, finally the system roots) |
-| a CA file with no PEM certificate (`/dev/null`) | `… holds no PEM certificate and is ignored …`, the next level |
-| only the key or only the certificate resolves | warned naming the variable(s); server authentication with the resolved CA |
-| the pair does not load (mismatch, bad PEM, encrypted key) | warned naming both variables; server authentication |
+| a file cannot be read | `otelhelper: WARN a TLS file cannot be read (missing, not readable, or larger than 1 MiB) and is ignored variable=OTEL_EXPORTER_OTLP_CERTIFICATE using="the system roots"` (a per-signal variable shows `using="the generic variable"`; a client file `using=none`), then the next level (for the CA, finally the system roots) |
+| a CA file with no PEM certificate (`/dev/null`) | `otelhelper: WARN a TLS CA file holds no PEM certificate and is ignored variable=… using=…`, the next level |
+| only the key or only the certificate resolves | `otelhelper: WARN the client key and the client certificate must both be set and readable; the client certificate is not used …` naming the variable(s), `using="server authentication"`; server authentication with the resolved CA |
+| the pair does not load (mismatch, bad PEM, encrypted key) | `otelhelper: WARN the client key and certificate were rejected (bad PEM, mismatch or encrypted key); the client certificate is not used …` naming both variables; server authentication |
 | the endpoint is plaintext (`http://`, or schemeless + `INSECURE=true`) | the files are not read; one warning names them and every signal they are ignored for: `TLS files are set but the endpoint is plaintext …; they are ignored for these signals … variable=OTEL_EXPORTER_OTLP_CERTIFICATE signals=traces,metrics,logs` |
 | a file larger than 1 MiB, or a device (`/dev/zero`) | refused as "cannot be read" (the read is bounded) |
 | a named pipe (FIFO) with no writer | the read waits for a writer: host start blocks. Point the variables at regular files (an operator error, not detected) |
 
 Warnings never print a path or file content. Setup never fails on a TLS file.
+
+**What the custom CA does.** `OTEL_EXPORTER_OTLP_CERTIFICATE` adds trust; it
+does not replace the system roots: a server certificate the system accepts
+still passes. Otherwise the chain must end at one of the file's CAs, built with
+the intermediates the server presents; the leaf must allow server
+authentication (EKU `1.3.6.1.5.5.7.3.1`, so a client-auth-only certificate is
+rejected); revocation is not checked on that path; a host-name mismatch still
+fails (task C5).
 
 The client key: on Linux it stays an ephemeral key, never written anywhere. On
 Windows, SChannel cannot use an ephemeral key for client authentication, so
@@ -2006,15 +2222,22 @@ the key is imported into the user key store for the life of the certificate
 
 | Value | What happens |
 |---|---|
-| `http://user:pw@collector:4317/?token=x` | userinfo, query and fragment removed, one warning (`endpoint userinfo/query is not supported and was removed; put credentials in OTEL_EXPORTER_OTLP_HEADERS`) |
-| `http://collector` with gRPC | dials `http://collector:4317`, warning `gRPC endpoint has no port; using 4317 - set an explicit port` |
+| `http://user:pw@collector:4317/?token=x` | userinfo, query and fragment removed, one warning per variable and value (`endpoint userinfo/query is not supported and was removed; put credentials in OTEL_EXPORTER_OTLP_HEADERS`); its `using=` is the URL the signal uses, `/v1/<signal>` included for `http/protobuf` |
+| `http://collector` with gRPC | dials `http://collector:4317`, warning `gRPC endpoint has no port; using 4317 - set an explicit port (e.g. :4317, or :443 behind an ingress)` |
 | `collector:4318` with `http/protobuf` | `https://collector:4318/v1/<signal>` and a deprecation warning: use a URL |
 | `http://bücher.de:4317` | dials `http://xn--bcher-kva.de:4317` (punycode) |
-| `http://collector:4317/otlp` with gRPC | dials `http://collector:4317`; `otelhelper: WARN endpoint path is ignored by the gRPC exporter variable=OTEL_EXPORTER_OTLP_ENDPOINT`, once per variable, never the path (task C7b; a bare `/` is not warned) |
+| `http://collector:4317/otlp` with gRPC | dials `http://collector:4317`; `otelhelper: WARN endpoint path is ignored by the gRPC exporter variable=OTEL_EXPORTER_OTLP_ENDPOINT`, once per variable, never the path (task C7b; a bare `/` is not warned; a code endpoint with a path warns the same way and does not fail start) |
 | `http://collector:04318` | port 4318, so `http/protobuf` is inferred (INFO) |
 | `http://user:4318/secret@collector` | used as parsed; `endpoint path contains '@' - misplaced credentials?` naming the variable only |
 | `http://coll ector:4317`, `http://[fe80::1%eth0]:4317`, `http://127.1:4317`, `http://h:0`, `https://h/x\y`, `http://h:4318/%zz` (`http/protobuf`) | invalid. Environment: `otelhelper: WARN invalid endpoint; ignored variable=OTEL_EXPORTER_OTLP_TRACES_ENDPOINT value="<unparseable URL>" using="next configured endpoint, else none"`, then the generic endpoint is used. Code: host start fails naming the option |
-| `unix:/var/run/otel.sock`, `ftp://collector` | unsupported scheme: warned (`value=unix:`), no OTLP exporter for that signal |
+| `unix:/var/run/otel.sock`, `ftp://collector` | unsupported scheme: `otelhelper: WARN unsupported endpoint scheme (use http:// or https://); ignored variable=OTEL_EXPORTER_OTLP_ENDPOINT value=unix: using="no OTLP exporter for this signal"`; that signal gets no OTLP exporter |
+
+**Which endpoint a signal uses:** `TelemetryOptions.<Signal>Endpoint` >
+`TelemetryOptions.OtelCollectorEndpoint` > `OTEL_EXPORTER_OTLP_<SIGNAL>_ENDPOINT` >
+`OTEL_EXPORTER_OTLP_ENDPOINT` — a code generic endpoint beats an environment
+per-signal one. An invalid code value fails host start with
+`<option> <value> is not a valid OTLP endpoint: <reason>; use an http:// or https:// URL or host:port.`
+after the `otelhelper: ERROR invalid TelemetryOptions set in code; …` line (README "Helper diagnostics").
 
 **Globalization-invariant images.** IDN hosts need ICU. In an image without it
 (`DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=1`, common in chiseled and alpine
@@ -2060,7 +2283,14 @@ makes only that signal `http/protobuf`). The port is compared as a number
 (`04318` is 4318) and the inference is logged once:
 `otelhelper: INFO endpoint port 4318 and no protocol set; using http/protobuf set=OTEL_EXPORTER_OTLP_PROTOCOL`.
 
-`http/json` is a valid value per the OTel spec but has no exporter implementation for traces/metrics/logs in this library: in `OTEL_EXPORTER_OTLP_PROTOCOL` it is warned on standard error (`otelhelper: WARN invalid OTEL_EXPORTER_OTLP_PROTOCOL …`) and the default applies; set in `TelemetryOptions.OtlpProtocol` it fails host start, naming the option.
+`http/json` is a valid value per the OTel spec but has no exporter implementation for traces/metrics/logs in this library: in `OTEL_EXPORTER_OTLP_PROTOCOL` it is warned on standard error and the default applies (an unknown value too):
+
+```text
+otelhelper: WARN invalid OTEL_EXPORTER_OTLP_PROTOCOL: http/json is not supported by the .NET OTLP exporter; ignored (port inference, else grpc) variable=OTEL_EXPORTER_OTLP_PROTOCOL value=http/json
+otelhelper: WARN invalid OTEL_EXPORTER_OTLP_PROTOCOL: unsupported OTLP protocol, ignored (port inference, else grpc); valid values: grpc, http/protobuf variable=OTEL_EXPORTER_OTLP_PROTOCOL value=grpcs
+```
+
+ set in `TelemetryOptions.OtlpProtocol` it fails host start, naming the option.
 
 `/v1/traces`, `/v1/metrics`, `/v1/logs` are appended to the endpoint automatically when `http/protobuf` is selected — do not include them in `OTEL_EXPORTER_OTLP_ENDPOINT`. A per-signal endpoint (`OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`, `TelemetryOptions.TracesEndpoint`, …) is used as written. 0.3 (this branch) keeps the path of the generic endpoint (`https://gw.example.com/otlp` → `https://gw.example.com/otlp/v1/traces`); 0.2.x dropped it.
 
@@ -2072,7 +2302,12 @@ For local development with a plaintext collector, set `OTEL_EXPORTER_OTLP_ENDPOI
 
 Task C8: the helper resolves these per signal — code, then
 `OTEL_EXPORTER_OTLP_<SIGNAL>_*`, then `OTEL_EXPORTER_OTLP_*`, then the
-default — and gives each exporter its own HTTP client.
+default — and gives each exporter its own HTTP client. That client replaces
+the SDK's: an `HttpClientFactory` or `Headers` set on `OtlpExporterOptions` by
+the application, and the named `IHttpClientFactory` clients the 0.2.x exporter
+used (`OtlpTraceExporter`, `OtlpMetricExporter`, `OtlpLogExporter`), do not
+reach the helper's exporters (ADR-013; configure headers and TLS through the
+variables or `TelemetryOptions`).
 
 ```bash
 OTEL_EXPORTER_OTLP_ENDPOINT=https://otel-gateway.example.com:4317
@@ -2097,8 +2332,20 @@ another key is skipped; a value with an invalid escape (`a%zz`), or whose
 bytes are not UTF-8 (`%FF`), is sent as written; a value that decodes to
 anything outside printable ASCII (`%C3%A9`, `a%0D%0Ab`) is skipped. Each case
 warns once naming the variable and the item position (`item="item #2"`), never
-the value. For a key that appears twice the last one wins. On gRPC a key
-ending in `-bin` is binary metadata: its value is sent base64. A
+the value:
+
+```text
+otelhelper: WARN a malformed OTEL_EXPORTER_OTLP_HEADERS item was skipped (expected key=value, the key of letters, digits, '.', '_' or '-') variable=OTEL_EXPORTER_OTLP_HEADERS item="item #2"
+otelhelper: WARN a OTEL_EXPORTER_OTLP_HEADERS item was skipped: its decoded value is not printable ASCII variable=OTEL_EXPORTER_OTLP_HEADERS item="item #1"
+otelhelper: WARN a OTEL_EXPORTER_OTLP_HEADERS item has an invalid percent-escape, or is not UTF-8 once decoded, and is kept literally variable=OTEL_EXPORTER_OTLP_HEADERS item="item #1"
+otelhelper: WARN an OTLP header item was rejected by the HTTP client (a content header) and skipped signal=traces key=content-type
+```
+
+Keys are lowercased; for a key that appears twice the last one wins. A content
+header (`content-type`, `content-length`, …) is rejected by the HTTP client:
+skipped, the key named, never the value. On gRPC a key ending in `-bin` is
+binary metadata: its value is sent as unpadded base64 (`ab` → `YWI`, as Go and
+Python; Node.js pads it). A
 per-signal variable with at least one valid item replaces the generic one for
 that signal.
 
@@ -2110,22 +2357,36 @@ warning. The value is the signal's export deadline: the exporter, the HTTP
 client (`HttpClient.Timeout`), the batch span or log processor and the
 periodic metric reader all use it, and gRPC exports carry it as
 `grpc-timeout`. `OTEL_BSP_EXPORT_TIMEOUT`, `OTEL_BLRP_EXPORT_TIMEOUT` and
-`OTEL_METRIC_EXPORT_TIMEOUT` are not honored (one warning each), and an
+`OTEL_METRIC_EXPORT_TIMEOUT` are not honored (one warning each:
+`otelhelper: WARN OTEL_BSP_EXPORT_TIMEOUT is not honored: the OTLP export timeout is the export deadline of every signal; set OTEL_EXPORTER_OTLP_TIMEOUT or OTEL_EXPORTER_OTLP_<SIGNAL>_TIMEOUT variable=OTEL_BSP_EXPORT_TIMEOUT`), and an
 application `Configure<BatchExportActivityProcessorOptions>`,
 `Configure<LogRecordExportProcessorOptions>` or `Configure<MetricReaderOptions>`
 export timeout does not apply to the helper's exporters: set while its variable
-is unset, each warns once naming the option. With
+is unset, each warns once naming the option (`otelhelper: WARN <option> is set (in code or IConfiguration) but not used by the helper's OTLP exporter: the OTLP export timeout is the export deadline of every signal; set TelemetryOptions.ExportTimeoutMs`). With
 `OTEL_EXPORTER_OTLP_METRICS_DEFAULT_HISTOGRAM_AGGREGATION`, a timeout set on the named
 options `"StaffOps.OtelHelper.OtlpMetrics"` after `AddOtelHelper` is replaced and warned;
 one registered before `AddOtelHelper` is overwritten by the helper's copy without a warning. `grpc-timeout` carries the
-configured deadline of each request, not the time left on an SDK retry.
+configured deadline of each request, not the time left on an SDK retry. The
+lines:
+
+```text
+otelhelper: WARN invalid OTEL_EXPORTER_OTLP_TIMEOUT: not positive decimal milliseconds; using the next level, else 10000 variable=OTEL_EXPORTER_OTLP_TIMEOUT value=0
+otelhelper: WARN invalid OTEL_EXPORTER_OTLP_TIMEOUT: timeout above 24 h; clamped to 86400000 variable=OTEL_EXPORTER_OTLP_TIMEOUT value=90000000
+otelhelper: WARN invalid OTEL_EXPORTER_OTLP_TIMEOUT: timeout below 1 ms; clamped to 1 variable=OTEL_EXPORTER_OTLP_TIMEOUT value=0.2
+```
 
 **Compression.** `gzip` (default) or `none`, any ASCII case. Another value
-(`deflate`, `zstd`) warns and the next level applies.
+(`deflate`, `zstd`) warns and the next level applies:
+`otelhelper: WARN invalid OTEL_EXPORTER_OTLP_COMPRESSION: unsupported compression, using the next level, else gzip; valid values: gzip, none variable=OTEL_EXPORTER_OTLP_COMPRESSION value=zstd`.
 
 **Batch size.** `OTEL_BSP_MAX_EXPORT_BATCH_SIZE` above `OTEL_BSP_MAX_QUEUE_SIZE`
-(likewise `OTEL_BLRP_*`; defaults 512 / 2048) warns once naming both and the
-queue size is used.
+(likewise `OTEL_BLRP_*`; for both prefixes the default batch size is 512 and the
+default queue size 2048) warns once naming both and the queue size is used
+(set in code, the line names the options instead of the variables; the `variable=` key appears twice, so a logfmt parser keeps only one of the names):
+
+```text
+otelhelper: WARN the export batch size is larger than the queue size; using the queue size variable=OTEL_BSP_MAX_EXPORT_BATCH_SIZE variable=OTEL_BSP_MAX_QUEUE_SIZE value=4096 using=2048
+```
 
 **Redirects.** The helper's client never follows a redirect. An endpoint
 that answers `3xx` loses that export, and the helper writes one ERROR per
@@ -2144,7 +2405,7 @@ Configure the URL the redirect points to. (0.2.x followed redirects.)
 `OTEL_ATTRIBUTE_VALUE_LENGTH_LIMIT=0` (or the `SPAN_`/`LOGRECORD_` variant)
 is invalid by the contract, and the helper warns, but the .NET OTLP exporter
 reads it itself and sends those attribute values empty; there is no public
-API to override it. Unset it or use a positive limit. (Hiding the variable
+API to override it (`otelhelper: WARN OTEL_ATTRIBUTE_VALUE_LENGTH_LIMIT=0 is not a valid value-length limit, but the .NET OTLP exporter applies it and sends those attribute values empty; unset it or set a positive limit variable=OTEL_ATTRIBUTE_VALUE_LENGTH_LIMIT`). Unset it or use a positive limit. (Hiding the variable
 while the exporter is built, as the Python helper does, would need
 `Environment.SetEnvironmentVariable`, which the .NET helper never calls.)
 

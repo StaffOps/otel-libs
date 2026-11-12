@@ -333,6 +333,31 @@ D-JS2) or the `@opentelemetry/api` peer range:
   `NODE_VERSION=22.15.0` and `26`; `sh ci/api-range-install.sh`;
   `SMOKE_LANGS=node NODE_VERSION=22.15.0 testing/e2e/smoke.sh`.
 
+## .NET release candidate (first: `dotnet/v0.3.0-rc.1`, task C19)
+Before the tag, in addition to "Before tagging":
+- Phase C tasks through C18 done (`specs/dotnet-otel-helper/tasks.md`), C19's
+  whole-package refutation and `code-review` with zero BLOCKING/HIGH.
+- `testing/verify.sh --release` green: with `PARITY_RELEASE=1` the .NET
+  runner fails while a `dotnet` status is `xfail:*`, `skip:phase-c` or
+  `skip:C<n>-…` (only D-NET15 skips may stay).
+- `<Version>0.3.0-rc.1</Version>` in the five packed projects; the examples
+  (`dotnet/example/*`, `-p:OtelHelperVersion`) and `testing/e2e/dotnet-smoke`
+  build on the packed packages, so pack first and run
+  `SMOKE_LANGS=dotnet testing/e2e/smoke.sh`.
+- Consumer probe: a fresh `net8.0` worker and an ASP.NET Core app that install
+  the packages from GitHub Packages with the `nuget.config` source mapping of
+  `CONSUMING.md`, exporting to a real Collector.
+- CHANGELOG: the .NET section and the .NET migration guide name the version;
+  the root README, `CONSUMING.md`, `AGENTS.md` and `dotnet/README.md` move from
+  "after task C19" to "published".
+
+After the tag: the `publish-dotnet-release` run is green; the five
+`StaffOps.OtelHelper*` packages exist on GitHub Packages at the version (a
+token with `read:packages`); an install smoke in a throwaway `sdk` container
+(`dotnet new console`, the `nuget.config` mapping, `dotnet add package
+StaffOps.OtelHelper --version <v>`, `dotnet build`). A published version
+cannot be replaced: fix forward with the next rc.
+
 ## .NET SDK-bump checklist
 Before raising any `OpenTelemetry*` `PackageReference` in `dotnet/` (core and
 contrib move together on one generation, requirement DN1; first walked in

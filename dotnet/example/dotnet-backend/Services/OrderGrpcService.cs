@@ -9,8 +9,7 @@ namespace DotnetBackend.Services;
 public class OrderGrpcService : OrderService.OrderServiceBase
 {
     // Only the "processed_by" field of the replies; telemetry gets service.name from the helper.
-    private static readonly string ServiceName = Environment.GetEnvironmentVariable("OTEL_SERVICE_NAME")
-        ?? Environment.GetEnvironmentVariable("SERVICE_NAME") ?? "sample-backend";
+    private static readonly string ServiceName = Environment.GetEnvironmentVariable("OTEL_SERVICE_NAME") ?? "sample-backend";
     private static readonly ActivitySource DbActivity = new("sample-backend.db");
     private static readonly ActivitySource ExternalActivity = new("sample-backend.external");
     // A fixed meter name, subscribed in Program.cs through TelemetryOptions.AdditionalMeters

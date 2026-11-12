@@ -184,8 +184,10 @@ reference (task C17):
 
 Each csproj switches on `OtelHelperVersion`: unset (the default, `dotnet run`
 from the repository) it keeps the project reference; set, it is a
-`PackageReference`. A build that finds no `StaffOps.OtelHelper.<version>.nupkg`
-in `/packages` fails at `test -n "$ver"`; a restore that cannot find the
+`PackageReference`. A build that finds zero or more than one
+`StaffOps.OtelHelper.<version>.nupkg` in `/packages` fails with
+`expected exactly one StaffOps.OtelHelper.<version>.nupkg in /packages, found: …`
+(`testing/e2e/run-dotnet.sh` prefixes `run-dotnet: `); a restore that cannot find the
 version in the local feed fails with `NU1101`/`NU1102` instead of falling back
 to another feed.
 
