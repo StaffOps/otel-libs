@@ -5401,6 +5401,30 @@ Unsupported instrumentation versions, task A10 (P18):
 .NET-only patch (tag `dotnet/v0.2.1`, branch `release/dotnet-0.2` cut from
 `v0.2.0`) for the .NET 8 end of support on 2026-11-10. Go and Python are not
 part of this release.
+- **Kubernetes test tooling (`testing/k8s/`).** Runs the e2e smoke programs
+  as Jobs and the example apps as Deployments on a real cluster, exporting to
+  the node-local OTel agent, and checks the result in the backends.
+  `build-images.sh` / `build-examples.sh` build linux/amd64 images from the
+  committed HEAD (`git archive`) and push them, tagged with the short sha that
+  `smoke-jobs.sh` and `examples.sh` use by default; `smoke-jobs.sh` (one Job per
+  language x grpc/http, `apply --verify` or `VERIFY=1` polls the Jobs, stops on
+  the first failure, and verifies);
+  `examples/examples.sh` (`LAYOUT=compact`, one pod per language, for a node at
+  its pod limit; `split` for one pod per app); `verify.py` (stdlib only,
+  read-only queries through the API server's service proxy): `smoke --run <id>`
+  checks per service a Tempo trace rooted at `e2e-smoke-span` with
+  `k8s.namespace.name`/`k8s.pod.name`, the `e2e-smoke-log` Loki line on the same
+  trace_id and the `e2e_smoke_runs_total` series; `examples` checks current
+  traffic only (last `--fresh` minutes): requests on the service-graph edges
+  and a sampled log line whose trace_id resolves in Tempo. New
+  `images/python-smoke.py` (the repo had no Python smoke program) exits 1 when
+  an OTLP exporter logs an ERROR record: the Python SDK reports a refused export
+  only in its log, `shutdown_telemetry()` and `force_flush()` still succeed
+  (measured; `images/check-python-refused.sh` asserts it locally). First run
+  2026-11-15: smoke 8/8 services, examples 4/4 languages; the differences found
+  are in `testing/k8s/README.md`, three of them recorded as Deferred rows in
+  `specs/config-contract-v0.3/tasks.md`. A first partial run of the deferred
+  soak Phase K check K2 (`k8sattributes` enrichment).
 
 ### Changed
 

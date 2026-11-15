@@ -1,6 +1,6 @@
 # Repo tooling — tasks
 
-**Status**: Done (2026-10-28). Spec: [requirements](requirements.md) · [design](design.md).
+**Status**: Done (2026-10-28); T12 added and done 2026-11-15. Spec: [requirements](requirements.md) · [design](design.md).
 
 | Task | Covers | Status |
 |---|---|---|
@@ -15,3 +15,4 @@
 | T9 Skills `change-loop`, `release`, `parity-case` | RT8, T-D5 | ✅ 2026-10-28 |
 | T10 Agent `spec-refuter` | RT9 | ✅ 2026-10-28 |
 | T11 Review (`dev` + `code-review`), AGENTS.md pointers, CHANGELOG | change loop | ✅ 2026-10-28 (code-review: 1 BLOCKING, 2 HIGH, 6 MEDIUM fixed) |
+| T12 `testing/k8s/`: smoke Jobs, example Deployments and `verify.py` on a real cluster (added 2026-11-15; a first partial run of [soak-simulation](../soak-simulation/tasks.md) K2) | soak K2 (partial) | ✅ 2026-11-15 (code-review APPROVE with suggestions; fix round 1 applied) |
