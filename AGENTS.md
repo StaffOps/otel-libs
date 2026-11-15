@@ -10,7 +10,7 @@ those.
 > Node.js implements it too (Phase B, [`specs/nodejs-otel-helper/`](specs/nodejs-otel-helper/),
 > release candidate `0.3.0-rc.1`); .NET implements it on this branch too (Phase C,
 > [`specs/dotnet-otel-helper/`](specs/dotnet-otel-helper/), tasks C4–C17 done; release
-> candidate `0.3.0-rc.1`, tag `dotnet/v0.3.0-rc.1`, on GitHub Packages (final validation task C19); the released .NET
+> candidate `0.3.0-rc.2`, tag `dotnet/v0.3.0-rc.2`, on GitHub Packages (final validation task C19; `dotnet/v0.3.0-rc.1` was tagged but never published); the released .NET
 > `0.2.1` keeps the 0.2 behavior). If this file conflicts
 > with the code, treat it as a bug in one of the two and flag it — do not
 > silently follow either side.
@@ -23,7 +23,7 @@ equivalent**: `go/` (module `github.com/staffops/otel-libs/go` +
 `aws`/`redis`/`sql`; `otel_helper` is a deprecated re-export until 1.0 —
 [ADR-011](specs/decisions/ADR-011-owner-prefixed-package-names.md)),
 `dotnet/` (`StaffOps.OtelHelper` + `.AWS`/`.Redis`/`.Sql`/`.Profiling`; `0.2.x` released as `OtelHelper*`;
-first published as `0.3.0-rc.1`, tag `dotnet/v0.3.0-rc.1`, on GitHub Packages), `nodejs/`
+first published as `0.3.0-rc.2`, tag `dotnet/v0.3.0-rc.2`, on GitHub Packages; rc.1 was tagged, never published), `nodejs/`
 (npm workspaces: `@staffops/otel-helper` + `-sql`/`-redis`/`-aws`/`-pino`/`-winston`;
 release candidate `0.3.0-rc.1`, tag `nodejs/v0.3.0-rc.1`, on npmjs with dist-tag `next` and on GitHub Packages; `latest` stays the deprecated bootstrap placeholder until the first stable release). Shared Grafana dashboards in `dashboards/`, MkDocs site in
 `docs/site/`, specs in [`specs/`](specs/README.md).

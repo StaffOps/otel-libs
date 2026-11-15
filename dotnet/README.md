@@ -6,7 +6,8 @@ Observability library for .NET 8+ applications. Abstracts OpenTelemetry SDK conf
 > implements it on this branch (Phase C of
 > [`specs/dotnet-otel-helper/`](https://github.com/StaffOps/otel-libs/blob/main/specs/dotnet-otel-helper/tasks.md),
 > tasks C4–C17; ADR-004), first published as the release candidate
-> `0.3.0-rc.1` (tag `dotnet/v0.3.0-rc.1`, GitHub Packages; final validation task C19).
+> `0.3.0-rc.2` (tag `dotnet/v0.3.0-rc.2`, GitHub Packages; final validation task C19; the tag
+> `dotnet/v0.3.0-rc.1` was never published).
 > The released `0.2.1` keeps the 0.2 behavior. Notes marked "0.3 (this branch,
 > task C<n>)" say what changed; "0.2.x:" gives the released behavior. Every
 > change, in two parts (API; telemetry): the .NET migration guide in
@@ -17,7 +18,7 @@ Observability library for .NET 8+ applications. Abstracts OpenTelemetry SDK conf
 > **Names.** On this branch the packages, assemblies and namespace are
 > `StaffOps.OtelHelper*` (ADR-011, task C2 of
 > [`specs/dotnet-otel-helper/`](https://github.com/StaffOps/otel-libs/blob/main/specs/dotnet-otel-helper/tasks.md));
-> they are first published as `0.3.0-rc.1`. The released `0.2.x` packages
+> they are first published as `0.3.0-rc.2` (`0.3.0-rc.1` was tagged, never published). The released `0.2.x` packages
 > keep the IDs `OtelHelper*` and `using OtelHelper;` — no compatibility
 > package. Environment variable names and the `AddOtelHelper*()` entry points
 > do not change.
@@ -796,7 +797,7 @@ container. Rows and failure output: [HOW-TO.md](HOW-TO.md#running-the-examples-a
 - .NET 8 (LTS)
 - .NET 10 (LTS) — via roll-forward
 
-On this branch the libraries target `net8.0` only (the `0.3.0-rc.1` packages
+On this branch the libraries target `net8.0` only (the `0.3.0-rc.2` packages
 too). The released `0.2.1` has `net8.0` and `net10.0` assets. Task C0, after
 the release candidate and the soak, retargets the 0.3 line to `net10.0` only
 (ADR-009); the migration guide gets a section for consumers still on .NET 8.

@@ -13,13 +13,14 @@ release candidate `0.3.0-rc.1`, always installed at an exact version
 
 | Language | Latest release | Next | Requirements |
 |----------|----------------|------|--------------|
-| .NET | `0.2.1` (tag `dotnet/v0.2.1`, 2026-11-04) | `0.3.0-rc.1` (tag `dotnet/v0.3.0-rc.1`, packages `StaffOps.OtelHelper*` on GitHub Packages), then `0.3.0` | `net8.0` and `net10.0` assets from `0.2.1` (`0.2.0`: `net8.0` only, .NET 10 via roll-forward) |
+| .NET | `0.2.1` (tag `dotnet/v0.2.1`, 2026-11-04) | `0.3.0-rc.2` (tag `dotnet/v0.3.0-rc.2`, packages `StaffOps.OtelHelper*` on GitHub Packages; `rc.1` was tagged but never published), then `0.3.0` | `net8.0` and `net10.0` assets from `0.2.1` (`0.2.0`: `net8.0` only, .NET 10 via roll-forward) |
 | Python | `0.2.0` (`otel-helper`) | `0.3.0-rc.2` published as `otel-helper` (tag `v0.3.0-rc.2`, wheel `otel_helper-0.3.0rc2-py3-none-any.whl`); next `0.3.0-rc.3` (tag `v0.3.0-rc.3`, wheel `staffops_otel_helper-0.3.0rc3-py3-none-any.whl`) — the first under the new name (ADR-011) | Python ≥ 3.10; OpenTelemetry `>=1.42,<1.46`, contrib `>=0.63b0,<0.67b0` from 0.3 |
 | Go | `go/v0.2.1` | `v0.3.0-rc.2` (tags `go/v0.3.0-rc.2`, `go/ext/<module>/v0.3.0-rc.2`; new module path, see ADR-010) | Go ≥ 1.22 for 0.2.x, **Go ≥ 1.26 from 0.3** |
 | Node.js | — (no stable release; npm `latest` is the deprecated `0.0.0-bootstrap.0` placeholder) | `0.3.0-rc.1` (tag `nodejs/v0.3.0-rc.1`, npm dist-tag `next`; packages `@staffops/otel-helper*` on npmjs and GitHub Packages), then `0.3.0` | Node.js ≥ 22.15.0; `@opentelemetry/api` `>=1.10.0 <1.11.0` (peer) |
 
-.NET `0.3.0-rc.1` ships as the `StaffOps.OtelHelper*` packages (tag
-`dotnet/v0.3.0-rc.1`, published by the `publish-dotnet-release` job); .NET releases are tagged `dotnet/vX.Y.Z`. It has
+.NET `0.3.0-rc.2` ships as the `StaffOps.OtelHelper*` packages (tag
+`dotnet/v0.3.0-rc.2`, published by the `publish-dotnet-release` job; the
+earlier tag `dotnet/v0.3.0-rc.1` was never published: its CI run failed); .NET releases are tagged `dotnet/vX.Y.Z`. It has
 `net8.0` assets only (.NET 10 via roll-forward); task C0 retargets the 0.3 line
 to `net10.0` only.
 
@@ -36,14 +37,14 @@ Registry: `https://nuget.pkg.github.com/StaffOps/index.json`
 
 Packages: `StaffOps.OtelHelper` (core), `StaffOps.OtelHelper.AWS`, `StaffOps.OtelHelper.Redis`, `StaffOps.OtelHelper.Sql`, `StaffOps.OtelHelper.Profiling`; namespace `StaffOps.OtelHelper` (ADR-011). Subpackages pull the core transitively at the same version.
 
-> **Package names.** The `StaffOps.OtelHelper*` IDs exist from `0.3.0-rc.1`
-> on, published to GitHub Packages from the tag `dotnet/v0.3.0-rc.1` (the
+> **Package names.** The `StaffOps.OtelHelper*` IDs exist from `0.3.0-rc.2`
+> on, published to GitHub Packages from the tag `dotnet/v0.3.0-rc.2` (the
 > `-dev-<sha>` builds of `main` use them once the rename is merged). The released `0.2.x` packages keep the old IDs
 > `OtelHelper*` and the namespace `OtelHelper`; there is no `OtelHelper` 0.3
 > package. Moving from 0.2 to 0.3: replace each `PackageReference` and each
 > `using OtelHelper…` — see the migration guide in
 > [`CHANGELOG.md`](CHANGELOG.md). The install commands below name the
-> released `0.2.x` IDs; the `0.3.0-rc.1` commands follow them.
+> released `0.2.x` IDs; the `0.3.0-rc.2` commands follow them.
 
 ### Add the NuGet source (once per machine or CI)
 
@@ -127,16 +128,16 @@ dotnet add package OtelHelper.Profiling --version 0.2.1
 > (`-dev-<sha>` published on every push to `main`, `-rc.N` from RC tags) — use
 > `--prerelease` only if you deliberately want to track those.
 
-Release candidate `0.3.0-rc.1` (tag `dotnet/v0.3.0-rc.1`; the 0.3 contract, new IDs and
+Release candidate `0.3.0-rc.2` (tag `dotnet/v0.3.0-rc.2`; the 0.3 contract, new IDs and
 namespace — read the .NET migration guide in [`CHANGELOG.md`](CHANGELOG.md)
 first). Install the exact version: a prerelease is never picked by default.
 
 ```bash
-dotnet add package StaffOps.OtelHelper --version 0.3.0-rc.1
-dotnet add package StaffOps.OtelHelper.Sql --version 0.3.0-rc.1        # each opt-in package: same version as the core
-dotnet add package StaffOps.OtelHelper.AWS --version 0.3.0-rc.1
-dotnet add package StaffOps.OtelHelper.Redis --version 0.3.0-rc.1
-dotnet add package StaffOps.OtelHelper.Profiling --version 0.3.0-rc.1
+dotnet add package StaffOps.OtelHelper --version 0.3.0-rc.2
+dotnet add package StaffOps.OtelHelper.Sql --version 0.3.0-rc.2        # each opt-in package: same version as the core
+dotnet add package StaffOps.OtelHelper.AWS --version 0.3.0-rc.2
+dotnet add package StaffOps.OtelHelper.Redis --version 0.3.0-rc.2
+dotnet add package StaffOps.OtelHelper.Profiling --version 0.3.0-rc.2
 ```
 
 Remove the `OtelHelper*` references in the same change: the two ID families

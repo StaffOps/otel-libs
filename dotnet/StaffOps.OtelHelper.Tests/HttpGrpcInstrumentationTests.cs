@@ -335,7 +335,6 @@ public sealed class HttpGrpcInstrumentationTests : IDisposable
     [InlineData("/live/")]
     [InlineData("/livez")]
     [InlineData("/metrics")]
-    [InlineData("/ping#f")]
     public async Task Server_Health_Requests_Get_No_Span_And_Are_Counted(string target)
     {
         await using var web = await StartAsync();
@@ -346,6 +345,20 @@ public sealed class HttpGrpcInstrumentationTests : IDisposable
         var duration = web.MetricNames();
         Assert.Contains("http.server.request.duration", duration);
         Assert.Equal(2, ServerRequestCount(web));
+    }
+
+    [Fact]
+    public async Task A_Fragment_In_The_Request_Target_Gets_No_Span()
+    {
+        // A request-target may not carry a fragment (RFC 9112 §3.2); measured 2026-11-15:
+        // Kestrel 8.0.33 accepts "/ping#f" (200), 8.0.34 and 10.0.14 reject it (400) before
+        // routing. Either way no span is created; the fragment cut itself is covered by the
+        // normalizer rows above ("/x#y?z" → "/x").
+        await using var web = await StartAsync();
+        Assert.Contains(await RawGetAsync(web.Port, "/ping#f"), new[] { 200, 400 });
+        Assert.Equal(200, await RawGetAsync(web.Port, "/orders"));
+        var spans = await SettledServerSpans(web, 1);
+        Assert.Equal(new[] { "/orders" }, spans.Select(a => (string?)a.GetTagItem("url.path")).ToArray());
     }
 
     [Theory]

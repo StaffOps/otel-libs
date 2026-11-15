@@ -7,7 +7,7 @@
     <LangVersion>latest</LangVersion>
 
     <PackageId>StaffOps.OtelHelper.Sql</PackageId>
-    <Version>0.3.0-rc.1</Version>
+    <Version>0.3.0-rc.2</Version>
     <Description>SQL Client instrumentation opt-in subpackage for StaffOps.OtelHelper</Description>
   </PropertyGroup>
 

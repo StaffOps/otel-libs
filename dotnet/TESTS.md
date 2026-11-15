@@ -652,7 +652,7 @@ there).
 |---|---|
 | Normalization | `Normalize_Follows_The_Contract` × 15 (query, fragment, trailing slashes, `%68`, `%2f`, a decoded `?`/`#`, malformed escapes, non-UTF-8 bytes, UTF-8, ASCII-only folding), `The_Grpc_Health_Service_Is_Matched_Whole_And_Case_Sensitive` × 9, `The_Default_List_Is_The_Contract_List` × 11, `Default_List_Matches_Go` |
 | `HealthPaths` validation | `Invalid_Code_Health_Path_Fails_Start` × 6, `Null_Code_Health_Path_Fails_Start`, `Valid_Code_Health_Paths_Pass` |
-| Server | `Server_Health_Requests_Get_No_Span_And_Are_Counted` × 9 (still counted in `http.server.request.duration`), `Server_Paths_That_Only_Contain_A_Health_Path_Are_Traced` × 4, `Code_Health_Paths_Replace_The_Default_List`, `An_Empty_Health_List_Traces_Every_Path`, `Children_Of_A_Health_Request_Are_Dropped_And_Of_Others_Kept` |
+| Server | `Server_Health_Requests_Get_No_Span_And_Are_Counted` × 8 (still counted in `http.server.request.duration`; the `/ping#f` row moved out on 2026-11-15, see below), `A_Fragment_In_The_Request_Target_Gets_No_Span` (accepts 200 or 400, no server span), `Server_Paths_That_Only_Contain_A_Health_Path_Are_Traced` × 4, `Code_Health_Paths_Replace_The_Default_List`, `An_Empty_Health_List_Traces_Every_Path`, `Children_Of_A_Health_Request_Are_Dropped_And_Of_Others_Kept` |
 | HttpClient | `HttpClient_Health_Requests_Get_No_Client_Span` (also `/grpc.health.v1.Health/Check`), `HttpClient_Follows_Code_Health_Paths`, `HttpClient_Health_Requests_Send_No_Context` × 12 (fix rounds 1 and 2: a local `TcpListener` records the headers; health paths get no `traceparent` or `tracestate` inside a sampled request and as a root, with the default list and a lone `tracecontext`; an application's own `baggage` and `tracestate` survive; with traces disabled a health call carries nothing and `/orders` the inbound `traceparent`; `/orders` keeps the context) |
 | Server (fix round 1) | `Absolute_Form_Targets_Are_Decoded_Once` × 3 (`GET http://host/%2568ealth` is traced), `An_Application_Filter_Registered_After_AddOtelHelper_Replaces_The_Health_Filter` × 2 |
 | gRPC | `One_Client_Span_Per_Grpc_Call_And_The_Server_Continues_It` (the only CLIENT span is GrpcNetClient's `parity.v1.Echo/Ping`, the parent of the server span `parity.v1.Echo/Ping` under scope `Microsoft.AspNetCore` with `rpc.system.name=grpc`), `Grpc_Not_Found_Is_Unset_On_The_Server`, `Grpc_Health_Calls_Get_No_Server_Or_Client_Span` × 2 (Check, Watch), `The_Server_Filter_Drops_Grpc_Health_Calls_Of_An_Uninstrumented_Client` × 2 (with and without the key), `Grpc_Health_Service_Is_Dropped_Whatever_The_Health_List`, `Without_The_Key_Grpc_Server_Spans_Are_Http_Shaped` (`POST …`, status 200, UNSET for NOT_FOUND) |
@@ -1140,3 +1140,14 @@ Design D-NET2 note of 2026-11-15; contract: the helper's own exports are not app
 | Error code 5 says access denied | `PrometheusFallbackC12Tests.BindFailure_Message_Names_Access_Denied_Only_For_Error_5` × 3 (5, 98, 99; an injected `HttpListenerException`, not measured on Windows) |
 
 Mutants, each failing a test (2026-11-15): no `MeterFactory` on the handler (both protocol rows), a factory that keeps the requested name (all three `ExportClientMetricsTests`), the noise rule without the export-client meter (both protocol rows and the unit row).
+
+## Fragment in the request-target (2026-11-15, after the `dotnet/v0.3.0-rc.1` CI failure)
+
+CI run 43756837495 (tag `dotnet/v0.3.0-rc.1` on `bedce89`) failed on both legs in one case,
+`Server_Health_Requests_Get_No_Span_And_Are_Counted(target: "/ping#f")`: expected 200, actual 400.
+Measured: Kestrel 8.0.33 accepts `GET /ping#f` (200); 8.0.34 — the GitHub runner's and the current
+`mcr.microsoft.com/dotnet/sdk:8.0` — and 10.0.14 reject it with 400 before routing (a request-target
+may not carry a fragment, RFC 9112 §3.2). The row was removed; `A_Fragment_In_The_Request_Target_Gets_No_Span`
+accepts 200 or 400 and asserts that only the control request `/orders` gets a server span. The fragment
+cut of the health-path normalizer stays covered by its own rows (`/x#y?z` → `/x`). No library change;
+`0.3.0-rc.2` is cut for it.

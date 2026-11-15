@@ -13,7 +13,7 @@ Decision record: `specs/config-contract-v0.3/design.md` D10 (+ "A11 ruling").
 | Python | `vX.Y.Z[-rc.N]` | CI `publish-python-release` → GitHub Release (wheel + sdist) |
 | Go core | `go/vX.Y.Z[-rc.N]` | nothing (module proxy reads the tag) |
 | Go ext | `go/ext/{otelaws,otelredis,otelsql}/vX.Y.Z[-rc.N]` | same |
-| .NET | `dotnet/vX.Y.Z[-rc.N]` | CI `publish-dotnet-release` → GitHub NuGet: the five `StaffOps.OtelHelper*` packages (from `0.3.0-rc.1`, task C2; `0.2.x` stays published as `OtelHelper*`, no compatibility package, O2) |
+| .NET | `dotnet/vX.Y.Z[-rc.N]` | CI `publish-dotnet-release` → GitHub NuGet: the five `StaffOps.OtelHelper*` packages (first published `0.3.0-rc.2`; the tag `dotnet/v0.3.0-rc.1` failed CI and published nothing; from `0.3.0-rc.1`, task C2; `0.2.x` stays published as `OtelHelper*`, no compatibility package, O2) |
 | Node.js | `nodejs/vX.Y.Z[-rc.N]` | CI `publish-nodejs-npmjs` → npmjs (trusted publishing, provenance), then `publish-nodejs-ghp` → GitHub Packages; the six packages at one version. **The first release needs the one-time bootstrap below** |
 
 A `v*` tag never publishes .NET or Node.js (`*` does not match `/`). Every
@@ -333,14 +333,14 @@ D-JS2) or the `@opentelemetry/api` peer range:
   `NODE_VERSION=22.15.0` and `26`; `sh ci/api-range-install.sh`;
   `SMOKE_LANGS=node NODE_VERSION=22.15.0 testing/e2e/smoke.sh`.
 
-## .NET release candidate (first: `dotnet/v0.3.0-rc.1`, task C19)
+## .NET release candidate (first published: `dotnet/v0.3.0-rc.2`, task C19; `dotnet/v0.3.0-rc.1` was tagged on bedce89, its CI failed, nothing published)
 Before the tag, in addition to "Before tagging":
 - Phase C tasks through C18 done (`specs/dotnet-otel-helper/tasks.md`), C19's
   whole-package refutation and `code-review` with zero BLOCKING/HIGH.
 - `testing/verify.sh --release` green: with `PARITY_RELEASE=1` the .NET
   runner fails while a `dotnet` status is `xfail:*`, `skip:phase-c` or
   `skip:C<n>-…` (only D-NET15 skips may stay).
-- `<Version>0.3.0-rc.1</Version>` in the five packed projects; the examples
+- `<Version>` = the tag version (`0.3.0-rc.2` now) in the five packed projects; the examples
   (`dotnet/example/*`, `-p:OtelHelperVersion`) and `testing/e2e/dotnet-smoke`
   build on the packed packages, so pack first and run
   `SMOKE_LANGS=dotnet testing/e2e/smoke.sh`.
@@ -351,7 +351,7 @@ Before the tag, in addition to "Before tagging":
   the root README, `CONSUMING.md`, `AGENTS.md` and `dotnet/README.md` move from
   "after task C19" to "published"; so do `dotnet/HOW-TO.md` (the version note and
   the §1 "Package name" note) and the `CONSUMING.md` .NET install text ("Release
-  candidate `0.3.0-rc.1` (once published …)"); then `tools/regen_index.py` for
+  candidate `0.3.0-rc.N` (once published …)"); then `tools/regen_index.py` for
   `docs/site/index.md`.
 - Before .NET `0.3.0-rc.2`: the core internals `StaffOps.OtelHelper.Profiling`
   uses (`IOtelHelperDiagnostics`, `OtelHelperDiagnostics.Fallback`) stay

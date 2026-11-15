@@ -6,7 +6,7 @@
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <LangVersion>latest</LangVersion>
     <PackageId>StaffOps.OtelHelper.Profiling</PackageId>
-    <Version>0.3.0-rc.1</Version>
+    <Version>0.3.0-rc.2</Version>
     <Description>Continuous profiling add-on for StaffOps.OtelHelper (Pyroscope in-process)</Description>
   </PropertyGroup>
   <ItemGroup>

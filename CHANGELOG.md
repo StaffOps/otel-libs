@@ -32,6 +32,12 @@ candidate, `0.3.0-rc.1` (tag `dotnet/v0.3.0-rc.1`, packages
 `StaffOps.OtelHelper*`), follows the final validation, task C19; the released
 .NET `0.2.1` keeps the 0.2 behavior.
 
+*Note 2026-11-15 (.NET task C19):* the tag `dotnet/v0.3.0-rc.1` (on
+`bedce89`) was never published — its CI run failed before the publish jobs
+(a test, not the library; see the .NET section) — so **`0.3.0-rc.2`** (tag
+`dotnet/v0.3.0-rc.2`) is the first published 0.3 .NET release candidate. The
+rc.1 tag is not moved.
+
 **Node.js release candidate: `0.3.0-rc.1`** (2026-11-04) — tag
 `nodejs/v0.3.0-rc.1`, the first npm release of the six packages
 `@staffops/otel-helper`, `-sql`, `-redis`, `-aws`, `-pino` and `-winston`,
@@ -648,6 +654,13 @@ emitted telemetry.
 > *Update 2026-11-15:* **Tagged as `dotnet/v0.3.0-rc.1` (on the commit that carries this line);
 > published by the `publish-dotnet-release` job** (the five
 > `StaffOps.OtelHelper*` packages on GitHub Packages).
+>
+> *Update 2026-11-15:* **`dotnet/v0.3.0-rc.1` was tagged on `bedce89` but not
+> published**: its CI run (43756837495) failed in a test on Kestrel 8.0.34's
+> rejection of `#` in the request-target, so every publish job was skipped; no
+> library change. This guide is the one for **`0.3.0-rc.2`** (tag
+> `dotnet/v0.3.0-rc.2`), the first published 0.3 .NET package: the five
+> packed projects declare `<Version>0.3.0-rc.2</Version>`.
 
 **API part.**
 
@@ -2603,6 +2616,16 @@ Phase C work on this branch (no .NET release yet; the first will be
   readme (`PackageReadmeFile`, `dotnet/Directory.Build.targets`). The
   subpackages keep a minimum-only dependency on the core (`>= 0.3.0-rc.1`; no
   upper bound — design D-NET13 note of 2026-11-15).
+- **.NET: `0.3.0-rc.2` replaces the unpublished `0.3.0-rc.1` (2026-11-15).**
+  The tag `dotnet/v0.3.0-rc.1` (on `bedce89`) failed CI run 43756837495 on both
+  legs in one test, `Server_Health_Requests_Get_No_Span_And_Are_Counted(target:
+  "/ping#f")`: expected 200, actual 400. ASP.NET Core 8.0.34 (the runner's and
+  now `mcr.microsoft.com/dotnet/sdk:8.0`) and 10.0.14 reject `#` in the
+  request-target (RFC 9112); 8.0.33 accepted it. No library change: the row is
+  removed and `A_Fragment_In_The_Request_Target_Gets_No_Span` accepts 200 or
+  400 and asserts no server span. The five packed projects declare
+  `<Version>0.3.0-rc.2</Version>`; nothing was published for rc.1, and its tag
+  stays where it is.
 
 ### Breaking — telemetry output changes (dashboards/alerts)
 

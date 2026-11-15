@@ -5,8 +5,8 @@ Practical guide for developers. One line configures everything — traces, metri
 > **Version note.** This guide describes the `0.3` contract as the .NET helper
 > implements it on this branch (Phase C of
 > [`specs/dotnet-otel-helper/`](https://github.com/StaffOps/otel-libs/blob/main/specs/dotnet-otel-helper/tasks.md),
-> tasks C4–C17), first published as the release candidate `0.3.0-rc.1` (tag
-> `dotnet/v0.3.0-rc.1`, GitHub Packages; final validation task C19). Notes marked
+> tasks C4–C17), first published as the release candidate `0.3.0-rc.2` (tag
+> `dotnet/v0.3.0-rc.2`, GitHub Packages; final validation task C19; `dotnet/v0.3.0-rc.1` was tagged, never published). Notes marked
 > "0.3 (this branch, task C<n>)" say what changed from the released `0.2.x`;
 > "0.2.x:" gives the released behavior. The whole list of changes, in two parts
 > (API; telemetry), is the .NET migration guide in
@@ -21,8 +21,8 @@ Practical guide for developers. One line configures everything — traces, metri
 dotnet add package StaffOps.OtelHelper
 ```
 
-> **Package name**: `StaffOps.OtelHelper*` from `0.3.0-rc.1` (GitHub
-> Packages; a prerelease, so install it with `--version 0.3.0-rc.1`); the released `0.2.x` is `OtelHelper*` with `using OtelHelper;`. Map
+> **Package name**: `StaffOps.OtelHelper*` from `0.3.0-rc.2` (GitHub
+> Packages; a prerelease, so install it with `--version 0.3.0-rc.2`); the released `0.2.x` is `OtelHelper*` with `using OtelHelper;`. Map
 > the IDs to the GitHub source with the `nuget.config` in
 > [`CONSUMING.md`](https://github.com/StaffOps/otel-libs/blob/main/CONSUMING.md).
 
