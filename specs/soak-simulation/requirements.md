@@ -28,6 +28,16 @@
 > positive control; prd-debug judged by bounds with a pre-sampling rate;
 > api answers 5xx on `/backend-error`; per-route spans calibrated per inbound
 > class; gRPC health probe added; 0.2 endpoint uses an explicit `http://`.
+>
+> **r5 (2026-11-15, draft, not yet reviewed — task K0)**: Phase K promoted
+> onto the shared homelab cluster `k8s01` (tasks.md promotion note; owner
+> confirmation K0b). New SR15; *Context* and *Out of scope* amended. SR0–SR14
+> and the Acceptance list are unchanged: Phase S still carries the D10
+> evidence, Phase K adds Kubernetes-only evidence next to it. Revised the same
+> day after the first K0 review (`observability`): K3 sample-time query, a
+> request-based budget (the owner raised kubelet `maxPods`, K0b ruling 3), K6
+> raw-counter checkpoints, the named namespace-label exception, Loki counts
+> by `service_instance_id`.
 
 ## Context
 
@@ -42,6 +52,11 @@ tail-sampling gateway into real backends.
 
 Everything runs with Docker Compose on one machine. Kubernetes-specific
 behavior is **deferred** (Phase K, tasks.md), not dropped.
+*(Amended 2026-11-15, r5: Phase K is promoted onto a real, shared cluster —
+SR15, design K-D1…K-D9. The Compose simulation stays the only place for
+tail-sampling, trace-ID routing and agent fault-injection evidence, because
+the cluster's gateway runs neither `tail_sampling` nor a
+`loadbalancingexporter` — measured, K-D1.)*
 
 ## Glossary
 
@@ -262,6 +277,101 @@ For each mode (design S-D12): **refused** (agent stopped, address kept),
   unscoped prune and never `--rmi all`.
 - No data leaves the machine; no credential enters an image layer.
 
+### SR15 — Phase K on the shared cluster `k8s01` (added 2026-11-15, r5)
+- **Scope.** Phase K SHALL write only namespaced objects in namespace
+  `dev-otel-libs` (K9: also in one `staffops*` namespace; the owner creates
+  that namespace — its creation is not a Phase K write). It SHALL NOT write to
+  `opentelemetry`, `monitoring`, `istio-system`, `kyverno`, to any
+  ArgoCD-managed object, or to any cluster-scoped object, with **one named
+  exception** (owner ruling K0b(2)): the `istio.io/dataplane-mode` label on
+  the cluster-scoped Namespace `dev-otel-libs`, set to `none` for the K4
+  window only and set back to `ambient` with `--overwrite` by the run trap —
+  never deleted (Kyverno `namespace-ambient-mode` would re-add `ambient` on a
+  missing label anyway) (design K-D5). No other label, annotation or field of
+  that Namespace is written.
+- **Resource budget.** WHEN a K run starts THEN its pre-flight SHALL read the
+  node's `allocatable` (`cpu`, `memory`, `pods`) and the sum of the CPU and
+  memory requests of its non-terminated pods, and SHALL refuse to start when
+  Σ the run's pod CPU requests > allocatable CPU − requested CPU − the CPU
+  reserve, when the same holds for memory, or when the run's pods would leave
+  fewer free pod slots than the pod reserve (K-D2). WHILE a run is active,
+  WHEN a pod outside `dev-otel-libs` that is still `Pending` has a
+  `FailedScheduling` event, newer than the run start, whose message contains `Too many pods`, `Insufficient cpu` or `Insufficient
+  memory` THEN the run SHALL scale its own Deployments to 0 within one watch
+  interval, mark the window invalid and report it — Phase K never starves
+  platform workloads.
+- **Load.** The open-loop load generator SHALL keep the SR3 rules
+  (client-side log on its stdout, read with `kubectl logs`) and SHALL drive
+  only the apps of the language under test in that window; whether it runs
+  in the api's pod or in its own is a K-D2 layout choice.
+- **Checker.** Every check SHALL query through the API server's service
+  proxy (`kubectl get --raw /api/v1/namespaces/<ns>/services/<svc>:<port>/
+  proxy/…`) or read-only `kubectl get` / `kubectl logs`, as
+  `testing/k8s/verify.py` does: no port-forward, no `exec`, no write. A
+  query that errors, times out or returns no series for a check that expects
+  data SHALL FAIL that check, never pass it (principle 8). The checker SHALL
+  never print Collector credentials: CR snapshots drop every `auth` block and
+  every authenticator extension before they are written (K-D3).
+- **Enrichment (K2).** WHEN a single-container pod in `dev-otel-libs` exports
+  THEN its resource SHALL carry `k8s.namespace.name`, `k8s.pod.name`,
+  `k8s.node.name`, `k8s.container.name` and `k8s.cluster.name` in Tempo,
+  the matching Loki stream labels and Prometheus `target_info` labels; and
+  the pod spec SHALL configure only `OTEL_SERVICE_NAME` and
+  `OTEL_RESOURCE_ATTRIBUTES` with `deployment.environment.name` (plus the
+  documented test tag `otel_libs.run`). Multi-container pods are asserted
+  without `k8s.container.name` (K-D4).
+- **Identity (K3).** WHEN a Deployment is restarted THEN every new process
+  SHALL report a new `service.instance.id` (Prometheus `instance`, Loki
+  `service_instance_id`), and the timestamp of the last sample of the old
+  `instance` SHALL be no later than the old container's
+  `status.containerStatuses[].state.terminated.finishedAt` (read before the
+  pod object is gone) + one `OTEL_METRIC_EXPORT_INTERVAL`. The sample time is
+  read with `max_over_time(timestamp(<metric>{instance="<old>"})[w:<step>])`
+  or a raw range selector (`<metric>{instance="<old>"}[w]`), never with
+  `timestamp(last_over_time(…))`, which returns the evaluation time
+  (measured 2026-11-15). OTLP point timestamps are set at SDK collection, so
+  the agent and gateway batch timeouts (5 s each, measured config) are not in
+  the bound; they only set how long the check waits for the last points to
+  arrive. OTLP-pushed series carry no staleness marker, so an instant query
+  still returns them for the Prometheus lookback window.
+- **Mesh (K4).** WHEN `dev-otel-libs` is switched from `ambient` to `none`
+  and back THEN, per route and inbound class, the spans per request, their
+  parent links and the K2 attributes SHALL be equal in both modes, and no
+  span SHALL come from the mesh. WHEN the pre-flight finds a waypoint for the
+  namespace, a mesh tracing provider or a `Telemetry` object THEN K4 SHALL
+  stop: D11.5 ("mesh tracing at 100% or disabled") then applies and K4 needs
+  a new review.
+- **Labels (K5).** Prometheus series of a soak app SHALL carry `job` =
+  `dev-otel-libs/<service.name>`, `instance` = `service.instance.id` and the
+  promoted attributes present on the resource; `deployment.environment.name`
+  SHALL be reachable through `target_info` (it is not promoted — measured);
+  the report SHALL record the series count per metric before and after each
+  rollout restart.
+- **Connector signals (K6).** A window is bounded by two quiesced
+  checkpoints t1 and t2 (load stopped, wait ≥ SDK batch delay + agent batch
+  timeout + gateway batch timeout + the `span_metrics` flush interval of
+  30 s, measured config). At each checkpoint the checker reads the raw
+  `traces_span_metrics_calls_total{job="dev-otel-libs/<svc>"}` values per
+  series (instant query, no `increase()`: its extrapolation makes an exact
+  equality impossible); per series the window count is value(t2) −
+  value(t1), and a series absent at t1 counts its full t2 value. Σ of those
+  counts SHALL equal the load generator's answered requests between t1 and
+  t2 × the calibrated non-health spans per route for that service. A counter
+  reset (a value lower at t2 than at t1, or a gateway restart between t1 and
+  t2) invalidates the window. The service-graph `failed` share per edge SHALL
+  match the load generator's error share within the S-D5 binomial tolerance;
+  `otelcol_connector_servicegraph_expired_edges` growth is reported, not
+  judged. Loki record counts (K6, K8) SHALL count log records selected by
+  `service_instance_id` and summed across every stream of the selector —
+  Loki splits streams by `__stream_shard__` — never count streams.
+- **Health (K7).** The absence of health spans SHALL be shown on the app side
+  (K-D6), not by their absence in Tempo.
+- **Soak (K8).** Under steady load the S-D5 memory and thread rules SHALL hold
+  per container on cAdvisor data; restarts SHALL be 0; FD growth is
+  reported `n/a` until a source exists (K-D3).
+- **Data.** No telemetry leaves the cluster's existing backends; reports
+  stay on the operator's machine.
+
 ## Acceptance (for `0.3.0` final, D10)
 - [ ] A full run on the **last rc** passes SR4–SR10, SR12, SR13 (SR11 report
       produced).
@@ -276,3 +386,17 @@ For each mode (design S-D12): **refused** (agent stopped, address kept),
 - .NET (0.2.x until Phase C) and Node.js (Phase B).
 - Kubernetes-specific behavior — Phase K (tasks.md): `k8sattributes`, pod
   identity recipe (D11.4), chart wiring, Istio (D11.5), platform chart values.
+  *(Amended 2026-11-15, r5: K2–K5 are now in scope on `k8s01` — SR15. Still
+  out of scope:)*
+- Changing the shared platform: Collector CRs, Prometheus/Tempo/Loki
+  configuration, Istio mesh config (waypoints, tracing providers,
+  `Telemetry`), Kyverno policies, OBI configuration, PriorityClasses. A check
+  that needs one of them is reported `n/a: platform` with the change it would
+  need. (Kubelet `maxPods` is no longer listed: the owner raised it,
+  K0b ruling 3 — an owner change, not a Phase K write.)
+- Tail sampling, trace-ID load balancing and their D11.1–D11.3 items on the
+  cluster (no such gateway there, K-D1).
+- Using Phase K results as D10 acceptance evidence before the owner rules it
+  (K0b); Phase K is additional evidence.
+- OBI as a supported deployment mode of the helpers (K9 is a one-off
+  measurement).

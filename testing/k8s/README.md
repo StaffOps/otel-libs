@@ -3,8 +3,9 @@
 Runs the helpers on a real cluster and checks what reached the backends. The
 Compose e2e (`testing/e2e/`) proves the wire format against a Collector on one
 machine; this directory adds what only Kubernetes shows: the node-local OTel
-agent, `k8sattributes` enrichment, pod identity and the Tempo service graph. It
-is a first, partial run of the deferred soak Phase K check K2
+agent, `k8sattributes` enrichment, pod identity and the service graph (built by
+the gateway Collector's `service_graph` connector). It is a first, partial
+run of the deferred soak Phase K check K2
 ([`specs/soak-simulation/tasks.md`](../../specs/soak-simulation/tasks.md)).
 
 | File | What it does |
@@ -25,8 +26,12 @@ is a first, partial run of the deferred soak Phase K check K2
 - An OTel agent reachable at
   `otel-agent-collector.opentelemetry.svc.cluster.local:4317` (gRPC) and `:4318`
   (HTTP), with `k8sattributes` and pipelines to Tempo, Loki and Prometheus.
-- Backends in namespace `monitoring`: `tempo:3200` (with the metrics-generator
-  service graph), `loki:3100`, `kps-prometheus:9090`. `verify.py` takes
+- Backends in namespace `monitoring`: `tempo:3200`, `loki:3100`,
+  `kps-prometheus:9090`. The service-graph series
+  (`traces_service_graph_request_total`, labels `client`, `server`, `failed`,
+  `connection_type`, `client_k8s_cluster_name`) come from the gateway
+  Collector's `service_graph` connector, written to Prometheus; Tempo runs no
+  `metrics_generator`. `verify.py` takes
   `BACKENDS_NAMESPACE`, `TEMPO`, `LOKI` and `PROMETHEUS` to point elsewhere.
 - Docker with a buildx builder (default name `multiarch`:
   `docker buildx create --name multiarch`) and a login to the registry for the

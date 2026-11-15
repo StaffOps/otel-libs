@@ -5388,6 +5388,14 @@ Unsupported instrumentation versions, task A10 (P18):
   are in `testing/k8s/README.md`, three of them recorded as Deferred rows in
   `specs/config-contract-v0.3/tasks.md`. A first partial run of the deferred
   soak Phase K check K2 (`k8sattributes` enrichment).
+- **Soak Phase K promoted to the homelab cluster (`specs/soak-simulation/`, r5).**
+  Owner rulings 2026-11-15: the trigger is amended (a cluster being available
+  is enough; soak acceptance still needs Phase S), the K4 ambient toggle on
+  `dev-otel-libs` is allowed, and kubelet `maxPods` was raised. New SR15 and
+  decisions K-D1–K-D9 (platform pipeline, CPU/memory budget with a watch that
+  scales the run to 0 when platform pods cannot schedule, checker queries,
+  ambient toggle, OBI experiment); tasks K0–K11. `testing/k8s/README.md` now
+  credits the service graph to the gateway's `service_graph` connector.
 - **Consumption docs: the repository is public.** `CONSUMING.md` drops the
   private-repo instructions — no `GOPRIVATE` (it silently disables Go
   checksum verification), anonymous wheel download; a token is needed only

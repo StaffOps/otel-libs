@@ -27,6 +27,7 @@ SR11 not implemented yet (spec draft); owner task: S5
 SR12 not implemented yet (spec draft); owner task: S4h
 SR13 not implemented yet (spec draft); owner task: S4i
 SR14 not implemented yet (spec draft); owner task: S6
+SR15 not implemented yet (spec draft r5, added 2026-11-15); owner tasks: K1-K8 (verify.py modes; testing/k8s is not a citation path)
 #
 # nodejs-otel-helper (Phase B): "JS<n> pending B<x>" = not cited yet; owner task B<x>
 # from specs/nodejs-otel-helper/tasks.md. The owner task deletes its line when its
