@@ -460,6 +460,35 @@ client per exporter instance. TLS through that handler on gRPC is a C8 wire
 test (`export.grpc_certificate_*`, `export.grpc_client_*`); only if it fails
 do those cases get `skip:no-upstream-dotnet-grpc-tls-files`.
 
+> **Note 2026-11-12 (C19 fix round 1, observability MEDIUM 1).** The helper's
+> own exports are not application HTTP traffic. Measured before the change
+> (`StaffOps.OtelHelper` 0.3.0-rc.1 packed, `aspnet:8.0`, no application
+> `HttpClient` call, export interval 2 s, Collector contrib 0.160.0): the
+> `System.Net.Http` meter's `http.client.request.duration` counted 45 export
+> POSTs with `server.address`/`server.port` of the Collector, on gRPC
+> (`network.protocol.version=2`, port 4317) and on http/protobuf (`1.1`, 4318) —
+> the helper `SocketsHttpHandler` had no `MeterFactory`, so the runtime recorded
+> on the shared `System.Net.Http` meter, which the helper subscribes;
+> `SuppressInstrumentationScope` stops spans, not meters (0.2.x counted them
+> too). **Choice:** each helper export client sets
+> `SocketsHttpHandler.MeterFactory` (net8.0 API) to a private `IMeterFactory`
+> that ignores the requested name and creates its meters under
+> `StaffOps.OtelHelper.Internal.OtlpExportClient`, a name no provider of the
+> helper subscribes (not the service name, not a `<ServiceName>.` child, not in
+> `AdditionalMeters` unless an application lists it); the factory and its meters
+> are disposed with the client. This covers every instrument the handler creates
+> from its factory (`http.client.request.duration`, `http.client.active_requests`,
+> and the connection metrics `http.client.open_connections`,
+> `http.client.connection.duration`, `http.client.request.time_in_queue`). Not
+> covered: `dns.lookup.duration` (`System.Net.NameResolution`, a process-wide
+> static meter with no factory hook) — documented. Rejected: a metric view that
+> drops points by `server.address` (the endpoint is configuration, an
+> application may call the same host; a view cannot tell the two apart).
+> The SDK writes one "Instrument belongs to a Meter not subscribed" warning per
+> instrument of the private meter (ten `otelhelper: WARN sdk` lines per start,
+> measured on the first build): the D-NET5 forwarder drops them as it drops the
+> runtime's `Private.InternalDiagnostics.*` notices.
+
 ### D-NET3 — Eager registration, deferred values (N4)
 **Choice** (r2 after C1 dev B1; r3 after C1b dev M4): two phases.
 - **Eager, inside `AddOtelHelper()`**: every call that registers services —
@@ -1216,6 +1245,22 @@ publishing stays on GitHub Packages only.
 **When wrong**: a consumer with many services needs a staged migration.
 **Reversal action**: publish `OtelHelper` 0.3.x as a thin `[Obsolete]`
 wrapper for one minor. **Alternatives**: rename last (rejected: churn).
+
+> **Note 2026-11-15 (C19 fix round 1, dev LOW): no upper bound on the core
+> dependency.** The four subpackages reference the core through a
+> `ProjectReference`, which `dotnet pack` writes as a minimum-only dependency
+> (`StaffOps.OtelHelper` `>= 0.3.0-rc.1`, measured in the packed `.nuspec`).
+> A range such as `[0.3.0-rc.1, 0.4.0)` has no `ProjectReference` metadata in
+> the .NET 8 SDK's NuGet pack; it would need a `PackageReference` to the core
+> (breaking the in-repo build and the tests that build from source) or a
+> custom target rewriting the pack's dependency list (fragile across SDK
+> versions). **Choice:** keep the minimum-only dependency; the pairing rule is
+> the documentation's ("each opt-in package: same version as the core",
+> `CONSUMING.md`), and the release skill freezes the core internals the
+> subpackages use until the deferred M1. **When wrong:** a consumer restores a
+> subpackage with a newer core whose internals changed (a `MissingMethodException`
+> at start). **Reversal:** a pack-time target, or the core's internals behind a
+> stable surface (M1).
 
 ### D-NET14 — Opt-in packages: one sanitizer before the exporter; upstream semconv
 **Choice**:

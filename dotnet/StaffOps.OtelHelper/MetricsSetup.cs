@@ -474,12 +474,26 @@ namespace StaffOps.OtelHelper.Metrics
                     ? $"the port set by {resolved.PrometheusPortSource} or the host set by {variable}"
                     : $"the port set by {resolved.PrometheusPortSource}";
                 diagnostics.ReportOnce("prometheus-bind-failed", DiagnosticLevel.Error,
-                    $"the Prometheus listener cannot bind (port in use, or an address this machine does not own); change {hint}; the MeterProvider build fails",
+                    BindFailureMessage(listenerError, hint),
                     ("host", host), ("port", resolved.PrometheusMetricsPort.ToString(System.Globalization.CultureInfo.InvariantCulture)),
                     ("error", listenerError.Message));
                 throw;
             }
         }
+
+        /// <summary>Windows <c>ERROR_ACCESS_DENIED</c>: HTTP.sys refuses a prefix without a URL reservation.</summary>
+        internal const int AccessDeniedErrorCode = 5;
+
+        /// <summary>
+        /// The bind-failure message (C19 fix round 1, observability MEDIUM 2): access denied (Windows,
+        /// error 5: the default <c>http://+:&lt;port&gt;/metrics/</c> prefix needs an administrator or a URL
+        /// reservation) gets its own hint; anything else is a busy port or an address this machine does
+        /// not own (errno 98 and 99 on Linux, measured).
+        /// </summary>
+        internal static string BindFailureMessage(System.Net.HttpListenerException error, string hint)
+            => error.ErrorCode == AccessDeniedErrorCode
+                ? $"the Prometheus listener cannot bind: access denied (on Windows the prefix needs an administrator or a URL reservation, netsh http add urlacl); change {hint}, set an OTLP endpoint, or set OTEL_HELPER_METRICS_PORT=0; the MeterProvider build fails"
+                : $"the Prometheus listener cannot bind (port in use, or an address this machine does not own); change {hint}; the MeterProvider build fails";
 
         /// <summary>A push reader the helper builds itself, recorded for <c>ForceFlushOtelHelper</c>.</summary>
         private static MetricReader Track(IServiceProvider sp, MetricReader reader)

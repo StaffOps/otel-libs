@@ -673,6 +673,29 @@ public sealed class SamplerPropagatorDebugTests : IDisposable
     }
 
     [Fact]
+    public async Task A_Second_AddOtelHelper_Keeps_The_Resolved_Settings_Until_It_Resolves()
+    {
+        // C10 code-review LOW (closed in C19): a second AddOtelHelper used to reset the process-wide
+        // settings to the bare OTEL_PROPAGATORS tokens, dropping an earlier container's traces-disabled
+        // pass-through until the second container resolved.
+        // Traces disabled in code: the resolved settings differ from what the environment tokens give.
+        using var first = TestPipelines.Build(o => { TestDiagnostics.Identified(o); o.ServiceName = "c19-second"; o.PrometheusMetricsPort = 0; o.DisabledSignals = "traces"; });
+        first.GetRequiredService<ResolvedTelemetry>();
+        var resolved = HelperRuntimePropagator.GlobalSettings;
+        Assert.True(resolved.PassThroughOnly);
+
+        var services = new ServiceCollection();
+        services.AddSingleton<StaffOps.OtelHelper.Diagnostics.IOtelHelperDiagnostics>(new TestDiagnostics().Sink);
+        services.AddOtelHelper(TestDiagnostics.Identified);
+        Assert.Same(resolved, HelperRuntimePropagator.GlobalSettings);
+        Assert.Same(HelperRuntimePropagator.Global, DistributedContextPropagator.Current);
+
+        // A root started here still carries no context (the no-op tracer's behavior).
+        using var root = new Activity("root").SetIdFormat(ActivityIdFormat.W3C).Start();
+        Assert.DoesNotContain(await SendCapturedAsync(), h => h.Name == "traceparent");
+    }
+
+    [Fact]
     public void A_Current_Set_By_The_Application_After_AddOtelHelper_Is_Kept_And_Warned()
     {
         Set("OTEL_PROPAGATORS", "none");

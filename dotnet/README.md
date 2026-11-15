@@ -6,7 +6,7 @@ Observability library for .NET 8+ applications. Abstracts OpenTelemetry SDK conf
 > implements it on this branch (Phase C of
 > [`specs/dotnet-otel-helper/`](https://github.com/StaffOps/otel-libs/blob/main/specs/dotnet-otel-helper/tasks.md),
 > tasks C4–C17; ADR-004), first published as the release candidate
-> `0.3.0-rc.1` (tag `dotnet/v0.3.0-rc.1`) after the final validation, task C19.
+> `0.3.0-rc.1` (tag `dotnet/v0.3.0-rc.1`, GitHub Packages; final validation task C19).
 > The released `0.2.1` keeps the 0.2 behavior. Notes marked "0.3 (this branch,
 > task C<n>)" say what changed; "0.2.x:" gives the released behavior. Every
 > change, in two parts (API; telemetry): the .NET migration guide in
@@ -226,6 +226,20 @@ helper's line below is written.
 - **A failed bind** (a busy port, an address the machine does not own): one
   ERROR naming the address, the port and what set them, then the
   `MeterProvider` build fails with the upstream `InvalidOperationException`.
+- **Windows (not measured on Windows):** `HttpListener` runs on HTTP.sys, which
+  refuses a prefix the user has no URL reservation for — the default prefix
+  `http://+:<port>/metrics/` included — unless the process runs as an
+  administrator. So a non-administrator `dotnet run` with no OTLP endpoint fails
+  to start (the listener is on by default). The ERROR line then says
+  `access denied` instead of `port in use` (error code 5, task C19; tested with
+  an injected exception). Ways out: set an OTLP endpoint
+  (`OTEL_EXPORTER_OTLP_ENDPOINT`), or set `OTEL_HELPER_METRICS_PORT=0` (no
+  listener), or add a reservation as an administrator
+  (`netsh http add urlacl url=http://+:9464/metrics/ user=<DOMAIN\user>`), or run
+  elevated. `OTEL_EXPORTER_PROMETHEUS_HOST=localhost` may not be enough: the
+  helper registers `http://127.0.0.1:<port>/metrics/` next to the `localhost`
+  prefix, and whether HTTP.sys admits that one without a reservation is not
+  measured.
 - **Scraping a host-bound listener:** the listener routes a specific-host bind
   by the request's `Host` header. A `127.0.0.1` bind (also `localhost` and
   `::1`) registers a `localhost` prefix too. `http://127.0.0.1:9464/metrics`
@@ -277,7 +291,12 @@ helper's line below is written.
   not own); change the port set by <source>; the MeterProvider build fails
   host=<address> port=<port> error=<OS text>` (with the host variable set, the
   hint also names it) and the build then fails; only an `HttpListenerException`
-  writes it, any other reader failure propagates without the line.
+  writes it, any other reader failure propagates without the line. With error
+  code 5 (Windows access denied) the line reads `otelhelper: ERROR the
+  Prometheus listener cannot bind: access denied (on Windows the prefix needs
+  an administrator or a URL reservation, netsh http add urlacl); change the port
+  set by <source>, set an OTLP endpoint, or set OTEL_HELPER_METRICS_PORT=0; the
+  MeterProvider build fails host=<address> port=<port> error=<OS text>`.
 
 
 ### Standard OpenTelemetry SDK Variables
@@ -377,7 +396,7 @@ gRPC calls are counted in `http.server.request.duration` with `http.response.sta
 |---|---|
 | .NET Runtime | GC, thread pool, JIT, assemblies |
 | ASP.NET Core | `http.server.request.duration`; `http.server.active_requests` only with the HTTP opt-in switch (0.3, this branch) |
-| HttpClient | `http.client.request.duration`; `http.client.active_requests`, `http.client.open_connections`, `http.client.connection.duration` and `http.client.request.time_in_queue` only with the HTTP opt-in switch |
+| HttpClient | `http.client.request.duration`; `http.client.active_requests`, `http.client.open_connections`, `http.client.connection.duration` and `http.client.request.time_in_queue` only with the HTTP opt-in switch — the application's requests only: the helper's own OTLP exports (gRPC and http/protobuf) are not counted (0.3, this branch, task C19; until C19 every export POST was counted, with the Collector as `server.address`; 0.2.x not measured, it exported through the SDK's default HttpClient the same way). Their DNS lookups still reach `dns.lookup.duration` (`System.Net.NameResolution`, a process-wide meter) |
 | Other framework meters | Also exported (measured 2026-11-10): `kestrel.active_connections`, `kestrel.connection.duration`, `kestrel.queued_connections`, `kestrel.queued_requests`, `aspnetcore.routing.match_attempts`, `dns.lookup.duration`; Go, Python and Node.js have no counterpart (root README gap rows). Drop unneeded ones with `OTEL_HELPER_DISABLED_METRICS` |
 | gRPC | No `rpc.*` metric: a gRPC client call is counted in `http.client.request.duration` as `POST`, status 200, `network.protocol.version=2`; a server call in `http.server.request.duration` with status 200 even when the RPC fails |
 | Custom Meters | Business metrics via the keyed `Meter` (named after the service), any `Meter` named `<serviceName>` or `<serviceName>.<anything>` (0.3, this branch, N5), and the meters in `AdditionalMeters` |
@@ -470,7 +489,9 @@ protocol inferred from port 4318).
 - Not forwarded: the Prometheus listener's cancel at shutdown, View-drop
   notices, the "not subscribed" notices for the runtime's
   `Private.InternalDiagnostics.*` meters (32 `msquic.*` lines on .NET 10,
-  task C14c), and the SDK's own parse warnings for the variables the helper
+  task C14c) and for the helper's export-client meter
+  `StaffOps.OtelHelper.Internal.OtlpExportClient` (ten lines per start, task
+  C19), and the SDK's own parse warnings for the variables the helper
   resolves and warns about itself (`OTEL_EXPORTER_OTLP_ENDPOINT`, `_PROTOCOL`,
   `_COMPRESSION`, the per-signal keys, `OTEL_METRIC_EXPORT_INTERVAL`,
   `OTEL_SDK_DISABLED`, `OTEL_EXPORTER_PROMETHEUS_*`).
@@ -592,7 +613,7 @@ instrumentation (`OpenTelemetry.Instrumentation.SqlClient` 1.20.2):
 
 | Driver | Spans | Metrics | Verified at |
 |---|---|---|---|
-| Microsoft.Data.SqlClient / System.Data.SqlClient | `OpenTelemetry.Instrumentation.SqlClient` (exception events recorded: `exception.type` only on the span, the detail in a correlated log, ADR-014) | `db.client.operation.duration` | instrumentation 1.20.2 (no SQL Server in the tests: synthetic spans) |
+| Microsoft.Data.SqlClient / System.Data.SqlClient | `OpenTelemetry.Instrumentation.SqlClient` (exception events recorded: `exception.type` only on the span, the detail in a correlated log, ADR-014) | `db.client.operation.duration` | instrumentation 1.20.2 with Microsoft.Data.SqlClient 5.2.2 on `mcr.microsoft.com/mssql/server:2022-latest` (task C19, a manual probe: the test suite uses synthetic SqlClient spans) |
 | Npgsql | source `Npgsql` | meter `Npgsql` (`db.client.operation.*`, `db.client.connection.*`) | Npgsql 10.0.3 on `postgres:17.11-alpine` |
 | MySqlConnector | source `MySqlConnector` | meter `MySqlConnector` (`db.client.connections.*`) | MySqlConnector 2.6.2 on `mysql:8.4.11` |
 
@@ -622,6 +643,28 @@ On the `Npgsql` and `MySqlConnector` meters a view drops the pool-name attribute
 (`db.client.connection.pool.name`, `pool.name`): an unnamed pool is named after
 its connection string, `SSL Password` / `Certificate Password` included. The view
 keeps an allowlist of semconv keys and merges the pools.
+
+SqlClient as measured on SQL Server 2022 (task C19, both semconv modes): the
+span name is `db.query.summary` — `SELECT [dbo].[probe_items]`,
+`SELECT [master].[dbo].[spt_values]`, `INSERT dbo.probe_items`,
+`TRUNCATE TABLE dbo.probe_items`, `CREATE TABLE dbo.probe_items`,
+`EXECUTE sp_who` (a stored procedure, with `db.stored_procedure.name` and no
+`db.query.text`), `SELECT` (no table). SqlClient replaces every literal in
+`db.query.text` with `?` — strings, `N'…'`, numbers, `0x1F`, the length in
+`nvarchar(50)`, and an `IN ('a', 'b')` list becomes `IN (?)` — and drops `/* … */`
+and `--` comments; a bound parameter stays `@s`, and its value is not exported
+even with `OTEL_DOTNET_EXPERIMENTAL_SQLCLIENT_ENABLE_TRACE_DB_QUERY_PARAMETERS=true`
+(the helper removes `db.query.parameter.*`). Spans carry `db.system.name`
+(`microsoft.sql_server`), `db.namespace`, `server.address` and, by default,
+`db.system` (`mssql`, removed with `OTEL_SEMCONV_STABILITY_OPT_IN=database`); the
+`db.client.operation.duration` points carry `db.query.summary` and `db.system.name`
+only. A failed command (error 208, an unknown table) gives a span with status
+`ERROR` and no description, `error.type=Microsoft.Data.SqlClient.SqlException`,
+`db.response.status_code=208` and one `exception` event with only
+`exception.type`; one ERROR log record, category `StaffOps.OtelHelper.Database`,
+with the span's trace and span id, carries `exception.message`
+(`Invalid object name 'dbo.no_such_table'.`) and `exception.stacktrace`. No helper
+line is written for any of this.
 
 The database's error text is in the correlated log, not on the span (ADR-014;
 Go, Python and Node.js follow in contract task A36). Gaps (root `README.md`, "Known emitted-telemetry

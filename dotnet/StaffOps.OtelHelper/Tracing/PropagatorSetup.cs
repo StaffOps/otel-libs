@@ -46,18 +46,27 @@ namespace StaffOps.OtelHelper.Tracing
         /// <see cref="DistributedContextPropagator.Current"/> it set before, or a service it registered —
         /// is kept; the resolution warns when the settings are not the default. A <c>Current</c> the
         /// application sets after <c>AddOtelHelper</c> is kept for handlers created later (warned the
-        /// same way); handlers created before keep the helper's.
+        /// same way); handlers created before keep the helper's. Only the first <c>AddOtelHelper</c> of the
+        /// process writes the token settings: a later call keeps the settings in force (an earlier
+        /// container's resolved ones included) until its own container resolves.
         /// </summary>
         internal static void Register(IServiceCollection services)
         {
             var currentIsOurs = HelperRuntimePropagator.IsRuntimeDefault(DistributedContextPropagator.Current) || DistributedContextPropagator.Current is HelperRuntimePropagator;
-            if (currentIsOurs)
+            if (HelperRuntimePropagator.IsRuntimeDefault(DistributedContextPropagator.Current))
             {
+                // First install only: once the helper's propagator is Current, its settings come from an
+                // earlier AddOtelHelper (the same environment tokens) or from a resolved container, which
+                // also knows whether traces are disabled. A second AddOtelHelper must not reset that to the
+                // bare tokens before its own container resolves (C10 code-review LOW, closed in C19).
                 var names = PropagatorResolver.Resolve(new OtelHelperDiagnostics(() => TextWriter.Null));
                 lock (Gate)
                 {
-                    HelperRuntimePropagator.GlobalSettings = new PropagationSettings(names.Contains("tracecontext"), names.Contains("baggage"), false);
-                    DistributedContextPropagator.Current = HelperRuntimePropagator.Global;
+                    if (HelperRuntimePropagator.IsRuntimeDefault(DistributedContextPropagator.Current))
+                    {
+                        HelperRuntimePropagator.GlobalSettings = new PropagationSettings(names.Contains("tracecontext"), names.Contains("baggage"), false);
+                        DistributedContextPropagator.Current = HelperRuntimePropagator.Global;
+                    }
                 }
             }
 

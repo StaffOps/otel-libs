@@ -6,7 +6,7 @@ Practical guide for developers. One line configures everything — traces, metri
 > implements it on this branch (Phase C of
 > [`specs/dotnet-otel-helper/`](https://github.com/StaffOps/otel-libs/blob/main/specs/dotnet-otel-helper/tasks.md),
 > tasks C4–C17), first published as the release candidate `0.3.0-rc.1` (tag
-> `dotnet/v0.3.0-rc.1`) after the final validation, task C19. Notes marked
+> `dotnet/v0.3.0-rc.1`, GitHub Packages; final validation task C19). Notes marked
 > "0.3 (this branch, task C<n>)" say what changed from the released `0.2.x`;
 > "0.2.x:" gives the released behavior. The whole list of changes, in two parts
 > (API; telemetry), is the .NET migration guide in
@@ -21,8 +21,8 @@ Practical guide for developers. One line configures everything — traces, metri
 dotnet add package StaffOps.OtelHelper
 ```
 
-> **Package name**: `StaffOps.OtelHelper*` from `0.3.0-rc.1` (not published
-> yet); the released `0.2.x` is `OtelHelper*` with `using OtelHelper;`. Map
+> **Package name**: `StaffOps.OtelHelper*` from `0.3.0-rc.1` (GitHub
+> Packages; a prerelease, so install it with `--version 0.3.0-rc.1`); the released `0.2.x` is `OtelHelper*` with `using OtelHelper;`. Map
 > the IDs to the GitHub source with the `nuget.config` in
 > [`CONSUMING.md`](https://github.com/StaffOps/otel-libs/blob/main/CONSUMING.md).
 
@@ -577,6 +577,8 @@ builder.Services.AddOtelHelper(opts => opts.AdditionalMeters.Add("Example.Paymen
 var billing = new Meter("orders-api.billing");
 ```
 
+> The helper's own OTLP exports are not counted in `http.client.*` (0.3, this branch, task C19): its export clients record on a private meter, `StaffOps.OtelHelper.Internal.OtlpExportClient`, which the helper never subscribes. An application that subscribes a wildcard covering it — for example `services.AddOpenTelemetry().WithMetrics(b => b.AddMeter("StaffOps.*"))`, which configures the helper's own `MeterProvider` — exports that meter too, and the export requests reappear as `http.client.request.duration` points with the Collector as `server.address`.
+
 ### Counter — counts events
 
 ```csharp
@@ -1054,7 +1056,7 @@ Notes:
   ```
 - Under `OTEL_SDK_DISABLED=true` with `tracecontext`, the helper's activity listener is process-wide: ASP.NET Core then creates a propagation-only (non-recorded) activity for every request that carries a `traceparent`, in every host of the process, until the container that started it is disposed.
 - With traces or the SDK disabled, only an activity with a **remote** parent (`HasRemoteParent`, as ASP.NET Core and the instrumentations create) passes its inbound context on; an activity an application starts with `SetParentId(string)` or with a local context counts as started here and carries nothing. The SDK's expected "Failed to inject activity context … 'Invalid context'" line is not forwarded then.
-- The settings are process-wide: the last container resolved wins, and nothing is restored when it is disposed. Known open item (C10 code review, carried to task C19): each `AddOtelHelper` call writes these settings, so a second host's `AddOtelHelper` briefly resets an earlier container's traces-disabled pass-through until the second container resolves.
+- The settings are process-wide: the last container resolved wins, and nothing is restored when it is disposed. Only the first `AddOtelHelper` of the process writes the `OTEL_PROPAGATORS` token settings; a later `AddOtelHelper` (a second host) keeps the settings in force — an earlier container's resolved ones, its traces-disabled pass-through included — until its own container resolves (a host resolves its container when it is built, not when it starts; task C19; before, each call reset them to the bare tokens). No line is written for this.
 - The HttpClient health list the runtime propagator checks (no trace context on a health request, §9) is process-wide too: the last container whose HttpClient instrumentation options were built wins (C11 fix round 2).
 - A `SocketsHttpHandler` takes the runtime propagator when it is created: an `HttpClient` created before the host starts keeps the earlier one. `IHttpClientFactory` handlers are created later and follow the setting.
 - Without a host (a bare `ServiceProvider`) the propagators are installed when the helper's settings are first resolved: when a provider is built, or the keyed `ActivitySource`/`Meter` (`OtelHelperKeys.Instrumentation`) is resolved. Under `OTEL_SDK_DISABLED=true` the no-op providers run no helper code, so resolve the keyed `ActivitySource` once, or use a host (it resolves the settings at start).

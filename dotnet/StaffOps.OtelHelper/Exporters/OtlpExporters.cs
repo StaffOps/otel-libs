@@ -71,6 +71,7 @@ namespace StaffOps.OtelHelper.Exporters
         private HttpClient? _client;
         private X509Certificate2Collection? _roots;
         private X509Certificate2? _clientCertificate;
+        private ExportClientMeterFactory? _meterFactory;
         private bool _disposed;
 
         /// <summary>The transport of the built client (tests: redirects, TLS).</summary>
@@ -112,6 +113,7 @@ namespace StaffOps.OtelHelper.Exporters
 
                 _disposed = true;
                 _client?.Dispose();
+                _meterFactory?.Dispose();
                 _clientCertificate?.Dispose();
                 foreach (var root in _roots ?? new X509Certificate2Collection())
                 {
@@ -126,6 +128,10 @@ namespace StaffOps.OtelHelper.Exporters
             {
                 AllowAutoRedirect = false,
                 PooledConnectionLifetime = TimeSpan.FromMinutes(5),
+
+                // The helper's exports are not application requests: without a factory the handler records
+                // on the shared System.Net.Http meter, which the helper subscribes (D-NET2 note, C19).
+                MeterFactory = _meterFactory = new ExportClientMeterFactory(),
             };
             if (_settings.Tls is { } tls)
             {

@@ -402,6 +402,26 @@ public class PrometheusFallbackC12Tests : IDisposable
         Assert.Contains("Cannot assign requested address", line, StringComparison.Ordinal);
     }
 
+    [Theory]
+    // HttpListenerException error codes: 5 = Windows ERROR_ACCESS_DENIED (HTTP.sys without a URL
+    // reservation, not measured on Windows here: injected); 98 and 99 = Linux, measured above.
+    [InlineData(5, true)]
+    [InlineData(98, false)]
+    [InlineData(99, false)]
+    public void BindFailure_Message_Names_Access_Denied_Only_For_Error_5(int errorCode, bool accessDenied)
+    {
+        var message = MetricsSetup.BindFailureMessage(new HttpListenerException(errorCode), "the port set by " + HelperPort);
+        Assert.Equal(accessDenied, message.Contains("access denied", StringComparison.Ordinal));
+        Assert.Equal(!accessDenied, message.Contains("port in use", StringComparison.Ordinal));
+        Assert.Contains("change the port set by " + HelperPort, message, StringComparison.Ordinal);
+        Assert.EndsWith("the MeterProvider build fails", message, StringComparison.Ordinal);
+        if (accessDenied)
+        {
+            Assert.Contains("netsh http add urlacl", message, StringComparison.Ordinal);
+            Assert.Contains("OTEL_HELPER_METRICS_PORT=0", message, StringComparison.Ordinal);
+        }
+    }
+
     [Fact]
     public void BusyPort_FailsTheBuild_AfterOneHelperError_NamingThePortSource()
     {

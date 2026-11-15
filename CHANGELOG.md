@@ -638,6 +638,16 @@ emitted telemetry.
 > where custom spans go. Items 19 and 20 of the API part and item 30 of the
 > telemetry part were added by C18 from the design's "Migration guide inputs";
 > items that a later task changed carry a dated note.
+>
+> **Version 2026-11-12 (task C19).** This guide is the one for
+> `StaffOps.OtelHelper*` `0.3.0-rc.1` (tag `dotnet/v0.3.0-rc.1`): the five packed
+> projects declare `<Version>0.3.0-rc.1</Version>`. The tag is pushed by the
+> owner after the final refutation; until then the packages are not on GitHub
+> Packages.
+>
+> *Update 2026-11-15:* **Tagged as `dotnet/v0.3.0-rc.1` (on the commit that carries this line);
+> published by the `publish-dotnet-release` job** (the five
+> `StaffOps.OtelHelper*` packages on GitHub Packages).
 
 **API part.**
 
@@ -1471,6 +1481,18 @@ dashboards and alerts.
    in the test setup); it stays as the SqlClient CHANGELOGs (1.20.0, 1.20.2)
    state it.
 
+   *Measured 2026-11-12 (task C19; Microsoft.Data.SqlClient 5.2.2 and
+   instrumentation 1.20.2 on SQL Server 2022, `mcr.microsoft.com/mssql/server:2022-latest`):*
+   the span name is `db.query.summary` — delimited and multi-part identifiers
+   kept as written (`SELECT [dbo].[probe_items]`,
+   `SELECT [master].[dbo].[spt_values]`), `TRUNCATE TABLE dbo.probe_items`,
+   `INSERT dbo.probe_items`, `EXECUTE sp_who`, a bare `SELECT` with no table;
+   `db.query.text` has every literal as `?` (strings, `N'…'`, numbers, `0x1F`,
+   `nvarchar(50)` → `nvarchar(?)`, `IN ('a', 'b')` → `IN (?)`), comments
+   dropped, a bound parameter kept as `@s`; no literal reached traces, metrics
+   or logs in either semconv mode. The 0.2.x (instrumentation 1.15.2) names
+   were not measured against these.
+
 24. **DB exception message and stack trace moved from span events to a
    correlated log record** (task C14a round 2, owner decision
    [ADR-014](https://github.com/StaffOps/otel-libs/blob/main/specs/decisions/ADR-014-exception-detail-in-correlated-logs.md)).
@@ -1623,6 +1645,21 @@ dashboards and alerts.
    `.Identity` and `.MemoryPool` meters. The `0.3.0-rc.1` packages target
    `net8.0` (`dotnet/README.md` ".NET 10 Note"); task C0 retargets to
    `net10.0` and adds the section for consumers still on the .NET 8 runtime.
+
+31. **The helper's own OTLP exports leave the HttpClient metrics** (added
+   2026-11-15, task C19 fix round 1; design D-NET2 note). Before (this branch
+   until C19; 0.2.x not measured, it exported through the SDK's default
+   HttpClient the same way): each export POST of the helper — traces, metrics
+   and logs, gRPC and http/protobuf — was recorded on the `System.Net.Http`
+   meter the helper exports, as `http.client.request.duration` with the
+   Collector's `server.address` / `server.port` (measured: 45 points in 10 s
+   at a 2 s metric interval, with no application `HttpClient` call; and in
+   `http.client.active_requests` and the connection metrics with the HTTP
+   opt-in switch). After: the export clients record on a private meter the
+   helper never exports; only application requests remain. Check: dashboards
+   or SLOs on `http_client_request_duration_seconds` that showed the Collector
+   as a dependency lose those series; `dns_lookup_duration_seconds` still
+   includes the exporter's lookups.
 
 ### Collector / platform prerequisites (before rolling 0.3.0 out)
 
@@ -2520,6 +2557,52 @@ Phase C work on this branch (no .NET release yet; the first will be
   `AGENTS.md`, `CONSUMING.md` (the `0.3.0-rc.1` install), and the `release` and
   `parity-case` skills (.NET steps). Migration guide: a status note, API items
   19–20, telemetry item 30 and dated notes on items superseded by later tasks.
+- **.NET: final validation for `0.3.0-rc.1` (task C19, 2026-11-12).** The five
+  packed projects (`StaffOps.OtelHelper`, `.AWS`, `.Redis`, `.Sql`,
+  `.Profiling`) declare `<Version>0.3.0-rc.1</Version>`, the version the
+  `publish-dotnet-release` job checks against the tag `dotnet/v0.3.0-rc.1`.
+  Fixed (C10 code-review LOW): only the first `AddOtelHelper` of the process
+  writes the `OTEL_PROPAGATORS` token settings of the runtime propagator; a
+  second `AddOtelHelper` (a second host) no longer resets an earlier
+  container's resolved settings — its traces-disabled pass-through included —
+  before its own container resolves (`PropagatorSetup.Register`; test
+  `A_Second_AddOtelHelper_Keeps_The_Resolved_Settings_Until_It_Resolves`;
+  HOW-TO §13). SqlClient instrumentation 1.20.2 measured on a real SQL Server
+  2022 (span names from `db.query.summary`, sanitized `db.query.text`, the
+  ADR-014 exception split with the correlated log record; `dotnet/README.md`
+  "Sql (databases)", migration guide telemetry item 6). Not changed, recorded:
+  the invalid `OTEL_EXPORTER_PROMETHEUS_HOST` warning keeps the text shared by
+  all four languages ("the listener binds every interface"; on .NET every IPv4
+  interface, as the README says); the batch-size warning keeps one `variable=`
+  (or `option=`) attribute per name — Go and Node.js write one `variable=` with
+  the two names joined by a comma (`specs/dotnet-otel-helper/tasks.md` C19).
+- **.NET: the helper's exports are no longer counted as application HTTP
+  calls (task C19 fix round 1, 2026-11-15).** Each export client sets
+  `SocketsHttpHandler.MeterFactory` to a private factory
+  (`Exporters/ExportClientMeterFactory.cs`) whose meters are named
+  `StaffOps.OtelHelper.Internal.OtlpExportClient`, which no helper provider
+  subscribes; disposed with the client. Measured before: every export POST was
+  an `http.client.request.duration` point on `System.Net.Http` with the
+  Collector as `server.address`, on both protocols. Tests
+  `ExportClientMetricsTests` (both protocols, an application request as the
+  positive control; two mutants killed). Migration guide telemetry item 31.
+  The SDK's "Instrument belongs to a Meter not subscribed" notices for that
+  private meter (ten `otelhelper: WARN sdk …` lines per start, measured on the
+  first build of the fix) are not forwarded, like the runtime's
+  `Private.InternalDiagnostics.*` meters (`SdkTextSanitizer.IsPrivateRuntimeMeterNotice`).
+  Also: a Prometheus listener bind that fails with error code 5 (Windows
+  access denied: HTTP.sys needs an administrator or a URL reservation for the
+  default `http://+:<port>/metrics/` prefix) writes `otelhelper: ERROR the
+  Prometheus listener cannot bind: access denied (on Windows the prefix needs
+  an administrator or a URL reservation, netsh http add urlacl); change …, set
+  an OTLP endpoint, or set OTEL_HELPER_METRICS_PORT=0; the MeterProvider build
+  fails` instead of the "port in use" text (`MetricsSetup.BindFailureMessage`;
+  tested with an injected `HttpListenerException(5)`, not measured on Windows;
+  `dotnet/README.md` Prometheus fallback, root README gap row ".NET on
+  Windows"). The five packages carry `dotnet/README.md` as their package
+  readme (`PackageReadmeFile`, `dotnet/Directory.Build.targets`). The
+  subpackages keep a minimum-only dependency on the core (`>= 0.3.0-rc.1`; no
+  upper bound — design D-NET13 note of 2026-11-15).
 
 ### Breaking — telemetry output changes (dashboards/alerts)
 

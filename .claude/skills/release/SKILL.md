@@ -349,7 +349,16 @@ Before the tag, in addition to "Before tagging":
   `CONSUMING.md`, exporting to a real Collector.
 - CHANGELOG: the .NET section and the .NET migration guide name the version;
   the root README, `CONSUMING.md`, `AGENTS.md` and `dotnet/README.md` move from
-  "after task C19" to "published".
+  "after task C19" to "published"; so do `dotnet/HOW-TO.md` (the version note and
+  the §1 "Package name" note) and the `CONSUMING.md` .NET install text ("Release
+  candidate `0.3.0-rc.1` (once published …)"); then `tools/regen_index.py` for
+  `docs/site/index.md`.
+- Before .NET `0.3.0-rc.2`: the core internals `StaffOps.OtelHelper.Profiling`
+  uses (`IOtelHelperDiagnostics`, `OtelHelperDiagnostics.Fallback`) stay
+  signature-frozen — the subpackages are built against the core's internals of
+  the same version, so a changed signature breaks a Profiling package paired
+  with another core version — or do the deferred C19 M1 (a public or
+  `[InternalsVisibleTo]`-free surface) first.
 
 After the tag: the `publish-dotnet-release` run is green; the five
 `StaffOps.OtelHelper*` packages exist on GitHub Packages at the version (a

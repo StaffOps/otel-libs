@@ -82,12 +82,15 @@ namespace StaffOps.OtelHelper.Diagnostics
         /// runtime-private meter (<c>Private.InternalDiagnostics.*</c>, e.g.
         /// <c>Private.InternalDiagnostics.System.Net.Quic.MsQuic</c>, whose <c>msquic.*</c> instruments
         /// the .NET 10 runtime creates at start: 32 warnings, measured C14c fix round 1). No provider
-        /// subscribes those meters by design; any other reason is forwarded.
+        /// subscribes those meters by design; any other reason is forwarded. The helper's own export-client
+        /// meter (<see cref="Exporters.ExportClientMeterFactory.MeterName"/>, C19 fix round 1) is private the
+        /// same way: its five <c>http.client.*</c> instruments gave ten warnings per start, measured.
         /// </summary>
         internal static bool IsPrivateRuntimeMeterNotice(string? eventName, object?[] payload)
             => eventName == "MetricInstrumentIgnored"
                 && payload.Length >= 3
-                && payload[1] is string meter && meter.StartsWith(PrivateRuntimeMeterPrefix, StringComparison.Ordinal)
+                && payload[1] is string meter
+                && (meter.StartsWith(PrivateRuntimeMeterPrefix, StringComparison.Ordinal) || meter == Exporters.ExportClientMeterFactory.MeterName)
                 && payload[2] is string reason && reason.Contains("not subscribed", StringComparison.OrdinalIgnoreCase);
 
         internal const string PrivateRuntimeMeterPrefix = "Private.InternalDiagnostics.";
