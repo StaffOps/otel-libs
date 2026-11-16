@@ -737,6 +737,15 @@ list).
   are never logged. `demo.sh render` prints `<generated>` in place of
   values; `demo.sh delete` deletes the Secrets (r3.3: `delete --all`; see
   **Lifetime**); `verify.py` never reads them.
+  *(r3.3, 2026-11-16, before DE3: superseded for the apps as for the
+  backing services — no password in container env. Each app mounts its key of
+  `demo-postgres-auth` (`demo_<lang>`) and the `password` key of
+  `demo-redis-auth` as files, mode 0440, and reads the paths from
+  `DEMO_PG_PASSWORD_FILE` and `DEMO_REDIS_PASSWORD_FILE` once at start-up;
+  the other connection settings (`DEMO_PG_HOST`, `DEMO_PG_DB`, `DEMO_PG_USER`,
+  `DEMO_REDIS_ADDR`, and `DEMO_API_URL` (worker → api), `DEMO_BACKEND_ADDR`
+  (api → backend)) are plain env, as are the listen ports `DEMO_HTTP_PORT`
+  (api, 8080) and `DEMO_GRPC_PORT` (backend, 50051). DE4 renders the mounts.)*
 - **Proof**: check g.secret (DE-D11): the anchored 48-hex scan over every
   span of the run and over the Loki records (line and structured metadata)
   of the run's pods and the two backing services.
