@@ -16,10 +16,16 @@ Planning artefacts for `otel-libs`. Conventions and principles live in
    helper at parity on the 0.3 contract.
    [`dotnet-otel-helper/`](dotnet-otel-helper/) — **active** (reviewed r3, 2026-11-04). Phase C:
    .NET helper at parity on the 0.3 contract; C0 (`net10.0` only) last.
-4. [`repo-tooling/`](repo-tooling/) — **active**. Hooks, spec lint,
+4. [`demo-environment/`](demo-environment/) — **draft r3.1** (2026-11-16; r1, r2,
+   r3 reviewed — DE0, DE0c, DE0d; owner rulings DE0b; r3.1 spot check DE0e open). Four-language demo on `k8s01` (worker → api → gRPC
+   backend, shared PostgreSQL and Redis queue) validating log/trace
+   correlation, exemplars, custom metrics and ADR-014 error routes.
+   [requirements](demo-environment/requirements.md) ·
+   [design](demo-environment/design.md) · [tasks](demo-environment/tasks.md)
+5. [`repo-tooling/`](repo-tooling/) — **active**. Hooks, spec lint,
    traceability, local verify, skills.
-5. [`decisions/`](decisions/) — decision records (index below).
-6. Shipped (historical, older user-story format; superseded wherever
+6. [`decisions/`](decisions/) — decision records (index below).
+7. Shipped (historical, older user-story format; superseded wherever
    `config-contract-v0.3` differs — e.g. health paths D5, gRPC API ADR-005):
    [`metrics-exporter-contract/`](metrics-exporter-contract/) (0.1.0),
    [`go-otel-helper/`](go-otel-helper/) (0.1.0).
