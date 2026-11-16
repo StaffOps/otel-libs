@@ -1,0 +1,12 @@
+# Context of dotnet/demo/Api/Dockerfile (repository root): only what the build needs.
+*
+!dotnet/Directory.Build.props
+!dotnet/Directory.Build.targets
+!dotnet/StaffOps.OtelHelper/
+!dotnet/StaffOps.OtelHelper.Redis/
+!dotnet/demo/Directory.Build.props
+!dotnet/demo/Common/
+!dotnet/demo/Api/
+!demo/proto/
+**/bin/
+**/obj/

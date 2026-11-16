@@ -4102,6 +4102,47 @@ Unsupported instrumentation versions, task A10 (P18):
 
 ### Internal
 
+- **Demo apps in all four languages (DE3a–DE3d; spec `specs/demo-environment/`
+  r3.5).** `go/demo/{worker,api,backend}` (+ `internal/demokit`),
+  `python/demo/`, `nodejs/demo/` (its own package and lockfile, outside the npm
+  workspace; images pack the workspace helper over the `0.3.0-rc.1` pins and
+  fail the build if the installed tree drifts from the lock) and
+  `dotnet/demo/` (net10.0, project references, outside the solution and every
+  pack/release job). Each worker drives a fixed cycle of `ok`,
+  `business_error`, `db_error` and `unhandled` orders at a fixed rate in a
+  root span `demo.drive` → api (HTTP; Redis quote cache; gRPC) → backend
+  (`demo.order.process`, PostgreSQL through the `-sql` extensions) → a Redis
+  Stream PRODUCER span; the worker's CONSUMER span has the producer as parent
+  and as its one link and acknowledges inside it. Failures follow ADR-014 by
+  hand: the owning demo span is ERROR with `error.type` and one event with
+  `exception.type` only; message and stack trace go to an ERROR log inside
+  that span; run tokens appear only in logs. Custom metrics
+  `demo.orders.processed` (`{order}`) and `demo.order.duration` (`s`) carry
+  `demo.scenario`, `demo.outcome` and, on failures, `error.type`. Pinned
+  conventions (DE-D7 r3.4/r3.5): run id from `otel_libs.run` in
+  `OTEL_RESOURCE_ATTRIBUTES`; order ids `ok-`/`ord-<seq mod 500>`, the backend
+  inserts `dup-<run>`; 422/409 for the business codes, 502 for other gRPC
+  failures, cache and publish failures only WARN; passwords only from
+  `DEMO_*_PASSWORD_FILE`; schema from `DEMO_SCHEMA_FILE`; `GET /health` and
+  `grpc.health.v1`. Images: repository-root context with per-Dockerfile
+  allow-lists, linux/amd64, non-root, base images by digest (Python from a
+  hashed lock, build tools included). Gates: CI jobs `demo-python`,
+  `demo-dotnet`, `demo-node`, `demo-go-images`, `go/demo` in the go-test and
+  govulncheck loops; `testing/verify.sh` steps `demo-node`, `demo-python`,
+  `demo-dotnet` (`demo-go` now runs with a 4 GiB tmpfs). Tests: Go
+  `go test -race`; Python 72 (99.8 %); Node.js 63 (`lib/` 100 %); .NET 106
+  (95.5 %). Local smokes against PostgreSQL 17.11, Redis 7.4.12 and a
+  Collector showed one trace per request across the three services in every
+  language and 0 secret hits. Measured gaps, recorded as tasks for DE6's
+  strict xfail cells: Go DB spans keep `dup-<run>` (A36) and lack
+  `db.namespace` (A38); Go HTTP server spans have no `error.type` on 5xx (new
+  A40); framework server spans keep exception detail (A37: ASP.NET Core,
+  express `request handler`, Python aio gRPC `AbortError`); the .NET api's
+  gRPC-client exemplars point at unexported spans (parked .NET item). The Go
+  demo turns off go-redis maintenance notifications (Redis 7.4 answers
+  `CLIENT MAINT_NOTIFICATIONS` with an error span). The Node.js demo works
+  around A39 (new task) with `setup()` → `shutdown()` → `setup()` and one
+  shared `service.instance.id`; the workaround goes when A39 lands.
 - **Demo environment, shared contract and backing services (DE1, DE2;
   spec `specs/demo-environment/` r3.3).** `demo/proto/otellibs/demo/v1/demo.proto`
   (`demo.v1.OrderService`: `PlaceOrder`, `GetOrder`) and

@@ -1,0 +1,32 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Unit tests of the .NET demo apps' logic (task DE3d). No network: the database,
+       Redis and HTTP parts are covered by the local smoke and the cluster run (DE6). -->
+  <PropertyGroup>
+    <IsTestProject>true</IsTestProject>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="coverlet.msbuild" Version="6.0.2">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.12.0" />
+    <PackageReference Include="xunit" Version="2.9.3" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Common\Demo.Common.csproj" />
+    <ProjectReference Include="..\Api\Demo.Api.csproj" />
+    <ProjectReference Include="..\Backend\Demo.Backend.csproj" />
+    <ProjectReference Include="..\Worker\Demo.Worker.csproj" />
+  </ItemGroup>
+</Project>

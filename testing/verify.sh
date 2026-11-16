@@ -10,7 +10,7 @@
 #   testing/verify.sh --list          # step names
 #
 # Steps: go, go-ext, py-3.10-lower, py-3.13-lower, py-3.13-latest, node, dotnet, e2e,
-# dotnet-scrape, mkdocs, spec-lint, trace, index, tools-tests, demo-tests, demo-go. `node` runs the Node.js
+# dotnet-scrape, mkdocs, spec-lint, trace, index, tools-tests, demo-tests, demo-go, demo-node, demo-python, demo-dotnet. `node` runs the Node.js
 # workspace, parity runner included, on node:${NODE_VERSION:-24}-slim (CI
 # covers 22.15.0/22/24/26). `dotnet` runs the .NET suite with the parity runner
 # and the coverage gate on sdk:8.0 (until C0).
@@ -29,7 +29,7 @@ compose=(docker compose -f "$root/testing/docker-compose.yml")
 MKDOCS_IMAGE="squidfunk/mkdocs-material:9.5.39"
 TOOLS_IMAGE="python:3.12-slim"
 
-ALL_STEPS=(go go-ext py-3.10-lower py-3.13-lower py-3.13-latest node dotnet e2e dotnet-scrape mkdocs spec-lint trace index tools-tests demo-tests demo-go)
+ALL_STEPS=(go go-ext py-3.10-lower py-3.13-lower py-3.13-latest node dotnet e2e dotnet-scrape mkdocs spec-lint trace index tools-tests demo-tests demo-go demo-node demo-python demo-dotnet)
 QUICK_SKIP=" e2e dotnet-scrape py-3.10-lower py-3.13-lower "
 
 usage() { sed -n '2,23p' "$0" | sed 's/^# \{0,1\}//'; }
@@ -80,9 +80,9 @@ trap 'exit 130' INT TERM
 step_go() { "${compose[@]}" run --rm go-tests; }
 
 step_go_ext() {
-  # Same module list as the CI go-test job (ext build/vet/test, examples build/vet).
+  # Same module list as the CI go-test job (ext + demo build/vet/test, examples build/vet).
   "${compose[@]}" run --rm go-tests sh -ec '
-    for d in ext/otelaws ext/otelredis ext/otelsql; do
+    for d in ext/otelaws ext/otelredis ext/otelsql demo; do
       echo "== $d"; (cd "$d" && go build ./... && go vet ./... && go test -count=1 ./...)
     done
     for d in example/go-api example/go-backend example/go-process example/go-custom-signals ../testing/e2e/go-smoke; do
@@ -145,6 +145,31 @@ step_demo_tests() { tools_run python -m unittest discover -s testing/k8s/demo -p
 # module tidy, builds and vets (same command as the CI job demo-go-stubs).
 step_demo_go() { "$root/go/demo/gen.sh" check; }
 
+# specs/demo-environment DE3c: unit tests (coverage gate 90 %) and syntax check of
+# the Node.js demo apps, on a copy (npm ci writes node_modules; the checkout stays
+# read-only). The copy keeps the layout lib/assets.js expects (../../../demo).
+step_demo_node() {
+  docker run --rm -v "$root:/repo:ro" "node:${DEMO_NODE_VERSION:-22}-slim" sh -ec '
+    mkdir -p /w/nodejs
+    cp -r /repo/demo /w/demo
+    tar -C /repo/nodejs --exclude=node_modules -cf - demo | tar -C /w/nodejs -xf -
+    cd /w/nodejs/demo
+    npm ci --ignore-scripts --no-audit --no-fund --loglevel=error
+    npm test
+    for f in */main.js */app.js; do node --check "$f"; done'
+}
+
+# specs/demo-environment DE3b: unit tests (coverage gate 90 %) of the Python demo
+# apps on the images' python:3.11-slim digest, from the hashed lock plus the local helper.
+step_demo_python() { "$root/python/demo/run-tests.sh"; }
+
+# specs/demo-environment DE3d: build and unit tests (line coverage gate 90 %) of
+# the .NET demo apps on sdk:10.0, on a copy made inside the container (the
+# checkout is mounted read-only; no bin/ or obj/ is written into it).
+step_demo_dotnet() {
+  docker run --rm -v "$root:/repo:ro" mcr.microsoft.com/dotnet/sdk:10.0@sha256:fe0fd4e93bd2fbb47c883b7a6369e5c8d3db8bf01cdc5981f6ee35fbdf3ff4fb /repo/dotnet/demo/test.sh
+}
+
 run_step() {
   case "$1" in
     go) step_go ;;
@@ -163,6 +188,9 @@ run_step() {
     tools-tests) step_tools_tests ;;
     demo-tests) step_demo_tests ;;
     demo-go) step_demo_go ;;
+    demo-node) step_demo_node ;;
+    demo-python) step_demo_python ;;
+    demo-dotnet) step_demo_dotnet ;;
   esac
 }
 

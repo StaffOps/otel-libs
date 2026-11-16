@@ -315,6 +315,24 @@ per 50 s. Each request runs in a new root span `demo.drive` (helpers'
 `ActivitySource` root with `parentContext: default`) with `demo.scenario`.
 Body `{"order_id", "customer", "amount", "scenario"}`; `customer` cycles over
 three values so the cache hits and misses.
+*(r3.4, 2026-11-16, after DE3a–d: conventions the spec left open, pinned so
+the four languages match. **Run id**: apps read `otel_libs.run` from
+`OTEL_RESOURCE_ATTRIBUTES`, fallback `local`; no separate variable.
+**Order ids**: `ok-<seq mod 500>` for `ok`, `ord-<seq mod 500>` for the error
+scenarios; the backend inserts `dup-<run>` itself for `db_error`, so
+`order.id` never carries a run token (DR12). **Amounts**: `business_error`
+sends 5000 and the backend rejects any amount over 1000; the other scenarios
+send ≤ 1000. **Wiring**: `DEMO_API_URL` is a base URL (the worker appends
+`/orders`); the backend reads the schema from `DEMO_SCHEMA_FILE`, default
+`/etc/otel-libs-demo/schema.sql`, baked into the image (Go cannot embed a
+file outside its module; the others may embed it but honor the variable).
+**Health**: every backend serves `grpc.health.v1`; every api serves
+`GET /health`. **Accept span on 4xx**: `demo.order.accept` is ERROR with no
+description, no `error.type`, no event and no log (only the owning span names
+the failure, DE-D8). **Panic/exception at span end**: an SDK that records an
+exception when a span ends during unwinding (Go `span.End()` deferred in a
+panic adds `exception.message`) must not see it — end the span before
+re-raising.)*
 **Justification**: a 15-minute window holds 180 requests per language: 126
 `ok` and 18 of each error scenario, minus at most one cycle at the edges —
 the floor for the DE-D11 minimums.
@@ -913,6 +931,44 @@ Exemplar selectors are the `_bucket` series of each duration (DE-D10).
 *(r3, 2026-11-16: new section, audit #20.)*
 
 ## Expected-results matrix (reference; predictions, replaced by DE6's measurements in `expected.json`)
+
+> **r3.5 (2026-11-16), after the DE3 review (code-review + observability
+> refutation of the four languages' apps and smokes).** Rulings, pinned for
+> all four languages:
+> - **Cache scope**: the api reads the quote cache (GET, SET on a miss) for
+>   every scenario that reaches it — all but `unhandled`, which fails before
+>   the cache. Supersedes the Scenario table's "PlaceOrder only" for
+>   `business_error` / `db_error`. No `demo.cache.hit` attribute.
+> - **api answers**: 422 / 409 for the two business gRPC codes; any other gRPC
+>   failure → 502, `demo.order.accept` ERROR only (propagate, no event/log).
+>   Cache and publish failures are not fatal: one WARN log, the answer stays
+>   201. The PRODUCER span records no exception event of its own.
+> - **Backend unexpected failure**: recorded in `demo.order.process` (ADR-014
+>   pattern), `demo.outcome=error`, `error.type` = the exception type name,
+>   gRPC INTERNAL with the constant message `order failed`.
+> - **Transport `error.type` on `demo.drive`**: the exception type name (Go:
+>   `%T` of the root error), never `_OTHER`.
+> - **Framework logs on the `unhandled` path** (Python `uvicorn.error`, .NET
+>   Kestrel): accepted as framework debt under A37, not filtered and not
+>   caught (catching would also hide the framework span event that A37
+>   measures). Check a/d count only records whose span id is a demo span.
+> - **Values**: customers `cust-a`, `cust-b`, `cust-c`; `ok` amount
+>   `10 + seq mod 90`; `seq` starts at 1; the worker runs at a fixed rate (a
+>   tick, not sleep-after-work); `db_error` is a plain `INSERT` (not the
+>   upsert); stream entries carry `order_id` and `scenario` only; the
+>   consumer group is created at `$` with `MKSTREAM`, and a process that finds
+>   it existing (BUSYGROUP) or missing (NOGROUP) recovers without an ERROR
+>   span; `order event processed` carries `order.id` and `demo.scenario`;
+>   the backend validates `scenario` (INVALID_ARGUMENT), the api answers 400.
+> - **Base images** pinned by digest in every language.
+> - **Matrix corrections** (measured in the four smokes, to be confirmed in
+>   DE6): Go d.http → `xfail:A40` (otelhttp v0.72 sets no `error.type` on
+>   server spans, `internal/semconv/server.go:74-75`); Python and Node.js
+>   g.sentinel.db → pass (no run token on the DB span; d.db stays
+>   `xfail:A36`: no event with `exception.type`); the d.http span set is the
+>   SERVER span **plus the framework INTERNAL spans of the same request**
+>   (Node.js express `request handler`), so Node.js d.http stays
+>   `xfail:A37`; .NET d.grpc and e → pass (were `unmeasured`).
 
 New task ids (`A38`, `A39`) are created by DE8 in
 `specs/config-contract-v0.3/tasks.md` before `expected.json` cites them.

@@ -22,8 +22,11 @@ Per language:
   helper modules); stubs committed in `go/demo/gen/`. After changing the
   proto run `go/demo/gen.sh` (Docker, pinned protoc and plugins) and commit
   the result; CI job `demo-go-stubs` runs `go/demo/gen.sh check`.
-- **Python** generates stubs at image build, **Node.js** loads the proto at
-  run time, **.NET** uses `Grpc.Tools` at build (tasks DE3b–DE3d).
+- **Python** — [`python/demo/`](../python/demo/README.md): stubs generated
+  from this proto at image build (`grpcio-tools`, removed from the runtime
+  image) and at test time (`python/demo/run-tests.sh`); nothing committed.
+- **Node.js** loads the proto at run time, **.NET** uses `Grpc.Tools` at
+  build (tasks DE3c–DE3d).
 
 Backing services on the cluster: `testing/k8s/demo/demo.sh apply | delete
 --lang <lang> | delete --all | render` (task DE2). Connection contract for the

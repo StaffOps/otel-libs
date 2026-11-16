@@ -30,7 +30,7 @@ esac
 
 docker run --rm \
   --user "$(id -u):$(id -g)" \
-  --tmpfs /tmp:rw,exec,size=1536m \
+  --tmpfs /tmp:rw,exec,size=4g \
   -e HOME=/tmp -e GOPATH=/tmp/go -e GOCACHE=/tmp/gocache \
   -e MODE="$mode" \
   -v "$root:/src:ro" \

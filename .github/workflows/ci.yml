@@ -79,7 +79,8 @@ jobs:
           OTELREDIS_TEST_ADDR: localhost:6379
           OTELREDIS_TEST_PASSWORD: otel-test-only
         run: |
-          for d in ext/otelaws ext/otelredis ext/otelsql; do
+          # demo: the demo apps' module (specs/demo-environment DE3a; unit tests only).
+          for d in ext/otelaws ext/otelredis ext/otelsql demo; do
             (cd "$d" && go build ./... && go vet ./... && go test ./...)
           done
           for d in example/go-api example/go-backend example/go-process example/go-custom-signals ../testing/e2e/go-smoke; do
@@ -90,7 +91,7 @@ jobs:
         if: matrix.go == '1.27.x'
         run: |
           go install golang.org/x/vuln/cmd/govulncheck@v1.9.0
-          for d in . ext/otelaws ext/otelredis ext/otelsql example/go-api example/go-backend example/go-process example/go-custom-signals ../testing/e2e/go-smoke; do
+          for d in . ext/otelaws ext/otelredis ext/otelsql demo example/go-api example/go-backend example/go-process example/go-custom-signals ../testing/e2e/go-smoke; do
             echo "== $d"; (cd "$d" && "$(go env GOPATH)/bin/govulncheck" ./...)
           done
       - name: Fake receiver logs
@@ -487,6 +488,94 @@ jobs:
           persist-credentials: false
       - name: Regenerate and diff
         run: go/demo/gen.sh check
+
+  demo-go-images:
+    # specs/demo-environment DE3a: the three Go demo images build from the repo
+    # root context (DE-D3) as linux/amd64, the cluster's platform. No push:
+    # DE4's build-demo.sh pushes from the committed HEAD.
+    name: Demo Go images (build, linux/amd64) (${{ matrix.app }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        app: [worker, api, backend]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - name: Build
+        run: docker build --platform linux/amd64 -f "go/demo/${{ matrix.app }}/Dockerfile" -t "otel-libs-demo-go-${{ matrix.app }}:ci" .
+
+  demo-node:
+    # specs/demo-environment DE3c: unit tests of the Node.js demo apps' logic
+    # (nodejs/demo/lib, line/branch/function coverage gate 90 %) on the
+    # demo images' Node.js line. nodejs/demo is its own package with its own
+    # lockfile, outside the npm workspace (the published packages' checks do
+    # not see it).
+    name: Demo Node.js apps (unit tests)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: nodejs/demo
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '22'
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: npm test
+      - name: Syntax check of the three apps
+        run: for f in */main.js */app.js; do node --check "$f"; done
+      - name: Build the three demo images (root context, linux/amd64, not pushed)
+        working-directory: .
+        run: |
+          for app in worker api backend; do
+            docker build --platform linux/amd64 -t "otel-libs-demo-node-$app:ci" -f "nodejs/demo/$app/Dockerfile" .
+          done
+
+  demo-python:
+    # specs/demo-environment DE3b: unit tests of the Python demo apps (worker,
+    # api, backend; coverage gate 90 %) in Docker on the images' pinned
+    # python:3.11-slim digest, from python/demo's hashed lock plus the local
+    # helper; and a build of the three images (root context, linux/amd64),
+    # not pushed.
+    name: Demo Python apps (unit tests, image build)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - name: Unit tests (python:3.11-slim digest)
+        run: python/demo/run-tests.sh
+      - name: Build the images
+        run: |
+          for app in worker api backend; do
+            docker build --platform linux/amd64 -f "python/demo/$app/Dockerfile" \
+              -t "otel-libs-demo-python-$app:ci" .
+          done
+
+  demo-dotnet:
+    # specs/demo-environment DE3d: build and unit tests (line coverage gate
+    # 90 %, Program.cs and the generated gRPC code excluded) of the .NET demo
+    # apps (dotnet/demo, net10.0). They reference the helper by project and are
+    # outside StaffOps.OtelHelper.sln and every pack/release job. Same script
+    # as testing/verify.sh demo-dotnet, in the sdk:10.0 container.
+    name: Demo .NET apps (unit tests)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - run: docker run --rm -v "$PWD:/repo:ro" mcr.microsoft.com/dotnet/sdk:10.0@sha256:fe0fd4e93bd2fbb47c883b7a6369e5c8d3db8bf01cdc5981f6ee35fbdf3ff4fb /repo/dotnet/demo/test.sh
+      - name: Build the three images (repository-root context, not pushed)
+        run: |
+          for app in Worker Api Backend; do
+            docker build --platform linux/amd64 -f "dotnet/demo/$app/Dockerfile" \
+              -t "otel-libs-demo-dotnet-$(echo "$app" | tr '[:upper:]' '[:lower:]'):ci" .
+          done
 
   spec-checks:
     # specs/repo-tooling RT7: spec format lint, requirement traceability and

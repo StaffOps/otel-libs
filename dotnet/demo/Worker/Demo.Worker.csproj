@@ -1,0 +1,8 @@
+<Project Sdk="Microsoft.NET.Sdk.Worker">
+  <!-- demo-dotnet-worker: load driver (POST /orders cycle) and queue consumer
+       (specs/demo-environment DE-D5, DE-D6, DE-D7, DE-D8). -->
+  <ItemGroup>
+    <ProjectReference Include="..\Common\Demo.Common.csproj" />
+    <ProjectReference Include="..\..\StaffOps.OtelHelper.Redis\StaffOps.OtelHelper.Redis.csproj" />
+  </ItemGroup>
+</Project>

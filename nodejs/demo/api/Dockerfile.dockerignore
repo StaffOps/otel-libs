@@ -1,0 +1,17 @@
+# Build context of nodejs/demo/api/Dockerfile (root context): only what the
+# image needs; BuildKit uses this file instead of the root .dockerignore.
+*
+!demo/proto/
+!nodejs/package.json
+!nodejs/package-lock.json
+!nodejs/.npmrc
+!nodejs/tsconfig.base.json
+!nodejs/packages/
+!nodejs/demo/package.json
+!nodejs/demo/package-lock.json
+!nodejs/demo/lib/
+!nodejs/demo/api/main.js
+!nodejs/demo/api/app.js
+**/node_modules
+**/dist
+**/coverage
