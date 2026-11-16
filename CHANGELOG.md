@@ -4102,6 +4102,33 @@ Unsupported instrumentation versions, task A10 (P18):
 
 ### Internal
 
+- **Demo environment, shared contract and backing services (DE1, DE2;
+  spec `specs/demo-environment/` r3.3).** `demo/proto/otellibs/demo/v1/demo.proto`
+  (`demo.v1.OrderService`: `PlaceOrder`, `GetOrder`) and
+  `demo/sql/schema.sql` (table `orders`; a `BEFORE INSERT` trigger raises
+  SQLSTATE 23505 `duplicate order <id>` for ids `dup-%`, so the duplicate
+  path needs no seed row; an advisory lock makes concurrent backend start-ups
+  safe) are shared by the four languages' demo apps. Go stubs are committed in
+  `go/demo/gen/` (separate module `go/demo`, `replace` to the local helper);
+  `go/demo/gen.sh check` (Docker, pinned protoc v36.2 by SHA-256) fails on
+  drift, in CI (job `demo-go-stubs`) and in `testing/verify.sh` (steps
+  `demo-go`, `demo-tests`). `testing/k8s/demo/demo.sh` (`apply`, `render`,
+  `delete --lang <l>`, `delete --all`) runs PostgreSQL 17.11 and Redis 7.4.12
+  by digest in `dev-otel-libs` only (other targets refused unless
+  `DEMO_ALLOW_OTHER_TARGET=1`): passwords generated at `apply` that live until
+  `delete --all`, SCRAM-SHA-256 verifiers computed by a stdlib helper reading the
+  password on stdin (`scram.py`, RFC 7677 vector tested), Redis `requirepass`
+  from a Secret-mounted `redis.conf`; no backing-service container gets a
+  password through `env` (PostgreSQL reads `POSTGRES_PASSWORD_FILE`, the Redis
+  probes read a mounted file), a resource pre-flight (`preflight.py`), an init
+  check (no restart, four roles), and a re-`apply` that reuses running
+  services (a different explicit `RUN` is refused).
+  Measured on k8s01 on 2026-11-16 (run `20261116t1802`): each `demo_<lang>`
+  role reaches only its own database through the Service and a wrong password
+  is denied; upserts repeat cleanly and `dup-x` fails with 23505; Redis answers
+  `NOAUTH` without the password; 0 secret values in pod specs, annotations,
+  `kubectl logs` or Loki. The image trusts loopback inside the PostgreSQL
+  container only (recorded in DE-D13). The demo apps follow (DE3).
 - **Node.js: intermittent hang of the `-redis` tests fixed (test-only; no
   library change).** The real-Redis scenario
   (`packages/otel-helper-redis/test/fixtures/scenario.cjs`) published on one

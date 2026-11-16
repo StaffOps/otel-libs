@@ -24,6 +24,12 @@
 > ^trace_id$` (homelab-gitops change); DE9 keeps the manual Explore check
 > and drops the request.
 
+> **r3.3 (2026-11-16)**: DE2 independent review applied — DR11 and DE-D13
+> passwords per backing-services lifetime, DE-D13 init check and psql echo,
+> DE-D4 advisory lock in `schema.sql`; DE1, DE2, DE3a and DE11 rows updated.
+> DE2 code review (same day): no password in the backing services' container
+> env (DE-D13), Secrets deleted by name.
+
 Rollout order (ADR-004) applies to helper changes, not to this demo: the demo
 changes no helper; the gaps it finds go to the tasks that own them (A36, A37,
 and the new ids DE8 creates).
@@ -37,9 +43,10 @@ and the new ids DE8 creates).
 | DE0c Re-review of r2 (`spec-refuter` N1–N8) and observability audit with live measurements (14:23–14:42 UTC) | DE0b | format rule | ✅ 2026-11-16 (applied in r3) |
 | DE0d Re-review of r3 | DE0c | format rule | ✅ 2026-11-16 (2 HIGH, 2 MEDIUM, LOWs; applied in r3.1) |
 | DE0e Confirm r3.1 fixes (spot check of H1, H2, M1, M2) | DE0d | format rule | ✅ 2026-11-16 (READY; two LOW wording gaps applied in r3.2) |
-| DE1 Shared contract: `demo/proto/otellibs/demo/v1/demo.proto`, `demo/sql/schema.sql` (table + `BEFORE INSERT` trigger, DE-D4), `demo/README.md`; `go/demo/go.mod` with `replace` lines; Go stubs in `go/demo/gen/` + CI regeneration diff check (Docker) | DE0e | DR0, DE-D3 | ☐ |
-| DE2 Backing services in `testing/k8s/demo/demo.sh` (`apply`, `delete`, `render`): PostgreSQL + Redis by digest, `emptyDir`, `redis.conf` Secret, SCRAM verifiers from a `python3` stdlib helper reading the password on stdin, verifier SQL in a Secret-mounted initdb script, `log_min_error_statement=panic` init, Secrets via `stringData` with `create -f -` / `apply --server-side`, `REDISCLI_AUTH` probes (DE-D13) | DE0e | DR1, DR11, DE-D4, DE-D13 | ☐ |
-| DE3a Go apps `go/demo/{worker,api,backend}` (+ Dockerfiles, root context) | DE1 | DR0–DR5, DE-D5–DE-D9 | ☐ |
+| DE0f Merge the observability scorecard findings on the examples run (`bedfa19`): late root spans retried once in check a, client connection resets as an INFO line in check d, .NET gRPC client exemplar recorded (DE-D11 r3.3) | DE0e | DE-D11 | ✅ 2026-11-16 (r3.3) |
+| DE1 Shared contract: `demo/proto/otellibs/demo/v1/demo.proto`, `demo/sql/schema.sql` (table + `BEFORE INSERT` trigger, DE-D4), `demo/README.md`; `go/demo/go.mod` with `replace` lines; Go stubs in `go/demo/gen/` + CI regeneration diff check (Docker) | DE0e | DR0, DE-D3 | ☐ implemented 2026-11-16, uncommitted, review pending: stubs by `go/demo/gen.sh` (Docker; protoc v36.2, protoc-gen-go v1.36.12, protoc-gen-go-grpc v1.6.2), CI job `demo-go-stubs` runs `gen.sh check` |
+| DE2 Backing services in `testing/k8s/demo/demo.sh` (`apply`, `delete`, `render`): PostgreSQL + Redis by digest, `emptyDir`, `redis.conf` Secret, SCRAM verifiers from a `python3` stdlib helper reading the password on stdin, verifier SQL in a Secret-mounted initdb script, `log_min_error_statement=panic` init, Secrets via `stringData` with `create -f -` / `apply --server-side`, `REDISCLI_AUTH` probes (DE-D13) | DE0e | DR1, DR11, DE-D4, DE-D13 | ☐ offline part implemented 2026-11-16 (uncommitted; review fixes r3.3 applied; helper tests `testing/k8s/demo/test_*.py`, verify.sh steps `demo-tests`, `demo-go`), applied on `k8s01` 2026-11-16 15:02 local (run `20261116t1802`), redeployed 15:12 after the code review (`delete --all` + `apply`, run `20261116t1812`): checks passed (connect matrix over the Service, wrong password denied, 23505 sentinel, Redis AUTH, no secretKeyRef env, no password in pod spec, annotations, logs or Loki); re-`apply` without `RUN` reused the services (nothing created, init verified, exit 0), `RUN=mismatch1` exited 1; services left running for DE3/DE6 |
+| DE3a Go apps `go/demo/{worker,api,backend}` (+ Dockerfiles, root context); add `go/demo` to the CI govulncheck loop and the go-test ext/examples loop | DE1 | DR0–DR5, DE-D5–DE-D9 | ☐ |
 | DE3b Python apps `python/demo/…` | DE1 | same | ☐ |
 | DE3c Node.js apps `nodejs/demo/…` (node-redis, `pg`) | DE1 | same | ☐ |
 | DE3d .NET apps `dotnet/demo/…` (Npgsql, StackExchange.Redis, gRPC instrumentation key) | DE1 | same | ☐ |
@@ -50,7 +57,7 @@ and the new ids DE8 creates).
 | DE8 Gap filing: create `A38` (Go `ext/otelsql` passes no `db.namespace`, `go/ext/otelsql/sql.go:42-44`) and, if needed, `A39`… as rows in `specs/config-contract-v0.3/tasks.md` before `expected.json` cites them; link each `xfail` cell from its task; root `README.md` gap rows for anything new | DE6 | DR9 | ☐ |
 | DE9 Manual Explore checks: the Loki `trace_id` derived field on an OTLP demo record (asked by the platform owner) and trace → logs from a trace id with leading zeros; the platform owner already set `matcherRegex: ^trace_id$` (DE-D14); results in the run report | DE6 | DR10, DE-D14 | ☐ |
 | DE10 Optional local path `demo/compose.yaml`, smoke only, own Collector config → local Prometheus (DE-D15) | DE3a–d | DE-D15 | ☐ |
-| DE11 Refutation of the DE6 report (`observability` + `dev`), `code-review` of the diff, CHANGELOG (Unreleased), `demo/README.md` + `testing/k8s/README.md` section | DE6–DE9 | change loop | ☐ |
+| DE11 Refutation of the DE6 report (`observability` + `dev`), `code-review` of the diff, CHANGELOG (Unreleased) entry for DE3–DE9 (DE1/DE2 have their own entry, 2026-11-16), `demo/README.md` + `testing/k8s/README.md` section | DE6–DE9 | change loop | ☐ |
 | DE12 Examples-replacement pass: the demo apps replace each language's example `api` / `backend` / `process`; `custom-signals` stay; CI `example-images` matrix and the Node.js `Dockerfile.demo` version check moved; `mkdocs.yml`, example READMEs/EXAMPLES.md, AGENTS.md rule "api, backend, worker" | DE11 | DR13, DE-D1 | ☐ |
 
 **Promotion triggers for deferred work**

@@ -10,7 +10,7 @@
 #   testing/verify.sh --list          # step names
 #
 # Steps: go, go-ext, py-3.10-lower, py-3.13-lower, py-3.13-latest, node, dotnet, e2e,
-# dotnet-scrape, mkdocs, spec-lint, trace, index, tools-tests. `node` runs the Node.js
+# dotnet-scrape, mkdocs, spec-lint, trace, index, tools-tests, demo-tests, demo-go. `node` runs the Node.js
 # workspace, parity runner included, on node:${NODE_VERSION:-24}-slim (CI
 # covers 22.15.0/22/24/26). `dotnet` runs the .NET suite with the parity runner
 # and the coverage gate on sdk:8.0 (until C0).
@@ -29,7 +29,7 @@ compose=(docker compose -f "$root/testing/docker-compose.yml")
 MKDOCS_IMAGE="squidfunk/mkdocs-material:9.5.39"
 TOOLS_IMAGE="python:3.12-slim"
 
-ALL_STEPS=(go go-ext py-3.10-lower py-3.13-lower py-3.13-latest node dotnet e2e dotnet-scrape mkdocs spec-lint trace index tools-tests)
+ALL_STEPS=(go go-ext py-3.10-lower py-3.13-lower py-3.13-latest node dotnet e2e dotnet-scrape mkdocs spec-lint trace index tools-tests demo-tests demo-go)
 QUICK_SKIP=" e2e dotnet-scrape py-3.10-lower py-3.13-lower "
 
 usage() { sed -n '2,23p' "$0" | sed 's/^# \{0,1\}//'; }
@@ -137,6 +137,14 @@ step_tools_tests() {
       python -m unittest discover -s tools/tests'
 }
 
+# specs/demo-environment DE2: the SCRAM verifier and K-D2 pre-flight helpers of
+# testing/k8s/demo (stdlib unittest, no cluster access).
+step_demo_tests() { tools_run python -m unittest discover -s testing/k8s/demo -p 'test_*.py'; }
+
+# specs/demo-environment DE1: committed Go stubs match a regeneration; go/demo
+# module tidy, builds and vets (same command as the CI job demo-go-stubs).
+step_demo_go() { "$root/go/demo/gen.sh" check; }
+
 run_step() {
   case "$1" in
     go) step_go ;;
@@ -153,6 +161,8 @@ run_step() {
     trace) tools_run python tools/trace_matrix.py --check ;;
     index) tools_run python tools/regen_index.py --check ;;
     tools-tests) step_tools_tests ;;
+    demo-tests) step_demo_tests ;;
+    demo-go) step_demo_go ;;
   esac
 }
 

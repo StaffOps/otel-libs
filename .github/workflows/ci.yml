@@ -474,6 +474,20 @@ jobs:
           persist-credentials: false
       - run: testing/e2e/dotnet-prom-scrape.sh
 
+  demo-go-stubs:
+    # specs/demo-environment DE1 (DE-D3): the committed Go stubs in go/demo/gen
+    # must match a fresh regeneration from demo/proto with the pinned protoc
+    # and plugins; the go/demo module must be tidy, build and vet. Runs in
+    # Docker (golang:1.26-alpine, the go.mod floor) like local use.
+    name: Demo contract (Go stubs regeneration diff)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Regenerate and diff
+        run: go/demo/gen.sh check
+
   spec-checks:
     # specs/repo-tooling RT7: spec format lint, requirement traceability and
     # docs/site/index.md freshness. Stdlib-only tools (T-D3), no install step.
@@ -497,6 +511,8 @@ jobs:
         run: python -m unittest discover -s tools/tests
       - name: Spec lint
         run: python tools/spec_lint.py
+      - name: Demo helper tests (testing/k8s/demo, specs/demo-environment DE2)
+        run: python -m unittest discover -s testing/k8s/demo -p 'test_*.py'
       - name: python/LICENSE matches the root LICENSE
         run: cmp LICENSE python/LICENSE
       - name: Traceability (uncovered SHALL requirements fail)

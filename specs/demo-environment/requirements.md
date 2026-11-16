@@ -279,10 +279,15 @@ What exists today cannot show this (read 2026-11-16):
   requests and a memory limit, and the soak K-D2 pre-flight SHALL decide
   whether the four languages run together or one per window (DE-D12); pods
   SHALL be single-container (soak K-D4).
-- WHEN a run creates credentials THEN the PostgreSQL and Redis passwords
-  SHALL be generated per run and SHALL never appear in a command line, an
-  object annotation, stdout, a container log, a log record, a span or a
-  report; they SHALL be deleted with the run (DE-D13).
+- WHEN the backing services are created THEN the PostgreSQL and Redis
+  passwords SHALL be generated for their lifetime (`demo.sh apply` →
+  `demo.sh delete --all`; language rotation windows reuse them) and SHALL
+  never appear in a command line, an object annotation, stdout, a container
+  log, a log record, a span or a report; they SHALL be deleted with the
+  backing services (DE-D13).
+  *(r3.3, 2026-11-16: was "per run … deleted with the run"; the DE2 review
+  found that a rotation window cannot regenerate them — PostgreSQL keeps the
+  roles' verifiers in the emptyDir initialized at the first apply.)*
 
 ### DR12 — Hygiene over every span and log of the run
 - WHEN check g runs THEN no span of the run (design DE-D11 defines the set,

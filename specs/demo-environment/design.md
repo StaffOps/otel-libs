@@ -198,6 +198,12 @@ seed insert, but the seed insert fires the same trigger; the trigger now
 fires only on `dup-%` ids and raises unconditionally, no seed. N3/audit #15
 — per-language node table; the r2 sentence guessing a Python Redis
 namespace is replaced by the measured contrib behaviour.)*
+*(r3.3, 2026-11-16, DE2 review: `demo/sql/schema.sql` starts with
+`SELECT pg_advisory_xact_lock(4242);` and is sent without bind parameters as
+one command — one implicit transaction under the simple query protocol (and
+under Npgsql's single-Sync batch), so two backends starting at once apply it
+in turn; drivers that split statements must keep the dollar-quoted function
+body intact.)*
 **Justification**: two pods instead of eight; a database per language keeps
 the four languages' PostgreSQL nodes apart where the driver writes
 `db.namespace`. The trigger puts the sentinel where an ADR-014 leak shows:
@@ -642,6 +648,22 @@ window sampling; N6 — g paging, poll-root exclusion, anchored TraceQL
 regexes, server-side cross-checks; #16 — settle delay justified; #17 — 4xx
 / 500 span status rules, `db.response.status_code`; #21 — run scoping by
 `target_info`.)*
+*(r3.3, 2026-11-16: three findings of the observability scorecard on the
+examples run at `bedfa19` are carried into check a and a new informational
+line, before DE6. (1) **Late root spans**: long-lived root spans reached
+Tempo after their child logs. A trace id or `span_id` from check a that does
+not resolve is retried once after 60 s; only the second miss is FAIL, and the
+retry count is printed. (2) **Client connection resets**: the examples'
+process → api calls showed connection resets in Python, Node.js and .NET,
+probably a client keep-alive racing the server idle timeout (unproven). Check
+d prints an INFO line per language with the count of worker → api HTTP
+client spans whose `error.type` is a connection error, never FAIL; a non-zero
+count is analysed in DE6 and the cause recorded in DE-D7. (3) **.NET gRPC
+client exemplar**: on .NET the exemplar of the gRPC client duration points at
+an `HttpClient` span that is never exported (parked item in
+`specs/dotnet-otel-helper/tasks.md`, commit b572e3a). Check b reads server,
+DB and demo series only, so it is not hit; if a client series is added
+(DE7), the .NET cell is a strict xfail on the task DE8 creates for it.)*
 **Justification**: read-only through the API server proxy like the existing
 modes (`testing/k8s/README.md:181-184`); strict xfail per ADR-008; minimums
 from the deterministic cycle (DE-D7) make empty data a failure.
@@ -685,19 +707,22 @@ DE7 finds a container above its request.
 **Alternatives**: always rotate; compact layout.
 
 ### DE-D13 — Credentials generated per run, never printed, never logged
+*(r3.3: "per run" is superseded — see **Lifetime** below.)*
 **Choice**: `demo.sh apply` generates the PostgreSQL superuser password, one
 password per language role and the Redis password with `openssl rand -hex 24`
 into shell variables (`set +x` around it), and creates the Secrets from a
 manifest with `stringData` on stdin with `kubectl create -f -` (a re-run
-deletes them first) or `kubectl apply --server-side -f -` — never client-side
+deletes them first; r3.3: see **Lifetime** — a re-run while the services run reuses them) or `kubectl apply --server-side -f -` — never client-side
 `kubectl apply`, which would store the plaintext in the
 `last-applied-configuration` annotation, and never `--from-literal` (process
 list).
 - **Redis**: the Secret holds a `redis.conf` with `requirepass <pw>`, mounted
   as a file; `redis-server /etc/redis/redis.conf`. Probes run `redis-cli
-  ping` with `REDISCLI_AUTH` from `secretKeyRef`, never `-a`.
+  ping` with `REDISCLI_AUTH` from `secretKeyRef`, never `-a`. *(r3.3:
+  superseded — see **No password in container env** below.)*
 - **PostgreSQL**: the superuser password through the image's
-  `POSTGRES_PASSWORD` from `secretKeyRef`; the per-language roles are
+  `POSTGRES_PASSWORD` from `secretKeyRef` (r3.3: superseded by
+  `POSTGRES_PASSWORD_FILE`, see **No password in container env**); the per-language roles are
   created with a **SCRAM-SHA-256 verifier** computed on the host by a
   `python3` standard-library helper (`hashlib.pbkdf2_hmac('sha256', …, 4096)`
   plus `hmac` for the client and server keys, RFC 5802 / 7677) that reads the
@@ -710,7 +735,8 @@ list).
   panic` so a failing init statement is not echoed to the log.
 - **Apps** read passwords with `secretKeyRef` and build DSNs in memory; DSNs
   are never logged. `demo.sh render` prints `<generated>` in place of
-  values; `demo.sh delete` deletes the Secrets; `verify.py` never reads them.
+  values; `demo.sh delete` deletes the Secrets (r3.3: `delete --all`; see
+  **Lifetime**); `verify.py` never reads them.
 - **Proof**: check g.secret (DE-D11): the anchored 48-hex scan over every
   span of the run and over the Loki records (line and structured metadata)
   of the run's pods and the two backing services.
@@ -719,6 +745,42 @@ DE-D11 g, N4.)*
 *(r2, 2026-11-16: review H6 — r1 left the Redis password on the command
 line of probes, the role passwords in PostgreSQL statements and the Secret
 in a client-side apply annotation.)*
+- **No password in container env** *(r3.3, 2026-11-16, DE2 code review;
+  replaces the `secretKeyRef` env choice of the Redis and PostgreSQL bullets
+  above, which stay as written)*: PostgreSQL reads the superuser password
+  from `POSTGRES_PASSWORD_FILE`, a file of the `demo-postgres-auth` Secret
+  (item `POSTGRES_PASSWORD`, mode 0440, group = `fsGroup` 70); Redis mounts
+  the `password` item next to `redis.conf`, and each probe runs
+  `REDISCLI_AUTH="$(cat /etc/redis/password)" redis-cli ping`, so the value
+  is in the probe's process environment only. No container `env` entry of
+  the backing services refers to a password key. (The image entrypoint still
+  exports the value read from the file into the postgres server's own
+  process environment; that is not visible in the pod spec.)
+- **Lifetime.** Passwords live as long as the backing services (`apply` →
+  `delete --all`); a rotation window reuses them, and `apply` with an
+  explicit `RUN` that differs from the running services' `otel-libs/run`
+  fails.
+- **Init check.** The initdb script runs once, on an empty PGDATA; a
+  container restart during init leaves PGDATA half-initialized and the
+  entrypoint then skips the script. After the rollout `apply` fails when the
+  PostgreSQL container's `restartCount` > 0 or `pg_roles` holds fewer than the
+  four `demo_<lang>` roles (count only, no secret), and says to `delete --all`
+  and apply again.
+- **psql echo.** `log_min_error_statement = panic` keeps a failing init
+  statement out of the **server** log; psql (the entrypoint's client) may
+  still print the failing line — a verifier, never a password — to the
+  container log.
+*(r3.3, 2026-11-16, DE2 review: lifetime (was per run), init check, psql
+client-side echo.)*
+*(r3.3, 2026-11-16, DE2 apply on k8s01: the image's default `pg_hba.conf`
+trusts `local` and `127.0.0.1/32`, `::1/128`; every other host uses
+`scram-sha-256`. Kept: only processes inside the `demo-postgres` container
+reach loopback (no shared network namespace, no service account token,
+read-only root filesystem), and apps connect through the Service, where a
+wrong password is denied (measured). Proofs of password checks must connect
+through the Service, never over loopback. Reversal: `POSTGRES_INITDB_ARGS=
+--auth-local=scram-sha-256 --auth-host=scram-sha-256`, with `verify_init`
+authenticating.)*
 **Justification**: AGENTS.md "Never print secrets"; the helpers drop
 connection strings from spans (Go `go/ext/otelredis/redis.go:19-20`; .NET
 `dotnet/README.md:636`; Node.js `nodejs/HOW-TO.md:624`), and g checks it.
