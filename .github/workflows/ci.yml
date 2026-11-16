@@ -354,6 +354,12 @@ jobs:
       # Includes the parity runner (test/parity/runner.test.cjs, strict xfail), run
       # by the core package's test script so its children count towards the gate.
       - name: Test + parity + coverage gate (c8 >= 90% lines, per package)
+        # Normally 1-3 min. Each test script passes --test-timeout=300000: on
+        # Node 22 it fails and kills a test file still running after 5 min; on
+        # Node 24 and 26 it names a test that never settles, but the file's
+        # process lives on while it holds open handles, and this step timeout
+        # bounds that case (nodejs/TESTS.md).
+        timeout-minutes: 10
         env:
           SQL_TEST_POSTGRES: postgres://otel:otel-test-only@localhost:5432/otel_test
           SQL_TEST_MYSQL: mysql://otel:otel-test-only@localhost:3306/otel_test

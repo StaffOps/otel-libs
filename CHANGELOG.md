@@ -4102,6 +4102,27 @@ Unsupported instrumentation versions, task A10 (P18):
 
 ### Internal
 
+- **Node.js: intermittent hang of the `-redis` tests fixed (test-only; no
+  library change).** The real-Redis scenario
+  (`packages/otel-helper-redis/test/fixtures/scenario.cjs`) published on one
+  connection without awaiting `subscribe()` on another; Redis does not order
+  commands across connections, so a PUBLISH that arrived first was dropped
+  and `server.test.cjs` waited for the message forever with two node-redis
+  sockets open. This hung the Node 22 leg of the `dotnet/v0.3.0-rc.2` tag run
+  until the 30-minute job timeout. Measured 2026-11-16 on Kubernetes against
+  `redis:7.4.12-alpine`: the unawaited pattern lost 19 of 500 messages (0 of
+  500 awaited, 0 against the in-process RESP fake); the `-redis` test script
+  hung 2 of 40 runs on Node 22.23.4, both in `server.test.cjs` with exactly
+  those two sockets open. The scenario now awaits the subscription and asserts
+  that PUBLISH reached one subscriber; it, `server.test.cjs` and the re-setup
+  test of `redis.test.cjs` close every client in `finally`. Safety net: every
+  Node.js test script (and `test:parity`) runs `node --test
+  --test-timeout=300000`, and the CI test step has `timeout-minutes: 10`. On
+  Node 22 the timeout bounds a whole test file and kills its process (the old
+  race, rerun with a 180 s value, failed as `not ok - test/server.test.cjs` in
+  182 s); on Node 24 and 26 it bounds each test, and the process stays up while
+  it holds open handles, so the step timeout covers that case
+  (`nodejs/TESTS.md`).
 - **A30 owner rulings of 2026-11-06 and 2026-11-08.** Node.js: `httpOptInMetrics` / `OTEL_HELPER_HTTP_OPT_IN_METRICS`
   accepted and resolved (`Resolved.httpOptInMetrics`) with no effect —
   instrumentation-http 0.300 has no opt-in instruments

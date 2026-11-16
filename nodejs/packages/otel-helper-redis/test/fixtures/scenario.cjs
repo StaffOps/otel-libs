@@ -18,7 +18,20 @@ const LUA_WORD = 'SECRET_TOKEN42';
 /** The argument the unknown command sends: the server quotes it in its error (exception event residual, contract D1 A25). */
 const QUOTED = 'secret-quoted-arg';
 
-const quiet = (client) => (client.on('error', () => undefined), client);
+/** Errors ignored; the client is added to `opened` (closed by {@link closeAll}). */
+const quiet = (opened) => (client) => (client.on('error', () => undefined), opened.push(client), client);
+
+/**
+ * Closes every client still open: a failed assertion must not leave sockets
+ * that keep the test file's process alive (Node 24 and 26 do not kill it on
+ * --test-timeout; nodejs/TESTS.md).
+ */
+function closeAll(opened) {
+  for (const client of opened) {
+    if (typeof client.status === 'string') client.disconnect(); // ioredis
+    else if (client.isOpen) client.destroy(); // node-redis
+  }
+}
 
 /**
  * Runs the matrix against `url` (`redis://default:<password>@host:port`).
@@ -30,61 +43,73 @@ async function runScenario({ url, refusedUrl }) {
   const { host } = new URL(url);
   const password = decodeURIComponent(new URL(url).password);
 
-  // node-redis: promise API, MULTI, pipeline, pub/sub, explicit AUTH, errors.
-  const c = quiet(createClient({ url }));
-  await c.connect();
-  await c.set('secret-key', 'secret-value');
-  assert.equal(await c.get('secret-key'), 'secret-value');
-  await assert.rejects(c.lPush('secret-key', 'secret-value'), /WRONGTYPE/);
-  await assert.rejects(c.sendCommand(['NOSUCHCMD', QUOTED]), /unknown command/);
-  await assert.rejects(c.sendCommand(['EVAL', SCRIPT, '0']), /MYCODE/);
-  await assert.rejects(c.sendCommand(['EVAL', ARGV_SCRIPT, '0', LUA_WORD]), new RegExp(LUA_WORD));
-  await c.multi().set('secret-key', 'secret-multi').get('secret-key').exec();
-  await c.multi().set('secret-key', 'secret-pipe').get('secret-key').execAsPipeline();
-  await c.auth({ username: 'default', password });
-  const sub = quiet(c.duplicate());
-  await sub.connect();
-  const received = new Promise((resolve) => sub.subscribe('chan', resolve));
-  await c.publish('chan', 'secret-msg');
-  assert.equal(await received, 'secret-msg');
-  await sub.unsubscribe('chan');
-  await sub.quit();
-  await c.quit();
+  const opened = [];
+  const q = quiet(opened);
+  try {
+    // node-redis: promise API, MULTI, pipeline, pub/sub, explicit AUTH, errors.
+    const c = q(createClient({ url }));
+    await c.connect();
+    await c.set('secret-key', 'secret-value');
+    assert.equal(await c.get('secret-key'), 'secret-value');
+    await assert.rejects(c.lPush('secret-key', 'secret-value'), /WRONGTYPE/);
+    await assert.rejects(c.sendCommand(['NOSUCHCMD', QUOTED]), /unknown command/);
+    await assert.rejects(c.sendCommand(['EVAL', SCRIPT, '0']), /MYCODE/);
+    await assert.rejects(c.sendCommand(['EVAL', ARGV_SCRIPT, '0', LUA_WORD]), new RegExp(LUA_WORD));
+    await c.multi().set('secret-key', 'secret-multi').get('secret-key').exec();
+    await c.multi().set('secret-key', 'secret-pipe').get('secret-key').execAsPipeline();
+    await c.auth({ username: 'default', password });
+    const sub = q(c.duplicate());
+    await sub.connect();
+    // Await the subscription before publishing: PUBLISH goes over another
+    // connection and can reach the server first, which drops the message, and
+    // `received` never settles (measured on a real Redis: 19 of 500 lost; the
+    // open sockets then kept server.test.cjs alive until the CI job timeout).
+    let onMessage;
+    const received = new Promise((resolve) => (onMessage = resolve));
+    await sub.subscribe('chan', onMessage);
+    assert.equal(await c.publish('chan', 'secret-msg'), 1, 'PUBLISH reached the subscriber');
+    assert.equal(await received, 'secret-msg');
+    await sub.unsubscribe('chan');
+    await sub.quit();
+    await c.quit();
 
-  // ioredis: promise and callback API, pipeline, MULTI, pub/sub, AUTH, errors.
-  const r = quiet(new IORedis(url, { lazyConnect: true }));
-  await r.connect();
-  await r.set('io-key', 'secret-io');
-  assert.equal(await r.get('io-key'), 'secret-io');
-  await new Promise((resolve, reject) => r.set('io-key', 'secret-io-cb', (err) => (err ? reject(err) : resolve())));
-  await assert.rejects(r.lpush('io-key', 'secret-io'), /WRONGTYPE/);
-  await assert.rejects(r.eval(SCRIPT, 0), /MYCODE/);
-  await assert.rejects(r.eval(ARGV_SCRIPT, 0, LUA_WORD), new RegExp(LUA_WORD));
-  await r.pipeline().set('io-key', 'secret-io-pipe').get('io-key').exec();
-  await r.multi().set('io-key', 'secret-io-multi').exec();
-  await r.auth(password);
-  const rs = quiet(new IORedis(url, { lazyConnect: true }));
-  await rs.connect();
-  const got = new Promise((resolve) => rs.on('message', (_ch, m) => resolve(m)));
-  await rs.subscribe('io-chan');
-  await r.publish('io-chan', 'secret-io-msg');
-  assert.equal(await got, 'secret-io-msg');
-  rs.disconnect();
-  await r.quit();
+    // ioredis: promise and callback API, pipeline, MULTI, pub/sub, AUTH, errors.
+    const r = q(new IORedis(url, { lazyConnect: true }));
+    await r.connect();
+    await r.set('io-key', 'secret-io');
+    assert.equal(await r.get('io-key'), 'secret-io');
+    await new Promise((resolve, reject) => r.set('io-key', 'secret-io-cb', (err) => (err ? reject(err) : resolve())));
+    await assert.rejects(r.lpush('io-key', 'secret-io'), /WRONGTYPE/);
+    await assert.rejects(r.eval(SCRIPT, 0), /MYCODE/);
+    await assert.rejects(r.eval(ARGV_SCRIPT, 0, LUA_WORD), new RegExp(LUA_WORD));
+    await r.pipeline().set('io-key', 'secret-io-pipe').get('io-key').exec();
+    await r.multi().set('io-key', 'secret-io-multi').exec();
+    await r.auth(password);
+    const rs = q(new IORedis(url, { lazyConnect: true }));
+    await rs.connect();
+    const got = new Promise((resolve) => rs.on('message', (_ch, m) => resolve(m)));
+    await rs.subscribe('io-chan');
+    await r.publish('io-chan', 'secret-io-msg');
+    assert.equal(await got, 'secret-io-msg');
+    rs.disconnect();
+    await r.quit();
 
-  // Failures: no password (NOAUTH), a wrong password (WRONGPASS), nobody listening.
-  const noAuth = quiet(createClient({ url: `redis://${host}`, socket: { reconnectStrategy: false } }));
-  await assert.rejects(noAuth.connect(), /NOAUTH/);
-  const wrong = quiet(createClient({ url: `redis://default:wrong-secret@${host}`, socket: { reconnectStrategy: false } }));
-  await assert.rejects(wrong.connect(), /WRONGPASS/);
-  const refused = quiet(createClient({ url: refusedUrl, socket: { reconnectStrategy: false } }));
-  await assert.rejects(refused.connect(), /ECONNREFUSED/);
-  const ioNoAuth = quiet(new IORedis(`redis://${host}`, { lazyConnect: true, maxRetriesPerRequest: 0, retryStrategy: () => null }));
-  await assert.rejects(ioNoAuth.connect().then(() => ioNoAuth.get('io-key')));
-  ioNoAuth.disconnect();
-  const ioRefused = quiet(new IORedis(refusedUrl, { lazyConnect: true, maxRetriesPerRequest: 0, retryStrategy: () => null }));
-  await assert.rejects(ioRefused.connect());
-  ioRefused.disconnect();
+    // Failures: no password (NOAUTH), a wrong password (WRONGPASS), nobody listening.
+    const noAuth = q(createClient({ url: `redis://${host}`, socket: { reconnectStrategy: false } }));
+    await assert.rejects(noAuth.connect(), /NOAUTH/);
+    const wrong = q(createClient({ url: `redis://default:wrong-secret@${host}`, socket: { reconnectStrategy: false } }));
+    await assert.rejects(wrong.connect(), /WRONGPASS/);
+    const refused = q(createClient({ url: refusedUrl, socket: { reconnectStrategy: false } }));
+    await assert.rejects(refused.connect(), /ECONNREFUSED/);
+    const ioNoAuth = q(new IORedis(`redis://${host}`, { lazyConnect: true, maxRetriesPerRequest: 0, retryStrategy: () => null }));
+    await assert.rejects(ioNoAuth.connect().then(() => ioNoAuth.get('io-key')));
+    ioNoAuth.disconnect();
+    const ioRefused = q(new IORedis(refusedUrl, { lazyConnect: true, maxRetriesPerRequest: 0, retryStrategy: () => null }));
+    await assert.rejects(ioRefused.connect());
+    ioRefused.disconnect();
+  } finally {
+    closeAll(opened);
+  }
 }
 
 /** Every attribute value, event attribute, name and status message of `spans`, as text (exception events apart). */

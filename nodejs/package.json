@@ -20,7 +20,7 @@
     "lint": "npm run build --workspace=@staffops/otel-helper && eslint .",
     "check": "npm run check --workspaces --if-present",
     "test": "npm run test --workspaces --if-present",
-    "test:parity": "node --test \"test/parity/*.test.cjs\"",
+    "test:parity": "node --test --test-timeout=300000 \"test/parity/*.test.cjs\"",
     "verify": "npm run lint && npm run typecheck && npm run build && npm run check && npm test"
   },
   "devDependencies": {

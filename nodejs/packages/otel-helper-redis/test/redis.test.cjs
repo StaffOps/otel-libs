@@ -378,12 +378,14 @@ test('re-setup: shutdown() unpatches (no spans), the next setup() instruments ag
   const fake = await startRespFake();
   const { createClient } = require('redis');
   const IORedis = require('ioredis');
+  let c;
+  let r;
   try {
     setupWith();
-    const c = createClient({ url: fake.url });
+    c = createClient({ url: fake.url });
     c.on('error', () => undefined);
     await c.connect();
-    const r = new IORedis(fake.url, { lazyConnect: true });
+    r = new IORedis(fake.url, { lazyConnect: true });
     await r.connect();
     await helper.shutdown();
     await c.get('a');
@@ -400,6 +402,9 @@ test('re-setup: shutdown() unpatches (no spans), the next setup() instruments ag
     await c.quit();
     await r.quit();
   } finally {
+    // After a failed assertion: node-redis would reconnect to the closed fake forever.
+    if (c?.isOpen) c.destroy();
+    r?.disconnect();
     await fake.close();
   }
 });

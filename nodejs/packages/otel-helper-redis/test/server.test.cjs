@@ -58,9 +58,12 @@ test('one span per command issued before ready (ioredis offline queue replay), a
   const IORedis = require('ioredis');
   const { createClient } = require('redis');
   const sets = () => exporter.getFinishedSpans().filter((s) => s.name === 'SET');
+  // Closed in `finally` when an assertion fails first (no open sockets keep the file alive).
+  const clients = [];
   try {
     // Before ready: queued offline, replayed through sendCommand on ready.
     const early = new IORedis(URL_);
+    clients.push(early);
     let readyAt;
     early.once('ready', () => { readyAt = process.hrtime.bigint(); });
     const issuedAt = process.hrtime.bigint();
@@ -76,6 +79,7 @@ test('one span per command issued before ready (ioredis offline queue replay), a
 
     exporter.reset();
     const late = new IORedis(URL_);
+    clients.push(late);
     await new Promise((resolve) => late.once('ready', resolve));
     await late.set('b14-online', '1');
     await late.set('b14-online', '2');
@@ -84,12 +88,17 @@ test('one span per command issued before ready (ioredis offline queue replay), a
 
     exporter.reset();
     const nodeRedis = createClient({ url: URL_ });
+    clients.push(nodeRedis);
     const connecting = nodeRedis.connect();
     await nodeRedis.set('b14-node', '1');
     await connecting;
     await nodeRedis.quit();
     assert.equal(sets().length, 1, 'node-redis before connect resolves: one span');
   } finally {
+    for (const c of clients) {
+      if (typeof c.status === 'string') c.disconnect(); // ioredis
+      else if (c.isOpen) c.destroy(); // node-redis
+    }
     await helper.shutdown();
     testing.reset();
   }

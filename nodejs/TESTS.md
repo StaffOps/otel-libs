@@ -174,6 +174,22 @@ The example apps run against the same Collector: see
   diagnostics sink — not on private SDK fields. Where the helper must read a
   private field (the G1 rollback), the test names it, so an API bump fails
   loudly.
+- Never wait on an event a real server can drop. Await `subscribe()` before
+  publishing on another connection: Redis gives no order across connections,
+  and a PUBLISH that arrives first is lost (2026-11-16: 19 of 500 against the
+  compose-image Redis; it hung `server.test.cjs` until the 30-minute CI job
+  timeout, sockets open, no output).
+- Every test script runs `node --test --test-timeout=300000` (measured
+  2026-11-16). On Node 22 the timeout bounds each test **file**: a file still
+  running after 5 minutes fails as `not ok - test/<file>` (`test timed out
+  after <ms>ms`) and its process is killed — with a 180 s value the old
+  pub/sub race failed this way in 182 s instead of hanging. On Node 24 and 26
+  it bounds each **test**: the test is named, but the file's process stays up
+  while it holds open sockets or timers, so close clients in a `finally`; the
+  CI test step's `timeout-minutes: 10` covers that case. 180 s was too short
+  on Node 22: the parity runner file (`test/parity/runner.test.cjs`) took
+  longer on a CPU-starved pod (50m request, four test pods in parallel). The
+  slowest single test took 31 s in CI (Node 22.15.0).
 - Wire behavior (endpoints, TLS, compression, timeouts) belongs in a parity
   `export` case, checked by the fake receiver.
 - Never print a secret in a test's output; the AWS suite sweeps every
