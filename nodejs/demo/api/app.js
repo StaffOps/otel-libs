@@ -6,7 +6,7 @@
 //   DEMO_HTTP_PORT (8080), DEMO_BACKEND_ADDR (demo-node-backend:50051),
 //   DEMO_REDIS_ADDR (demo-redis:6379), DEMO_REDIS_PASSWORD_FILE (required).
 //
-// Loaded by main.js once the helper is set up (lib/bootstrap.js): every
+// Loaded by main.js after setup(): every
 // instrumented library (express, @grpc/grpc-js and redis) is required here, after setup().
 'use strict';
 
@@ -20,6 +20,7 @@ const protoLoader = require('@grpc/proto-loader');
 const { createClient } = require('redis');
 
 const { loadOrderService } = require('../lib/assets');
+const { healthClient, isServing } = require('../lib/health');
 const { LANG, envOr, parseHostPort, portEnv, readSecretFile, runId } = require('../lib/config');
 const { DemoUnhandledError } = require('../lib/errors');
 const { DEMO_SCOPE, errorTypeOf, ownFailure } = require('../lib/failure');
@@ -50,6 +51,9 @@ redis.on('error', (err) => log.warn({ 'error.type': errorTypeOf(err) }, 'redis c
 
 const OrderService = loadOrderService(grpc, protoLoader);
 const backend = new OrderService(BACKEND_ADDR, grpc.credentials.createInsecure());
+// grpc.health.v1 calls produce no span (the helper filters them, HOW-TO §3).
+const backendHealth = healthClient(grpc, protoLoader, BACKEND_ADDR);
+const HEALTH_TIMEOUT_MS = 1_000;
 
 /** One PlaceOrder call with a deadline; resolves `{reply}` or `{code}` (never rejects). */
 function placeOrder(order) {
@@ -138,10 +142,11 @@ function accept(order) {
 const app = express();
 app.use(express.json({ limit: '16kb' }));
 
-// 503 until Redis is connected and the listener is up (DE-D7 r3.5).
+// 200 only when the listener is up, Redis is connected and the backend's
+// grpc.health.v1 answers SERVING; else 503 (DE-D7 r3.5, DE-D11 r3.6).
 let listening = false;
-app.get('/health', (_req, res) => {
-  const ready = listening && redis.isReady;
+app.get('/health', async (_req, res) => {
+  const ready = listening && redis.isReady && (await isServing(backendHealth, 'demo.v1.OrderService', HEALTH_TIMEOUT_MS));
   res.status(ready ? 200 : 503).json({ status: ready ? 'ok' : 'starting' });
 });
 
@@ -182,6 +187,7 @@ function stop(exitCode = 0) {
   drained
     .then(async () => {
       backend.close();
+      backendHealth.close();
       await redis.close().catch(() => {});
       await new Promise((resolve) => setTimeout(resolve, 100));
       return shutdown(5_000);

@@ -8,8 +8,51 @@ namespace StaffOps.OtelLibs.Demo.Worker;
 /// The load driver (DE-D7): one <c>POST /orders</c> every <c>DEMO_INTERVAL_SECONDS</c> (5 s),
 /// cycling the fixed sequence of ten scenarios, each in a new root span <c>demo.drive</c>.
 /// </summary>
-public sealed class Driver(HttpClient api, ILogger<Driver> logger, TimeSpan interval) : BackgroundService
+public sealed class Driver(HttpClient api, ILogger<Driver> logger, TimeSpan interval, TimeSpan? readinessPoll = null) : BackgroundService
 {
+    private readonly TimeSpan _readinessPoll = readinessPoll ?? TimeSpan.FromSeconds(1);
+
+    /// <summary>
+    /// Waits, untraced, until the api's <c>GET /health</c> answers 200 (DE-D11 r3.6: the start-up
+    /// race of the first live run). One INFO record when waiting starts and one when the api is ready.
+    /// </summary>
+    public async Task WaitForApiAsync(CancellationToken cancellationToken)
+    {
+        var waiting = false;
+        while (true)
+        {
+            var ready = await QuietTracing.RunAsync(async () =>
+            {
+                try
+                {
+                    using var response = await api.GetAsync("health", cancellationToken);
+                    return response.IsSuccessStatusCode;
+                }
+                catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException && !cancellationToken.IsCancellationRequested)
+                {
+                    return false;
+                }
+            });
+            if (ready)
+            {
+                if (waiting)
+                {
+                    DemoLog.Write(logger, LogLevel.Information, "api ready", null);
+                }
+
+                return;
+            }
+
+            if (!waiting)
+            {
+                waiting = true;
+                DemoLog.Write(logger, LogLevel.Information, "waiting for api", null);
+            }
+
+            await Task.Delay(_readinessPoll, cancellationToken);
+        }
+    }
+
     /// <summary>Sends the request numbered <paramref name="seq"/> in its own trace.</summary>
     public async Task DriveAsync(long seq, CancellationToken cancellationToken)
     {
@@ -48,6 +91,7 @@ public sealed class Driver(HttpClient api, ILogger<Driver> logger, TimeSpan inte
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         await Task.Yield();
+        await WaitForApiAsync(stoppingToken);
         using var timer = new PeriodicTimer(interval);
         long seq = 0;
         do

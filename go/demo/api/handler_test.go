@@ -246,6 +246,31 @@ func TestCacheAndQueueFailuresAreNotFatal(t *testing.T) {
 	}
 }
 
+func TestHealthReflectsCachedReadiness(t *testing.T) {
+	f := newAPI(t)
+	calls, ok := 0, false
+	now := time.Date(2026, 11, 16, 12, 0, 0, 0, time.UTC)
+	f.a.ready = newReadiness(func(context.Context) bool { calls++; return ok })
+	f.a.ready.now = func() time.Time { return now }
+	get := func() int {
+		rr := httptest.NewRecorder()
+		f.a.routes().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/health", nil))
+		return rr.Code
+	}
+	if c := get(); c != http.StatusServiceUnavailable || calls != 1 {
+		t.Fatalf("not ready: code=%d calls=%d", c, calls)
+	}
+	ok = true
+	now = now.Add(500 * time.Millisecond)
+	if c := get(); c != http.StatusServiceUnavailable || calls != 1 {
+		t.Errorf("within the TTL the cached result is used: code=%d calls=%d", c, calls)
+	}
+	now = now.Add(time.Second)
+	if c := get(); c != http.StatusOK || calls != 2 {
+		t.Errorf("after the TTL it re-checks: code=%d calls=%d", c, calls)
+	}
+}
+
 func TestRecovererKeepsErrAbortHandler(t *testing.T) {
 	h := recoverer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { panic(http.ErrAbortHandler) }))
 	defer func() {

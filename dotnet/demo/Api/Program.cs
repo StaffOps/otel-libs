@@ -24,6 +24,8 @@ builder.Services.AddOtelHelperRedis();
 var backendUri = DemoSettings.BackendUri(DemoSettings.Get("DEMO_BACKEND_ADDR", "demo-dotnet-backend:50051"));
 builder.Services.AddSingleton(_ => Grpc.Net.Client.GrpcChannel.ForAddress(backendUri));
 builder.Services.AddSingleton(sp => new OrderService.OrderServiceClient(sp.GetRequiredService<Grpc.Net.Client.GrpcChannel>()));
+builder.Services.AddSingleton(sp => new ApiHealth(sp.GetRequiredService<IConnectionMultiplexer>(),
+    new Grpc.Health.V1.Health.HealthClient(sp.GetRequiredService<Grpc.Net.Client.GrpcChannel>())));
 
 var (redisHost, redisPort) = DemoRedis.ServerOf(DemoSettings.Get("DEMO_REDIS_ADDR", "demo-redis:6379"));
 builder.Services.AddSingleton(new OrderEndpoint.Settings(DemoSettings.CurrentRunId(), redisHost, redisPort));
@@ -33,8 +35,12 @@ var app = builder.Build();
 app.MapPost("/orders", (OrderRequest? order, OrderEndpoint endpoint, CancellationToken cancellationToken) =>
     endpoint.HandleAsync(order, cancellationToken));
 // Probe paths: excluded from traces by the helper's health-path filter (design D5).
-// GET /health is the probe every language's api serves (DE-D7 r3.4).
-app.MapGet("/health", () => Results.Ok("ok"));
+// GET /health (DE-D7 r3.4, DE-D11 r3.6): 200 only when Redis is connected and the backend answers
+// SERVING; the worker waits for it before its first order. /ready is the same; /healthz is liveness.
+app.MapGet("/health", Ready);
+app.MapGet("/ready", Ready);
 app.MapGet("/healthz", () => Results.Ok("ok"));
-app.MapGet("/ready", () => Results.Ok("ok"));
 app.Run();
+
+static async Task<IResult> Ready(ApiHealth health, CancellationToken cancellationToken) =>
+    await health.IsReadyAsync(cancellationToken) ? Results.Ok("ok") : Results.StatusCode(StatusCodes.Status503ServiceUnavailable);

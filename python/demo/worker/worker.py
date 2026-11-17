@@ -28,6 +28,7 @@ import socket
 from typing import Any
 
 from opentelemetry import propagate, trace
+from opentelemetry.instrumentation.utils import suppress_instrumentation
 from opentelemetry.trace import Link, SpanKind, Status, StatusCode, Tracer
 
 import democommon as dc
@@ -100,7 +101,10 @@ async def poll_once(redis_client, tracer: Tracer, consumer: str, redis_host: str
     from redis.exceptions import ResponseError
 
     try:
-        batches = await redis_client.xreadgroup(dc.CONSUMER_GROUP, consumer, {dc.STREAM: ">"}, count=10)
+        # Tracing suppressed around the poll (DE-D11 r3.6): an empty poll makes no
+        # span; the CONSUMER span and its XACK below are traced as usual.
+        with suppress_instrumentation():
+            batches = await redis_client.xreadgroup(dc.CONSUMER_GROUP, consumer, {dc.STREAM: ">"}, count=10)
     except ResponseError as e:
         if "NOGROUP" not in str(e):
             raise
@@ -115,6 +119,29 @@ async def poll_once(redis_client, tracer: Tracer, consumer: str, redis_host: str
             handled += 1
     return handled
 
+
+
+async def wait_for_api(http, api_url: str, stop: asyncio.Event, every: float = 1.0) -> bool:
+    """Wait until ``GET <api>/health`` answers 200 before the first order (DE-D11 r3.6).
+
+    Untraced (the probes are not demo traffic). Returns False when stopped first.
+    """
+    waited = 0
+    while not stop.is_set():
+        try:
+            with suppress_instrumentation():
+                response = await http.get(f"{api_url}/health")
+            if response.status_code == 200:
+                logger.info("api ready", extra={"demo.wait_attempts": waited})
+                return True
+        except Exception:  # noqa: BLE001 - not up yet
+            pass
+        waited += 1
+        try:
+            await asyncio.wait_for(stop.wait(), timeout=every)
+        except asyncio.TimeoutError:
+            pass
+    return False
 
 
 async def _guarded(step) -> None:
@@ -185,7 +212,12 @@ async def run() -> None:  # pragma: no cover - process wiring, run by the image 
     async with httpx.AsyncClient(timeout=10.0) as http:
         await dc.ensure_group(redis_client)
         logger.info("worker started", extra={"demo.interval_seconds": interval, "demo.poll_seconds": poll})
-        await asyncio.gather(_every(interval, stop, drive, concurrent=True), _every(poll, stop, consume))
+
+        async def drive_when_ready() -> None:
+            if await wait_for_api(http, api_url, stop):
+                await _every(interval, stop, drive, concurrent=True)
+
+        await asyncio.gather(drive_when_ready(), _every(poll, stop, consume))
     await redis_client.aclose()
 
 

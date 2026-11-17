@@ -8,7 +8,7 @@
 //   /etc/otel-libs-demo/schema.sql, baked into the image). Serves
 //   grpc.health.v1.Health next to demo.v1.OrderService.
 //
-// Loaded by main.js once the helper is set up (lib/bootstrap.js): every
+// Loaded by main.js after setup(): every
 // instrumented library (pg and @grpc/grpc-js) is required here, after setup().
 'use strict';
 

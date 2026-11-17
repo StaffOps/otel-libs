@@ -50,3 +50,18 @@ test('Check and Watch over a real server', async (t) => {
   const res = await new Promise((resolve, reject) => client.Check({ service: '' }, (e, r) => (e ? reject(e) : resolve(r))));
   assert.equal(res.status, 'SERVING');
 });
+
+test('isServing: true for SERVING, false for an unknown service or an unreachable server', async (t) => {
+  const { healthClient, isServing } = require('../lib/health');
+  const server = new grpc.Server();
+  server.addService(healthServiceDefinition(grpc, protoLoader), healthHandlers(statusOf, grpc.status.NOT_FOUND));
+  const port = await new Promise((resolve, reject) => server.bindAsync('127.0.0.1:0', grpc.ServerCredentials.createInsecure(), (e, p) => (e ? reject(e) : resolve(p))));
+  t.after(() => server.forceShutdown());
+  const client = healthClient(grpc, protoLoader, `127.0.0.1:${port}`);
+  t.after(() => client.close());
+  assert.equal(await isServing(client, 'demo.v1.OrderService', 2000), true);
+  assert.equal(await isServing(client, 'nope', 2000), false);
+  const dead = healthClient(grpc, protoLoader, '127.0.0.1:1');
+  t.after(() => dead.close());
+  assert.equal(await isServing(dead, '', 300), false);
+});

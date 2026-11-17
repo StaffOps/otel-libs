@@ -74,6 +74,7 @@ func run() error {
 		logger:    logger,
 		tracer:    otelhelper.GetTracer(demokit.TracerName),
 		http:      &http.Client{Transport: otelhelper.NewHTTPTransport(nil), Timeout: 10 * time.Second},
+		probe:     &http.Client{Timeout: 2 * time.Second},
 		apiURL:    strings.TrimRight(demokit.EnvOr("DEMO_API_URL", "http://demo-"+demokit.Lang+"-api:8080"), "/"),
 		stream:    redisStream{rdb: rdb, consumer: consumer},
 		redisHost: host,
@@ -88,6 +89,11 @@ func run() error {
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
+		// No demo.drive before the api (and through it Redis and the backend)
+		// is ready: start-up errors are not demo scenarios (DE-D11 r3.6).
+		if !w.waitForAPI(ctx, time.Second) {
+			return
+		}
 		every(ctx, demokit.EnvSeconds("DEMO_INTERVAL_SECONDS", 5*time.Second), func(seq uint64) { w.drive(ctx, seq) })
 	}()
 	go func() {

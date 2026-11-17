@@ -6,7 +6,7 @@
 //   (demo-redis:6379),
 //   DEMO_REDIS_PASSWORD_FILE, DEMO_INTERVAL_SECONDS (5), DEMO_POLL_SECONDS (2).
 //
-// Loaded by main.js once the helper is set up (lib/bootstrap.js): every
+// Loaded by main.js after setup(): every
 // instrumented library (redis; fetch's undici) is required here, after setup().
 'use strict';
 
@@ -20,11 +20,14 @@ const { LANG, envOr, parseHostPort, readSecretFile, secondsEnv } = require('../l
 const { DEMO_SCOPE, errorTypeOf, markPropagated } = require('../lib/failure');
 const { createDemoLogger } = require('../lib/logging');
 const { CONSUMER_GROUP, consumerSpan, streamKey } = require('../lib/messaging');
+const { waitUntil, withoutTracing } = require('../lib/quiet');
 const { buildOrder } = require('../lib/scenarios');
 
 const env = process.env;
 // DEMO_API_URL is a base URL; /orders is appended to it (a base path is kept, DE-D7 r3.4).
-const API_URL = `${envOr(env, 'DEMO_API_URL', `http://demo-${LANG}-api:8080`).replace(/\/+$/, '')}/orders`;
+const API_BASE = envOr(env, 'DEMO_API_URL', `http://demo-${LANG}-api:8080`).replace(/\/+$/, '');
+const API_URL = `${API_BASE}/orders`;
+const HEALTH_URL = `${API_BASE}/health`;
 const REDIS = parseHostPort(envOr(env, 'DEMO_REDIS_ADDR', 'demo-redis:6379'), 6379, 'DEMO_REDIS_ADDR');
 const INTERVAL_MS = secondsEnv(env, 'DEMO_INTERVAL_SECONDS', 5) * 1000;
 const POLL_MS = secondsEnv(env, 'DEMO_POLL_SECONDS', 2) * 1000;
@@ -126,12 +129,18 @@ async function processMessage(message) {
   });
 }
 
-/** XREADGROUP COUNT 10 without BLOCK every DEMO_POLL_SECONDS (DE-D5). */
+/**
+ * XREADGROUP COUNT 10 without BLOCK every DEMO_POLL_SECONDS (DE-D5). The read
+ * always runs with tracing suppressed, as in the other languages: it happens
+ * before any producer context exists, so it cannot sit under a CONSUMER span,
+ * and an idle poll would be a root span (DE-D11 r3.6). Each message's CONSUMER
+ * span and its XACK are traced.
+ */
 async function consumeLoop() {
   while (!stopping) {
     const started = Date.now();
     try {
-      const reply = await redis.xReadGroup(CONSUMER_GROUP, CONSUMER, { key: STREAM, id: '>' }, { COUNT: READ_COUNT });
+      const reply = await withoutTracing(() => redis.xReadGroup(CONSUMER_GROUP, CONSUMER, { key: STREAM, id: '>' }, { COUNT: READ_COUNT }));
       for (const stream of reply ?? []) {
         for (const message of stream.messages ?? []) await processMessage(message);
       }
@@ -163,6 +172,15 @@ async function main() {
   await redis.connect();
   await ensureGroup();
   log.info({ 'messaging.destination.name': STREAM }, 'demo worker started');
+  // The first demo.drive waits for the api's /health 200 (Redis and backend
+  // ready), probed with tracing suppressed (DE-D11 r3.6: start-up race).
+  const ready = await waitUntil(() => withoutTracing(async () => {
+    const res = await fetch(HEALTH_URL, { signal: AbortSignal.timeout(2_000) });
+    await res.arrayBuffer();
+    return res.status === 200;
+  }), { intervalMs: 1_000, shouldStop: () => stopping, onWait: () => log.info({}, 'waiting for the api to be ready') });
+  if (!ready) return;
+  log.info({}, 'api ready, driving orders');
   startDriving();
   await consumeLoop();
 }

@@ -18,6 +18,7 @@ import (
 	"go.opentelemetry.io/otel/codes"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
+	"go.opentelemetry.io/otel/trace"
 )
 
 func TestScenarioAtFollowsTheCycle(t *testing.T) {
@@ -119,6 +120,25 @@ func TestErrorTypeAndMessages(t *testing.T) {
 	}
 	if !errors.Is(&OrderExistsError{ID: "x", Err: driver}, driver) {
 		t.Error("OrderExistsError must unwrap to the driver error")
+	}
+}
+
+func TestUntracedRecordsNothing(t *testing.T) {
+	tracer, rec := demotest.Tracer() // default sampler: ParentBased(AlwaysSample)
+	ctx := Untraced(context.Background())
+	if sc := trace.SpanContextFromContext(ctx); !sc.IsValid() || sc.IsSampled() {
+		t.Fatalf("Untraced parent = %+v, want valid and unsampled", sc)
+	}
+	_, span := tracer.Start(ctx, "XREADGROUP")
+	if span.IsRecording() {
+		t.Error("a span under Untraced must not record")
+	}
+	span.End()
+	if n := len(rec.Ended()); n != 0 {
+		t.Errorf("ended spans = %d, want 0", n)
+	}
+	if a, b := trace.SpanContextFromContext(Untraced(context.Background())), trace.SpanContextFromContext(ctx); a.TraceID() == b.TraceID() {
+		t.Error("each Untraced context must get its own ids")
 	}
 }
 

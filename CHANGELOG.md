@@ -4128,6 +4128,16 @@ Unsupported instrumentation versions, task A10 (P18):
 
 ### Internal
 
+- **Demo apps, r3.6 (scorecard of the first k8s01 run, 2026-11-16).** The
+  worker waits before its first `demo.drive` until the api's `GET /health`
+  answers 200, and the api answers 200 only when Redis is connected and the
+  backend's `grpc.health.v1` answers SERVING (1 s timeout, 1 s cache,
+  untraced); this removes the start-up connection errors the first run showed
+  in its first 12 s. `XREADGROUP` runs untraced in every language (no root
+  span per poll; the CONSUMER span and its `XACK` stay traced). The Node.js
+  demo drops its A39 workaround and runs a single `setup()` now that the
+  helper fix landed (e4378b9); core HTTP, express and gRPC spans are present.
+  .NET adds `Grpc.HealthCheck` 2.62.0 for the api's readiness check.
 - **Demo apps on Kubernetes (DE4; spec `specs/demo-environment/` r3.5).**
   `testing/k8s/build-demo.sh` builds the twelve images
   `otel-libs-demo-<lang>-<app>:<tag>` from a root `git archive HEAD`,

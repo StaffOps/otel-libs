@@ -51,4 +51,17 @@ function healthHandlers(statusOf, notFoundCode) {
   };
 }
 
-module.exports = { SERVING_STATUS, healthHandlers, healthServiceDefinition };
+/** A Health client constructor for `addr` (insecure, as the demo's gRPC). */
+function healthClient(grpc, protoLoader, addr) {
+  const Client = grpc.makeGenericClientConstructor(healthServiceDefinition(grpc, protoLoader), 'Health');
+  return new Client(addr, grpc.credentials.createInsecure());
+}
+
+/** True when `service` answers SERVING within `timeoutMs`; false on any error (never rejects). */
+function isServing(client, service, timeoutMs) {
+  return new Promise((resolve) => {
+    client.Check({ service }, { deadline: Date.now() + timeoutMs }, (err, res) => resolve(!err && res?.status === 'SERVING'));
+  });
+}
+
+module.exports = { SERVING_STATUS, healthClient, healthHandlers, healthServiceDefinition, isServing };

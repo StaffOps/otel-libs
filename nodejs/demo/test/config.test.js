@@ -3,7 +3,7 @@
 const assert = require('node:assert/strict');
 const { test } = require('node:test');
 
-const { DEFAULT_RUN, LANG, envOr, hasInstanceId, parseHostPort, portEnv, readSecretFile, requireEnv, runId, secondsEnv } = require('../lib/config');
+const { DEFAULT_RUN, LANG, envOr, parseHostPort, portEnv, readSecretFile, requireEnv, runId, secondsEnv } = require('../lib/config');
 
 test('LANG is node', () => {
   assert.equal(LANG, 'node');
@@ -96,13 +96,4 @@ test('envOr returns the trimmed value or the default', () => {
   assert.equal(envOr({ A: ' x ' }, 'A', 'd'), 'x');
   assert.equal(envOr({ A: ' ' }, 'A', 'd'), 'd');
   assert.equal(envOr({}, 'A', 'd'), 'd');
-});
-
-test('hasInstanceId detects a non-empty service.instance.id', () => {
-  assert.equal(hasInstanceId({ OTEL_RESOURCE_ATTRIBUTES: 'a=b, service.instance.id=i-1' }), true);
-  assert.equal(hasInstanceId({ OTEL_RESOURCE_ATTRIBUTES: 'service%2Einstance.id=i' }), true);
-  assert.equal(hasInstanceId({ OTEL_RESOURCE_ATTRIBUTES: 'service.instance.id= ,x' }), false);
-  assert.equal(hasInstanceId({ OTEL_RESOURCE_ATTRIBUTES: 'service.instance.id' }), false);
-  assert.equal(hasInstanceId({}), false);
-  assert.equal(typeof hasInstanceId(), 'boolean');
 });

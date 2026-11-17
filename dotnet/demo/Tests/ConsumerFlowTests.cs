@@ -42,6 +42,12 @@ public sealed class ConsumerFlowTests : IDisposable
 
         Assert.Equal(1, _redis.GroupCreates);
         Assert.Equal(["5-0", "6-0"], _redis.Acked);
+        // r3.6: the poll (and the group creation) run under the unrecorded quiet parent, the XACK
+        // under its CONSUMER span.
+        Assert.All(_redis.Contexts.Where(c => c.Command is "StreamReadGroupAsync" or "StreamCreateConsumerGroupAsync"),
+            c => Assert.Equal(("otel-libs-demo.quiet", false), (c.Activity, c.Recorded)));
+        Assert.All(_redis.Contexts.Where(c => c.Command == "StreamAcknowledgeAsync"),
+            c => Assert.Equal(("process demo:dotnet:orders", true), (c.Activity, c.Recorded)));
         var spans = _spans.Started.Where(a => a.Kind == ActivityKind.Consumer).ToList();
         Assert.Equal(2, spans.Count);
         Assert.Equal(producer.SpanId, spans[0].ParentSpanId);

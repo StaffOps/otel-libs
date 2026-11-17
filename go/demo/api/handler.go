@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"sync"
 	"time"
 
 	otelhelper "github.com/staffops/otel-libs/go"
@@ -54,6 +55,37 @@ type api struct {
 	run       string
 	redisHost string
 	redisPort int
+	ready     *readiness
+}
+
+// readinessTTL is how long a readiness result is reused.
+const readinessTTL = time.Second
+
+// readiness caches the result of check for readinessTTL, so probes do not
+// hit Redis and the backend on every request.
+type readiness struct {
+	mu      sync.Mutex
+	check   func(ctx context.Context) bool
+	now     func() time.Time
+	checked time.Time
+	ok      bool
+}
+
+func newReadiness(check func(ctx context.Context) bool) *readiness {
+	return &readiness{check: check, now: time.Now}
+}
+
+// Ready reports the cached result, re-checking once it is older than
+// readinessTTL.
+func (r *readiness) Ready(ctx context.Context) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if !r.checked.IsZero() && r.now().Sub(r.checked) < readinessTTL {
+		return r.ok
+	}
+	r.ok = r.check(ctx)
+	r.checked = r.now()
+	return r.ok
 }
 
 // routes wires the handlers. Each route is wrapped by the helper's HTTP
@@ -63,7 +95,11 @@ type api struct {
 func (a *api) routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.Handle("POST /orders", otelhelper.NewHTTPHandler(recoverer(http.HandlerFunc(a.placeOrder)), "POST /orders"))
-	mux.Handle("GET /health", otelhelper.NewHTTPHandler(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	mux.Handle("GET /health", otelhelper.NewHTTPHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if a.ready != nil && !a.ready.Ready(r.Context()) {
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"status": "unavailable"})
+			return
+		}
 		writeJSON(w, http.StatusOK, map[string]string{"status": "healthy"})
 	}), "GET /health"))
 	return mux

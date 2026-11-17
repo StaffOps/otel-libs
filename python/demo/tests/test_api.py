@@ -32,6 +32,15 @@ class FakeRedis:
     async def aclose(self):
         self.closed = True
 
+    async def ping(self):
+        from opentelemetry.instrumentation.utils import is_instrumentation_enabled
+
+        assert not is_instrumentation_enabled()  # readiness probes make no spans (r3.6)
+        self.pings = getattr(self, "pings", 0) + 1
+        if getattr(self, "down", False):
+            raise ConnectionError("redis down")
+        return True
+
 
 class FakeStub:
     def __init__(self, error=None):
@@ -48,15 +57,33 @@ class FakeStub:
         return demo_pb2.PlaceOrderResponse(order_id=request.order_id, status="processed")
 
 
-def client_for(otel, stub=None, redis=None):
+class FakeHealth:
+    def __init__(self, status=1, error=None):
+        self.status, self.error, self.calls = status, error, 0
+
+    async def Check(self, request):
+        from types import SimpleNamespace
+
+        from opentelemetry.instrumentation.utils import is_instrumentation_enabled
+
+        assert not is_instrumentation_enabled() and request.service == ""
+        self.calls += 1
+        if self.error:
+            raise self.error
+        return SimpleNamespace(status=self.status)
+
+
+def client_for(otel, stub=None, redis=None, health=None):
     import demo_pb2
+    from grpc_health.v1 import health_pb2
 
     redis = redis or FakeRedis()
     stub = stub or FakeStub()
 
     async def factory():
         return api.Deps(redis=redis, stub=stub, request_cls=demo_pb2.PlaceOrderRequest,
-                        tracer=otel.tracer, run="r1", redis_host="demo-redis", redis_port=6379)
+                        tracer=otel.tracer, run="r1", redis_host="demo-redis", redis_port=6379,
+                        health_stub=health, health_request=health_pb2.HealthCheckRequest)
 
     return TestClient(api.create_app(factory), raise_server_exceptions=False), redis, stub
 
@@ -66,9 +93,40 @@ def body(scenario, order_id="ok-1"):
 
 
 def test_health(otel):
-    client, _, _ = client_for(otel)
+    client, _, _ = client_for(otel, health=FakeHealth())
     with client:
         assert client.get("/health").json() == {"status": "ok"}
+    assert not otel.finished()
+
+
+@pytest.mark.parametrize("redis_down, health", [
+    (True, FakeHealth()),
+    (False, FakeHealth(status=2)),  # NOT_SERVING
+    (False, FakeHealth(error=ConnectionError("backend down"))),
+])
+def test_health_is_503_until_redis_and_backend_answer(otel, redis_down, health):
+    redis = FakeRedis()
+    redis.down = redis_down
+    client, _, _ = client_for(otel, redis=redis, health=health)
+    with client:
+        r = client.get("/health")
+    assert r.status_code == 503 and r.json() == {"status": "unavailable"}
+
+
+def test_health_result_is_cached_for_about_a_second(otel, monkeypatch):
+    clock = [100.0]
+    monkeypatch.setattr(api.time, "monotonic", lambda: clock[0])
+    health = FakeHealth()
+    redis = FakeRedis()
+    client, _, _ = client_for(otel, redis=redis, health=health)
+    with client:
+        assert client.get("/health").status_code == 200
+        assert client.get("/health").status_code == 200  # same second: cached
+        assert (redis.pings, health.calls) == (1, 1)
+        clock[0] += 1.5
+        redis.down = True
+        assert client.get("/health").status_code == 503
+        assert redis.pings == 2
 
 
 def test_ok_caches_calls_backend_and_publishes_with_context(otel):

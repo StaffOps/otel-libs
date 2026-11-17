@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	otelhelper "github.com/staffops/otel-libs/go"
 	"github.com/staffops/otel-libs/go/demo/internal/demokit"
@@ -37,6 +38,7 @@ type worker struct {
 	logger    *slog.Logger
 	tracer    trace.Tracer
 	http      *http.Client
+	probe     *http.Client
 	apiURL    string
 	stream    stream
 	redisHost string
@@ -75,6 +77,33 @@ func (w *worker) drive(ctx context.Context, seq uint64) {
 	span.SetAttributes(demokit.Outcome(false))
 }
 
+// waitForAPI blocks until the api's GET /health answers 200 (the api is
+// ready only when Redis and the backend are, DE-D11 r3.6), checking every
+// interval; false when ctx ends first. The probe goes through w.probe, an
+// untraced client: health requests are not part of the demo traffic.
+func (w *worker) waitForAPI(ctx context.Context, interval time.Duration) bool {
+	start := time.Now()
+	w.logger.InfoContext(ctx, "waiting for the api to be ready", "url.path", "/health")
+	for {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, w.apiURL+"/health", nil)
+		if err == nil {
+			if resp, err := w.probe.Do(req); err == nil {
+				_, _ = io.Copy(io.Discard, resp.Body)
+				_ = resp.Body.Close()
+				if resp.StatusCode == http.StatusOK {
+					w.logger.InfoContext(ctx, "api ready", "demo.wait_seconds", time.Since(start).Seconds())
+					return true
+				}
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return false
+		case <-time.After(interval):
+		}
+	}
+}
+
 // fail marks demo.drive failed; statusCode 0 means no answer arrived.
 func (w *worker) fail(ctx context.Context, span trace.Span, errorType string, statusCode int) {
 	span.SetStatus(codes.Error, "")
@@ -86,10 +115,13 @@ func (w *worker) fail(ctx context.Context, span trace.Span, errorType string, st
 	w.logger.WarnContext(ctx, "order request failed", "http.response.status_code", statusCode)
 }
 
-// poll reads up to ten entries (a root Redis span per poll, DE-D5) and
-// processes each in its own CONSUMER span.
+// poll reads up to ten entries and processes each in its own CONSUMER span.
+// The read runs untraced (DE-D11 r3.6): an empty poll leaves no span, and
+// XACK of a received message is traced inside its CONSUMER span. The read
+// itself happens before any message (and its context) exists, so no
+// XREADGROUP span is recorded at all.
 func (w *worker) poll(ctx context.Context) {
-	msgs, err := w.stream.Read(ctx)
+	msgs, err := w.stream.Read(demokit.Untraced(ctx))
 	if err != nil {
 		w.logger.WarnContext(ctx, "stream read failed", "error", err.Error())
 		if strings.HasPrefix(err.Error(), "NOGROUP") {

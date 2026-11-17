@@ -8,5 +8,7 @@
 
   <ItemGroup>
     <PackageReference Include="Grpc.Net.Client" Version="2.62.0" />
+    <!-- grpc.health.v1 client for GET /health (DE-D11 r3.6). -->
+    <PackageReference Include="Grpc.HealthCheck" Version="2.62.0" />
   </ItemGroup>
 </Project>

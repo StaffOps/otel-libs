@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Reflection;
 using Grpc.Core;
 using StackExchange.Redis;
@@ -34,16 +35,24 @@ internal sealed class FakeRedis
     public Exception? ReadError { get; set; }
     public Exception? AckError { get; set; }
     public Exception? StringError { get; set; }
+    public bool Connected { get; set; } = true;
+    public List<(string Command, string? Activity, bool Recorded)> Contexts { get; } = [];
     public Exception? AddError { get; set; }
 
     public IConnectionMultiplexer Multiplexer => Fake<IConnectionMultiplexer>.Create((m, _) =>
-        m.Name == nameof(IConnectionMultiplexer.GetDatabase) ? Database : throw new NotSupportedException(m.Name));
+        m.Name switch
+        {
+            nameof(IConnectionMultiplexer.GetDatabase) => Database,
+            "get_IsConnected" => Connected,
+            _ => throw new NotSupportedException(m.Name),
+        });
 
     public IDatabase Database => Fake<IDatabase>.Create(Handle);
 
     private object? Handle(MethodInfo method, object?[] args)
     {
         Commands.Add(method.Name);
+        Contexts.Add((method.Name, Activity.Current?.OperationName, Activity.Current?.Recorded ?? false));
         switch (method.Name)
         {
             case nameof(IDatabase.StringGetAsync):

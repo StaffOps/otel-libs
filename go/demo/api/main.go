@@ -27,6 +27,7 @@ import (
 	"github.com/staffops/otel-libs/go/ext/otelredis"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+	healthpb "google.golang.org/grpc/health/grpc_health_v1"
 
 	demov1 "github.com/staffops/otel-libs/go/demo/gen/otellibs/demo/v1"
 )
@@ -85,6 +86,7 @@ func run() error {
 		run:       demokit.RunID(),
 		redisHost: host,
 		redisPort: port,
+		ready:     newReadiness(readyCheck(rdb, healthpb.NewHealthClient(conn))),
 	}
 
 	srv := &http.Server{
@@ -108,6 +110,21 @@ func run() error {
 	defer cancel()
 	_ = srv.Shutdown(drainCtx)
 	return runErr
+}
+
+// readyCheck reports whether Redis answers PING and the backend's
+// grpc.health.v1 answers SERVING, each within one second (DE-D11 r3.6). It
+// runs untraced; the gRPC client handler also drops health RPCs.
+func readyCheck(rdb *redis.Client, health healthpb.HealthClient) func(ctx context.Context) bool {
+	return func(ctx context.Context) bool {
+		ctx, cancel := context.WithTimeout(demokit.Untraced(ctx), time.Second)
+		defer cancel()
+		if rdb.Ping(ctx).Err() != nil {
+			return false
+		}
+		resp, err := health.Check(ctx, &healthpb.HealthCheckRequest{})
+		return err == nil && resp.GetStatus() == healthpb.HealthCheckResponse_SERVING
+	}
 }
 
 // redisCache is the quote cache on the instrumented client.

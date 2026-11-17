@@ -43,14 +43,6 @@ function envOr(env, name, fallback) {
   return value === '' ? fallback : value;
 }
 
-/** True when OTEL_RESOURCE_ATTRIBUTES already carries a non-empty service.instance.id. */
-function hasInstanceId(env = process.env) {
-  return (env.OTEL_RESOURCE_ATTRIBUTES ?? '').split(',').some((entry) => {
-    const eq = entry.indexOf('=');
-    return eq >= 0 && safeDecode(entry.slice(0, eq).trim()) === 'service.instance.id' && entry.slice(eq + 1).trim() !== '';
-  });
-}
-
 /** A required, non-empty variable; the error names the variable only. */
 function requireEnv(env, name) {
   const value = (env[name] ?? '').trim();
@@ -122,4 +114,4 @@ function readSecretFile(env, name, readFile = fs.readFileSync) {
   return secret;
 }
 
-module.exports = { DEFAULT_RUN, LANG, envOr, hasInstanceId, parseHostPort, portEnv, readSecretFile, requireEnv, runId, secondsEnv };
+module.exports = { DEFAULT_RUN, LANG, envOr, parseHostPort, portEnv, readSecretFile, requireEnv, runId, secondsEnv };

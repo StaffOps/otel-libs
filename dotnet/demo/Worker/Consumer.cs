@@ -6,7 +6,7 @@ namespace StaffOps.OtelLibs.Demo.Worker;
 
 /// <summary>
 /// The queue consumer (DE-D5, DE-D6): every <c>DEMO_POLL_SECONDS</c> (2 s) one
-/// <c>XREADGROUP COUNT 10</c> without <c>BLOCK</c>; per message one CONSUMER span
+/// <c>XREADGROUP COUNT 10</c> without <c>BLOCK</c>, not traced (r3.6); per message one CONSUMER span
 /// <c>process demo:dotnet:orders</c> with the producer's context as parent and as its one link,
 /// outside any other span, and the <c>XACK</c> inside it.
 /// </summary>
@@ -65,33 +65,38 @@ public sealed class Consumer(IConnectionMultiplexer redis, ILogger<Consumer> log
     public async Task PollAsync(CancellationToken cancellationToken)
     {
         var db = redis.GetDatabase();
-        if (!_groupReady)
-        {
-            await EnsureGroupAsync(db);
-        }
-
-        // A root Redis client span per poll (no current activity), DE-D5.
-        Activity.Current = null;
-        StreamEntry[] entries;
-        try
-        {
-            entries = await db.StreamReadGroupAsync(DemoSettings.StreamKey, DemoSettings.ConsumerGroup,
-                settings.ConsumerName, StreamPosition.NewMessages, BatchSize);
-        }
-        catch (RedisServerException ex) when (ex.Message.StartsWith("NOGROUP", StringComparison.Ordinal))
-        {
-            // The stream or group was deleted (r3.5): recreate it at "$" and read at the next tick;
-            // no ERROR span, one INFO record.
-            _groupReady = false;
-            await EnsureGroupAsync(db);
-            DemoLog.Write(logger, LogLevel.Information, "consumer group recreated", null);
-            return;
-        }
+        // The poll itself is not traced (DE-D11 r3.6): an empty XREADGROUP gives no span; only a
+        // received message gets one (its CONSUMER span, with the XACK under it).
+        var entries = await QuietTracing.RunAsync(() => ReadAsync(db));
 
         foreach (var entry in entries)
         {
             cancellationToken.ThrowIfCancellationRequested();
             await ProcessAsync(db, entry);
+        }
+    }
+
+    /// <summary>XREADGROUP (group created on first use; recreated after NOGROUP, r3.5).</summary>
+    private async Task<StreamEntry[]> ReadAsync(IDatabase db)
+    {
+        if (!_groupReady)
+        {
+            await EnsureGroupAsync(db);
+        }
+
+        try
+        {
+            return await db.StreamReadGroupAsync(DemoSettings.StreamKey, DemoSettings.ConsumerGroup,
+                settings.ConsumerName, StreamPosition.NewMessages, BatchSize);
+        }
+        catch (RedisServerException ex) when (ex.Message.StartsWith("NOGROUP", StringComparison.Ordinal))
+        {
+            // The stream or group was deleted: recreate it at "$" and read at the next tick; no
+            // ERROR span, one INFO record.
+            _groupReady = false;
+            await EnsureGroupAsync(db);
+            DemoLog.Write(logger, LogLevel.Information, "consumer group recreated", null);
+            return [];
         }
     }
 

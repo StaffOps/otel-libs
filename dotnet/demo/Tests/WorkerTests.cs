@@ -130,13 +130,59 @@ public class WorkerTests
         var driver = new Driver(new HttpClient(handler) { BaseAddress = new Uri("http://api:8080/") }, new RecordingLogger<Driver>(), TimeSpan.FromMilliseconds(20));
 
         await driver.StartAsync(CancellationToken.None);
-        for (var i = 0; i < 200 && handler.Requests.Count < 2; i++)
+        for (var i = 0; i < 200 && Orders(handler) < 2; i++)
         {
             await Task.Delay(10);
         }
 
         await driver.StopAsync(CancellationToken.None);
-        Assert.True(handler.Requests.Count >= 2);
+        Assert.Equal("/health", handler.Requests[0].RequestUri!.AbsolutePath);
+        Assert.True(Orders(handler) >= 2);
+    }
+
+    private static int Orders(StubHandler handler)
+    {
+        lock (handler.Requests)
+        {
+            return handler.Requests.Count(r => r.RequestUri!.AbsolutePath == "/orders");
+        }
+    }
+
+    [Fact]
+    public async Task WaitForApiAsync_PollsHealthUntraced()
+    {
+        using var spans = new SpanCollector();
+        var logger = new RecordingLogger<Driver>();
+        var answers = new Queue<Func<HttpResponseMessage>>([
+            () => throw new HttpRequestException("refused"),
+            () => new HttpResponseMessage(HttpStatusCode.ServiceUnavailable),
+            () => new HttpResponseMessage(HttpStatusCode.OK)]);
+        var current = new List<(string? Name, bool Recorded, bool Suppressed)>();
+        var handler = new StubHandler(_ =>
+        {
+            current.Add((Activity.Current?.OperationName, Activity.Current?.Recorded ?? false, OpenTelemetry.Sdk.SuppressInstrumentation));
+            return answers.Dequeue()();
+        });
+        var driver = new Driver(new HttpClient(handler) { BaseAddress = new Uri("http://api:8080/") }, logger,
+            TimeSpan.FromSeconds(5), TimeSpan.FromMilliseconds(5));
+
+        await driver.WaitForApiAsync(CancellationToken.None);
+
+        Assert.Equal(3, handler.Requests.Count);
+        Assert.All(handler.Requests, r => Assert.Equal("/health", r.RequestUri!.AbsolutePath));
+        Assert.All(current, c => Assert.Equal(("otel-libs-demo.quiet", false, true), c));
+        Assert.Equal(["waiting for api", "api ready"], logger.Entries.Select(e => e.Message));
+        Assert.Empty(spans.Started);
+    }
+
+    [Fact]
+    public async Task WaitForApiAsync_ReadyAtOnceLogsNothing()
+    {
+        var logger = new RecordingLogger<Driver>();
+        var driver = new Driver(new HttpClient(new StubHandler(_ => new HttpResponseMessage(HttpStatusCode.OK))) { BaseAddress = new Uri("http://api:8080/") },
+            logger, TimeSpan.FromSeconds(5));
+        await driver.WaitForApiAsync(CancellationToken.None);
+        Assert.Empty(logger.Entries);
     }
 
     private sealed class StubHandler(Func<HttpRequestMessage, HttpResponseMessage> respond) : HttpMessageHandler

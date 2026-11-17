@@ -682,6 +682,26 @@ an `HttpClient` span that is never exported (parked item in
 `specs/dotnet-otel-helper/tasks.md`, commit b572e3a). Check b reads server,
 DB and demo series only, so it is not hit; if a client series is added
 (DE7), the .NET cell is a strict xfail on the task DE8 creates for it.)*
+*(r3.6, 2026-11-16, observability scorecard of the first live run
+`20261116t1812`, overall ≈ 8.7/10, no BLOCKING/HIGH. (1) **Startup race**,
+not keep-alive: the r3.3 "connection resets" (one worker → api error in
+Python, Node.js and .NET, two Go api → backend `UNAVAILABLE`) all fell in the
+first 12 s after pod start; 0 inside the window. So the worker waits, before
+its first `demo.drive`, until the api's `GET /health` answers 200, and the
+api's `/health` answers 200 only when Redis is connected **and** the backend's
+`grpc.health.v1` answers SERVING; `verify.py demo` reports BLOCKED when the
+window starts less than 60 s after the youngest app pod's start. The INFO
+line stays. (2) The XREADGROUP poll roots (≈ 27 per minute per language) are
+noise: the worker suppresses tracing around the empty poll (no span when no
+message arrives). *(Refined 2026-11-16 after DE3: the `XREADGROUP` call is
+untraced always — it runs before any producer context exists, so it cannot
+sit under the CONSUMER span; the CONSUMER span and its `XACK` stay traced.
+The start-up group creation is untraced too where the language allows.)* (3) New tasks from the run: A42 (.NET ASP.NET Core server
+`error.type` = exception type name, so .NET d.http stays xfail on A37 and
+A42), A43 (Go and .NET DB-client exemplars on the parent span; b.db_client
+keeps "a span of the trace" until A43 is decided); A37 evidence extended.
+(4) `otelcol_connector_servicegraph_dropped_spans` returns no data on this
+gateway: the info line prints `unmeasured` instead of 0.)*
 **Justification**: read-only through the API server proxy like the existing
 modes (`testing/k8s/README.md:181-184`); strict xfail per ADR-008; minimums
 from the deterministic cycle (DE-D7) make empty data a failure.

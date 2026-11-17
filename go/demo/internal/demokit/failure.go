@@ -2,6 +2,7 @@ package demokit
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -132,3 +133,18 @@ func Outcome(failed bool) attribute.KeyValue {
 
 // Scenario is the demo.scenario span attribute.
 func Scenario(s string) attribute.KeyValue { return attribute.String(attrScenario, s) }
+
+// Untraced returns ctx with a valid but unsampled local parent span context.
+// Under the helper's parent-based sampler (default parentbased_always_on,
+// ADR-002) nothing started from it is recorded: the worker's empty
+// XREADGROUP polls and the api's readiness probes leave no span (DE-D11
+// r3.6). A sampler without the parent-based rule (OTEL_TRACES_SAMPLER=
+// always_on) would still record them. Never log with this context: the
+// record would carry the throwaway trace id.
+func Untraced(ctx context.Context) context.Context {
+	var tid trace.TraceID
+	var sid trace.SpanID
+	_, _ = rand.Read(tid[:])
+	_, _ = rand.Read(sid[:])
+	return trace.ContextWithSpanContext(ctx, trace.NewSpanContext(trace.SpanContextConfig{TraceID: tid, SpanID: sid}))
+}

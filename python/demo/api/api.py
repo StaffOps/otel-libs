@@ -17,8 +17,10 @@ Environment: ``DEMO_HTTP_PORT`` (8080), ``DEMO_BACKEND_ADDR``
 # OTEL_PROPAGATORS values are skipped instead of raising (isort would move it).
 import staffops_otel_helper  # isort: skip  # noqa: F401
 
+import asyncio
 import logging
 import os
+import time
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import Any, Literal
@@ -28,6 +30,7 @@ from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from opentelemetry import propagate, trace
+from opentelemetry.instrumentation.utils import suppress_instrumentation
 from opentelemetry.trace import SpanKind, Status, StatusCode, Tracer
 from pydantic import BaseModel
 
@@ -62,6 +65,38 @@ class Deps:
     redis_host: str
     redis_port: int
     channel: Any = None
+    health_stub: Any = None  # grpc_health.v1 HealthStub on the backend channel
+    health_request: Any = None  # grpc_health.v1 HealthCheckRequest
+    ready_checked_at: float = float("-inf")
+    ready: bool = False
+
+
+# Readiness (DE-D11 r3.6): each dependency check times out quickly; the answer is reused for ~1 s.
+READY_TIMEOUT_SECONDS = 1.0
+READY_CACHE_SECONDS = 1.0
+
+
+async def check_ready(deps: Deps) -> bool:
+    """True when Redis answers PING and the backend's grpc.health.v1 says SERVING.
+
+    Runs with instrumentation suppressed: probes every few seconds would
+    otherwise make root Redis and gRPC client spans (noise in every check).
+    """
+    now = time.monotonic()
+    if now - deps.ready_checked_at < READY_CACHE_SECONDS:
+        return deps.ready
+    ok = False
+    with suppress_instrumentation():
+        try:
+            await asyncio.wait_for(deps.redis.ping(), READY_TIMEOUT_SECONDS)
+            if deps.health_stub is not None:
+                reply = await asyncio.wait_for(
+                    deps.health_stub.Check(deps.health_request(service="")), READY_TIMEOUT_SECONDS)
+                ok = reply.status == 1  # HealthCheckResponse.SERVING
+        except Exception:  # noqa: BLE001 - not ready, whatever the reason
+            ok = False
+    deps.ready_checked_at, deps.ready = time.monotonic(), ok
+    return ok
 
 
 def quote_for(customer: str) -> str:
@@ -175,7 +210,10 @@ def create_app(deps_factory=None) -> FastAPI:
 
     @app.get("/health")
     async def health():
-        return {"status": "ok"}
+        # 200 only when Redis and the backend are reachable: the worker waits for it (r3.6).
+        if await check_ready(app.state.deps):
+            return {"status": "ok"}
+        return JSONResponse({"status": "unavailable"}, status_code=503)
 
     @app.post("/orders")
     async def orders(body: OrderBody):
@@ -190,6 +228,7 @@ async def deps_from_env() -> Deps:
     import demo_pb2
     import demo_pb2_grpc
     import redis.asyncio as aioredis
+    from grpc_health.v1 import health_pb2, health_pb2_grpc
 
     host, port = dc.split_host_port(os.environ.get("DEMO_REDIS_ADDR", "demo-redis:6379"), 6379)
     password = dc.read_secret_file(os.environ.get("DEMO_REDIS_PASSWORD_FILE"), "DEMO_REDIS_PASSWORD_FILE")
@@ -199,7 +238,9 @@ async def deps_from_env() -> Deps:
     return Deps(redis=client, stub=demo_pb2_grpc.OrderServiceStub(channel),
                 request_cls=demo_pb2.PlaceOrderRequest,
                 tracer=staffops_otel_helper.get_tracer(dc.SCOPE), run=dc.run_id(),
-                redis_host=host, redis_port=port, channel=channel)
+                redis_host=host, redis_port=port, channel=channel,
+                health_stub=health_pb2_grpc.HealthStub(channel),
+                health_request=health_pb2.HealthCheckRequest)
 
 
 def main() -> None:  # pragma: no cover - process wiring, run by the image smoke

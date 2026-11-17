@@ -66,9 +66,15 @@ class FakeRedis:
         self.reads = []
 
     async def xack(self, stream, group, entry_id):
+        from opentelemetry.instrumentation.utils import is_instrumentation_enabled
+
+        assert is_instrumentation_enabled()  # XACK spans stay under the CONSUMER span
         self.acked.append((stream, group, entry_id))
 
     async def xreadgroup(self, group, consumer, streams, count=None):
+        from opentelemetry.instrumentation.utils import is_instrumentation_enabled
+
+        assert not is_instrumentation_enabled()  # the poll itself is untraced (r3.6)
         self.reads.append((group, consumer, streams, count))
         return self.batches
 
@@ -277,3 +283,37 @@ def test_consumer_span_records_no_exception_when_xack_fails(otel):
         asyncio.run(worker.consume_message(R(), otel.tracer, "1-1", fields, "r", 1))
     (consumer,) = otel.finished(f"process {dc.STREAM}")
     assert not consumer.events and consumer.status.description is None
+
+
+def test_wait_for_api_polls_health_untraced_until_200(otel):
+    from opentelemetry.instrumentation.utils import is_instrumentation_enabled
+
+    answers = [None, 503, 200]
+    seen = []
+
+    def handler(request):
+        assert request.url.path == "/health" and not is_instrumentation_enabled()
+        answer = answers[len(seen)]
+        seen.append(answer)
+        if answer is None:
+            raise httpx.ConnectError("refused", request=request)
+        return httpx.Response(answer)
+
+    async def go():
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+            return await worker.wait_for_api(http, "http://api", asyncio.Event(), every=0.01)
+
+    assert asyncio.run(go()) is True and seen == [None, 503, 200]
+    (rec,) = otel.records()
+    assert rec.body == "api ready" and rec.attributes["demo.wait_attempts"] == 2
+    assert not otel.finished()
+
+
+def test_wait_for_api_returns_false_when_stopped():
+    async def go():
+        stop = asyncio.Event()
+        stop.set()
+        async with httpx.AsyncClient(transport=httpx.MockTransport(lambda r: httpx.Response(503))) as http:
+            return await worker.wait_for_api(http, "http://api", stop)
+
+    assert asyncio.run(go()) is False

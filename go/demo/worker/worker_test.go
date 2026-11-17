@@ -20,17 +20,21 @@ import (
 )
 
 type fakeStream struct {
-	ackSpan trace.SpanContext
-	msgs    []message
-	readErr error
-	ackErr  error
-	acked   []string
-	created int
+	ackSpan  trace.SpanContext
+	readSpan trace.SpanContext
+	msgs     []message
+	readErr  error
+	ackErr   error
+	acked    []string
+	created  int
 }
 
 func (s *fakeStream) CreateGroup(context.Context) error { s.created++; return nil }
 
-func (s *fakeStream) Read(context.Context) ([]message, error) { return s.msgs, s.readErr }
+func (s *fakeStream) Read(ctx context.Context) ([]message, error) {
+	s.readSpan = trace.SpanContextFromContext(ctx)
+	return s.msgs, s.readErr
+}
 
 func (s *fakeStream) Ack(ctx context.Context, id string) error {
 	s.acked = append(s.acked, id)
@@ -138,6 +142,12 @@ func TestProcessUsesTheProducerAsParentAndLink(t *testing.T) {
 
 	w.poll(context.Background())
 
+	if !st.readSpan.IsValid() || st.readSpan.IsSampled() {
+		t.Errorf("the read must run under an unsampled parent: %+v", st.readSpan)
+	}
+	if n := len(rec.Ended()); n != 1 {
+		t.Fatalf("spans = %d, want only the CONSUMER span", n)
+	}
 	s := rec.Ended()[0]
 	psc := producer.SpanContext()
 	if s.Name() != "process demo:go:orders" || s.SpanKind() != trace.SpanKindConsumer {
@@ -183,6 +193,42 @@ func TestPollFailures(t *testing.T) {
 	s := rec.Ended()[0]
 	if s.Status().Code != otelcodes.Error || s.Parent().IsValid() || len(s.Links()) != 0 {
 		t.Errorf("status=%v parent=%v links=%v", s.Status(), s.Parent(), s.Links())
+	}
+}
+
+func TestEmptyPollLeavesNoSpanOrLog(t *testing.T) {
+	w, rec, logs, st := newWorker(t, "")
+	w.poll(context.Background())
+	if len(rec.Ended()) != 0 || len(logs.Records()) != 0 || st.readSpan.IsSampled() {
+		t.Errorf("empty poll: spans=%d logs=%d", len(rec.Ended()), len(logs.Records()))
+	}
+}
+
+func TestWaitForAPI(t *testing.T) {
+	n := 0
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n++
+		if r.URL.Path != "/health" || n < 3 {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer api.Close()
+	w, _, logs, _ := newWorker(t, api.URL)
+	w.probe = api.Client()
+	if !w.waitForAPI(context.Background(), time.Millisecond) || n != 3 {
+		t.Errorf("waitForAPI: n=%d", n)
+	}
+	if r := logs.Records(); len(r) != 2 || r[1].Message != "api ready" {
+		t.Errorf("logs = %+v", r)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	w.apiURL = "http://127.0.0.1:1"
+	if w.waitForAPI(ctx, time.Millisecond) {
+		t.Error("a cancelled context must stop the wait")
 	}
 }
 

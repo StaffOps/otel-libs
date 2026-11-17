@@ -12,12 +12,16 @@ shared contract (proto, schema, connection table) is described in
 | `api/` | `demo-node-api` | express `POST /orders` (span `demo.order.accept`), Redis quote cache, gRPC client of `PlaceOrder`, PRODUCER span `send demo:node:orders` + `XADD` | core, `-redis` (node-redis), `-pino` |
 | `backend/` | `demo-node-backend` | gRPC `demo.v1.OrderService` (proto loaded at run time), span `demo.order.process`, `pg` upsert + read-back, metrics `demo.orders.processed` / `demo.order.duration` | core, `-sql` (pg), `-pino` |
 
-Each app's `main.js` sets the helper up through `lib/bootstrap.js` —
-`setup()` → `shutdown()` → `setup({ instrumentations })`, one
-`service.instance.id` for both — and then loads `app.js`. The double setup
-works around a helper defect (an opt-in factory plus OTLP over gRPC leaves
-the core http, express and gRPC instrumentations without spans); remove it
-when the helper is fixed.
+Each app's `main.js` requires the helper first, calls one
+`setup({ instrumentations: [<factory>()] })` with the opt-in factory created
+inside the call (load order, HOW-TO §9), then loads `app.js`.
+
+Start-up and idle behaviour (design DE-D11 r3.6): the api's `GET /health`
+answers 200 only when Redis is connected and the backend's `grpc.health.v1`
+answers SERVING; the worker sends its first order only after that 200 (probed
+with tracing suppressed). The queue read (`XREADGROUP`) always runs with
+tracing suppressed, as in the other languages; each message's CONSUMER span
+and its `XACK` are traced.
 
 `lib/` holds the logic the three share (scenario cycle, ADR-014 failure
 recording, gRPC status mapping, messaging attributes and propagation, order
@@ -40,7 +44,7 @@ once from files and never logged.
 
 The run id in the scenarios' error messages (`rej-<run>`, `dup-<run>`,
 `unh-<run>`) is `otel_libs.run` from `OTEL_RESOURCE_ATTRIBUTES`, else `local`
-(design DE-D7 r3.4). The api serves `GET /health` (503 until Redis is connected); the backend serves
+(design DE-D7 r3.4). The api serves `GET /health` (503 until Redis is connected and the backend is SERVING); the backend serves
 `grpc.health.v1.Health` (`""` and `demo.v1.OrderService` are `SERVING` once the
 schema is applied).
 
