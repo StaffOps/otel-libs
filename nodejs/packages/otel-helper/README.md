@@ -47,6 +47,30 @@ import { shutdown } from '@staffops/otel-helper'; // CommonJS: require('@staffop
 process.once('SIGTERM', () => { shutdown().finally(() => process.exit(0)); });
 ```
 
+Custom spans with one failure rule, shared with Go and Python: a throw or
+rejection marks the span ERROR (no description) with `error.type` and no
+`exception` event, and writes one ERROR log record with the message and
+stack in the span's context (one record per helper span the failure
+crosses, each with its own span id); success stays Unset (never Ok); an
+`AbortError` or a grpc-js `CANCELLED` error stays Unset (an `AbortError`
+caused by `AbortSignal.timeout()` is a timeout: a failure). `startRootSpan`
+follows the same rule (changed in 0.3: no message or stack on the span).
+Override `error.type` with `Symbol.for('otel.error_type')`.
+
+```js
+const { recordFailure, withSpan } = require('@staffops/otel-helper');
+
+await withSpan('order.process', async (span) => {
+  const result = await process(order); // a throw: ERROR + error.type, one correlated ERROR log, rethrown
+  if (!result.ok) recordFailure(new Error(result.reason), span); // a handled failure, marked by hand
+});
+```
+
+Details: [README, Application span failures](https://github.com/StaffOps/otel-libs/blob/main/nodejs/README.md#application-span-failures)
+and [HOW-TO §16](https://github.com/StaffOps/otel-libs/blob/main/nodejs/HOW-TO.md#16-application-span-failures-withspan-recordfailure).
+Records on the stdout fallback carry `trace_id` and `span_id` when written in
+a span.
+
 Opt-in packages: `@staffops/otel-helper-sql`, `-redis`, `-aws`
 (instrumentation) and `-pino`, `-winston` (log destinations).
 

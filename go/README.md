@@ -198,6 +198,58 @@ defaults to `otel-helper`.
 Starts a span with no parent (a new trace) even if `ctx` carries one — one
 trace per worker iteration or consumed message.
 
+### `WithSpan(ctx, tracer, name, fn, ...SpanStartOption) error` / `RecordFailure(ctx, err)`
+
+Application spans with one failure rule in every language (R11,
+[ADR-016](../specs/decisions/ADR-016-application-span-failure-status.md)):
+
+```go
+err := otelhelper.WithSpan(ctx, tracer, "order.process", func(ctx context.Context) error {
+    return process(ctx, order) // a returned error marks the span
+})
+
+// A failure the code handles instead of returning:
+otelhelper.RecordFailure(ctx, &OrderRejectedError{ID: id})
+```
+
+| `fn` outcome | Span | Log record |
+|---|---|---|
+| returns `nil` | status **Unset** (the helper never sets Ok) | none |
+| returns an error | status **ERROR**, empty description, `error.type`; no `exception` event | one ERROR record in the span's context |
+| returns a cancellation: every leaf of the error tree is `context.Canceled` or a gRPC status with `codes.Canceled` (`fmt.Errorf("q: %w", ctx.Err())` included) | **Unset** | none |
+| returns `context.DeadlineExceeded` (a timeout) | ERROR | one |
+| panics | ERROR, then re-panics with the same value (an `error` value follows the error rows, a cancellation included) | one |
+| panics with or returns `http.ErrAbortHandler` | Unset (a panic is re-panicked) | none |
+| `runtime.Goexit` | Unset | none |
+
+The error is returned unchanged. `trace.WithNewRoot()` in the options makes a
+root span (`StartRootSpan` stays a plain span starter); a nil `tracer` is
+`GetTracer()` (scope `otel-helper`, global provider). `RecordFailure` marks
+`trace.SpanFromContext(ctx)` the same way, always records, and does not apply
+the cancellation rule; a nil error does nothing.
+
+- **`error.type`** (also the record's `exception.type`): the first
+  non-empty `ErrorType() string` method along the `Unwrap` chain wins (the
+  upstream convention; an empty one does not hide a deeper one), else `semconv.ErrorType` (semconv v1.43.0): a single-`%w`
+  wrapper is stripped, a pointer type prints the package name
+  (`*fs.PathError`), a value type the full import path. `errors.New`
+  (`*errors.errorString`), several `%w` (`*fmt.wrapErrors`) and `errors.Join`
+  (`*errors.joinError`) are shared buckets: give application errors an
+  `ErrorType()` method. A panicking `ErrorType()` (typed-nil receiver) falls
+  back to `%T`; a panic value that is not an `error` gets `%T`.
+- **The record** goes through the helper's slog handler (OTel bridge with a
+  logs exporter, stdout JSON otherwise, with `"logger":"otel-helper"` on
+  stdout — the bridge scope name): severity ERROR, body = the error text
+  (`<nil>` for a typed nil), `exception.type`, `exception.message`,
+  `exception.stacktrace` (`debug.Stack()` where the helper marks the span; for
+  a panic, at the recover, so it includes the panic site). It is emitted in
+  the span's context also when the span is not sampled. With logs disabled
+  the span is still marked. A stdout write error is reported once on stderr.
+- **One record per span.** A failure that crosses several `WithSpan` calls
+  marks every span and each one emits its own record in its own span context:
+  3 nested `WithSpan` give 3 records. Use `WithSpan` only at the layers that
+  should report. Details: [HOW-TO §3b](HOW-TO.md#3b-application-span-failures-withspan-and-recordfailure).
+
 ### `NewHTTPHandler(handler http.Handler, operation string) http.Handler`
 
 otelhttp server instrumentation: a server span per request and
@@ -250,7 +302,16 @@ back to stdout after `Shutdown`. Stdout shape (same as Python):
 
 `time` is RFC 3339 UTC with milliseconds; `level` is `DEBUG`/`INFO`/`WARN`/`ERROR`;
 the first error-valued attribute of the record becomes `exception` (its
-`Error()` text). Stdout records carry no `trace_id`/`span_id`.
+`Error()` text). A record emitted in a valid span context (a `*Context` call)
+carries `trace_id` and `span_id` right after `msg` (after `logger` when the
+record has one; `With` attributes stay before them), and a top-level
+attribute of either name is then dropped:
+
+```json
+{"time":"2026-11-17T10:02:11.201Z","level":"WARN","msg":"retrying","trace_id":"4bf92f3577b34da6a3ce929d0e0e4736","span_id":"00f067aa0ba902b7","attempt":2}
+```
+
+Under a `WithGroup` the ids stay at the top level, before the group object.
 
 **Trace correlation** needs the `*Context` calls: `logger.InfoContext(ctx, …)`
 attaches the active span's `trace_id`/`span_id` to the exported record;
@@ -434,6 +495,7 @@ go/
 ├── config.go          # Env resolution, validation, deprecations, propagators
 ├── endpoint.go        # OTLP endpoint / TLS / timeout / compression / headers resolution
 ├── tracing.go         # TracerProvider, sampler, StartRootSpan
+├── failure.go         # WithSpan, RecordFailure (application span failure rule, R11)
 ├── health.go          # Health-check sampler and path matching
 ├── processors.go      # debug=true marker on entry spans
 ├── metrics.go         # MeterProvider, runtime metrics, Prometheus reader, MetricsHandler

@@ -43,6 +43,11 @@ var stdStreamFiles = map[string]bool{"diag.go": true}
 // second logr sink writing to the std streams).
 var deniedImports = map[string]bool{"syscall": true, "runtime/debug": true, "github.com/go-logr/stdr": true}
 
+// importAllowed exempts one file from deniedImports: failure.go needs
+// debug.Stack() for the exception.stacktrace of the failure record (design D15).
+// Any other debug.* reference is still a violation.
+var importAllowed = map[string]bool{"failure.go|runtime/debug": true}
+
 // slogEmitters are log/slog package functions that write through (or
 // replace) the default logger; referencing them at all (call or method
 // value) is a violation.
@@ -82,7 +87,7 @@ func TestDiagnosticsChannel(t *testing.T) {
 		imports := map[string]string{} // local name -> import path
 		for _, imp := range f.Imports {
 			p, _ := strconv.Unquote(imp.Path.Value)
-			if deniedImports[p] {
+			if deniedImports[p] && !importAllowed[name+"|"+p] {
 				violations = append(violations, fset.Position(imp.Pos()).String()+": import "+p)
 			}
 			if imp.Name != nil && imp.Name.Name == "." {
@@ -144,6 +149,8 @@ func TestDiagnosticsChannel(t *testing.T) {
 						report(x, "log."+sel)
 					case path == "fmt" && strings.HasPrefix(sel, "Print"):
 						report(x, "fmt."+sel)
+					case path == "runtime/debug" && sel != "Stack":
+						report(x, "debug."+sel) // the exempted import allows debug.Stack only
 					case path == "os" && sel == "NewFile":
 						report(x, "os.NewFile")
 					case path == "os" && (sel == "Stdout" || sel == "Stderr") && !stdStreamFiles[base]:

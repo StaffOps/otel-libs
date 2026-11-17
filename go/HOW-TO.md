@@ -164,6 +164,152 @@ before calling `Shutdown`, so its span is exported.
 
 ---
 
+## 3b. Application span failures: `WithSpan` and `RecordFailure`
+
+Spans from the HTTP, gRPC and database instrumentations get their status from
+semantic conventions. For spans the application creates, `WithSpan` applies
+one rule, the same in Go, Python and Node.js (R11,
+[ADR-016](../specs/decisions/ADR-016-application-span-failure-status.md)):
+a failure gives status ERROR with **no description** and `error.type`; success
+stays **Unset**; the helper never sets Ok. The message and the stack go to one
+ERROR log record in the span's context, not on the span
+([ADR-014](../specs/decisions/ADR-014-exception-detail-in-correlated-logs.md)).
+
+```go
+// OrderRejectedError carries its own error.type, the same literal in every
+// language (the default would be "*main.OrderRejectedError").
+type OrderRejectedError struct{ ID string }
+
+func (e *OrderRejectedError) Error() string     { return "order " + e.ID + " rejected" }
+func (e *OrderRejectedError) ErrorType() string { return "OrderRejectedError" }
+
+func handle(ctx context.Context, msg Message) error {
+    return otelhelper.WithSpan(ctx, tracer, "order.process", func(ctx context.Context) error {
+        if err := validate(ctx, msg); err != nil {
+            return fmt.Errorf("validate: %w", err) // marks this span, one record
+        }
+        if over, err := limits(ctx, msg); err == nil && over {
+            // Handled: answered normally, but counted as a failure on purpose.
+            otelhelper.RecordFailure(ctx, &OrderRejectedError{ID: msg.ID})
+            return nil
+        }
+        return nil
+    }, trace.WithSpanKind(trace.SpanKindConsumer))
+}
+
+// One trace per worker iteration: pass trace.WithNewRoot().
+err := otelhelper.WithSpan(ctx, tracer, "process-batch", processBatch, trace.WithNewRoot())
+```
+
+On a failure the span looks like this (status ERROR, empty description,
+`error.type="OrderRejectedError"`, no event) and the record, on the stdout
+fallback, like this (`exception.stacktrace` shortened):
+
+```json
+{"time":"2026-11-17T10:02:11.201Z","level":"ERROR","msg":"order o-1 rejected","logger":"otel-helper","trace_id":"4bf92f3577b34da6a3ce929d0e0e4736","span_id":"00f067aa0ba902b7","exception.type":"OrderRejectedError","exception.message":"order o-1 rejected","exception.stacktrace":"goroutine 7 [running]:\n..."}
+```
+
+With a logs exporter the same record is exported through the OTel bridge with
+the span's `trace_id` and `span_id`.
+
+**What counts as a failure**
+
+| `fn` result | Span | Record |
+|---|---|---|
+| `nil` | Unset | none |
+| an error | ERROR + `error.type` | one |
+| a cancellation: every leaf of the error tree (`Unwrap() error` and `Unwrap() []error` links) is `context.Canceled` or a gRPC status with `codes.Canceled` (`status.Code`) | Unset | none |
+| `context.DeadlineExceeded`, a gRPC `DeadlineExceeded` | ERROR | one |
+| a panic | ERROR, then re-panic with the same value | one |
+| a panic with `http.ErrAbortHandler` (the `net/http` handler abort) | Unset, re-panicked | none |
+| `runtime.Goexit` | Unset | none |
+
+- `fmt.Errorf("query: %w", ctx.Err())` is a cancellation (the leaf rule goes
+  through `%w`); `errors.Join(ownErr, ctx.Err())` is a failure (one leaf is
+  not a cancellation). Python `raise X from CancelledError()` and a Node.js
+  `{ cause: abortErr }` are failures there: the languages differ on a wrapped
+  cancellation.
+- A panic value that implements `error` follows the error rules (type,
+  cancellation, text); any other value gets `error.type` = `%T` and the
+  message `fmt.Sprint(value)`. The stack is taken at the recover, so it
+  includes the panic site.
+- `RecordFailure(ctx, err)` marks `trace.SpanFromContext(ctx)` and records in
+  `ctx` (that span's ids, also when it is not the span your code considers
+  current). It always records and marks whatever it is given: no
+  cancellation rule. A nil error does nothing.
+- A nil `tracer` is `GetTracer()`: scope `otel-helper` on the global provider.
+
+**`error.type`.** The first non-empty `ErrorType() string` method along the
+`Unwrap` chain wins; an empty one at the top does not hide a deeper one.
+Otherwise `semconv.ErrorType` (semconv v1.43.0) is used: one `%w` wrapper is
+stripped; a pointer type prints the package name (`*fs.PathError`), a value
+type the full import path (`github.com/<org>/app/orders.LimitError`).
+`errors.New` (`*errors.errorString`), several `%w` (`*fmt.wrapErrors`) and
+`errors.Join` (`*errors.joinError`) put unrelated failures in one bucket, so
+give application errors an `ErrorType()` method; it is also the way to get one
+value across languages. A typed-nil receiver whose `ErrorType()` panics falls
+back to `%T`, and its text is `<nil>`. The error tree is walked with cycle
+tracking, at most 256 links, and `Unwrap()` under `recover`; a tree the walk
+cannot finish (a cycle, the bound, a panicking `Unwrap`) is a failure with
+`error.type` `%T` (`semconv.ErrorType` would loop forever on a cyclic chain).
+
+**The record.** Severity ERROR, body = the error text,
+`exception.type` (= `error.type`), `exception.message` (= the body) and
+`exception.stacktrace` = `debug.Stack()` at the marking point, taken only when
+the record is enabled. For a returned error that stack shows the `WithSpan`
+frames, not where the error was made (Go errors carry no stack). The record
+goes through the helper's slog handler (`NewSlogHandler`): the OTel bridge
+while `Setup` has a logs exporter (scope `otel-helper`), the stdout JSON
+fallback otherwise (also before `Setup`), where the line carries
+`"logger":"otel-helper"`, the same name as the bridge scope and the Node.js
+helper's logger. It carries no event name (the slog bridge has none). It is
+emitted whether or not the span is sampled: an unsampled span still has its
+ids. With `OTEL_LOGS_EXPORTER=none` the record goes to stdout; the span is
+marked in every case. A stdout write error is reported once per process on
+stderr (helper diagnostics), without the record text. An application that
+also logs the same error gets two ERROR records — drop its own.
+
+**One record per span.** Every `WithSpan` a failure crosses marks its own
+span (ERROR + `error.type`) and emits its own record, in its own span context
+(owner ruling of 2026-11-17, design D15 "Nesting"). A failure through 3
+nested `WithSpan` calls gives 3 records, each naming its span; a panic gives
+one record per `WithSpan` it crosses and is re-panicked unchanged.
+`RecordFailure` always records, so returning the same error from the
+enclosing `WithSpan` records it again for that span. You control the volume:
+use `WithSpan` only at the layers that should report, and plain
+`tracer.Start` spans (outside the rule) elsewhere. This deviates on purpose
+from semconv recording-errors ("recorded once"): each record names the
+operation that failed. Goroutines that `fn` starts (errgroup fan-out) can
+call `WithSpan` and `RecordFailure` with `fn`'s context concurrently.
+
+**Documented behaviors**
+
+- **Counting.** An error rate per span name counts every layer a failure
+  crosses (each span is ERROR). To count failures, use SERVER/CONSUMER or
+  root spans. The log records also count once per span crossed.
+- **Handled failures.** A failure the outer code handles leaves the inner
+  span ERROR and the outer span Unset (semconv recording-errors). Call
+  `RecordFailure` when the handled outcome must count as an error.
+- **Ok is final.** If the application set Ok on the span before, the API
+  ignores the ERROR, but `error.type` and the record are still added.
+- **Plain SDK spans are outside the rule.** `tracer.Start` + `span.RecordError`
+  keeps the SDK behavior (message in an `exception` event). A `defer span.End()` that runs while a panic
+  unwinds also makes the Go SDK add an `exception` event with the panic
+  message and stack (`sdk/trace` `End` recovers and re-panics); `WithSpan`
+  ends its span after recovering, so its span gets none.
+- **`http.ErrAbortHandler`.** A handler that aborts with
+  `panic(http.ErrAbortHandler)` leaves the helper span Unset and emits no
+  record; the value is re-panicked so `net/http` still aborts the response. A `fn` that **returns** `http.ErrAbortHandler`
+  is treated the same way (Unset, no record).
+- **HTTP mapping.** An error returned from the work inside a request handler
+  makes the helper span ERROR even when the handler then answers 404 (the
+  SERVER span stays Unset: semconv leaves 4xx Unset on SERVER). A 500 written
+  without an error reaching `WithSpan` leaves the helper span Unset.
+- `StartRootSpan` is unchanged: a plain span starter. Use
+  `WithSpan(…, trace.WithNewRoot())` for a root span with the failure rule.
+
+---
+
 ## 4. Custom signals
 
 The runnable version of this section is
@@ -203,6 +349,12 @@ func processOrder(ctx context.Context, o Order) error {
     return nil
 }
 ```
+
+This is the plain SDK API: `RecordError` puts the message in an `exception`
+event and the description is free text. For application spans prefer
+`otelhelper.WithSpan` ([§3b](#3b-application-span-failures-withspan-and-recordfailure)):
+ERROR without description, `error.type`, and the message and stack in a
+correlated log record instead.
 
 The example wraps the per-order spans in a batch root span,
 `otelhelper.StartRootSpan(ctx, tracer, "orders.process-batch", …)`: a span that
@@ -257,7 +409,8 @@ and `span_id` of the span in `ctx`. An attribute whose value is an `error`
 (any key; the key itself is not exported) becomes `exception.message` /
 `exception.type` on the exported record. `logger.Info` (without `Context`)
 exports a record with no trace correlation. Without a logs exporter the record
-is a stdout JSON line (no trace IDs) — see [§7](#7-slog-integration).
+is a stdout JSON line; a `*Context` call in a span adds `trace_id` and
+`span_id` to it — see [§7](#7-slog-integration).
 
 ---
 
@@ -336,6 +489,15 @@ Stdout line (shared with Python):
   `exception` (its `Error()` text) — not when an `exception` key exists, and not
   for attributes added with `WithAttrs`. A typed-nil error renders `<nil>`, a
   panicking `Error()` renders `!PANIC: …`.
+- A record emitted in a valid span context (`InfoContext(ctx, …)` with a span
+  in `ctx`, sampled or not) carries `trace_id` (32 hex) and `span_id` (16 hex)
+  right after `msg`, or after `logger` when the record has one. Attributes
+  added with `With` are written by slog right after `msg`, so they come before
+  the ids. A top-level `trace_id` / `span_id` attribute of the record or of
+  `With` is then dropped (no duplicate key); without a span context it is
+  kept. Under `WithGroup` the ids stay at the top level, before the group
+  object (that record pays one handler rebuild). Same names as Python, Node.js
+  and .NET (parity case `logging.stdout_span_context`).
 
 Exported records use the instrumentation scope `otel-helper`.
 

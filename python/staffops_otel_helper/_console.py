@@ -23,6 +23,8 @@ import math
 import sys
 import traceback
 
+from opentelemetry import trace
+
 # Self-diagnostics of the helper and of the OTel SDK reach stderr at INFO and above.
 _DIAGNOSTIC_LOGGERS = ("staffops_otel_helper", "opentelemetry")
 DIAGNOSTIC_LEVEL = logging.INFO
@@ -34,6 +36,22 @@ _RESERVED = frozenset(vars(logging.LogRecord("", 0, "", 0, "", None, None))) | {
 def is_diagnostic(name: str) -> bool:
     """True for records of the ``staffops_otel_helper`` and ``opentelemetry`` logger hierarchies."""
     return any(name == p or name.startswith(p + ".") for p in _DIAGNOSTIC_LOGGERS)
+
+
+_FAILURE_LOGGER = "staffops_otel_helper.failure"
+
+
+def is_failure_record(name: str) -> bool:
+    """True for the application failure records of ``staffops_otel_helper.failure`` (design D15, D6 note 2026-11-17).
+
+    A routing exception only: ``is_diagnostic`` still covers the logger (it is re-enabled after an app
+    ``dictConfig``), but the console routing sends its records the application way, never to stderr.
+    """
+    return name == _FAILURE_LOGGER or name.startswith(_FAILURE_LOGGER + ".")
+
+
+def _routed_as_diagnostic(name: str) -> bool:
+    return is_diagnostic(name) and not is_failure_record(name)
 
 
 def is_sdk_diagnostic(name: str) -> bool:
@@ -143,6 +161,10 @@ class JSONFormatter(logging.Formatter):
             "msg": record.getMessage(),
             "logger": record.name,
         }
+        span_context = trace.get_current_span().get_span_context()
+        if span_context.is_valid:  # contract A23 amendment 2026-11-11: right after logger, attributes dropped
+            entry["trace_id"] = format(span_context.trace_id, "032x")
+            entry["span_id"] = format(span_context.span_id, "016x")
         for key, value in vars(record).items():
             if key not in _RESERVED and key not in entry:
                 entry[key] = value
@@ -183,7 +205,7 @@ class ConsoleFallback(logging.Handler):
         self.previous = previous
 
     def handle(self, record: logging.LogRecord) -> bool:
-        if is_diagnostic(record.name):
+        if _routed_as_diagnostic(record.name):
             return _to_stderr(self.previous, record)
         return bool(self._stdout.handle(record))
 
@@ -207,7 +229,7 @@ class DiagnosticsToStderr(logging.Handler):
         self._helper = helper_handlers
 
     def handle(self, record: logging.LogRecord) -> bool:
-        if not is_diagnostic(record.name):
+        if not _routed_as_diagnostic(record.name):
             return False
         if any(h is not self and h not in self._helper for h in logging.getLogger().handlers):
             return False  # the application configured root: its handlers decide
@@ -227,7 +249,7 @@ class SetupDiagnostics(logging.Handler):
     def handle(self, record: logging.LogRecord) -> bool:
         if self.previous is None:
             return False
-        if is_diagnostic(record.name) and not is_sdk_diagnostic(record.name):
+        if _routed_as_diagnostic(record.name) and not is_sdk_diagnostic(record.name):
             return _to_stderr(self.previous, record)
         if record.levelno >= self.previous.level:  # what the stdlib would have done
             self.previous.handle(record)

@@ -11,11 +11,13 @@
  *
  * The stdout line has the shape of the Go and Python fallbacks: `time` (RFC
  * 3339, milliseconds, UTC `Z`), `level` (`DEBUG`/`INFO`/`WARN`/`ERROR`),
- * `msg`, `logger` (the name, as Python), the record attributes, and
- * `exception` for the first `Error`-valued attribute. No trace ids (as
- * Python). Both paths drop records below the level (R4).
+ * `msg`, `logger` (the name, as Python), `trace_id` and `span_id` when the
+ * record is written in a valid span context (contract A23 amendment of
+ * 2026-11-11; an attribute of either name is then left out), the record
+ * attributes, and `exception` for the first `Error`-valued attribute. Both
+ * paths drop records below the level (R4).
  */
-import { SeverityNumber, type AnyValue, type Attributes, type Context } from '@opentelemetry/api';
+import { context as apiContext, isSpanContextValid, SeverityNumber, trace, type AnyValue, type Attributes, type Context, type SpanContext } from '@opentelemetry/api';
 import { reportOnce, truncateValue } from './diagnostics';
 import { typeName } from './env';
 import { LOG_LEVELS, type LogLevel } from './log-level';
@@ -78,6 +80,8 @@ const STDOUT_TEXT: Readonly<Record<LogLevel, string>> = { debug: 'DEBUG', info: 
 /** Keys of the stdout line that record attributes cannot replace (Python: skipped). */
 const RESERVED = new Set(['time', 'level', 'msg', 'logger']);
 const EXCEPTION = 'exception';
+const TRACE_ID = 'trace_id';
+const SPAN_ID = 'span_id';
 
 function fail(option: string, why: string): never {
   throw new TypeError(`createLogger(): ${option} ${why}`);
@@ -215,10 +219,15 @@ function write(
   leading: Error | undefined,
   time: Date | undefined,
   context: Context | undefined,
+  eventName?: string,
 ): void {
   const destination = logDestination();
   if (!enabled(fixed ?? destination.level, level)) return;
   const severity = SEVERITY[level];
+  const toStdout = (): void => {
+    const ids = spanIds(context ?? apiContext.active());
+    process.stdout.write(`${stdoutLine(name, severity.stdout, body.stdout, attributes, time ?? new Date(), leading, ids)}\n`);
+  };
   if (destination.provider !== undefined) {
     const { attrs, exception } = otelAttributes(attributes, leading);
     let plain: ReturnType<typeof plainException> | undefined;
@@ -226,12 +235,13 @@ function write(
       plain = exception === undefined ? undefined : plainException(exception);
     } catch {
       // Unreachable in practice (plainException reads through read()); stdout keeps the record.
-      process.stdout.write(`${stdoutLine(name, severity.stdout, body.stdout, attributes, time ?? new Date(), leading)}\n`);
+      toStdout();
       return;
     }
     destination.provider.getLogger(name).emit({
       severityNumber: severity.number,
       severityText: severityText ?? severity.text,
+      ...(eventName === undefined ? {} : { eventName }),
       ...(body.otel === undefined ? {} : { body: body.otel }),
       attributes: attrs,
       ...(time === undefined ? {} : { timestamp: time }),
@@ -240,7 +250,43 @@ function write(
     });
     return;
   }
-  process.stdout.write(`${stdoutLine(name, severity.stdout, body.stdout, attributes, time ?? new Date(), leading)}\n`);
+  toStdout();
+}
+
+/** The stdout `trace_id` / `span_id` of a record (contract A23 amendment of 2026-11-11). */
+export interface StdoutSpanIds {
+  readonly traceId: string;
+  readonly spanId: string;
+}
+
+/** The ids of the span in `ctx` when its span context is valid (recording or not), else `undefined`. */
+export function spanIds(ctx: Context): StdoutSpanIds | undefined {
+  let spanContext: SpanContext | undefined;
+  try {
+    spanContext = trace.getSpanContext(ctx);
+  } catch {
+    return undefined; // a span object whose spanContext() throws: the record is kept, without ids
+  }
+  if (spanContext === undefined || !isSpanContextValid(spanContext)) return undefined;
+  return { traceId: spanContext.traceId, spanId: spanContext.spanId };
+}
+
+/**
+ * The record of an application span failure (contract design D15, ADR-016
+ * and ADR-014): severity ERROR, event name `exception`, `body` as the body,
+ * the three `exception.*` attributes set explicitly (sdk-logs would prefer
+ * an error's `code` for `exception.type`), in `ctx` (the marked span's
+ * context, so the record carries its ids). Same per-record rule as every
+ * helper record (D6). Never throws.
+ *
+ * @internal
+ */
+export function emitFailureRecord(name: string, body: string, attributes: Readonly<Record<string, string>>, ctx: Context): void {
+  try {
+    write(name, undefined, 'error', undefined, { stdout: body, otel: body }, attributes, undefined, undefined, ctx, 'exception');
+  } catch (err) {
+    reportEmitFailed(err);
+  }
 }
 
 /**
@@ -480,9 +526,15 @@ export function stdoutLine(
   attributes: LogAttributes | null | undefined,
   now: Date,
   leading?: Error,
+  ids?: StdoutSpanIds,
 ): string {
   // `define` keeps a `__proto__` attribute an ordinary field.
   const entry: Record<string, unknown> = { time: now.toISOString(), level: STDOUT_TEXT[level], msg: message, logger: name };
+  // Right after `logger` (A23 amendment); an attribute of either name is then left out.
+  if (ids !== undefined) {
+    entry[TRACE_ID] = ids.traceId;
+    entry[SPAN_ID] = ids.spanId;
+  }
   // A bridged record's own error (B10d) is the exception; an `exception` attribute is then left out.
   let exception: string | undefined = leading === undefined ? undefined : errorText(leading);
   if (attributes !== undefined && attributes !== null) {
@@ -498,6 +550,7 @@ export function stdoutLine(
         continue;
       }
       if (RESERVED.has(key) || (leading !== undefined && key === EXCEPTION)) continue;
+      if (ids !== undefined && (key === TRACE_ID || key === SPAN_ID)) continue;
       define(entry, key, value === UNREADABLE ? UNREADABLE_ACCESSOR : jsonValue(value));
     }
   }

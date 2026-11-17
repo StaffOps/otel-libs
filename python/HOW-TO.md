@@ -144,6 +144,8 @@ while True:
 
 Without it, spans of every iteration end up in the trace that was current when
 the loop started. It is the Python equivalent of .NET's `StartRootActivity`.
+An exception that leaves the span marks it ERROR (no message on the span) and
+writes one correlated log record, as `traced` does ([§6](#failures-in-your-own-spans-traced-and-record_failure)).
 A worker is a plain process: handle SIGTERM so buffered telemetry is flushed
 ([§13](#shutdown-and-sigterm)).
 
@@ -223,8 +225,10 @@ def process_order(order_id: str):
   `logging.basicConfig()` simply takes over. One JSON object per line:
   `time` (RFC 3339, milliseconds, `Z` in UTC), `level`
   (`DEBUG/INFO/WARN/ERROR`), `msg`, `logger`, your `extra=` fields and
-  `exception` (traceback). It carries no trace ids — correlation needs a logs
-  exporter. Same shape as the Go helper, plus `logger`.
+  `exception` (traceback). A record emitted in a valid span context also
+  carries `trace_id` (32 hex) and `span_id` (16 hex) right after `logger`; an
+  `extra=` field of either name is then dropped. Same shape as the Go helper,
+  plus `logger`.
 - **Diagnostics.** `staffops_otel_helper.*` (INFO and above; the helper sets that logger
   to INFO when you left it unset) and `opentelemetry.*` (WARNING and above)
   always reach stderr until the app configures a root handler, including with
@@ -295,14 +299,130 @@ with start_root_span(tracer, "orders.process-batch", attributes={"batch.size": l
 
 - `tracer.start_as_current_span()` makes the span current, so spans and log
   records created inside become its children / carry its ids.
-- An exception that **leaves** `start_as_current_span()` is recorded as an
-  `exception` event and sets status ERROR automatically. Handled errors need
-  `record_exception()` + `set_status()`.
+- An exception that **leaves** a plain SDK `start_as_current_span()` is
+  recorded as an `exception` event (message and stack on the span) and sets
+  status ERROR with the message as description. For your own spans prefer
+  `traced` and `record_failure` (next section): they keep the message and the
+  stack off the span (ADR-014).
 - Attribute values: `str`, `bool`, `int`, `float` or sequences of one type.
   Never put user ids, emails or request ids in metric attributes; on spans they
   are fine when they are not secrets.
 - `start_root_span(tracer, name, **kwargs)` accepts the
   `start_as_current_span()` keyword arguments (`attributes`, `kind`, `links`).
+
+### Failures in your own spans: `traced` and `record_failure`
+
+`traced` runs work in a span and applies one failure rule, the same in Go and
+Node.js (ADR-016):
+
+```python
+import logging
+
+from staffops_otel_helper import record_failure, traced
+
+
+class OrderRejectedError(Exception):
+    __otel_error_type__ = "OrderRejectedError"  # optional: one error.type value across languages
+
+
+@traced("order.process", attributes={"order.id": "ord-1"})
+async def process(order):            # plain and async def functions
+    await charge(order)              # raises -> span ERROR, one log record, re-raised
+
+
+with traced("orders.process-batch", root=True) as batch:   # context manager; root=True = new trace
+    for order in orders:
+        try:
+            validate(order)
+        except OrderRejectedError as e:   # handled: answered normally, but counted as a failure
+            record_failure(e)             # marks the current span (or span=...)
+```
+
+What a failure gives:
+
+- **Span**: status ERROR with an **empty description**, `error.type`, and no
+  `exception` event. The message and the stack never go on the span.
+- **`error.type`**: a non-empty `str` `__otel_error_type__` class or instance
+  attribute wins; otherwise `module.qualname` (bare for built-ins and
+  `__main__`). Fields such as `error_type` are never read. Contrib
+  instrumentations use the bare `__qualname__` and the SDK keeps the
+  `__main__.` prefix, so their values can differ from the helper's.
+- **One log record per helper span that marks the failure**, at ERROR on the
+  logger `staffops_otel_helper.failure`, in that span's context (its `trace_id` and `span_id`, also when the span you pass
+  to `record_failure` is not current or not recording): body = `str(exc)`,
+  attributes `exception.type` (= `error.type`), `exception.message` and
+  `exception.stacktrace` (`traceback.format_exception`). It is exported through
+  OTLP with a logs exporter, written as stdout JSON without one, and never to
+  stderr. The span is marked even when no log pipeline keeps the record.
+- **The exception** propagates unchanged (the same object).
+- **Success** leaves the status Unset. The helper never sets Ok.
+- **Cancellation is not a failure**: a `BaseException` that is not an
+  `Exception` (`asyncio.CancelledError`, `KeyboardInterrupt`, `SystemExit`,
+  `GeneratorExit`) and a `grpc.RpcError` whose `code()` is `CANCELLED` leave
+  the span Unset with no record (the helper only checks gRPC when `grpc` is
+  already imported). A `BaseExceptionGroup` (or `ExceptionGroup`) is a
+  cancellation only when every leaf is one (walked through `.exceptions`, up
+  to 256 groups and leaves); one failure leaf makes it a failure.
+  `raise X from CancelledError()` is a failure. Timeouts
+  (`TimeoutError`, `asyncio.TimeoutError`) are failures.
+- `start_root_span` follows the same rule (`traced(name, tracer=tracer,
+  root=True)`); in 0.2 it put the message and the stack on the span.
+
+Rules and limits:
+
+- **Nesting: one record per span.** A failure that crosses several helper
+  spans (A calls B, B calls C, C fails) marks every one of them, and every one
+  writes its own record with its own `span_id`: 3 spans give 3 records. There
+  is no deduplication (no mark on the exception, no `__cause__` walk), so
+  `raise ... from` at each layer and a cached exception shared by several
+  traces are recorded by every span they cross. `record_failure` always
+  records. Control the volume by using `traced` only at the layers that should
+  report. This deviates from semconv recording-errors ("recorded once"): each
+  record names the operation that failed.
+- **Counting.** An error rate per span name counts every layer a failure
+  crosses. Count failures on SERVER/CONSUMER or root spans, or count the log
+  records.
+- **Handled failures.** A failure the outer code catches leaves the inner span
+  ERROR and the outer span Unset.
+- **Ok is final.** If you set Ok earlier, the status stays Ok, but
+  `error.type` and the record are still added.
+- **Plain SDK spans are outside the rule.** A `tracer.start_as_current_span()`
+  inside a helper span still writes the message on its own span, and the
+  helper's nesting does not see it.
+- **HTTP mapping.** A raised `HTTPException(404)` makes the helper span ERROR
+  while the SERVER span stays Unset (4xx is not a server error); a 500 returned
+  without raising leaves the helper span Unset.
+- **Decorator.** Generator and async generator functions are rejected with
+  `TypeError` (the span would end before the lazy work runs). When a plain
+  function returns an awaitable or a generator (an object with `async def
+  __call__`, a sync wrapper around a coroutine), the span ends when the call
+  returns; the helper warns once per decorated function and returns the value.
+- **Keyword arguments** go to `start_as_current_span()` (`kind`, `attributes`,
+  `links`, `context`); `record_exception` and `set_status_on_exception` are
+  rejected with `TypeError`. With `root=True` an explicit `context` wins.
+  `tracer=None` uses `get_tracer()` at each call. `traced(name)` raises
+  `TypeError` for a name that is not a `str`. One `traced(...)` object can be
+  reused, nested and shared by concurrent asyncio tasks and threads: each
+  `with` and each decorated call has its own span, and each exits its own
+  scope (kept per context in a `contextvars.ContextVar`).
+- **Already logging the error?** The helper writes its own record, so an
+  application that also logs the same exception gets two ERROR records; drop
+  your own.
+- **Level.** While `staffops_otel_helper.failure` has no level of its own
+  (`NOTSET`), the helper sets it to `DEBUG` when it writes the first record,
+  so quieting the helper's diagnostics with
+  `logging.getLogger("staffops_otel_helper").setLevel(...)` does not drop
+  failure records. A level you set on `staffops_otel_helper.failure` itself is
+  kept and applies (for example `CRITICAL` silences them; the spans are still
+  marked). After `logging.config.dictConfig()` the logger is re-enabled. It
+  stays a child of the `staffops_otel_helper` hierarchy: records propagate to
+  it, so `propagate=False` plus handlers on `staffops_otel_helper` still
+  capture them. It is routed as an application record (never to stderr).
+- **Before `setup_telemetry()`** the record goes through the stdlib
+  `lastResort` to stderr as plain text (Go and Node.js write stdout JSON before
+  setup).
+- **Severity** is always ERROR, even for an exception a caller later handles
+  (the helper cannot see that).
 
 ### Metrics
 
@@ -378,8 +498,8 @@ current when it is emitted (no code needed), its `extra=` fields as attributes
 and the level as severity. `exc_info` adds `exception.type` (the bare class
 name, e.g. `PaymentDeclinedError`), `exception.message` and
 `exception.stacktrace`. In Grafana, a derived field / "logs for this span"
-link joins them. The stdout JSON fallback has no ids: correlation needs a logs
-exporter.
+link joins them. The stdout JSON fallback writes the same ids as `trace_id` and
+`span_id`.
 
 ---
 
@@ -945,6 +1065,8 @@ visible (application startup, `post_fork`), not lazily inside a request.
 | Health probes | `excluded_urls`: no span, no metric; `/users/ping` also dropped | no span, **counted** in HTTP metrics; exact match | exclude health routes in SLI queries |
 | `HEALTH_PATHS` | `staffops_otel_helper.tracing.HEALTH_PATHS` | removed | `staffops_otel_helper.DEFAULT_HEALTH_PATHS` |
 | Logs without exporter | SDK handler with no processor (records lost) | no OTel handler; JSON on stdout while the app configures none | none |
+| `start_root_span` on an exception | status ERROR with `"<type>: <message>"` as description, `exception` event with message and stack | status ERROR without description, `error.type`, no event; message and stack in one ERROR record on `staffops_otel_helper.failure` (same `trace_id`/`span_id`); cancellations stay Unset | read the detail from the correlated log; drop your own log of the same exception |
+| Stdout JSON fallback in a span | no ids | `trace_id`, `span_id` after `logger` | none |
 | `code.*` log attributes | always added | off | `OTEL_PYTHON_LOG_CODE_ATTRIBUTES=true` |
 | Root log level | always set | set only when root is unconfigured | none |
 | `/metrics` | global registry (`process_*`, `python_*`, your metrics); always 200 | dedicated registry; 503 before setup / after shutdown | serve your own registry yourself; scrape while serving |

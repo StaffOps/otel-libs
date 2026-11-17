@@ -4234,7 +4234,7 @@
       "id": "logging.stdout_span_context",
       "kind": "logging",
       "requirement": "D6/A23",
-      "note": "contract design D1 row \"Stdout fallback fields\" (A23 amendment 2026-11-11, from .NET C14a round 3 and ADR-014): a record emitted inside a valid span context carries trace_id (32 lower-case hex) and span_id (16) right after logger (after msg in Go, which has no logger name). The in_span input is a valid, non-recording span context with fixed ids (trace 4bf92f3577b34da6a3ce929d0e0e4736, span 00f067aa0ba902b7), whatever tracer is installed; .NET cannot set an Activity's own span id, so the fixed span id is its parent and the case matches the trace id exactly and the span id by shape (amended 2026-11-11, round 4). Go, Python and Node.js write none yet (task A36) (added 2026-11-11, .NET C14a round 3)",
+      "note": "contract design D1 row \"Stdout fallback fields\" (A23 amendment 2026-11-11, from .NET C14a round 3 and ADR-014): a record emitted inside a valid span context carries trace_id (32 lower-case hex) and span_id (16) right after logger (after msg in Go, which has no logger name). The in_span input is a valid, non-recording span context with fixed ids (trace 4bf92f3577b34da6a3ce929d0e0e4736, span 00f067aa0ba902b7), whatever tracer is installed; .NET cannot set an Activity's own span id, so the fixed span id is its parent and the case matches the trace id exactly and the span id by shape (amended 2026-11-11, round 4). added 2026-11-11, .NET C14a round 3; Go, Python and Node.js write the ids since task A45, 2026-11-17 (Go: slog With attributes come before them)",
       "env": {
         "OTEL_SERVICE_NAME": "parity-svc",
         "ENVIRONMENT": "DEV"
@@ -4249,10 +4249,10 @@
         }
       },
       "status": {
-        "go": "xfail:A36",
-        "python": "xfail:A36",
+        "go": "pass",
+        "python": "pass",
         "dotnet": "pass",
-        "nodejs": "xfail:A36"
+        "nodejs": "pass"
       }
     },
     {

@@ -38,7 +38,8 @@ if os.environ.get("PARITY_COVERAGE_DATA"):
 # handler to the root logger: the helper's handler decisions depend on what
 # root has at setup time (P10), so the capture must not change them.
 # Helper diagnostics (helper_log) are records from the helper's own loggers
-# (`staffops_otel_helper` and children) at any level; SDK/library output is excluded.
+# (`staffops_otel_helper` and children) at any level; SDK/library output is excluded, and so are
+# the application failure records of `staffops_otel_helper.failure` (design D15, D6 note 2026-11-17).
 _captured: list[str] = []
 _helper: list[str] = []
 _orig_call_handlers = logging.Logger.callHandlers
@@ -50,7 +51,8 @@ def _call_handlers(self: logging.Logger, record: logging.LogRecord) -> None:
     except Exception:  # noqa: BLE001 - malformed record args
         msg = str(record.msg)
     line = f"{record.name} {record.levelname} {msg}"
-    if record.name == "staffops_otel_helper" or record.name.startswith("staffops_otel_helper."):
+    if (record.name == "staffops_otel_helper" or record.name.startswith("staffops_otel_helper.")) \
+            and not (record.name == "staffops_otel_helper.failure" or record.name.startswith("staffops_otel_helper.failure.")):
         _helper.append(line)
     if record.levelno >= logging.WARNING:
         _captured.append(line)

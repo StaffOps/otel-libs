@@ -40,3 +40,32 @@ export function rejected(): void {
   // @ts-expect-error fn must be a function
   void startRootSpan('x', 'nope');
 }
+
+// withSpan / recordFailure (task A45, design D15): same return-type rule.
+import { recordFailure, withSpan } from '../../src/index';
+import type { SpanResult, WithSpanOptions } from '../../src/index';
+
+export const withSync = () => withSpan('sync', () => 42);
+export const withAsync = () => withSpan('async', async () => {
+  await Promise.resolve();
+  return 'done';
+}, { root: true, attributes: { a: 1 } });
+const options: WithSpanOptions = { root: false };
+export const withOptions = () => withSpan('opts', (span) => span.isRecording(), options);
+
+export type WithSpanChecks = [
+  Expect<Equal<ReturnType<typeof withSync>, number>>,
+  Expect<Equal<ReturnType<typeof withAsync>, Promise<string>>>,
+  Expect<Equal<ReturnType<typeof withOptions>, boolean>>,
+  Expect<Equal<SpanResult<PromiseLike<number>>, Promise<number>>>,
+  Expect<Equal<ReturnType<typeof recordFailure>, void>>,
+];
+
+export function withSpanRejected(): void {
+  recordFailure(new Error('x'));
+  recordFailure('a primitive is accepted');
+  // @ts-expect-error span must be a Span
+  recordFailure(new Error('x'), 'not a span');
+  // @ts-expect-error root must be a boolean
+  void withSpan('x', () => 1, { root: 'yes' });
+}

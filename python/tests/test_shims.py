@@ -901,6 +901,15 @@ class TestDiagnosticsChannel:
     def test_logger_scan_catches(self, rel, snippet):
         assert self._logger_offenders(rel, ast.parse(snippet))
 
+    def test_failure_logger_is_excluded_from_the_diagnostics_channel(self):
+        """design D15 / D6 note 2026-11-17: staffops_otel_helper.failure carries application records."""
+        from staffops_otel_helper import _console, _failure
+
+        assert _failure.FAILURE_LOGGER == "staffops_otel_helper.failure"
+        assert _console.is_failure_record(_failure.FAILURE_LOGGER)
+        for name in ("staffops_otel_helper", "staffops_otel_helper.tracing", "staffops_otel_helper.failures"):
+            assert not _console.is_failure_record(name)
+
     def test_package_name_is_otel_helper(self):
         # getLogger(__name__) only lands in the staffops_otel_helper hierarchy for this package name.
         import staffops_otel_helper.metrics as m

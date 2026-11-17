@@ -251,7 +251,7 @@ value), also when a standard variable or code wins.
 |---|---|
 | Traces | `node:http`/`https` servers and clients, `fetch` (undici), express (route-named SERVER span plus a `request handler - <route>` span per matched handler), `@grpc/grpc-js` client and server. Health probes produce no server span |
 | Metrics | `http.server.request.duration` and `http.client.request.duration` (stable semconv, seconds), your instruments; every 30 s. No runtime metrics (Go and Python emit `go.*` / `system.*`, `process.*`) |
-| Logs | `createLogger()` records (and the pino/winston packages) with trace/span ids, exported when a logs exporter is active; single-line JSON on stdout otherwise |
+| Logs | `createLogger()` records (and the pino/winston packages) with trace/span ids, exported when a logs exporter is active; single-line JSON on stdout otherwise, with `trace_id` and `span_id` when the record is written in a span |
 
 Without any OTLP endpoint: metrics on `http://<pod>:9464/metrics`, traces
 in-process only (propagation still works), logs as JSON on stdout.
@@ -270,7 +270,10 @@ with `setup({ healthPaths: [...] })` (`[]` traces every path).
 | `shutdown(timeoutMs = 30000) → Promise<void>` | Flush and shut down under one deadline; rejects with an `AggregateError` (a provider failed) or an `Error` (deadline) |
 | `SetupOptions`, `Resolved` | Code configuration and the resolved values (types; [HOW-TO §12](HOW-TO.md#12-setupoptions-and-resolved-reference)) |
 | `getTracer(name?, version?)` / `getMeter(name?, version?)` | Tracer / Meter from the global providers (default scope name `otel-helper`, shared with Go and Python) |
-| `startRootSpan(name, fn, { tracer?, attributes?, kind?, links? })` | Run `fn(span)` in a new trace; ends the span, records a throw or rejection |
+| `withSpan(name, fn, { tracer?, root?, kind?, attributes?, links? })` | Run `fn(span)` in a span (a child of the active span; `root: true` starts a new trace) and apply the [failure rule](#application-span-failures): a throw or rejection marks the span ERROR with `error.type` and writes one correlated ERROR log record; success stays Unset |
+| `startRootSpan(name, fn, { tracer?, attributes?, kind?, links? })` | `withSpan` with `root: true`: run `fn(span)` in a new trace, same failure rule |
+| `recordFailure(err, span?)` | Apply the failure rule to a span you hold (default: the active span) for a failure you handle instead of throwing; the span is not ended |
+| `WithSpanOptions`, `RootSpanOptions`, `SpanResult`, `RootSpanResult` | Option and return types of `withSpan` / `startRootSpan` |
 | `createLogger({ name, level? })` | The helper's logger (`debug`, `info`, `warn`, `error`) |
 | `defaultLogLevel(environment?, debug?)` | The level an environment implies (`LOCAL` debug, `DEV`/`HML` info, `PRD` warn) |
 | `metricsHandler()` | `(req, res)` handler serving `/metrics` from the app's own server (`node:http`, express) |
@@ -281,6 +284,54 @@ with `setup({ healthPaths: [...] })` (`[]` traces every path).
 
 The `@staffops/otel-helper/internal/*` entries are for the opt-in packages
 only: not a public API, no compatibility promise.
+
+## Application span failures
+
+`withSpan`, `startRootSpan` and `recordFailure` apply one rule to the spans
+your application creates, the same in Go and Python (contract R11, design
+D15, ADR-016): span metrics and `status = error` searches count the same
+failures in every language. Details and recipes:
+[HOW-TO §16](HOW-TO.md#16-application-span-failures-withspan-recordfailure).
+
+- **Failure** (a throw, a rejection, a throwing `then`): status ERROR
+  **without a description**, `error.type`, and **no** `exception` span event.
+  The same value is rethrown.
+- **The detail goes to a log** (ADR-014): one ERROR record, event name
+  `exception`, body = the message (`err.message`, or the string form of a
+  non-`Error` value), attributes `exception.type` (= `error.type`, never the
+  error's `code`), `exception.message` and `exception.stacktrace`
+  (`err.stack`; none for a primitive), in the span's context, so it carries
+  the span's `trace_id` and `span_id` even when the span is not recording.
+  Logger name and scope `otel-helper`. It follows the normal per-record rule:
+  OTLP with a logs exporter, else one JSON line on stdout (no `eventName`
+  there). The span is marked even when the record cannot be written.
+- **Success** stays Unset. The helper never sets Ok; an Ok you set yourself
+  stays (Ok is final), while `error.type` and the record are still added.
+- **Cancellation is not a failure**: `name === 'AbortError'`, or a grpc-js
+  `ServiceError` with `CANCELLED` (`code === 1` and a `metadata` property),
+  leaves the span Unset with no record. A `TimeoutError`
+  (`AbortSignal.timeout()`) is a failure, and so is an `AbortError` whose
+  `cause` is a `TimeoutError` (how `timers/promises`, `fs`, `events` and
+  `stream` reject when given `AbortSignal.timeout()`; `error.type`
+  `TimeoutError`), and an error whose `cause` is an `AbortError`.
+- **`error.type`**: a non-empty string under `Symbol.for('otel.error_type')`
+  (own, inherited through a prototype getter, or a `static` member of the
+  class) wins; else the error's `name` when it is not `"Error"`, else its
+  `constructor.name`, else `"Error"` (also for any non-`Error` value). Use the
+  override to give one value across languages; fields such as `errorType`
+  are never read.
+- **One record per marked span**: a failure that crosses several helper
+  spans (A calls B, B calls C, C throws) marks each of them, and each writes
+  its own record in its own span context: 3 spans, 3 records, each with its
+  own `span_id`. `recordFailure` always records. There is no deduplication
+  (owner ruling 2026-11-17; a deliberate deviation from semconv's "recorded
+  once"): control the volume by using `withSpan` only at the layers that
+  should report.
+
+**Behavior change in 0.3 (startRootSpan).** Before, a failure recorded an
+`exception` span event with the message and stack and set the description
+`"<name>: <message>"`. Now the span carries only ERROR and `error.type`; the
+message and stack are in the correlated log record.
 
 ## API stability (0.x)
 

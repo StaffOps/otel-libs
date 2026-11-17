@@ -144,12 +144,13 @@ The example apps run against the same Collector: see
 | `instrumentation.test.cjs` | http, undici, express and gRPC instrumentation, health exclusion, the gRPC status rule, the loaded-before-setup report, an instrumentation built before `setup()` with OTLP over gRPC and `http/protobuf` (A39) |
 | `metrics.test.cjs` | the `/metrics` listener, `metricsHandler()` status table, unit suffixes, busy port |
 | `exit.test.cjs` | the `beforeExit` flush of a process that ends on its own: exported once, no loop, no repeat after an app `shutdown()`, no stacking on re-setup, none after a failed setup or in a worker thread, removed by `reset()`, a failure reported |
-| `logging.test.cjs` | `createLogger()`: OTel path vs stdout, levels, attribute conversion, the bridges' flushes |
+| `logging.test.cjs` | `createLogger()`: OTel path vs stdout (with `trace_id`/`span_id` in a span context), levels, attribute conversion, the bridges' flushes |
 | `forwarding.test.cjs` | the forwarding providers and propagator across re-setups |
 | `cluster.test.cjs` | `cluster` workers: instance ids, the explicit-id warning, per-worker ports, re-fork on a slot, the flush of a worker the primary disconnects. Each run has a 20 s deadline that kills every worker and fails |
 | `hooks.test.cjs` | the `/hooks` and `/register` entries, worker threads, the ESM-without-hooks warning |
 | `opt-in.test.cjs` | `setup({ instrumentations })`, name conflicts, the `OTEL_SEMCONV_STABILITY_OPT_IN` HTTP warning |
-| `api.test.cjs` | `getTracer`, `getMeter`, `startRootSpan` |
+| `api.test.cjs` | `getTracer`, `getMeter`, `startRootSpan` (settlement, root trace, the failure rule on the span) |
+| `failure.test.cjs` | `withSpan`, `recordFailure` and `startRootSpan` failure rule (contract R11, design D15): ERROR without description, `error.type` and its override, no event, cancellation Unset (an `AbortError` caused by a `TimeoutError` is a failure), one correlated record per marked span (3 nested spans give 3 records), `recordFailure` always records and rejects `undefined`/`null`, `root` validation, unsampled and non-current spans, marking without a log pipeline, the OTLP record (event name, attributes, ids), stdout `trace_id`/`span_id` (A23 amendment) |
 | `db.test.cjs`, `contrib.test.cjs` | the internal entries the opt-in packages share |
 | `dual-load.test.cjs`, `esm-wrapper.test.mjs`, `state.test.cjs`, `version.test.cjs`, `diagnostics.test.cjs` | one implementation and one state for `require` and `import`, the ESM wrappers, the shared state, the version, the diagnostics sink and redaction |
 | `types/` | type-level checks (`tsc`) of the public API |

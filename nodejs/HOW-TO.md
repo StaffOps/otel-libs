@@ -24,6 +24,7 @@ Collector reachable over OTLP (or none, for the Prometheus fallback).
 - [13. Lifecycle: setup, shutdown, SIGTERM, cluster, worker threads](#13-lifecycle-setup-shutdown-sigterm-cluster-worker-threads)
 - [14. Validation and diagnostics](#14-validation-and-diagnostics)
 - [15. Testing your app](#15-testing-your-app)
+- [16. Application span failures (`withSpan`, `recordFailure`)](#16-application-span-failures-withspan-recordfailure)
 - [Troubleshooting](#troubleshooting)
 - [FAQ](#faq)
 
@@ -263,10 +264,13 @@ async function cycle() {
 - Attributes passed in `attributes` are set at span start, so the sampler
   sees them. Baggage and other context values are kept; the sampler sees no
   parent, so the root is sampled on its own.
-- A throw or rejection records an exception event and status ERROR
-  `"<error name>: <message>"`, then rethrows the original value.
-  `exception.type` is the error's `name` (set `this.name` in your error
-  classes, or it reads `Error`).
+- A throw or rejection follows the [failure rule](#16-application-span-failures-withspan-recordfailure):
+  status ERROR without a description, `error.type`, no `exception` event, and
+  one ERROR log record with the message and stack in the span's context; then
+  the original value is rethrown. An `AbortError` (cancellation) leaves the
+  span Unset. *Changed in 0.3:* the span no longer carries the message, the
+  stack or the description `"<name>: <message>"`.
+- `startRootSpan(name, fn, options)` is `withSpan(name, fn, { ...options, root: true })`.
 - **A promise that never settles leaves the span open: it is never exported**
   (as an unclosed span in Go or Python). Give every awaited call a timeout
   (`AbortSignal.timeout()`, a gRPC deadline).
@@ -332,12 +336,17 @@ are read per record. Its methods never throw.
 | No logs endpoint, `OTEL_LOGS_EXPORTER=none`, before `setup()`, after a failed one, or under another `@opentelemetry/api` version's registry | One JSON line on stdout |
 
 Never both. The stdout line has the fields of the Go and Python fallback —
-`time` (UTC, `Z`), `level`, `msg`, `logger`, your attributes, `exception` —
-and no trace ids (as Python):
+`time` (UTC, `Z`), `level`, `msg`, `logger`, `trace_id` and `span_id` (only
+when the record is written in a valid span context, recording or not), your
+attributes, `exception`:
 
 ```json
-{"time":"2026-11-03T22:41:15.525Z","level":"ERROR","msg":"order failed","logger":"orders","order.id":"ord-3","exception":"Error: boom\n    at …"}
+{"time":"2026-11-03T22:41:15.525Z","level":"ERROR","msg":"order failed","logger":"orders","trace_id":"4bf92f3577b34da6a3ce929d0e0e4736","span_id":"00f067aa0ba902b7","order.id":"ord-3","exception":"Error: boom\n    at …"}
 ```
+
+With the ids on the line, an attribute named `trace_id` or `span_id` is left
+out (no duplicate key); outside a span it is written as any attribute. A
+pino or winston record uses the context of its logging call.
 
 `OTEL_LOGS_EXPORTER=console` is a **debugging format**: the SDK's console
 exporter prints a multi-line `console.dir` dump of each record, which a log
@@ -441,32 +450,27 @@ the same names and trace shape as the Go and Python twins.
 ### Spans
 
 ```js
-const { SpanStatusCode } = require('@opentelemetry/api');
-const { getTracer } = require('@staffops/otel-helper');
+const { getTracer, withSpan } = require('@staffops/otel-helper');
 
 const tracer = getTracer('orders'); // instrumentation scope: your module
 
 function processOrder(order) {
-  return tracer.startActiveSpan('order.process', { attributes: { 'order.id': order.id } }, async (span) => {
-    try {
-      span.addEvent('order.validated', { 'order.amount': order.amount });
-      await charge(order);
-    } catch (err) {
-      span.recordException(err);
-      span.setStatus({ code: SpanStatusCode.ERROR, message: 'payment declined' });
-      throw err;
-    } finally {
-      span.end(); // startActiveSpan does not end the span for you
-    }
-  });
+  // A child of the active span; ended when the promise settles.
+  return withSpan('order.process', async (span) => {
+    span.addEvent('order.validated', { 'order.amount': order.amount });
+    await charge(order); // a throw marks the span ERROR + error.type and writes one ERROR log
+  }, { tracer, attributes: { 'order.id': order.id } });
 }
 ```
 
 `getTracer(name?, version?)` reads the global provider; the default scope is
 `otel-helper` (as Go and Python). The service name comes from the resource,
-not from the tracer name. Note: `span.recordException(err)` takes
-`exception.type` from the error's `code` when it has one; `startRootSpan()`
-always writes the `name`.
+not from the tracer name. `withSpan` applies the
+[failure rule](#16-application-span-failures-withspan-recordfailure); a span
+you start with `tracer.startActiveSpan()` keeps the SDK behavior (nothing is
+set on a throw, and you end it yourself). Avoid `span.recordException(err)`:
+it puts the message and stack on the span (ADR-014) and takes
+`exception.type` from the error's `code`; use `recordFailure(err, span)`.
 
 ### Metrics
 
@@ -505,7 +509,8 @@ duration.record(0.042, { 'order.type': 'standard' });
 ### Logs correlated with the trace
 
 `createLogger()` records carry the trace and span ids of the span active when
-they are emitted (OTel path only; see [§5](#5-logs)). Log inside the span:
+they are emitted, on the OTel path and as `trace_id` / `span_id` on the stdout
+line (see [§5](#5-logs)). Log inside the span:
 
 ```js
 tracer.startActiveSpan('order.process', (span) => {
@@ -1188,6 +1193,117 @@ const exporter = new InMemorySpanExporter();
 setup({ serviceName: 'test', metricExporters: [], spanProcessors: [new SimpleSpanProcessor({ exporter })] });
 // ... exporter.getFinishedSpans()
 ```
+
+## 16. Application span failures (`withSpan`, `recordFailure`)
+
+One rule for the spans your application creates, the same in Go and Python
+(contract R11, design D15, ADR-016), so span metrics and `status = error`
+searches count the same failures in every language. The exception detail
+goes to a correlated log, never to the span (ADR-014).
+
+```js
+const { recordFailure, withSpan } = require('@staffops/otel-helper');
+
+class OrderRejectedError extends Error {
+  // One error.type in every language (Go ErrorType(), Python __otel_error_type__).
+  static [Symbol.for('otel.error_type')] = 'OrderRejectedError';
+}
+
+// A thrown or rejected failure: the span gets ERROR + error.type; one ERROR
+// record carries the message and stack; the same error is rethrown.
+await withSpan('order.process', async () => {
+  await reserveStock(order);
+});
+
+// A failure you handle and answer normally (a 422): mark it yourself.
+await withSpan('order.validate', async (span) => {
+  const result = await validate(order);
+  if (!result.ok) recordFailure(new OrderRejectedError(result.reason), span);
+  return result;
+});
+```
+
+| Outcome | Span | Log record |
+|---|---|---|
+| `fn` returns or its promise fulfills | Unset (never Ok) | none |
+| A throw, a rejection, a throwing `then` | ERROR, **no description**, `error.type`, **no** `exception` event | one ERROR record |
+| `AbortError`, grpc-js `CANCELLED` (`code === 1` with `metadata`) | Unset | none |
+| `TimeoutError` (`AbortSignal.timeout()`), an `AbortError` whose `cause` is a `TimeoutError`, any other error | ERROR | one record |
+| A failure crossing several helper spans | each span ERROR + `error.type` | one record per span, in its own span context |
+| `recordFailure(err, span?)` | ERROR + `error.type` on `span` (default: the active span), not ended; a cancellation is marked too | always one record |
+
+**The record.** Severity ERROR, event name `exception` (OTLP; the stdout line
+has no event name), logger name and scope `otel-helper`, body = the message
+(`err.message`; the string form of a non-`Error` value), attributes
+`exception.type` (= `error.type`), `exception.message` (= the body) and
+`exception.stacktrace` (`err.stack`, where the error was created; a primitive
+has none). It is written in the marked span's context, so it carries that
+span's ids even when you pass a span that is not active, or the span is not
+sampled. It goes where every helper record goes ([§5](#5-logs)): OTLP with a
+logs exporter, else one JSON line on stdout with `trace_id` and `span_id`.
+With `OTEL_LOGS_EXPORTER=none` and nothing reading stdout, the detail is kept
+nowhere, but the span is still marked. Severity is always ERROR, also for a
+failure a caller later handles (the helper cannot know).
+
+**`error.type`.** A non-empty string under `Symbol.for('otel.error_type')`
+wins: on the error (own, or inherited through a prototype getter) or a
+`static` member of its class. Otherwise the error's `name` when it is not
+`"Error"`, else `constructor.name` (`class PaymentError extends Error {}`
+without `this.name` gives `PaymentError`), else `"Error"`. A non-`Error`
+value (a string, a plain object, an `Error` from another realm or with a
+`null` prototype) gives `"Error"`. The error's `code` is never used, and
+payload fields such as `errorType` are never read. Go and Python defaults
+differ (Go type names, Python `module.qualname`): set the override for a
+query that groups one failure across languages.
+
+**Cancellation.** Only an `AbortError` value or a grpc-js `ServiceError` with
+status `CANCELLED` is a cancellation. An `AbortError` whose `cause` is a
+`TimeoutError` is a timeout, so a failure with `error.type` `TimeoutError`
+(the override still wins): Node core APIs (`timers/promises`, `fs`,
+`events`, `stream`) reject that way when you pass them
+`AbortSignal.timeout()`, while `fetch` rejects with the `TimeoutError`
+itself. A wrapped cancellation
+(`new Error('x', { cause: abortErr })`) is a failure (Go applies its rule
+through `%w`; Python and Node.js do not walk the chain). The instrumentation's
+gRPC CLIENT span still marks `CANCELLED` (semconv); only the helper span stays
+Unset.
+
+**One record per marked span.**
+- A failure that crosses several helper spans (A calls B, B calls C, C
+  throws) marks each of them ERROR with `error.type`, and each span writes
+  its own record in its own span context: 3 spans give 3 records, each with
+  its own `span_id`, innermost first.
+- `recordFailure` always writes a record, also when the same error is later
+  rethrown through a `withSpan` (which writes one more).
+- There is no deduplication by error object, `cause` chain or trace (owner
+  ruling 2026-11-17, design D15 "Nesting"). This deviates on purpose from
+  semconv recording-errors ("recorded (or logged) once"): the helper records
+  once per operation that failed, and each record names its own span.
+- Control the volume: use `withSpan` only at the layers that should report,
+  plain `tracer.startActiveSpan` spans elsewhere, and `recordFailure` where a
+  handled failure should report.
+
+**Counting and other behaviors.**
+- An error rate per span name counts every layer a failure crosses. To count
+  failures, use SERVER/CONSUMER spans, root spans, or the log records.
+- A failure the outer code handles leaves the inner span ERROR and the outer
+  span Unset, as semconv recording-errors says.
+- If you set Ok earlier, the ERROR is ignored (Ok is final); `error.type`
+  and the record are still added.
+- Spans you start with the plain API (`tracer.startActiveSpan`) are outside
+  the rule: nothing is set on a throw and no record is written.
+- HTTP: a thrown `HttpError(404)` makes the helper span ERROR while the
+  express/http SERVER span stays Unset (semconv: 4xx is Unset on SERVER). A
+  500 sent without throwing leaves the helper span Unset; call
+  `recordFailure` if you want it counted.
+- If your code already logs the same error, you get two ERROR records: drop
+  your own log line, or log at a lower level.
+- A promise that never settles leaves the span open (never exported), as with
+  `startRootSpan`.
+- `withSpan` and `startRootSpan` throw a `TypeError` for a non-string name, a
+  non-function `fn`, non-object options or a `root` that is set and not a
+  boolean; `recordFailure` for an `err` that is `undefined` or `null`, or a
+  `span` that is not a span (R8).
 
 ---
 

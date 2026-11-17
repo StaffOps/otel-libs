@@ -7,8 +7,9 @@
  *   a Prometheus `/metrics` endpoint when no endpoint is set) and installs
  *   the http, undici, express and gRPC instrumentations; {@link shutdown}
  *   flushes and stops them. Both are safe to call again.
- * - {@link getTracer}, {@link getMeter} and {@link startRootSpan} for custom
- *   spans and metrics; {@link createLogger} for logs correlated with the
+ * - {@link getTracer}, {@link getMeter}, {@link withSpan}, {@link startRootSpan}
+ *   and {@link recordFailure} for custom spans and metrics (a failure marks
+ *   the span ERROR with `error.type` and goes to one correlated ERROR log); {@link createLogger} for logs correlated with the
  *   active span; {@link metricsHandler} to serve `/metrics` from your own server.
  * - `@staffops/otel-helper/register` sets up from the environment before the
  *   app loads (`node --import @staffops/otel-helper/register app.js`);
@@ -23,8 +24,9 @@
  * @packageDocumentation
  */
 export { VERSION } from './version';
-export { getMeter, getTracer, startRootSpan } from './internal/api';
-export type { RootSpanOptions, RootSpanResult } from './internal/api';
+export { getMeter, getTracer, startRootSpan, withSpan } from './internal/api';
+export type { RootSpanOptions, RootSpanResult, SpanResult, WithSpanOptions } from './internal/api';
+export { recordFailure } from './internal/failure';
 export { metricsHandler, setup, shutdown } from './internal/setup';
 export type { ScrapeRequest, ScrapeResponse } from './internal/metrics-endpoint';
 export { createLogger } from './internal/logging';

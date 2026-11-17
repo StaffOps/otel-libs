@@ -192,7 +192,9 @@ in-process only (propagation still works), logs as JSON on stdout.
 | `shutdown_telemetry(timeout_ms=30000)` | Flush and shut down; raises `RuntimeError` on failure or timeout |
 | `TelemetryOptions` | Code configuration (fields in HOW-TO §12) |
 | `get_tracer(name=None)` / `get_meter(name=None)` | Tracer / Meter from the global providers (default scope name `otel-helper`, shared with Go) |
-| `start_root_span(tracer, name, **kwargs)` | Context manager starting a new trace |
+| `start_root_span(tracer, name, **kwargs)` | Context manager starting a new trace; applies the failure rule below (0.3: no message, stack or description on the span) |
+| `traced(name, *, tracer=None, root=False, **span_kwargs)` | Context manager and decorator (plain and `async def` functions): a span that gets status ERROR without description and `error.type` when the work raises, stays Unset on success, never Ok; the message and stack go to one correlated ERROR log record per helper span the failure crosses, no deduplication (HOW-TO §6 "Failures in your own spans") |
+| `record_failure(exc, *, span=None)` | Applies the same rule to a span you hold (default: the current span), for handled failures; every call writes a record |
 | `instrument_fastapi(app)` | Instrument an app whose `FastAPI` class was imported before setup |
 | `metrics_app()` | ASGI app serving `/metrics` from the app's own server |
 | `DEFAULT_HEALTH_PATHS` | `/health /healthz /ready /readyz /live /livez /ping /metrics` |
@@ -203,8 +205,9 @@ in-process only (propagation still works), logs as JSON on stdout.
 See [HOW-TO.md, "Migrating from 0.2 to 0.3"](HOW-TO.md#migrating-from-02-to-03)
 and the root `CHANGELOG.md`. The biggest changes: stable HTTP metric names,
 `OTEL_SERVICE_NAME` beats `SERVICE_NAME`, no `LOCAL` default environment,
-timeouts in milliseconds, a parent-based sampler, and no OTel log handler
-without a logs exporter.
+timeouts in milliseconds, a parent-based sampler, no OTel log handler
+without a logs exporter, and `start_root_span` no longer puts the exception
+message and stack on the span (they go to a correlated log record).
 
 ## Architecture
 

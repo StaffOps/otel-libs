@@ -114,32 +114,37 @@ test('startRootSpan with a remote parent active: still a new trace', () => {
   assert.notEqual(byName('root').spanContext().traceId, '0af7651916cd43dd8448eb211c80319c');
 });
 
-test('startRootSpan sync throw: exception event, ERROR "<name>: <message>", ended, rethrown', () => {
+// A45 (contract R11, design D15, ADR-016): a failure gives ERROR without a
+// description and error.type, no exception event; the message and stack go to
+// one correlated ERROR record (test/failure.test.cjs covers the record).
+const ERROR_NO_DESCRIPTION = { code: api.SpanStatusCode.ERROR };
+
+test('startRootSpan sync throw: ERROR without description, error.type, no event, ended, rethrown', () => {
   class PaymentDeclinedError extends Error {
     constructor(m) { super(m); this.name = 'PaymentDeclinedError'; }
   }
   assert.throws(() => helper.startRootSpan('fail', () => { throw new PaymentDeclinedError('declined'); }), PaymentDeclinedError);
   const s = byName('fail');
-  assert.deepEqual(s.status, { code: api.SpanStatusCode.ERROR, message: 'PaymentDeclinedError: declined' });
-  const ev = s.events.find((e) => e.name === 'exception');
-  assert.equal(ev.attributes['exception.type'], 'PaymentDeclinedError');
-  assert.equal(typeof ev.attributes['exception.stacktrace'], 'string');
-  assert.equal(ev.attributes['exception.message'], 'declined');
+  assert.deepEqual(s.status, ERROR_NO_DESCRIPTION);
+  assert.equal(s.attributes['error.type'], 'PaymentDeclinedError');
+  assert.deepEqual(s.events, []);
 });
 
-test('startRootSpan async reject: exception event, ERROR, ended, rejection propagated', async () => {
+test('startRootSpan async reject: ERROR without description, no event, ended, rejection propagated', async () => {
   await assert.rejects(helper.startRootSpan('fail', async () => { throw new TypeError('bad'); }), TypeError);
   const s = byName('fail');
-  assert.deepEqual(s.status, { code: api.SpanStatusCode.ERROR, message: 'TypeError: bad' });
-  assert.ok(s.events.some((e) => e.name === 'exception'));
+  assert.deepEqual(s.status, ERROR_NO_DESCRIPTION);
+  assert.equal(s.attributes['error.type'], 'TypeError');
+  assert.deepEqual(s.events, []);
 });
 
-test('startRootSpan non-Error throw and reject: status message is the value', async () => {
+test('startRootSpan non-Error throw and reject: ERROR without description, error.type "Error"', async () => {
   assert.throws(() => helper.startRootSpan('s', () => { throw 'boom'; }), (e) => e === 'boom');
   await assert.rejects(helper.startRootSpan('a', () => Promise.reject(7)), (e) => e === 7);
-  assert.deepEqual(byName('s').status, { code: api.SpanStatusCode.ERROR, message: 'boom' });
-  assert.deepEqual(byName('a').status, { code: api.SpanStatusCode.ERROR, message: '7' });
-  assert.ok(byName('s').events.some((e) => e.name === 'exception'));
+  assert.deepEqual(byName('s').status, ERROR_NO_DESCRIPTION);
+  assert.deepEqual(byName('a').status, ERROR_NO_DESCRIPTION);
+  assert.equal(byName('s').attributes['error.type'], 'Error');
+  assert.deepEqual(byName('s').events, []);
 });
 
 test('startRootSpan: kind and links options, a thenable result is awaited', async () => {
@@ -172,7 +177,8 @@ test('startRootSpan: a thenable always gives a real Promise; a throwing then rej
   const p = helper.startRootSpan('t1', () => ({ then() { throw new RangeError('then broke'); } }));
   assert.ok(p instanceof Promise);
   await assert.rejects(p, RangeError);
-  assert.deepEqual(byName('t1').status, { code: api.SpanStatusCode.ERROR, message: 'RangeError: then broke' });
+  assert.deepEqual(byName('t1').status, ERROR_NO_DESCRIPTION);
+  assert.equal(byName('t1').attributes['error.type'], 'RangeError');
 });
 
 test('startRootSpan: a then that resolves and returns undefined, and a double resolve, settle once', async () => {
@@ -185,43 +191,33 @@ test('startRootSpan: a then that resolves and returns undefined, and a double re
 test('startRootSpan: a then getter that throws is a sync failure', () => {
   const bad = Object.defineProperty({}, 'then', { get() { throw new Error('getter'); } });
   assert.throws(() => helper.startRootSpan('t4', () => bad), /getter/);
-  assert.deepEqual(byName('t4').status, { code: api.SpanStatusCode.ERROR, message: 'Error: getter' });
+  assert.deepEqual(byName('t4').status, ERROR_NO_DESCRIPTION);
 });
 
-test('startRootSpan: exception.type is the error name, not its code (gRPC 14, errno)', async () => {
+test('startRootSpan: error.type is the error name, not its code (gRPC 14, errno)', async () => {
   const grpcErr = Object.assign(new Error('14 UNAVAILABLE: No connection established'), { code: 14 });
   await assert.rejects(helper.startRootSpan('c1', async () => { throw grpcErr; }), (e) => e === grpcErr);
-  const ev = byName('c1').events.find((e) => e.name === 'exception');
-  assert.equal(ev.attributes['exception.type'], 'Error');
-  assert.equal(ev.attributes['exception.message'], '14 UNAVAILABLE: No connection established');
-  assert.equal(typeof ev.attributes['exception.stacktrace'], 'string');
+  assert.equal(byName('c1').attributes['error.type'], 'Error');
+  assert.deepEqual(byName('c1').events, []);
 });
 
-test('startRootSpan: an Error without a stack string is recorded without a stacktrace', () => {
-  const err = new Error('no stack');
-  err.stack = undefined;
-  assert.throws(() => helper.startRootSpan('c2', () => { throw err; }), (e) => e === err);
-  const ev = byName('c2').events.find((e) => e.name === 'exception');
-  assert.equal(ev.attributes['exception.stacktrace'], undefined);
-});
-
-test('startRootSpan: throw Object.create(null) and a throwing toString rethrow the same value, span ended', () => {
+test('startRootSpan: throw Object.create(null) and a throwing toString rethrow the same value, span ended ERROR', () => {
   const bare = Object.create(null);
   assert.throws(() => helper.startRootSpan('n1', () => { throw bare; }), (e) => e === bare);
-  assert.deepEqual(byName('n1').status, { code: api.SpanStatusCode.ERROR, message: '[object Object]' });
+  assert.deepEqual(byName('n1').status, ERROR_NO_DESCRIPTION);
   const evil = { toString() { throw new Error('no'); } };
   assert.throws(() => helper.startRootSpan('n3', () => { throw evil; }), (e) => e === evil);
-  assert.deepEqual(byName('n3').status, { code: api.SpanStatusCode.ERROR, message: '[object Object]' });
+  assert.deepEqual(byName('n3').status, ERROR_NO_DESCRIPTION);
   const hostile = new Proxy({}, { getPrototypeOf: () => Object.prototype, get() { throw new Error('trap'); } });
   assert.throws(() => helper.startRootSpan('n2', () => { throw hostile; }), (e) => e === hostile);
   assert.ok(byName('n2'), 'ended');
-  assert.deepEqual(byName('n2').status, { code: api.SpanStatusCode.ERROR, message: 'unknown error' });
+  assert.deepEqual(byName('n2').status, ERROR_NO_DESCRIPTION);
 });
 
-test('startRootSpan: a recording span that throws in recordException still ends and rethrows the original', () => {
+test('startRootSpan: never calls recordException; a fake span without setAttribute still ends and rethrows the original', () => {
   const err = new Error('orig');
   let ended = 0;
-  const span = { recordException() { throw new Error('rec'); }, setStatus() {}, end() { ended++; } };
+  const span = { recordException() { throw new Error('must not be called'); }, setStatus() {}, end() { ended++; } };
   const tracer = { startActiveSpan: (_n, _o, _c, fn) => fn(span) };
   assert.throws(() => helper.startRootSpan('x', () => { throw err; }, { tracer }), (e) => e === err);
   assert.equal(ended, 1);
@@ -271,20 +267,20 @@ test('startRootSpan: throwing name/message/stack getters still give ERROR and an
   Object.defineProperty(err, 'stack', { get() { throw new Error('stack getter'); } });
   assert.throws(() => helper.startRootSpan('g1', () => { throw err; }), (e) => e === err);
   const s = byName('g1');
-  assert.deepEqual(s.status, { code: api.SpanStatusCode.ERROR, message: 'Error: ' });
-  const ev = s.events.find((e) => e.name === 'exception');
-  assert.equal(ev.attributes['exception.type'], 'Error');
+  assert.deepEqual(s.status, ERROR_NO_DESCRIPTION);
+  assert.equal(s.attributes['error.type'], 'Error');
+  assert.deepEqual(s.events, []);
 });
 
-test('startRootSpan: a span whose setStatus and end throw does not replace the error', async () => {
+test('startRootSpan: a span whose setStatus, setAttribute and end throw does not replace the error', async () => {
   const err = new Error('orig');
   const calls = [];
   const span = {
-    recordException() { calls.push('record'); },
     setStatus() { calls.push('status'); throw new Error('status'); },
+    setAttribute() { calls.push('attribute'); throw new Error('attribute'); },
     end() { calls.push('end'); throw new Error('end'); },
   };
   const tracer = { startActiveSpan: (_n, _o, _c, fn) => fn(span) };
   await assert.rejects(helper.startRootSpan('x', async () => { throw err; }, { tracer }), (e) => e === err);
-  assert.deepEqual(calls, ['record', 'status', 'end']);
+  assert.deepEqual(calls, ['status', 'attribute', 'end']);
 });

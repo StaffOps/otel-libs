@@ -305,8 +305,9 @@ message and stack on the span (ADR-014 violation); Go `StartRootSpan` and
 - WHEN that work succeeds THEN the span status SHALL stay Unset. The helper
   SHALL NOT set Ok on any span.
 - WHEN the helper marks a failure (span function or record function, D15)
-  THEN it SHALL hand exactly one ERROR record per failure object (or chain
-  holding an already-recorded object, D15 "Nesting") and trace to
+  THEN it SHALL hand one ERROR record per marked span (a failure crossing
+  N helper spans gives N records, each in its own span; owner ruling
+  2026-11-17, D15 "Nesting") to
   its log channel (D15 "Channel"), in the marked span's context (same
   `trace_id` and `span_id`, also when that span is not current or not
   recording), with the message as body and `exception.type` (= `error.type`),

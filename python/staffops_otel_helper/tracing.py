@@ -1,10 +1,14 @@
 """Tracing setup — equivalent to TracerSetup.cs."""
 
+import contextvars
+import functools
+import inspect
 import logging
 import math
+import threading
 from contextlib import contextmanager
 
-from opentelemetry import context, trace
+from opentelemetry import trace
 from opentelemetry.sdk.trace import SpanLimits, TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from opentelemetry.sdk.trace.sampling import (
@@ -216,23 +220,156 @@ def configure_tracing(resource: Resource, options: TelemetryOptions) -> TracerPr
     return provider
 
 
+# Keyword arguments of Tracer.start_as_current_span the failure rule owns (R8: rejected).
+_FORBIDDEN_SPAN_KWARGS = ("record_exception", "set_status_on_exception")
+
+
+def _check_span_kwargs(function: str, kwargs: dict) -> None:
+    for key in _FORBIDDEN_SPAN_KWARGS:
+        if key in kwargs:
+            raise TypeError(f"{function}() does not accept {key!r}: the helper applies the failure rule "
+                            "(status ERROR without description, error.type, one correlated log record)")
+
+
+def _default_tracer():
+    from staffops_otel_helper import get_tracer  # the package imports this module
+
+    return get_tracer()
+
+
+@contextmanager
+def _span_scope(name: str, tracer, root: bool, span_kwargs: dict):
+    """One span applying the failure rule (design D15); fresh state per call."""
+    from staffops_otel_helper._failure import is_cancellation, mark_failure
+
+    if tracer is None:
+        tracer = _default_tracer()
+    if root:
+        # A new trace: an invalid parent in the current context (baggage kept); an explicit context wins.
+        span_kwargs = {"context": trace.set_span_in_context(trace.INVALID_SPAN), **span_kwargs}
+    with tracer.start_as_current_span(name, record_exception=False, set_status_on_exception=False,
+                                      **span_kwargs) as span:
+        try:
+            yield span
+        except BaseException as exc:
+            if not is_cancellation(exc):
+                mark_failure(span, exc)
+            raise
+
+
+# Scopes entered through a `with traced(...)` object, per context (asyncio task, thread):
+# an immutable tuple of (owner, scope), replaced on every enter and exit (copy-on-write),
+# so one object shared by concurrent tasks or threads exits its own scope.
+_ACTIVE_SCOPES: contextvars.ContextVar[tuple] = contextvars.ContextVar("staffops_otel_helper_traced_scopes",
+                                                                        default=())
+
+
+class _Traced:
+    """What :func:`traced` returns: a context manager and a decorator."""
+
+    def __init__(self, name: str, tracer, root: bool, span_kwargs: dict) -> None:
+        self._name = name
+        self._tracer = tracer
+        self._root = root
+        self._span_kwargs = span_kwargs
+
+    def _scope(self):
+        return _span_scope(self._name, self._tracer, self._root, self._span_kwargs)
+
+    def __enter__(self):
+        scope = self._scope()
+        span = scope.__enter__()
+        _ACTIVE_SCOPES.set(_ACTIVE_SCOPES.get() + ((self, scope),))
+        return span
+
+    def __exit__(self, exc_type, exc, tb):
+        # The innermost scope this object opened in the current context (task or thread).
+        entries = _ACTIVE_SCOPES.get()
+        index = next((i for i in range(len(entries) - 1, -1, -1) if entries[i][0] is self), None)
+        if index is None:
+            raise RuntimeError("traced(): __exit__ without a matching __enter__ in this context")
+        _ACTIVE_SCOPES.set(entries[:index] + entries[index + 1:])
+        return entries[index][1].__exit__(exc_type, exc, tb)
+
+    def __call__(self, fn):
+        if inspect.isgeneratorfunction(fn) or inspect.isasyncgenfunction(fn):
+            raise TypeError(f"traced() cannot decorate the generator function {fn.__qualname__!r}: "
+                            "the span would end before the lazy work runs")
+        if inspect.iscoroutinefunction(fn):
+            @functools.wraps(fn)
+            async def async_wrapper(*args, **kwargs):
+                with self._scope():
+                    return await fn(*args, **kwargs)
+
+            return async_wrapper
+
+        warned = threading.Event()
+
+        @functools.wraps(fn)
+        def wrapper(*args, **kwargs):
+            with self._scope():
+                result = fn(*args, **kwargs)
+            if not warned.is_set() and (inspect.isawaitable(result) or inspect.isgenerator(result)
+                                        or inspect.isasyncgen(result)):
+                warned.set()
+                _log.warning("[OtelHelper] traced(%r): %s returned %s; the span ended when the call returned, "
+                             "before that work ran. Decorate an `async def` function or wrap the work itself.",
+                             self._name, getattr(fn, "__qualname__", type(fn).__name__), type(result).__name__)
+            return result
+
+        return wrapper
+
+
+def traced(name: str, *, tracer=None, root: bool = False, **span_kwargs) -> _Traced:
+    """Run work in a span that applies the failure rule (R11, ADR-016, design D15).
+
+    Use as a context manager (``with traced("orders.process") as span:``) or as
+    a decorator of a plain or ``async def`` function. When the work raises, the
+    span gets status ERROR **without description** and ``error.type``
+    (``__otel_error_type__`` when set, else the qualified class name), no
+    ``exception`` event, and one ERROR record with the message and the stack
+    goes to the ``staffops_otel_helper.failure`` logger in the span's context (one
+    record per helper span the failure crosses);
+    the exception propagates unchanged. On success the status stays Unset
+    (never Ok). A cancellation (a ``BaseException`` that is not an
+    ``Exception``, or a gRPC ``CANCELLED`` error) leaves the span Unset with no
+    record.
+
+    Args:
+        name: span name.
+        tracer: the tracer to use; default the helper's ``get_tracer()``, per call.
+        root: start a new trace (no parent), as :func:`start_root_span`.
+        **span_kwargs: passed to ``Tracer.start_as_current_span`` (``kind``,
+            ``attributes``, ``links``, ...); ``record_exception`` and
+            ``set_status_on_exception`` are rejected.
+
+    Raises:
+        TypeError: a non-`str` name; a rejected keyword argument; decorating a generator function.
+    """
+    if not isinstance(name, str):
+        raise TypeError(f"traced() name must be a str, got {type(name).__name__}")
+    _check_span_kwargs("traced", span_kwargs)
+    return _Traced(name, tracer, root, span_kwargs)
+
+
 @contextmanager
 def start_root_span(tracer, name, **kwargs):
-    """Start a new root span (new trace), detaching from any current parent context.
+    """Start a new root span (new trace) that applies the failure rule (design D15).
 
-    Use in workers/background services where each iteration should be an independent trace.
-    Equivalent to .NET's ActivitySource.StartRootActivity().
+    Use in workers/background services where each iteration should be an
+    independent trace. Same rule as :func:`traced` (``traced(name,
+    tracer=tracer, root=True)``): an exception that leaves the span sets
+    status ERROR without description and ``error.type``; the message and the
+    stack go to one correlated log record, not to the span (changed in 0.3).
 
     Usage:
         with start_root_span(tracer, "process.cycle") as span:
             span.set_attribute("batch.size", 10)
             ...
+
+    Raises:
+        TypeError: ``record_exception`` or ``set_status_on_exception`` passed.
     """
-    from opentelemetry.trace import NonRecordingSpan, INVALID_SPAN_CONTEXT
-    clean_ctx = trace.set_span_in_context(NonRecordingSpan(INVALID_SPAN_CONTEXT))
-    token = context.attach(clean_ctx)
-    try:
-        with tracer.start_as_current_span(name, **kwargs) as span:
-            yield span
-    finally:
-        context.detach(token)
+    _check_span_kwargs("start_root_span", kwargs)
+    with _span_scope(name, tracer, True, kwargs) as span:
+        yield span

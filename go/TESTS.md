@@ -112,6 +112,8 @@ docker compose -f testing/docker-compose.yml --profile e2e stop collector
 | `metrics_contract_test.go` | `OTEL_METRICS_EXPORTER` / `WithMetricExporters` table, export interval, dual OTLP + Prometheus, mounted handler, listener |
 | `metrics_status_test.go` | `MetricsHandler()` status: 503 before/after, 200 empty when Prometheus is off |
 | `logging_test.go` | Per-record handler switch (before `Setup`, bridge, after `Shutdown`), stdout JSON shape, `exception`, levels |
+| `logging_spanctx_test.go` | Stdout `trace_id` / `span_id` for records in a span context: placement after `msg` / `logger`, attributes of either name dropped, held-back `With` ids, `WithGroup` replay, none without a span (A23 amendment, A45) |
+| `failure_test.go` | `WithSpan` / `RecordFailure` (R11, design D15): ERROR without description + `error.type`, no event, one record per span with its ids, the three attributes and `logger` otel-helper (stdout and bridge), Unset on success and cancellation (`context.Canceled`, gRPC `Canceled`, `%w`, `http.ErrAbortHandler` panic), deadline and `errors.Join(own, ctx.Err())` = failure, override (an empty one does not hide a deeper one), 3 nested spans = 3 records, `%w` layers, new roots, panics (slice, `error`, nil), `Goexit`, uncomparable values, typed-nil `ErrorType()`, bounded chain walks, nil tracer, level-disabled record, stdout write error reported once, errgroup fan-out under `-race` |
 | `lifecycle_test.go` | Failed `Setup` rollback, idempotent/concurrent `Shutdown`, `Setup` after `Shutdown` |
 | `deprecation_test.go`, `extra_test.go` | Deprecated variables warn once; `OTEL_HELPER_EXTRA_INSTRUMENTATION` warns and has no effect |
 | `diag_channel_test.go` | Source scan: helper diagnostics only through the stderr diag logger |

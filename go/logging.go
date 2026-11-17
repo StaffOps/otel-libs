@@ -13,6 +13,7 @@ import (
 	"go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp"
 	sdklog "go.opentelemetry.io/otel/sdk/log"
 	"go.opentelemetry.io/otel/sdk/resource"
+	"go.opentelemetry.io/otel/trace"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
 )
@@ -134,10 +135,30 @@ type switchHandler struct {
 	// held back from stdout so that a record's own "logger" can replace it (A23).
 	scopeLogger    slog.Value
 	hasScopeLogger bool
+	// scopeIDs: top-level trace_id / span_id attributes added with WithAttrs,
+	// held back from stdout: a record in a valid span context writes its own
+	// ids instead (A23 amendment 2026-11-11), any other record writes these.
+	scopeIDs []slog.Attr
+	// root is the stdout destination before any op and stdoutOps the ops as
+	// applied to it: a record in a span under a WithGroup is written through a
+	// replay that adds the ids at the top level, before the first group opens.
+	root      slog.Handler
+	stdoutOps []stdoutOp
+}
+
+// stdoutOp is one op as the stdout destination received it: a group, the
+// (filtered) attributes, or — preGroup — the held-back logger and ids written
+// just before the first group opens.
+type stdoutOp struct {
+	group     string
+	attrs     []slog.Attr
+	preGroup  bool
+	logger    slog.Value
+	hasLogger bool
 }
 
 func newSwitchHandler(min slog.Leveler, stdout slog.Handler) *switchHandler {
-	return &switchHandler{min: min, stdout: stdout, derived: new(atomic.Pointer[derivedBridge])}
+	return &switchHandler{min: min, stdout: stdout, root: stdout, derived: new(atomic.Pointer[derivedBridge])}
 }
 
 // newStdoutJSONHandler is the fallback destination: the application's own log
@@ -204,7 +225,107 @@ func (h *switchHandler) Handle(ctx context.Context, r slog.Record) error {
 	if !h.stdout.Enabled(ctx, r.Level) {
 		return nil
 	}
-	return h.stdout.Handle(ctx, h.stdoutRecord(r))
+	ids := spanIDAttrs(ctx)
+	if ids != nil && h.inGroup() {
+		// Inside a group a record attribute nests; the ids belong at the top
+		// level, before the first group: replay the ops with them added.
+		return h.stdoutInSpan(ids).Handle(ctx, h.stdoutRecord(r, nil))
+	}
+	return h.stdout.Handle(ctx, h.stdoutRecord(r, ids))
+}
+
+// Stdout span-context fields (contract design D1 row "Stdout fallback
+// fields", A23 amendment 2026-11-11, parity case logging.stdout_span_context).
+const (
+	traceIDKey = "trace_id"
+	spanIDKey  = "span_id"
+)
+
+var stdoutIDKeys = map[string]bool{traceIDKey: true, spanIDKey: true}
+
+// spanIDAttrs returns the trace_id and span_id fields of a record emitted in a
+// valid span context (recording or not), else nil.
+func spanIDAttrs(ctx context.Context) []slog.Attr {
+	sc := trace.SpanContextFromContext(ctx)
+	if !sc.IsValid() {
+		return nil
+	}
+	return []slog.Attr{slog.String(traceIDKey, sc.TraceID().String()), slog.String(spanIDKey, sc.SpanID().String())}
+}
+
+// stdoutInSpan rebuilds the stdout destination from root with ids written
+// where the held-back logger is written, just before the first group opens.
+// Only records in a span under a WithGroup take this path (one replay each).
+func (h *switchHandler) stdoutInSpan(ids []slog.Attr) slog.Handler {
+	hd := h.root
+	for _, op := range h.stdoutOps {
+		switch {
+		case op.preGroup:
+			held := make([]slog.Attr, 0, 1+len(ids))
+			if op.hasLogger {
+				held = append(held, slog.Attr{Key: loggerKey, Value: op.logger})
+			}
+			hd = hd.WithAttrs(append(held, ids...))
+		case op.group != "":
+			hd = hd.WithGroup(op.group)
+		default:
+			hd = hd.WithAttrs(op.attrs)
+		}
+	}
+	return hd
+}
+
+// splitIDs takes the top-level trace_id / span_id attributes (members of
+// inline groups included) out of attrs. rest is attrs itself, and changed
+// false, when there is none.
+func splitIDs(attrs []slog.Attr) (rest, ids []slog.Attr, changed bool) {
+	for i, a := range attrs {
+		keep, drop, modified := a, false, false
+		if v, ok := inlineGroup(a); ok {
+			inner, innerIDs, innerChanged := splitIDs(v.Group())
+			if innerChanged {
+				modified = true
+				ids = append(ids, innerIDs...)
+				if len(inner) == 0 {
+					drop = true
+				} else {
+					keep = slog.Attr{Value: slog.GroupValue(inner...)}
+				}
+			}
+		} else if stdoutIDKeys[a.Key] {
+			modified, drop = true, true
+			ids = append(ids, a)
+		}
+		if modified && rest == nil {
+			rest = append(make([]slog.Attr, 0, len(attrs)), attrs[:i]...)
+		}
+		if rest != nil && !drop {
+			rest = append(rest, keep)
+		}
+	}
+	if rest == nil {
+		return attrs, ids, false
+	}
+	return rest, ids, true
+}
+
+// mergeIDs returns scope with add applied, the last value of a key winning;
+// scope itself is never modified (it is shared with the parent handler).
+func mergeIDs(scope, add []slog.Attr) []slog.Attr {
+	out := append(make([]slog.Attr, 0, len(scope)+len(add)), scope...)
+	for _, a := range add {
+		replaced := false
+		for i := range out {
+			if out[i].Key == a.Key {
+				out[i], replaced = a, true
+				break
+			}
+		}
+		if !replaced {
+			out = append(out, a)
+		}
+	}
+	return out
 }
 
 // reservedStdoutKeys are the stdout line's own fields. A top-level attribute
@@ -323,7 +444,12 @@ func filterReserved(attrs []slog.Attr, rename *bool) (out []slog.Attr, changed b
 // common case allocates nothing. Empty-key attributes are resolved in each
 // pass that inspects them (not cached: a LogValuer is cheap to resolve again
 // and caching would need a per-record buffer).
-func (h *switchHandler) stdoutRecord(r slog.Record) slog.Record {
+//
+// ids (top level only) are the record's span-context fields: written right
+// after the logger field, and a top-level trace_id / span_id attribute of the
+// record or the scope is then dropped; without them the held-back scope ids
+// are written there instead.
+func (h *switchHandler) stdoutRecord(r slog.Record, ids []slog.Attr) slog.Record {
 	top := !h.inGroup()
 	firstErr, hasExcKey, needTop := -1, false, false
 	logger, hasLogger := h.scopeLogger, top && h.hasScopeLogger
@@ -339,6 +465,8 @@ func (h *switchHandler) stdoutRecord(r slog.Record) slog.Record {
 			needTop = needTop || top
 		case top && reservedStdoutKeys[a.Key]:
 			needTop = true
+		case top && ids != nil && stdoutIDKeys[a.Key]:
+			needTop = true
 		}
 		if firstErr < 0 && isError(a.Value) {
 			firstErr = i
@@ -349,7 +477,8 @@ func (h *switchHandler) stdoutRecord(r slog.Record) slog.Record {
 	if hasExcKey || h.excInScope {
 		firstErr = -1
 	}
-	if firstErr < 0 && !needTop && !hasLogger {
+	scopeIDs := top && len(h.scopeIDs) > 0
+	if firstErr < 0 && !needTop && !hasLogger && ids == nil && !scopeIDs {
 		return r
 	}
 	// An error under a reserved key inside an inline group is renamed only
@@ -379,6 +508,11 @@ func (h *switchHandler) stdoutRecord(r slog.Record) slog.Record {
 	if hasLogger {
 		out.AddAttrs(slog.Attr{Key: loggerKey, Value: logger})
 	}
+	if ids != nil {
+		out.AddAttrs(ids...)
+	} else if scopeIDs {
+		out.AddAttrs(h.scopeIDs...)
+	}
 	i = 0
 	r.Attrs(func(a slog.Attr) bool {
 		idx := i
@@ -392,8 +526,13 @@ func (h *switchHandler) stdoutRecord(r slog.Record) slog.Record {
 			out.AddAttrs(a)
 		case reservedStdoutKeys[a.Key]:
 			// dropped; a logger was written above
+		case ids != nil && stdoutIDKeys[a.Key]:
+			// dropped; the record's own ids were written above
 		case a.Key == "":
 			kept, _, _, _ := filterReserved([]slog.Attr{a}, &rename)
+			if ids != nil {
+				kept, _, _ = splitIDs(kept)
+			}
 			out.AddAttrs(kept...)
 		default:
 			out.AddAttrs(a)
@@ -430,7 +569,7 @@ func errorText(err error) (s string) {
 
 // with returns a handler with op appended (replayed on the bridge) and stdout
 // as the stdout destination; stdoutAttrs are the attributes stdout received.
-func (h *switchHandler) with(op handlerOp, stdout slog.Handler, stdoutAttrs []slog.Attr) *switchHandler {
+func (h *switchHandler) with(op handlerOp, stdout slog.Handler, stdoutAttrs []slog.Attr, sops ...stdoutOp) *switchHandler {
 	ops := make([]handlerOp, len(h.ops), len(h.ops)+1)
 	copy(ops, h.ops)
 	exc := h.excInScope
@@ -438,9 +577,11 @@ func (h *switchHandler) with(op handlerOp, stdout slog.Handler, stdoutAttrs []sl
 		exc = false
 	}
 	exc = exc || hasException(stdoutAttrs)
-	n := &switchHandler{min: h.min, stdout: stdout, ops: append(ops, op), derived: new(atomic.Pointer[derivedBridge]), excInScope: exc}
+	n := &switchHandler{min: h.min, stdout: stdout, ops: append(ops, op), derived: new(atomic.Pointer[derivedBridge]), excInScope: exc, root: h.root}
+	n.stdoutOps = append(append(make([]stdoutOp, 0, len(h.stdoutOps)+len(sops)), h.stdoutOps...), sops...)
 	if op.group == "" {
 		n.scopeLogger, n.hasScopeLogger = h.scopeLogger, h.hasScopeLogger
+		n.scopeIDs = h.scopeIDs
 	}
 	return n
 }
@@ -450,15 +591,20 @@ func (h *switchHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
 		return h
 	}
 	if h.inGroup() {
-		return h.with(handlerOp{attrs: attrs}, h.stdout.WithAttrs(attrs), attrs)
+		return h.with(handlerOp{attrs: attrs}, h.stdout.WithAttrs(attrs), attrs, stdoutOp{attrs: attrs})
 	}
 	// Top level: an error under a reserved key becomes exception when the
 	// scope has none yet (A23, G4); the rest of the reserved rule as for records.
 	rename := !h.excInScope && !hasException(attrs)
 	stdoutAttrs, _, logger, hasLogger := filterReserved(attrs, &rename)
-	n := h.with(handlerOp{attrs: attrs}, h.stdout.WithAttrs(stdoutAttrs), stdoutAttrs)
+	// trace_id / span_id are held back: a record in a span writes its own.
+	stdoutAttrs, ids, _ := splitIDs(stdoutAttrs)
+	n := h.with(handlerOp{attrs: attrs}, h.stdout.WithAttrs(stdoutAttrs), stdoutAttrs, stdoutOp{attrs: stdoutAttrs})
 	if hasLogger {
 		n.scopeLogger, n.hasScopeLogger = logger, true
+	}
+	if len(ids) > 0 {
+		n.scopeIDs = mergeIDs(h.scopeIDs, ids)
 	}
 	return n
 }
@@ -468,12 +614,21 @@ func (h *switchHandler) WithGroup(name string) slog.Handler {
 		return h
 	}
 	stdout := h.stdout
-	if h.hasScopeLogger && !h.inGroup() {
-		// The held-back scope logger is written before the group opens: inside
-		// the group, a record's logger nests and cannot replace it.
-		stdout = stdout.WithAttrs([]slog.Attr{{Key: loggerKey, Value: h.scopeLogger}})
+	var sops []stdoutOp
+	if !h.inGroup() {
+		// The held-back scope logger and ids are written before the group
+		// opens: inside the group, a record's own nest and cannot replace them.
+		held := make([]slog.Attr, 0, 1+len(h.scopeIDs))
+		if h.hasScopeLogger {
+			held = append(held, slog.Attr{Key: loggerKey, Value: h.scopeLogger})
+		}
+		if held = append(held, h.scopeIDs...); len(held) > 0 {
+			stdout = stdout.WithAttrs(held)
+		}
+		sops = append(sops, stdoutOp{preGroup: true, logger: h.scopeLogger, hasLogger: h.hasScopeLogger})
 	}
-	return h.with(handlerOp{group: name}, stdout.WithGroup(name), nil)
+	sops = append(sops, stdoutOp{group: name})
+	return h.with(handlerOp{group: name}, stdout.WithGroup(name), nil, sops...)
 }
 
 // NewSlogHandler returns the helper's slog.Handler. While Setup has a logs

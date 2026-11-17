@@ -62,7 +62,9 @@ trace_id=2a1bca8bf62a7b40b865f0c8c9f4190f
 ```
 
 The first line is a diagnostic (stderr). The JSON lines are the stdout
-fallback: no trace IDs, as Python. Metrics are served on `:9464/metrics` only
+fallback. A record written inside a span also carries `trace_id` and
+`span_id` right after `logger` (contract A23 amendment, task A45); this
+capture was taken before that change. Metrics are served on `:9464/metrics` only
 while the process runs (`order_processed_total`,
 `order_duration_seconds_bucket`, `order_active`, `order_queue_depth`).
 

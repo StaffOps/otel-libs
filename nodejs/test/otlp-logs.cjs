@@ -71,7 +71,7 @@ function keyValues(list) {
   return out;
 }
 
-/** ExportLogsServiceRequest -> flat records `{ scope, severityNumber, severityText, body, attributes, traceId, spanId, timeUnixNano, resource }`. */
+/** ExportLogsServiceRequest -> flat records `{ scope, severityNumber, severityText, body, attributes, traceId, spanId, eventName, timeUnixNano, resource }`. */
 function decodeLogs(body) {
   const records = [];
   for (const rl of all(body, 1)) {
@@ -93,6 +93,7 @@ function decodeLogs(body) {
           attributes: keyValues(all(lr, 6)),
           traceId: one(lr, 9) === undefined ? '' : one(lr, 9).toString('hex'),
           spanId: one(lr, 10) === undefined ? '' : one(lr, 10).toString('hex'),
+          eventName: text(one(lr, 12)) ?? '',
         });
       }
     }

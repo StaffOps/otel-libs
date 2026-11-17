@@ -3952,6 +3952,78 @@ Unsupported instrumentation versions, task A10 (P18):
 
 ### Changed
 
+- **Go, Python, Node.js: one failure rule for application spans (task A45,
+  [ADR-016](specs/decisions/ADR-016-application-span-failure-status.md),
+  requirement R11, design D15; .NET follows later, it is parked).** Owner
+  decision 2026-11-17.
+  - **New functions:**
+    - Go: `otelhelper.WithSpan(ctx, tracer, name, fn, opts...)` and
+      `otelhelper.RecordFailure(ctx, err)`.
+    - Python: `staffops_otel_helper.traced(name, *, tracer=None, root=False, ...)`,
+      a context manager and a decorator for plain and `async def` functions,
+      and `record_failure(exc, *, span=None)`.
+    - Node.js: `withSpan(name, fn, options)` and `recordFailure(err, span?)`.
+  - **On a failure** (an exception, a returned Go error or a Go panic):
+    - the span gets status ERROR without a description, and `error.type`;
+      no `exception` event is added;
+    - one ERROR log record goes in the span's context (same `trace_id` /
+      `span_id`), with the message as body and `exception.type`,
+      `exception.message` and `exception.stacktrace` (ADR-014). Node.js also
+      sets the event name `exception`;
+    - every helper span that marks the failure writes its own record in
+      its own span context: a failure crossing 3 helper spans gives 3
+      records (owner ruling 2026-11-17; a deliberate deviation from the
+      semconv advice to record once).
+  - **Success, cancellation and Ok:** success leaves the status Unset, and
+    the helper never sets Ok. A cancellation (Go `context.Canceled`, Python
+    `CancelledError`, Node.js `AbortError`, gRPC `CANCELLED`) stays Unset
+    with no record. Timeouts are failures, including a Node.js `AbortError`
+    whose `cause` is a `TimeoutError` (Node core APIs given
+    `AbortSignal.timeout()`). Node.js `recordFailure(undefined | null)` and
+    a non-boolean `root` throw `TypeError`.
+  - **`error.type` override per error:** Go `ErrorType() string`, Python
+    `__otel_error_type__`, Node.js `Symbol.for('otel.error_type')`. Use it to
+    get one value across languages; the defaults are native to each
+    language.
+  - **Behavior change: Python `start_root_span` and Node.js `startRootSpan`
+    follow the same rule.**
+    - A failed root span no longer carries the exception message, the stack
+      or the `"<name>: <message>"` description; the detail is in the
+      correlated log record.
+    - Python rejects `record_exception=` and `set_status_on_exception=` with
+      `TypeError`.
+    - Go `StartRootSpan` is unchanged; use `WithSpan` with
+      `trace.WithNewRoot()` for the rule.
+  - **Stdout fallback lines carry `trace_id` and `span_id`** right after
+    `logger` (Go: after `msg` when there is no logger) for records written
+    in a valid span context (contract A23 amendment). An attribute with
+    either name is then dropped. The parity case
+    `logging.stdout_span_context` now passes in Go, Python and Node.js.
+  - **Python:** failure records use the logger
+    `staffops_otel_helper.failure`. It is routed as application logs (stdout
+    fallback or OTLP, never stderr).
+    - Its level does not follow the `staffops_otel_helper` diagnostics
+      level: while it has none of its own, the helper sets it to DEBUG at
+      the first record. A level set on the failure logger itself applies.
+    - Before `setup_telemetry()` its records go to stderr as plain text.
+    - A `BaseExceptionGroup` is a cancellation only when all its leaves are.
+    - `traced()` raises `TypeError` for a non-`str` name.
+    - One `traced(...)` object can be shared by concurrent asyncio tasks and
+      threads.
+  - **Go:**
+    - `WithSpan` ends its span after recovering a panic, so the SDK's `End`
+      does not add an exception event with the panic message and stack.
+    - `error.type` is the first non-empty `ErrorType()` along the `Unwrap`
+      chain, else `semconv.ErrorType` (v1.43.0).
+    - A panic with `http.ErrAbortHandler` is a cancellation.
+    - A nil tracer uses `GetTracer()`.
+    - On stdout the record carries `"logger":"otel-helper"`.
+    - slog `With` attributes come before the stdout `trace_id`/`span_id`.
+  - Docs: the README and HOW-TO of each language list every documented
+    behavior and limit. These include counting failures across layers,
+    handled failures, Ok set earlier, reused objects, groups, Go type-name
+    buckets, and Go stacks taken at the marking point.
+
 - **Node.js: a process that ends on its own now flushes its telemetry (Phase
   B, B12 fix round, 2026-11-03; not released).** The first successful
   `setup()` of the main thread registers one `process.once('beforeExit')`

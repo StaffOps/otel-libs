@@ -17,7 +17,7 @@ Spans the application creates itself (for example the demo's
 | Python | `start_as_current_span` sets ERROR and records an `exception` event with message and stack (`record_exception=True`, `set_status_on_exception=True` defaults) | `start_root_span` (`python/staffops_otel_helper/tracing.py:220`) inherits that: message and stack on the span |
 | Node.js | `startActiveSpan` sets nothing | `startRootSpan` (`nodejs/packages/otel-helper/src/internal/api.ts:140`) records the exception with message and stack, and the description `"<name>: <message>"` |
 | Go | nothing (errors are return values) | `StartRootSpan` (`go/tracing.go:142`) sets nothing |
-| .NET | nothing | `StartRootActivity` (`dotnet/StaffOps.OtelHelper/ActivitySourceExtensions.cs:27`) sets nothing |
+| .NET | nothing by default; the SDK has an opt-in `SetErrorStatusOnException` (*corrected 2026-11-17: the first version said "nothing"*) | `StartRootActivity` (`dotnet/StaffOps.OtelHelper/ActivitySourceExtensions.cs:27`) sets nothing |
 
 So the same failure gives a different span in each language, and the Python
 and Node.js helpers put the exception message and stack on the span, which
@@ -43,8 +43,11 @@ ERROR.
    exception's type name). When the work succeeds the status stays **Unset**.
    The helper **never sets Ok**.
 2. **ADR-014 applies:** the message and the stack trace go to one ERROR log
-   record emitted in the span's context (same `trace_id` and `span_id`), once
-   per failure. The new functions add **no `exception` span event**
+   record emitted in the span's context (same `trace_id` and `span_id`), one
+   per helper span that marks the failure (*owner ruling 2026-11-17, after
+   the implementation review: per-span recording replaces once-per-failure
+   deduplication, which was complex and lost or duplicated records; a
+   deliberate deviation from semconv "record once"*). The new functions add **no `exception` span event**
    (*corrected 2026-11-17, review round 1: semconv `exceptions-spans` is
    deprecated in favor of exception log records, and a type-only event only
    repeats `error.type`*). A **cancellation** is not a failure: the span stays
@@ -111,6 +114,11 @@ ERROR.
   unreachable from a failed span (same condition as ADR-014).
 
 ## Reversal action
+
+When the SDKs and instrumentations ship the exception-as-log mode
+(`OTEL_SEMCONV_EXCEPTION_SIGNAL_OPT_IN=logs`, OTEP 4430, the 2026 span-events
+deprecation), the helper's record delegates to it. Revisit when spec issue
+#5005 (error-status APIs) lands.
 
 If decision 4 is reversed, add a classification callback to the span
 function. If the helper's record is unwanted, add an option to skip it (span

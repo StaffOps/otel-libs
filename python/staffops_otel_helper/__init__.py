@@ -24,7 +24,8 @@ from staffops_otel_helper.instrumentation import instrument_fastapi
 from staffops_otel_helper.metrics import metrics_app
 from staffops_otel_helper.setup import emit_fork_warning as _emit_fork_warning
 from staffops_otel_helper.setup import setup_telemetry, shutdown_telemetry, reset_telemetry
-from staffops_otel_helper.tracing import DEFAULT_HEALTH_PATHS, start_root_span
+from staffops_otel_helper._failure import record_failure
+from staffops_otel_helper.tracing import DEFAULT_HEALTH_PATHS, start_root_span, traced
 
 
 def get_tracer(name: str | None = None) -> _trace.Tracer:
@@ -61,6 +62,8 @@ __all__ = [
     "metrics_app",
     "instrument_fastapi",
     "start_root_span",
+    "traced",
+    "record_failure",
     "DEFAULT_HEALTH_PATHS",
     "ext",
 ]
