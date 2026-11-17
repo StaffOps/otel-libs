@@ -4128,6 +4128,13 @@ Unsupported instrumentation versions, task A10 (P18):
 
 ### Internal
 
+- **Demo DE7 and DE9 (2026-11-17).** Requests recalibrated from the live run
+  (`testing/k8s/demo/demo.sh`): all four languages plus PostgreSQL and Redis
+  now request 195 m CPU / 1056 Mi (was 450 m / 1424 Mi), memory limits ≥ 2×
+  the measured maximum, no CPU limit. Grafana links checked read-only on the
+  data side: Loki `trace_id` → Tempo, Tempo span → Loki (Grafana pads a
+  leading-zero trace id to 32 hex, so the Loki query finds the records), and
+  Prometheus exemplar → Tempo all resolve to the right trace and span.
 - **Demo baseline on k8s01 (DE6, 2026-11-17).** Run `20261116t1812` with
   images `1d36be4`: `verify.py demo` over a 15-minute window gives NA 6,
   PASS 44, XFAIL 14 and exits 0 across Go, Python, Node.js and .NET; every

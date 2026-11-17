@@ -20,8 +20,8 @@ HERE = Path(__file__).resolve().parent
 DEMO = HERE / "demo.sh"
 LANGS = ("go", "python", "node", "dotnet")
 APPS = ("worker", "api", "backend")
-BUDGET = {"go": ("20m", "48Mi", "128Mi"), "python": ("20m", "96Mi", "256Mi"),
-          "node": ("20m", "96Mi", "256Mi"), "dotnet": ("40m", "128Mi", "384Mi")}
+BUDGET = {"go": ("5m", "32Mi", "64Mi"), "python": ("15m", "96Mi", "192Mi"),
+          "node": ("10m", "64Mi", "192Mi"), "dotnet": ("20m", "128Mi", "256Mi")}  # DE7
 UID = {"go": "65534", "python": "65532", "node": "1000", "dotnet": "1654"}
 HEX48 = re.compile(r"(?<![0-9a-f])[0-9a-f]{48}(?![0-9a-f])")
 
@@ -250,7 +250,7 @@ case "$args" in
   *" get pods --all-namespaces --field-selector status.phase!=Succeeded"*)
     # Once the backing services exist, their requests count on the node.
     if [ -e "$d/created.yaml" ]; then
-      echo '{"items": [{"spec": {"nodeName": "k8s01", "containers": [{"resources": {"requests": {"cpu": "150m", "memory": "320Mi"}}}]}}]}'
+      echo '{"items": [{"spec": {"nodeName": "k8s01", "containers": [{"resources": {"requests": {"cpu": "45m", "memory": "96Mi"}}}]}}]}'
     else
       echo '{"items": []}'
     fi ;;
@@ -332,8 +332,8 @@ class Apply(FakeCluster):
     def test_all_fits_and_applies_with_the_backing_run(self):
         result = self.apply("--all")
         self.assertEqual(result.returncode, 0, result.stderr)
-        # 3 pods per language: 4 x 3 = 12; Σ cpu 3*(20+20+20+40); Σ memory 3*(48+96+96+128).
-        self.assertIn("run 300m 1104Mi 12 pods", result.stdout)
+        # 3 pods per language: 4 x 3 = 12; Σ cpu 3*(5+15+10+20); Σ memory 3*(32+96+64+128).
+        self.assertIn("run 150m 960Mi 12 pods", result.stdout)
         applied = (self.dir / "applied.yaml").read_text()
         self.assertEqual(applied.count("kind: Deployment"), 12)
         self.assertEqual(applied.count("kind: Service"), 8)
@@ -346,14 +346,14 @@ class Apply(FakeCluster):
     def test_one_language(self):
         result = self.apply("--lang", "dotnet")
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("run 120m 384Mi 3 pods", result.stdout)
+        self.assertIn("run 60m 384Mi 3 pods", result.stdout)
         applied = (self.dir / "applied.yaml").read_text()
         self.assertEqual(applied.count("kind: Deployment"), 3)
         self.assertIn("demo-dotnet-backend", applied)
         self.assertNotIn("demo-go-", applied)
 
     def test_all_does_not_fit_says_rotate(self):
-        self.write("nodes.json", node("400m", "32Gi"))
+        self.write("nodes.json", node("350m", "32Gi"))  # 150m + 250m reserve > 350m
         result = self.apply("--all")
         self.assertEqual(result.returncode, 1)
         self.assertIn("Rotate one language per window", result.stderr)
@@ -361,17 +361,17 @@ class Apply(FakeCluster):
         self.assertFalse((self.dir / "applied.yaml").exists())
 
     def test_one_language_does_not_fit(self):
-        self.write("nodes.json", node("300m", "32Gi"))
+        self.write("nodes.json", node("250m", "32Gi"))  # 15m + 250m reserve > 250m
         result = self.apply("--lang", "go")
         self.assertEqual(result.returncode, 1)
         self.assertIn("pre-flight failed for go", result.stderr)
         self.assertFalse((self.dir / "applied.yaml").exists())
 
     def test_backing_created_but_apps_do_not_fit(self):
-        # No backing services: apply creates them (150m fit in 209m), then the
-        # apps (60m) do not fit in the 59m left — the message says what was created.
+        # No backing services: apply creates them (45m fit in 59m), then the
+        # apps (15m) do not fit in the 14m left — the message says what was created.
         (self.dir / "backing.txt").write_text("")
-        self.write("nodes.json", node("459m", "32Gi"))  # 209m free, then 59m
+        self.write("nodes.json", node("309m", "32Gi"))  # 59m free, then 14m
         result = self.apply("--lang", "go")
         self.assertEqual(result.returncode, 1, result.stderr)
         self.assertTrue((self.dir / "created.yaml").exists())

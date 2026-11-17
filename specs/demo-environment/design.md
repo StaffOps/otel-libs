@@ -895,6 +895,19 @@ request; audit #20 — zero-padding Explore check.)*
 **Reversal action**: a token-based Grafana API check, read-only.
 **Alternatives**: a second Grafana in the namespace.
 
+*(DE9, 2026-11-17, run `20261116t1812`, read-only: the three links resolve on
+the data side. (1) Loki derived field `^trace_id$` (label matcher, structured
+metadata among the frame's label keys) → Tempo trace `070460fb…` with the
+record's `order.id` — correct trace. (2) Tempo → Loki with a leading-zero
+trace: search shows `90d00dfd…` (31 hex), the span link expands
+`${__trace.traceId}` to `090d00dfd5df9a790741f4a681debd8c` (32 hex), and that
+Loki query returns the backend and worker records; the stripped id would
+return nothing, so the padding matters and holds. (3) Prometheus exemplar on
+`demo_order_duration_seconds_bucket` (.NET `016066c9…`, Go `c3b00ba8…`) →
+Tempo, `span_id` = `demo.order.process`. The UI click itself (link button
+shown) is not measurable through the API: one human click per check closes
+it.)*
+
 ### DE-D15 — Local Compose path: optional, smoke only
 **Choice**: `demo/compose.yaml` (task DE10) runs one language's apps,
 PostgreSQL, Redis and a Collector whose config exports traces and logs to the
@@ -968,7 +981,7 @@ Exemplar selectors are the `_bucket` series of each duration (DE-D10).
 | Tempo `/api/search` | hex, leading zeros stripped (audit: 10 of 129 ids had 31 characters) | — | `zfill(32)` |
 | Loki structured metadata `trace_id`, `span_id` | 32 hex with zeros | 16 hex with zeros | lower-case |
 | Prometheus exemplar labels `trace_id`, `span_id` | 32 hex with zeros | 16 hex with zeros | lower-case |
-| Grafana `${__trace.traceId}` | `unmeasured` (DE-D14 check 2) | — | — |
+| Grafana `${__trace.traceId}` | 32 hex with zeros — the Tempo plugin hex-encodes the stored 16 bytes (`pkg/tempo/trace_transform.go:124-125`); measured DE9 2026-11-17 | — | — |
 
 *(r3, 2026-11-16: new section, audit #20.)*
 
@@ -1061,6 +1074,21 @@ The demo does not change `specs/soak-simulation/`. It can feed:
 ## Budget table (reference)
 
 Proposed requests and limits; DE7 recalibrates. Basis: DE-D12.
+
+> **DE7 calibration (2026-11-17, run `20261116t1812`, measured 02:17–02:30
+> UTC over 90 min for the apps and 8 h for PostgreSQL and Redis).** Request ≈
+> p95 + ≥ 20 % headroom of the busiest app per language; memory limit ≥ 2× the
+> highest maximum across both pod generations; no CPU limit. New values (in
+> `testing/k8s/demo/demo.sh`): Go 5 m / 32 Mi / 64 Mi; Python 15 m / 96 Mi /
+> 192 Mi; Node.js 10 m / 64 Mi / 192 Mi; .NET 20 m / 128 Mi / 256 Mi;
+> `demo-postgres` 20 m / 64 Mi / 256 Mi; `demo-redis` 25 m / 32 Mi / 128 Mi.
+> All four + shared: **195 m / 1056 Mi** requests (was 450 m / 1424 Mi),
+> 2496 Mi limits; with the K-D2 reserve 445 m / 1568 Mi. Measured use ≈ 74 m
+> CPU (Σ p95) and 697 Mi working set (Σ max). Node at the read: 3275 m /
+> 7797 Mi free, 78 pod slots — fits. .NET memory still grew 7–13 Mi per app in
+> the last hour (others ±2.6 Mi): recheck over several hours; .NET keeps its
+> 128 Mi request until then. The table below is the r2 proposal, kept for the
+> record.
 
 | Component | Pods | CPU request | Memory request | Memory limit | Σ CPU | Σ memory request |
 |---|---|---|---|---|---|---|

@@ -92,10 +92,10 @@ redis_image=docker.io/library/redis:7.4.12-alpine@sha256:7f7d30b7fdd09467bac5819
 langs="go python node dotnet"
 selector="app.kubernetes.io/part-of=otel-libs,app.kubernetes.io/component=demo"
 
-# Budget table (design DE-D12), defined once: the manifests and the
-# pre-flight both read these.
-pg_cpu_m=100 pg_memory_mi=256 pg_limit_mi=512
-redis_cpu_m=50 redis_memory_mi=64 redis_limit_mi=128
+# Budget table (design DE-D12, calibrated by DE7 on 2026-11-17), defined
+# once: the manifests and the pre-flight both read these.
+pg_cpu_m=20 pg_memory_mi=64 pg_limit_mi=256
+redis_cpu_m=25 redis_memory_mi=32 redis_limit_mi=128
 run_cpu="$((pg_cpu_m + redis_cpu_m))m"
 run_memory="$((pg_memory_mi + redis_memory_mi))Mi"
 run_pods=2
@@ -137,9 +137,10 @@ resolve_tag() {
 # app_cpu_m, app_memory_mi, app_limit_mi.
 app_budget() {
   case "$1" in
-    go)          app_cpu_m=20 app_memory_mi=48  app_limit_mi=128 ;;
-    python|node) app_cpu_m=20 app_memory_mi=96  app_limit_mi=256 ;;
-    dotnet)      app_cpu_m=40 app_memory_mi=128 app_limit_mi=384 ;;
+    go)     app_cpu_m=5  app_memory_mi=32  app_limit_mi=64 ;;
+    python) app_cpu_m=15 app_memory_mi=96  app_limit_mi=192 ;;
+    node)   app_cpu_m=10 app_memory_mi=64  app_limit_mi=192 ;;
+    dotnet) app_cpu_m=20 app_memory_mi=128 app_limit_mi=256 ;;
   esac
 }
 
