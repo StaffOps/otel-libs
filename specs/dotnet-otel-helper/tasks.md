@@ -175,6 +175,7 @@ cases (D-NET12) keep their owner below once C5 maps them.
 
 | Item | Trigger |
 |---|---|
+| Contract A45 / ADR-016 for .NET (added 2026-11-17): an `ActivitySource` span function and a record function with the D15 rule (ERROR without description, `error.type` = `GetType().FullName`, type-only `exception` event, one correlated ERROR record, nesting once, never Ok); `StartRootActivity` unchanged as a starter | the owner un-parks the .NET backlog |
 | A `0.2.x` patch with the Redis DI-overload fix (C1 dev B1) | a consumer needs `AddOtelHelperRedis()` without passing the multiplexer before 0.3.0 |
 | A `.NET`-only `0.2.x` patch for N1 or N2 | a consumer hits N1 (server spans under the service scope) or N2 (tracestate dropped) in production (ADR-004 "When wrong") |
 | `tools/spec_lint.py` decision-heading regex extended to `(?:[A-Z]+-)?D(?:-[A-Z]+)?\d+` so D-NET (and D-JS) decisions are checked for a Reversal action (repo-tooling; C1b refuter M3 — today checked by hand: every D-NET decision has one, D-NET2 delegates to ADR-013, D-NET15 is reference) | a decision without a reversal action is found in review |

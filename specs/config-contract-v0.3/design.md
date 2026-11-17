@@ -604,6 +604,25 @@ A5 validation rulings (2026-10-28):
   with `disable_existing_loggers=True`). `opentelemetry.*` SDK/exporter records are **never** exported via OTLP
   (avoids the export-failure feedback loop; Go equivalent: `otel.Handle`);
   `otel_helper.*` records go to stderr and, additionally, to OTLP.
+  *Amended 2026-11-17 (A45, design D15):* one exception. The Python logger
+  `staffops_otel_helper.failure` carries **application** failure records
+  (R11), not diagnostics:
+  - The routing checks (`ConsoleFallback.handle`, `DiagnosticsToStderr.handle`,
+    `SetupDiagnostics.handle`, through a separate predicate) send it the
+    application way: to the stdout JSON fallback without an exporter, to
+    OTLP only with one, and never to stderr.
+  - It is not a feedback loop: it never logs SDK or exporter errors.
+  - `is_diagnostic` still covers it, so it is re-enabled after an app
+    `dictConfig`.
+  - It inherits the `staffops_otel_helper` level, so an app that quiets the
+    helper's diagnostics with that logger silences these records too
+    (documented).
+  - The parity driver's `helper_log` capture and the A3 diagnostics-channel
+    test exclude it.
+  - Before `setup_telemetry()`, a record goes through the stdlib
+    `lastResort` to stderr as plain text, while Go and Node.js write stdout
+    JSON before setup. This known difference is documented in the Python
+    HOW-TO.
 - **Stdout fallback shape is identical**: single-line JSON with `time`
   (RFC 3339, millisecond precision, `Z` for UTC — both languages),
   `level` (`DEBUG/INFO/WARN/ERROR`), `msg`, the logger name (`logger`, Python) and
@@ -903,6 +922,363 @@ Python ext import failures (A13 validation, 2026-10-28): `otel_helper.ext.{aws,r
 
 Node `@staffops/otel-helper-sql` (B10a fix round, 2026-11-03; Node design D-JS14): the same certainty rule, with one difference forced by npm layouts — a library is never reported missing on resolution alone (a nested, non-hoisted copy is invisible to the helper). `sqlInstrumentation()` throws only when a contrib module does not load (`SQL instrumentation not installed: <module> is missing…` when that module itself is not found, else `failed to import the SQL instrumentation: <first line>`), for the library named `true` or when none loads. An unresolved library is still instrumented and reported once: WARN when named `true`, `diag` debug in default mode.
 
+## D15 — Application span failure status (R11, ADR-016, task A45)
+
+Added 2026-11-17. Go, Python and Node.js; .NET follows when its parked
+backlog is picked up (`specs/dotnet-otel-helper/tasks.md` "Promotion
+triggers").
+
+> **Corrected 2026-11-17 (A45 spec review, round 1: `observability` +
+> `spec-refuter`).** Six things in the first draft were wrong or would not
+> work:
+> 1. The Python log channel: a `staffops_otel_helper.*` logger is a
+>    diagnostics logger. It goes to stderr, not to the stdout fallback, and
+>    `exc_info` rewrites the attributes.
+> 2. The Python nesting mechanism: built-in exceptions cannot be weakly
+>    referenced.
+> 3. The Go type name: the SDK `typeStr` gives `*fmt.wrapError` for every
+>    `%w` wrap.
+> 4. The Go nesting rule: `errors.Is` matches sentinels, and comparing panic
+>    values can panic.
+> 5. Cancellation was left open.
+> 6. The type-only `exception` span event duplicated `error.type`.
+>
+> The sections below replace the first draft.
+>
+> **Corrected again 2026-11-17 (review round 2).** Two changes were made
+> because of crashes or silent drops:
+> - Go `==` on a "comparable" struct can panic, so it is now a
+>   recover-guarded compare.
+> - Exempting the Python logger in `is_diagnostic` would let `dictConfig`
+>   disable it, so the exemption is now routing-only.
+>
+> Other changes in this round:
+> - A gRPC `CANCELLED` status is a cancellation in every language.
+> - A wrapped error whose chain holds an already-recorded failure is not
+>   recorded again.
+> - Go nesting is scoped to the trace.
+> - The Python and Node.js override names are namespaced.
+> - A Go panic with an `error` value uses the error rule.
+> - The D6 note was added.
+>
+> **Round 3, 2026-11-17.** Python walks `__cause__` only. Go walks
+> `Unwrap() error` only. Groups are new failures. The chain walk is bounded.
+> The failure logger is re-enabled at emit time when there is no exporter.
+> The gRPC `code()` call is guarded.
+
+### Choice
+
+**API** (same shape in every language; the failure comes first, the span is
+optional):
+
+| | Run work in a span (applies the rule) | Mark a span the app holds |
+|---|---|---|
+| Go | `otelhelper.WithSpan(ctx, tracer, name string, fn func(context.Context) error, opts ...trace.SpanStartOption) error`. `trace.WithNewRoot()` in `opts` makes a root. | `otelhelper.RecordFailure(ctx context.Context, err error)`; the span is `trace.SpanFromContext(ctx)`. |
+| Python | `staffops_otel_helper.traced(name, *, tracer=None, root=False, **span_kwargs)`: a context manager, and a decorator for plain functions and `async def`. | `staffops_otel_helper.record_failure(exc, *, span=None)`; the default span is `trace.get_current_span()`. |
+| Node.js | `withSpan(name, fn, { tracer?, root?, kind?, attributes?, links? })`: sync or thenable `fn`, with the same settlement rules as `startRootSpan`. | `recordFailure(err, span?)`; the default span is `trace.getActiveSpan()`. |
+
+- **Python decorator.** `traced` checks `inspect.iscoroutinefunction` and
+  wraps coroutines with an async wrapper. Generator and async-generator
+  functions raise `TypeError` when decorated, because a span cannot wrap
+  lazy work. State is per call.
+- **Sync result is awaitable or a generator.** This happens with a callable
+  object that has `async def __call__`, or a sync wrapper around a
+  coroutine. The span ends when the call returns, so one diagnostic warning
+  is written once per decorated function, and the value is returned
+  unchanged. Documented.
+- **Python keyword arguments.** `traced(**span_kwargs)` and
+  `start_root_span(**kwargs)` reject `record_exception` and
+  `set_status_on_exception` with `TypeError` (R8: invalid code input fails
+  fast).
+- The names avoid `RecordError`, which is the SDK span method that writes
+  the message ADR-014 forbids.
+
+**Which failures mark the span.** The span function marks a failure when
+the work throws or rejects, when Go `fn` returns a non-nil error, or when Go
+`fn` panics. The record function marks whatever it is given.
+
+- **Cancellation is not a failure.** The span stays Unset, nothing is
+  recorded, and the value propagates unchanged:
+  - Go: every leaf of the error tree is `context.Canceled` or a gRPC status
+    with `codes.Canceled` (`status.Code`). The tree is the `Unwrap() error`
+    and `Unwrap() []error` links. So `errors.Join(ownErr, ctx.Err())` is a
+    failure, not a cancellation.
+  - Python: every `BaseException` that is not an `Exception`
+    (`asyncio.CancelledError`, `KeyboardInterrupt`, `SystemExit`,
+    `GeneratorExit`), and a `grpc.RpcError` whose `code()` is
+    `StatusCode.CANCELLED`. That check runs only when `grpc` is already
+    imported, and the helper never imports it. `code()` is called under
+    `try`: the base `RpcError` has no `code()`, and any error means "not
+    cancelled".
+  - A wrapped cancellation differs by language (documented):
+    - Go applies the leaf rule through `%w`, so
+      `fmt.Errorf("x: %w", ctx.Err())` is a cancellation;
+    - Python `raise X from CancelledError()` and a Node.js
+      `new Error(m, { cause: abortErr })` are failures.
+  - Node.js: `name === 'AbortError'`, or a grpc-js `ServiceError`, meaning
+    numeric `code === 1` (`CANCELLED`) together with a `metadata` property.
+
+  With the gRPC rule, a cancelled call gives the same helper span in all
+  three languages.
+- **Timeouts and deadlines are failures:** Go `context.DeadlineExceeded`,
+  Python `TimeoutError` (`asyncio.TimeoutError` is the same class from 3.11,
+  and a separate `Exception` subclass on 3.10, also a failure), Node.js
+  `TimeoutError` from `AbortSignal.timeout()`.
+- **Go panic.** The span function recovers, marks the span, ends it and
+  re-panics with the same value.
+  - A value that implements `error` uses the error rules below: the type
+    rule, the cancellation rule and `errorText`.
+  - Any other value: the type is `%T` and the message is `fmt.Sprint(value)`.
+  - The stack is taken at the recover, so it includes the panic site. On `runtime.Goexit` (no recover value) the span
+  ends Unset.
+
+**What a marked span gets:**
+- status ERROR with an empty description;
+- `error.type`;
+- **no `exception` event.** semconv `exceptions-spans` is deprecated in
+  favor of exception log records, the event would only repeat `error.type`,
+  and these are new APIs with no compatibility burden. A36 decides whether
+  DB spans keep their type-only event (open in the A36 row).
+
+**`error.type` value.** It is also the `exception.type` of the log record:
+
+| Language | Override (wins) | Default |
+|---|---|---|
+| Go | an `ErrorType() string` method anywhere in the Unwrap chain (the upstream semconv convention) | `semconv.ErrorType(err)` from the pinned `semconv/v1.43.0` (`error_type.go`), called under `recover` because a typed-nil receiver can panic (fallback `%T`). It honors the method and strips a single-`%w` `*fmt.wrapError`; `*fmt.wrapErrors` (several `%w`), `*errors.joinError` and `*errors.errorString` (`errors.New`) stay shared buckets, so the docs recommend `ErrorType()` on application error types. Naming quirk: a pointer type prints the package name (`*fs.PathError`), a value type the full import path. |
+| Python | a non-empty `str` class or instance attribute `__otel_error_type__` (namespaced, so library fields such as `error_type` are never read) | `_db_status._qualified`: `module.qualname`, bare for `builtins` / `__main__`. Contrib instrumentations use `__qualname__` (unqualified) and the SDK keeps `__main__.`. Both differences are documented. |
+| Node.js | a non-empty string under `Symbol.for('otel.error_type')` (own or inherited, e.g. a `static`/prototype getter), so payload fields such as `errorType` are never read | `name` when it is not `"Error"`, else a non-empty `constructor.name`, else `"Error"`. A non-`Error` value gives `"Error"`. |
+
+The defaults are native to each language. Cross-language grouping (one
+query for every language) needs the override; the demo uses it to keep its
+pinned literals (`OrderRejectedError`, …). Every A45 test suite checks that
+the override wins.
+
+**The log record.** The span function or the record function hands the
+helper's log channel exactly one record per failure (nesting below). The
+channel's level and exporter rules then apply (ADR-014 Negative: with logs
+disabled the detail is kept nowhere; the span is still marked).
+
+- **Content:**
+  - severity ERROR;
+  - event name `exception` where the helper's channel exposes one: Node.js
+    `eventName`. Python logging and the Go slog bridge expose none. The Go
+    log API has `Record.SetEventName`, but the record stays on the slog
+    channel so that it shares the stdout fallback and the A36 path.
+    Documented.
+  - body = the message: Go `errorText(err)` (`go/logging.go:418`, safe for a
+    typed nil), Python `str(exc)`, Node.js `err.message`, or the string form
+    of a non-`Error` value;
+  - attributes `exception.type` (= `error.type`), `exception.message` (= the
+    body) and `exception.stacktrace`. Go uses `debug.Stack()` at the marking
+    call, so for a returned error it shows the `WithSpan` frames, not where
+    the error was made (documented). Python uses
+    `traceback.format_exception(exc)`. Node.js uses `err.stack`.
+- **Ids.** The record is emitted in the context of the marked span, even
+  when the record function gets an explicit span that is not current:
+  - Python logs inside `trace.use_span(span, end_on_exit=False, record_exception=False, set_status_on_exception=False)`;
+  - Node.js passes `trace.setSpan(context.active(), span)`.
+
+  It is emitted whether or not the span is recording. An unsampled span
+  still has its ids, and principle 8 says no telemetry is dropped silently.
+- **Channel**, one per language, shared with A36:
+  - Go: the helper's per-record slog handler (`go/logging.go` `switchHandler`).
+    It writes through the OTel bridge while a log pipeline is installed,
+    otherwise to the stdout JSON fallback.
+  - Python: the logger `staffops_otel_helper.failure`, routed as an
+    application record by the routing checks only, through a separate
+    predicate in `ConsoleFallback.handle`, `DiagnosticsToStderr.handle` and
+    `SetupDiagnostics.handle`. It goes to the stdout JSON fallback without an
+    exporter, to OTLP only with one, and is never copied to stderr.
+    `is_diagnostic` still covers it, so `_reenable_diagnostic_loggers`
+    re-enables it after an application `dictConfig` (see the D6 note of
+    2026-11-17). With no exporter that guard is not installed
+    (`logging_setup.py:242-247`), so at emit time the helper also sets
+    `disabled = False` on this logger, which it owns. Test: `dictConfig`
+    with and without an exporter, and the record reaches the app's handler
+    or the fallback. The three attributes go through `extra=`,
+    without `exc_info`. The contrib bridge's `exc_info` path would overwrite
+    `exception.type` with `__name__`, and `exception.message` with
+    `args[0]`.
+  - Node.js: the helper's `write()` path (`logging.ts`), with the three
+    attributes set explicitly. sdk-logs 3.0.0 `_setException` prefers `code`
+    for `exception.type` unless the attribute is already set.
+- **Stdout ids.** Records on the stdout fallback carry `trace_id` and
+  `span_id` (contract A23 amendment of 2026-11-11, parity case
+  `logging.stdout_span_context`). None of the three languages does this yet.
+  A45 implements that part and the case's marker moves from `xfail:A36` to
+  pass; A36 reuses it.
+
+**Nesting.** Identity of the failure object, scoped to the trace, also
+through a chain.
+- A failure that crosses several helper spans gets ERROR and `error.type` on
+  every span it crosses. Only the innermost span that marked it hands over
+  the record.
+- **Wrapped failures.** A wrapped failure is not recorded again when a link
+  of its chain is identical to a failure already recorded in this trace:
+  - Go: `Unwrap() error` only. Multi-error values (`errors.Join`,
+    several `%w`) are new failures, like Python `ExceptionGroup` and
+    Node.js `AggregateError` (round 3). `Unwrap() []error` is used only by
+    the cancellation-leaf rule.
+  - Python: `__cause__` only (explicit `raise … from`), like Go `Unwrap` and
+    Node.js `cause`. The implicit `__context__` is not walked, so an
+    unrelated failure raised while handling a recorded one (a failed
+    rollback) gets its own record (round 3);
+  - Node.js: `cause`.
+
+  So `fmt.Errorf("step: %w", err)` at every layer gives one record. A
+  failure with no recorded link is new and gets its own record. That covers
+  a fresh exception, `ExceptionGroup` and `AggregateError` members that were
+  never recorded, and a Go `errors.Join` of new errors. This is the same
+  rule in every language.
+- **Python:** the helper marks the exception with
+  `object.__setattr__(exc, "_staffops_failure_marked", trace_id)`, as
+  `_db_status.py:57` already marks objects. A later helper span skips the
+  record only when the mark equals its own trace id, so a cached exception
+  shared by several traces is recorded once per trace. If `setattr` raises,
+  the helper records at every level (documented).
+- **Node.js:** a `WeakMap` from the error object to the trace id, with the
+  same skip rule. A thrown primitive cannot be remembered and is recorded at
+  every level (documented).
+- **Go:**
+  - `WithSpan` puts a private, mutex-protected marker in the context it
+    passes to `fn`. `RecordFailure` and an inner `WithSpan` add
+    `(value, traceID)` to the nearest marker.
+  - When `WithSpan` returns a marked value, it copies the entry into its
+    parent's marker.
+  - The outer span skips the record only for an entry of its own trace whose
+    value equals a link of the returned chain.
+  - Equality is a **recover-guarded `==`**: a panic during the compare means
+    "not equal". That covers a struct whose interface field holds a slice,
+    which `reflect.Type.Comparable()` reports as comparable. It never uses
+    `errors.Is`, so sentinels do not match by `Is`.
+  - A Go panic is recorded by the innermost recover, which adds
+    `(panic value, traceID)` the same way. An outer recover skips it when
+    the guarded compare says equal. If the compare panics, the value is
+    recorded again (documented).
+  - The marker is released when its `WithSpan` returns. While it is alive it
+    grows with every failure inner spans mark (documented for long loops).
+  - Errgroup use is safe under `-race`.
+- **Known limits (documented):**
+  - A reused object, such as a Go sentinel returned again later in the same
+    trace after an inner span already recorded it, is recorded once only.
+    Its spans are still marked.
+  - A group of failures (Go `errors.Join`, `ExceptionGroup`,
+    `AggregateError`) gets its own record even when its members were already
+    recorded: one extra record, never a lost one.
+  - The chain walk tracks visited links by identity and stops at 256 levels
+    (the A29 budget). A Go `Unwrap()` that panics ends the walk (recover).
+    Tests: a cyclic `cause` and a cyclic `__cause__`.
+
+**Root-span functions.** Python `start_root_span` and Node.js `startRootSpan`
+apply this rule: no message, no stack, no description and no event on the
+span, plus one record. This is a behavior change, so it goes in the
+CHANGELOG (Python, Node.js). Go `StartRootSpan` stays a plain span starter;
+callers use `WithSpan` with `trace.WithNewRoot()`.
+
+**Documented behaviors** (HOW-TO per language):
+- **Counting.** An error rate per span name counts every layer a failure
+  crosses. To count failures, use SERVER/CONSUMER or root spans, or the log
+  records.
+- **Handled failures.** A failure the outer code handles leaves the inner
+  span ERROR and the outer span Unset, as semconv recording-errors says.
+- **Ok.** If the application set Ok earlier, the API ignores the ERROR (Ok is
+  final), but `error.type` and the record are still added.
+- **Plain SDK spans are outside the rule.** A Python `start_as_current_span`
+  inside a helper span still writes the message (SDK `use_span`), and the
+  helper's nesting does not see it.
+- **HTTP mapping.** A thrown `HttpError(404)` makes the helper span ERROR
+  while the SERVER span stays Unset (semconv: 4xx is Unset on SERVER). A 500
+  returned without throwing leaves the helper span Unset.
+
+**Tests per language:**
+- failure → ERROR, empty description, `error.type`, no event, one record
+  with the span's ids and the three attributes (also on the stdout
+  fallback), failure propagated by identity;
+- success → Unset, no record; never Ok;
+- override wins;
+- cancellation → Unset and no record; timeout → ERROR;
+- nested (2 spans) → 1 record, both spans ERROR. Python with a built-in
+  `ValueError` and a dataclass exception;
+- wrapped through 3 layers (`%w` / `raise from` / `{ cause }`) → 1 record;
+  a fresh failure → its own record; Python: a failure raised inside the
+  `except` block of a recorded one (implicit `__context__`) → its own record;
+- nested root span (new trace) → 1 record per trace;
+- gRPC `CANCELLED` → Unset and no record; Go `errors.Join(own, ctx.Err())`
+  → ERROR;
+- override under the namespaced key wins, and a plain `error_type` /
+  `errorType` field is ignored;
+- explicit span that is not current → that span's ids; unsampled parent →
+  record emitted;
+- span marking without a log pipeline;
+- Go:
+  - a panic with a slice value is re-raised by identity, with 1 record;
+  - a struct-with-slice-in-interface error nested 2 deep gives no crash;
+  - a panic with an `error` value uses the override;
+  - a typed-nil `ErrorType()` falls back to `%T`;
+  - `Goexit` → Unset; errgroup under `-race`;
+- Python:
+  - an `async def` function decorated;
+  - decorating a generator function → `TypeError`;
+  - a sync function returning an awaitable → one warning;
+  - forbidden kwargs → `TypeError`;
+  - after `logging.config.dictConfig({"version": 1})`, a failure record is
+    still exported;
+- Python and Node.js: the root-span functions follow the rule.
+
+No parity case beyond `logging.stdout_span_context`: the fixture has no kind
+for application spans (none invented here).
+
+### Justification
+- One rule, written once per language and used by every application, gives
+  the same span for the same failure (ADR-016 Rationale).
+- ERROR without a description is a **deliberate deviation** from semconv
+  recording-errors ("description SHOULD be the exception message"), under
+  that page's sensitive-data carve-out and ADR-014.
+- Cancellation as Unset follows semconv: HTTP client spans say "the
+  cancellation SHOULD NOT be treated as an error", gRPC SERVER spans leave
+  `CANCELLED` out of the error codes, and the Python API's `use_span` already
+  catches only `Exception`. The trade-off: the instrumentation's gRPC CLIENT
+  span still marks `CANCELLED`, while the helper span above it stays Unset.
+- Severity ERROR for every record is a deliberate deviation from semconv
+  `exceptions-logs` (WARN for exceptions the caller is expected to handle):
+  the helper cannot know whether a caller handles a propagated failure.
+
+### Trade-offs
+- The defaults differ by language; cross-language grouping needs the
+  override.
+- A wrapped failure whose chain holds no recorded link gets its own record.
+  A group of failures is recorded again even when its members were recorded.
+- Go records a returned error's stack at the marking point, not where the
+  error was made.
+- One more ERROR record in applications that already log the same failure.
+
+### When it would be wrong
+- Applications mostly need the origin stack of Go errors. Then a stack-
+  carrying error type would be needed, and that is out of scope.
+- The `exception` event turns out to be read by a backend feature the
+  platform uses. Then restore a type-only event (additive).
+
+### Reversal action
+- If the owner reverses ADR-016 decision 4 (handled business errors count
+  by default), add a classification callback to the span function.
+- If the record is noisy for applications that already log, add an option
+  to skip the record; span marking stays.
+- If the event is needed, restore it with only `exception.type`.
+
+All of these are additive in the next minor.
+
+### Alternatives
+- **Mark only in a SpanProcessor** (no API): rejected. A processor cannot
+  see the exception, and status cannot change in `OnEnd`.
+- **Record at every level:** rejected. semconv says an exception "SHOULD be
+  recorded (or logged) once".
+- **Identity of the returned object only, no chain walk:** rejected in
+  round 2. Go's `%w` at every layer would give one record per layer, against
+  semconv's "recorded (or logged) once".
+- **A fully qualified type everywhere:** rejected. Go has no stable
+  qualified name, and contrib instrumentations do not use one.
+
+
 ---
 
 ## D11 — Collector / platform prerequisites (reference checklist)
@@ -932,3 +1308,9 @@ Owned outside this repo; each item blocks the 0.3.0 **rollout** (not the rc).
    (e.g. `process.pid`); keep `service.instance.id` (D4).
 7. Collector `filterprocessor` dropping health spans as defense in depth (D5).
 8. Consumers using portless gRPC URLs: add an explicit `:4317` (D1.b warning).
+9. Span metrics (added 2026-11-17, A45 review): the Collector `spanmetrics`
+   connector lists `error.type` as a dimension (not a default one) and sets a
+   non-zero `aggregation_cardinality_limit` (default 0 = unlimited; overflow
+   goes to `otel.metric.overflow="true"`). Calculate span metrics before any
+   tail sampling. k8s01 has the dimension since homelab-gitops 696fb84; the
+   cardinality limit is unmeasured there.

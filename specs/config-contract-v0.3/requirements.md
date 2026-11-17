@@ -276,6 +276,52 @@ old, silently.
   metrics are language-specific namespaces (`go.*` vs `process.runtime.cpython.*`)
   and out of parity scope.
 
+### R11 — Application spans: Error on a failure, Unset on success, never Ok
+(added 2026-11-17, [ADR-016](../decisions/ADR-016-application-span-failure-status.md), task A45;
+Go, Python and Node.js; .NET parked)
+
+Evidence: the helpers' root-span functions disagree today. Python
+`start_root_span` and Node.js `startRootSpan` set ERROR with the exception
+message and stack on the span (ADR-014 violation); Go `StartRootSpan` and
+.NET `StartRootActivity` set nothing (ADR-016 Context table).
+
+> *Corrected 2026-11-17 (A45 spec review round 1): the first draft kept a
+> type-only `exception` event, required the record "exactly once" while level
+> rules could suppress it, made every root-span function follow the rule
+> (Go's stays a plain starter), and left cancellation open.*
+
+- WHEN work run through the helper's span function (design D15) throws,
+  rejects, returns a non-nil Go `error` or panics, and the failure is not a
+  cancellation (D15) THEN the span SHALL end with status ERROR without
+  description and `error.type` = the D15 type value (override first), with
+  no `exception` event; and the failure SHALL be propagated unchanged (same
+  object rethrown, same `error` returned, panic re-raised with the same
+  value).
+- WHEN the failure is a cancellation (D15: Go `context.Canceled` or gRPC
+  `CANCELLED` at every leaf, Python `BaseException` that is not `Exception`
+  or gRPC `CANCELLED`, Node.js `AbortError` or grpc-js `CANCELLED`) THEN the
+  span SHALL stay Unset, no record SHALL be emitted, and the value SHALL
+  propagate unchanged. Timeouts and deadlines are failures.
+- WHEN that work succeeds THEN the span status SHALL stay Unset. The helper
+  SHALL NOT set Ok on any span.
+- WHEN the helper marks a failure (span function or record function, D15)
+  THEN it SHALL hand exactly one ERROR record per failure object (or chain
+  holding an already-recorded object, D15 "Nesting") and trace to
+  its log channel (D15 "Channel"), in the marked span's context (same
+  `trace_id` and `span_id`, also when that span is not current or not
+  recording), with the message as body and `exception.type` (= `error.type`),
+  `exception.message`, `exception.stacktrace`; the channel's level and
+  exporter rules then apply (ADR-014). Records on the stdout fallback SHALL
+  carry `trace_id` and `span_id` (parity case `logging.stdout_span_context`).
+- Span marking SHALL NOT depend on the log pipeline (marked with logs
+  disabled too).
+- Python `start_root_span` and Node.js `startRootSpan` SHALL follow the same
+  rule; Go `StartRootSpan` is unchanged (use `WithSpan` with
+  `trace.WithNewRoot()`).
+- WHEN the application answers a business outcome normally (no failure
+  reaches the helper) THEN the span SHALL stay Unset; the application marks
+  it explicitly with the record function when it wants an error.
+
 ## Go-only (G)
 
 - **G1** Evidence: failed Setup → `global TP sdk=true span.IsRecording=true`,
