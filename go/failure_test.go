@@ -150,8 +150,59 @@ func TestWithSpan_FailureMarksSpanAndRecordsOnce(t *testing.T) {
 	if recs[0]["logger"] != "otel-helper" {
 		t.Errorf("stdout failure record logger = %v, want otel-helper", recs[0]["logger"])
 	}
-	if !strings.Contains(recs[0]["exception.stacktrace"].(string), "WithSpan") {
-		t.Error("the stack is taken at the marking point and shows the WithSpan frames")
+	st := recs[0]["exception.stacktrace"].(string)
+	if !strings.HasPrefix(st, "goroutine ") || !strings.HasPrefix(stackFrame(st, 0), helperFramePrefix+"TestWithSpan_FailureMarksSpanAndRecordsOnce(") {
+		t.Errorf("the first frame is the caller of WithSpan (helper frames skipped), got:\n%s", st)
+	}
+	if strings.Contains(st, "runtime/debug.Stack") || strings.Contains(st, "emitFailureRecord") {
+		t.Errorf("helper frames left in the stack:\n%s", st)
+	}
+}
+
+// stackFrame returns the function line of frame n (0-based) of a debug.Stack
+// text: line 1 + 2n.
+func stackFrame(st string, n int) string {
+	lines := strings.Split(st, "\n")
+	if 1+2*n >= len(lines) {
+		return ""
+	}
+	return lines[1+2*n]
+}
+
+func TestFailureStack_SkipsOnlyHelperFrames(t *testing.T) {
+	for line, want := range map[string]bool{
+		"runtime/debug.Stack()":                                     true,
+		helperFramePrefix + "emitFailureRecord({0x1, 0x2}, ...)":    true,
+		helperFramePrefix + "applyFailure(...)":                     true,
+		helperFramePrefix + "failureStack()":                        true,
+		helperFramePrefix + "failSpan({0x1, 0x2}, {0x3, 0x4}, ...)": true,
+		helperFramePrefix + "RecordFailure({0x1, 0x2}, {0x3, 0x4})": true,
+		helperFramePrefix + "WithSpan({0x1, 0x2}, ...)":             true,
+		helperFramePrefix + "WithSpan.func1()":                      true,
+		helperFramePrefix + "WithSpanner()":                         false,
+		helperFramePrefix + "TestWithSpan(0xc000)":                  false,
+		"github.com/staffops/otel-libs/go/ext/otelredis.WithSpan()": false,
+		"main.WithSpan()":   false,
+		"panic({0x1, 0x2})": false,
+	} {
+		if got := isHelperFrame(line); got != want {
+			t.Errorf("isHelperFrame(%q) = %v, want %v", line, got, want)
+		}
+	}
+}
+
+func TestRecordFailure_StackStartsAtCaller(t *testing.T) {
+	env := newFailureEnv(t)
+	ctx, span := env.tracer.Start(context.Background(), "handled")
+	RecordFailure(ctx, &plainErr{"rejected"})
+	span.End()
+	recs := env.records(t)
+	if len(recs) != 1 {
+		t.Fatalf("want 1 record, got %d", len(recs))
+	}
+	st := recs[0]["exception.stacktrace"].(string)
+	if !strings.HasPrefix(stackFrame(st, 0), helperFramePrefix+"TestRecordFailure_StackStartsAtCaller(") {
+		t.Errorf("the first frame is the caller of RecordFailure, got:\n%s", st)
 	}
 }
 
@@ -503,8 +554,9 @@ func TestWithSpan_PanicSliceReRaisedByIdentity(t *testing.T) {
 		t.Fatalf("want 1 record, got %d", len(recs))
 	}
 	assertRecordOf(t, recs[0], s, "[]int", "[1 2 3]")
-	if !strings.Contains(recs[0]["exception.stacktrace"].(string), "TestWithSpan_PanicSliceReRaisedByIdentity") {
-		t.Error("the stack is taken at the recover and includes the panic site")
+	st := recs[0]["exception.stacktrace"].(string)
+	if !strings.HasPrefix(stackFrame(st, 0), "panic(") || !strings.HasPrefix(stackFrame(st, 1), helperFramePrefix+"TestWithSpan_PanicSliceReRaisedByIdentity.") {
+		t.Errorf("the stack starts at the runtime panic frame, then the panic site, got:\n%s", st)
 	}
 }
 
@@ -811,4 +863,170 @@ func TestWithSpan_StdoutWriteErrorReportedOnce(t *testing.T) {
 		t.Errorf("the diag line must not carry the record text: %q", out)
 	}
 	env.records(t)
+}
+
+// A guard against an accidental rename; a fork with another module path
+// changes this literal (the code reads the prefix at runtime).
+func TestFailureStack_PrefixIsThisPackage(t *testing.T) {
+	if helperFramePrefix != "github.com/staffops/otel-libs/go." {
+		t.Errorf("helperFramePrefix = %q", helperFramePrefix)
+	}
+}
+
+// frame builds the two debug.Stack lines of one frame.
+func frame(fn string) string { return fn + "\n\t/src/x.go:1 +0x1" }
+
+func TestTrimHelperFrames(t *testing.T) {
+	const hdr = "goroutine 7 [running]:"
+	p := helperFramePrefix
+	join := func(parts ...string) string { return strings.Join(parts, "\n") }
+	for _, tc := range []struct{ name, in, want string }{
+		{"no helper frames", join(hdr, frame("main.a()"), frame("main.main()")), join(hdr, frame("main.a()"), frame("main.main()"))},
+		{"header only", hdr + "\n", hdr + "\n"},
+		{"leading run", join(hdr, frame("runtime/debug.Stack()"), frame(p+"failureStack()"), frame(p+"emitFailureRecord(...)"), frame(p+"applyFailure(...)"), frame(p+"failSpan(...)"), frame(p+"WithSpan(...)"), frame("main.a()")),
+			join(hdr, frame("main.a()"))},
+		{"later WithSpan kept", join(hdr, frame("runtime/debug.Stack()"), frame(p+"RecordFailure(...)"), frame("main.fn()"), frame(p+"WithSpan(...)"), frame("main.a()")),
+			join(hdr, frame("main.fn()"), frame(p+"WithSpan(...)"), frame("main.a()"))},
+		{"function line without file line stops", join(hdr, frame("runtime/debug.Stack()"), p+"applyFailure(...)", "main.a()"),
+			join(hdr, p+"applyFailure(...)", "main.a()")},
+		{"nested panic: inner re-panics dropped", join(hdr, frame("runtime/debug.Stack()"), frame(p+"failSpan(...)"), frame(p+"WithSpan.func1()"),
+			frame("panic({0x1, 0x2})"), frame(p+"WithSpan.func1()"), frame("panic({0x1, 0x2})"), frame(p+"WithSpan.func1()"), frame("panic({0x1, 0x2})"), frame("main.site()"), frame(p+"WithSpan(...)"), "created by main.main in goroutine 1", "\t/src/x.go:2 +0x2"),
+			join(hdr, frame("panic({0x1, 0x2})"), frame("main.site()"), frame(p+"WithSpan(...)"), "created by main.main in goroutine 1", "\t/src/x.go:2 +0x2")},
+	} {
+		if got := trimHelperFrames(tc.in); got != tc.want {
+			t.Errorf("%s:\ngot:\n%s\nwant:\n%s", tc.name, got, tc.want)
+		}
+	}
+}
+
+func TestTrimHelperFrames_OnlyHelperFramesUnchanged(t *testing.T) {
+	in := strings.Join([]string{"goroutine 1 [running]:", frame("runtime/debug.Stack()"), frame(helperFramePrefix + "failureStack()"), ""}, "\n")
+	if got := trimHelperFrames(in); got != in {
+		t.Errorf("got %q, want the input", got)
+	}
+}
+
+// The real shape of a deep debug.Stack: 50 frames, the runtime's
+// "...N frames elided..." line, 50 frames, the created-by pair; long paths
+// push it over the cap. The cut keeps the innermost and the outermost frames.
+func TestTrimHelperFrames_CapsInTheMiddle(t *testing.T) {
+	long := strings.Repeat("d/", 100)
+	fr := func(n int) string { return fmt.Sprintf("main.recurse%d(...)\n\t/%sx.go:%d +0x1", n, long, n) }
+	parts := []string{"goroutine 1 [running]:", frame("runtime/debug.Stack()"), frame(helperFramePrefix + "RecordFailure(...)")}
+	for n := 0; n < 50; n++ {
+		parts = append(parts, fr(n))
+	}
+	parts = append(parts, "...4904 frames elided...")
+	for n := 4954; n < 5004; n++ {
+		parts = append(parts, fr(n))
+	}
+	parts = append(parts, frame("main.main()"), "created by main.start in goroutine 1", "\t/src/x.go:9 +0x1")
+	in := strings.Join(parts, "\n")
+	if len(in) <= maxFailureStackBytes {
+		t.Fatalf("test input %d bytes does not exceed the cap", len(in))
+	}
+	got := trimHelperFrames(in)
+	if len(got) > maxFailureStackBytes {
+		t.Fatalf("len %d > cap %d", len(got), maxFailureStackBytes)
+	}
+	lines := strings.Split(got, "\n")
+	if lines[0] != "goroutine 1 [running]:" || lines[1] != "main.recurse0(...)" {
+		t.Errorf("want the header, then the innermost frame; got %q", lines[:2])
+	}
+	if !strings.HasSuffix(got, "main.main()\n\t/src/x.go:1 +0x1\ncreated by main.start in goroutine 1\n\t/src/x.go:9 +0x1") {
+		t.Errorf("the outermost frames and the created-by trailer must stay; tail %q", lines[len(lines)-4:])
+	}
+	marker := 0
+	for j, l := range lines {
+		if strings.HasSuffix(l, "frames elided by otel-helper...") {
+			marker++
+			if !strings.HasPrefix(lines[j+1], "main.") && !strings.HasPrefix(lines[j+1], "...") {
+				t.Errorf("the marker must be followed by a whole frame, got %q", lines[j+1])
+			}
+		} else if j > 0 && !strings.HasPrefix(l, "\t") && !strings.HasPrefix(l, "main.") && !strings.HasPrefix(l, "created by") && l != "...4904 frames elided..." {
+			t.Errorf("unexpected line %q", l)
+		}
+	}
+	if marker != 1 {
+		t.Errorf("want one otel-helper marker, got %d", marker)
+	}
+	// The count = the frames dropped by the helper + the runtime's 4904 when
+	// its line falls in the cut.
+	kept := strings.Count(got, "main.recurse")
+	wantElided := 100 - kept
+	if !strings.Contains(got, "...4904 frames elided...") {
+		wantElided += 4904
+	}
+	if !strings.Contains(got, fmt.Sprintf("...%d frames elided by otel-helper...", wantElided)) {
+		t.Errorf("want %d frames elided in the marker, got:\n%s", wantElided, got)
+	}
+}
+
+func TestTrimHelperFrames_OneFrameElidedIsSingular(t *testing.T) {
+	big := "main.big(" + strings.Repeat("0x1, ", 3000) + ")\n\t/src/x.go:1 +0x1"
+	got := trimHelperFrames(strings.Join([]string{"goroutine 1 [running]:", frame("runtime/debug.Stack()"), big}, "\n"))
+	if !strings.Contains(got, "...1 frame elided by otel-helper...") {
+		t.Errorf("got %q", got)
+	}
+}
+
+func TestTrimHelperFrames_ShortStackKeepsRuntimeMarker(t *testing.T) {
+	in := strings.Join([]string{"goroutine 1 [running]:", frame("runtime/debug.Stack()"), frame("main.a()"), "...10 frames elided...", frame("main.main()")}, "\n")
+	want := strings.Join([]string{"goroutine 1 [running]:", frame("main.a()"), "...10 frames elided...", frame("main.main()")}, "\n")
+	if got := trimHelperFrames(in); got != want {
+		t.Errorf("got:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+// Every layer of a panic crossing nested WithSpan starts at the original
+// panic frame, then the panic site (the inner re-panics are dropped).
+func TestWithSpan_NestedPanicStacksStartAtSite(t *testing.T) {
+	env := newFailureEnv(t)
+	_ = recoverValue(func() {
+		_ = WithSpan(context.Background(), env.tracer, "outer", func(ctx context.Context) error {
+			return WithSpan(ctx, env.tracer, "inner", func(context.Context) error { panic(errors.New("boom")) })
+		})
+	})
+	recs := env.records(t)
+	if len(recs) != 2 {
+		t.Fatalf("want 2 records, got %d", len(recs))
+	}
+	for i, r := range recs {
+		st := r["exception.stacktrace"].(string)
+		if !strings.HasPrefix(stackFrame(st, 0), "panic(") || !strings.HasPrefix(stackFrame(st, 1), helperFramePrefix+"TestWithSpan_NestedPanicStacksStartAtSite.") {
+			t.Errorf("record %d: want panic(...) then the panic site, got:\n%s", i, st)
+		}
+	}
+}
+
+func TestWithSpan_ErrorPanicStackStartsAtSite(t *testing.T) {
+	env := newFailureEnv(t)
+	_ = recoverValue(func() {
+		_ = WithSpan(context.Background(), env.tracer, "p", func(context.Context) error { panic(errors.New("boom")) })
+	})
+	recs := env.records(t)
+	if len(recs) != 1 {
+		t.Fatalf("want 1 record, got %d", len(recs))
+	}
+	st := recs[0]["exception.stacktrace"].(string)
+	if !strings.HasPrefix(stackFrame(st, 0), "panic(") || !strings.HasPrefix(stackFrame(st, 1), helperFramePrefix+"TestWithSpan_ErrorPanicStackStartsAtSite.") {
+		t.Errorf("got:\n%s", st)
+	}
+}
+
+func TestRecordFailure_InsideWithSpanStartsAtCaller(t *testing.T) {
+	env := newFailureEnv(t)
+	_ = WithSpan(context.Background(), env.tracer, "op", func(ctx context.Context) error {
+		RecordFailure(ctx, &plainErr{"handled"})
+		return nil
+	})
+	recs := env.records(t)
+	if len(recs) != 1 {
+		t.Fatalf("want 1 record, got %d", len(recs))
+	}
+	st := recs[0]["exception.stacktrace"].(string)
+	if !strings.HasPrefix(stackFrame(st, 0), helperFramePrefix+"TestRecordFailure_InsideWithSpanStartsAtCaller.") ||
+		!strings.HasPrefix(stackFrame(st, 1), helperFramePrefix+"WithSpan(") {
+		t.Errorf("want the fn closure, then the enclosing WithSpan kept, got:\n%s", st)
+	}
 }

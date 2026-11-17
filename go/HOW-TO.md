@@ -256,8 +256,23 @@ cannot finish (a cycle, the bound, a panicking `Unwrap`) is a failure with
 **The record.** Severity ERROR, body = the error text,
 `exception.type` (= `error.type`), `exception.message` (= the body) and
 `exception.stacktrace` = `debug.Stack()` at the marking point, taken only when
-the record is enabled. For a returned error that stack shows the `WithSpan`
-frames, not where the error was made (Go errors carry no stack). The record
+the record is enabled, with the helper's own leading frames removed (the
+`goroutine N [running]:` header stays). For a returned error the first frame
+is the caller of `WithSpan` or `RecordFailure`, not where the error was made
+(Go errors carry no stack). For a panic the stack starts at the runtime
+`panic(...)` frame, followed by the panic site; with nested `WithSpan` every
+layer's record looks like that (the inner layers' re-panic frames are
+skipped). Enclosing `WithSpan` frames below the application's frames stay.
+`debug.Stack` itself keeps at most 100 frames (the innermost 50, a
+`...N frames elided...` line, the outermost 50). Long file paths can still
+make that tens of KiB, so above 12 KiB the helper cuts the middle: it keeps
+the innermost and the outermost frames, with one
+`...N frames elided by otel-helper...` line between them (N includes the
+frames of a runtime `...N frames elided...` line that falls in the cut). 12 KiB keeps the
+record under Loki's 64 KiB structured-metadata limit, and keeps the
+JSON-escaped stdout line under containerd's 16 KiB line split when the error
+message is short (the line carries the message twice, as `msg` and
+`exception.message`, and the message is not capped). The record
 goes through the helper's slog handler (`NewSlogHandler`): the OTel bridge
 while `Setup` has a logs exporter (scope `otel-helper`), the stdout JSON
 fallback otherwise (also before `Setup`), where the line carries

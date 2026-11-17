@@ -491,7 +491,9 @@ hand-written `Failure.Record` (its library has no A45 API, parked) and the
   pinned literal. The Node.js record no longer carries `demo.scenario`; the Go
   stack is `debug.Stack()` at `WithSpan`'s marking (for a returned error it
   shows the `WithSpan` frames, D15; for a panic it is taken at the recover and
-  shows the panic site). The .NET `Failure.Record` calls of the owning spans
+  shows the panic site). *Updated 2026-11-17 (A45 follow-up):* the helper's
+  leading frames are now skipped, so the first frame is the caller of
+  `WithSpan` (D15). The .NET `Failure.Record` calls of the owning spans
   no longer pass `demo.scenario` / `order.id`, so in all four languages the
   record carries only the `exception.*` attributes.*
 - *Node.js: `api/app.js` and `backend/app.js` stop at load when the helper

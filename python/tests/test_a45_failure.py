@@ -779,3 +779,78 @@ class TestRoutingEndToEnd:
             fail()
         """)
         assert "FAIL-DETAIL" in proc.stderr and "FAIL-DETAIL" not in proc.stdout
+
+
+def _first_frame(stacktrace: str) -> str:
+    """The first `File ...` line of a formatted traceback."""
+    return next(line for line in stacktrace.splitlines() if line.lstrip().startswith("File "))
+
+
+class TestStacktraceSkipsHelperFrames:
+    """exception.stacktrace starts at the application's frame (no `_span_scope` yield, no wrapper)."""
+
+    def _raise_in_with(self, tracer):
+        with traced("w", tracer=tracer):
+            raise OrderError("in with")
+
+    def test_with_block(self, spans, records):
+        with pytest.raises(OrderError):
+            self._raise_in_with(spans[0])
+        st = getattr(records.records[0][0], "exception.stacktrace")
+        assert _first_frame(st).endswith("in _raise_in_with")
+        assert "tracing.py" not in st and "_span_scope" not in st
+
+    def test_decorator(self, spans, records):
+        @traced("d", tracer=spans[0])
+        def decorated():
+            raise OrderError("in decorated")
+
+        with pytest.raises(OrderError):
+            decorated()
+        st = getattr(records.records[0][0], "exception.stacktrace")
+        assert _first_frame(st).endswith("in decorated")
+        assert "tracing.py" not in st
+
+    def test_async_decorator(self, spans, records):
+        @traced("a", tracer=spans[0])
+        async def work():
+            raise OrderError("in async")
+
+        with pytest.raises(OrderError):
+            asyncio.run(work())
+        st = getattr(records.records[0][0], "exception.stacktrace")
+        assert _first_frame(st).endswith("in work")
+        assert "tracing.py" not in st
+
+    def test_exception_traceback_untouched(self, spans, records):
+        with pytest.raises(OrderError) as info:
+            self._raise_in_with(spans[0])
+        assert info.value.__traceback__ is not None
+        names = []
+        tb = info.value.__traceback__
+        while tb is not None:
+            names.append(tb.tb_frame.f_code.co_name)
+            tb = tb.tb_next
+        # The propagating exception keeps its own traceback (contextlib restores it after the throw).
+        assert names == ["test_exception_traceback_untouched", "_raise_in_with"]
+
+    def test_no_helper_frames_unchanged(self):
+        try:
+            raise OrderError("x")
+        except OrderError as exc:
+            tb = exc.__traceback__
+        assert _failure._skip_helper_frames(None) is None
+        assert _failure._skip_helper_frames(tb) is tb
+
+    def test_only_helper_frames_kept(self):
+        helper_globals = {"__name__": "staffops_otel_helper._probe", "OrderError": OrderError}
+        exec(compile("def boom():\n    raise OrderError('x')\n", "probe.py", "exec"), helper_globals)
+        try:
+            helper_globals["boom"]()
+        except OrderError as exc:
+            tb = exc.__traceback__.tb_next  # skip this test's frame: only the helper-module frame remains
+        assert _failure._is_helper_frame(tb)
+        assert _failure._skip_helper_frames(tb) is tb
+
+    def test_package_name(self):
+        assert _failure._HELPER_PACKAGE == "staffops_otel_helper"

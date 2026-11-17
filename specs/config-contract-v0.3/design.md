@@ -1086,8 +1086,35 @@ disabled the detail is kept nowhere; the span is still marked).
   - attributes `exception.type` (= `error.type`), `exception.message` (= the
     body) and `exception.stacktrace`. Go uses `debug.Stack()` at the marking
     call, so for a returned error it shows the `WithSpan` frames, not where
-    the error was made (documented). Python uses
+    the error was made (documented). *Corrected 2026-11-17 (A45 follow-up,
+    DE12a scorecard, review round 1):* Go keeps the `runtime.Stack` format
+    (the semconv Go representation) with the leading helper frames removed,
+    as `cloud.google.com/go/errorreporting` `chopStack` does: the marking
+    path (`runtime/debug.Stack`, `failureStack`, `emitFailureRecord`,
+    `applyFailure`, `failSpan`, `RecordFailure`, `WithSpan` and its
+    closures), then each leading `panic(...)` + `WithSpan` closure pair (an
+    inner layer's re-panic). The first frame is the caller of `WithSpan` or
+    `RecordFailure`, or for a panic the original `panic(...)` frame followed
+    by the panic site, in every layer. The `goroutine N [running]:` header
+    stays. `debug.Stack` keeps at most 100 frames, but long paths can make
+    it tens of KiB: above 12 KiB it is cut in the middle (the innermost and
+    outermost frames, one `...N frames elided by otel-helper...` line), so
+    the record stays under Loki's 64 KiB structured metadata and the stdout
+    line under containerd's 16 KiB split (review round 2). A text of helper
+    frames only is kept. The package prefix is read from the running code.
+    Python uses
     `traceback.format_exception(exc)`. Node.js uses `err.stack`.
+    *Corrected 2026-11-17 (same round):* Python formats the traceback without
+    its leading frames from the helper's own modules, matched by module name
+    (the `_span_scope` `yield`
+    the exception is thrown into and a decorator wrapper), so it runs from the
+    frame of the `with traced(...)` block or the decorated function to the
+    raise site; the exception's own `__traceback__` is not changed. Node.js
+    `err.stack` is cut at V8's `Error.stackTraceLimit` (10). An error made
+    synchronously in a `withSpan` callback spends 8 of them on helper and
+    OpenTelemetry frames; an error made after an `await` keeps only the
+    callers that `await` the result (as `async` frames). Documented; the helper does not change the limit (a process-wide
+    setting).
 - **Ids.** The record is emitted in the context of the marked span, even
   when the record function gets an explicit span that is not current:
   - Python logs inside `trace.use_span(span, end_on_exit=False, record_exception=False, set_status_on_exception=False)`;

@@ -241,8 +241,13 @@ the cancellation rule; a nil error does nothing.
   logs exporter, stdout JSON otherwise, with `"logger":"otel-helper"` on
   stdout — the bridge scope name): severity ERROR, body = the error text
   (`<nil>` for a typed nil), `exception.type`, `exception.message`,
-  `exception.stacktrace` (`debug.Stack()` where the helper marks the span; for
-  a panic, at the recover, so it includes the panic site). It is emitted in
+  `exception.stacktrace` (`debug.Stack()` where the helper marks the span,
+  without the helper's own leading frames: the first frame is the caller of
+  `WithSpan` or `RecordFailure`; for a panic, the stack is taken at the
+  recover and starts at the runtime `panic(...)` frame, then the panic site,
+  in every layer of nested `WithSpan`; `debug.Stack` keeps at most 100 frames,
+  and above 12 KiB the helper cuts the middle, with
+  `...N frames elided by otel-helper...`). It is emitted in
   the span's context also when the span is not sampled. With logs disabled
   the span is still marked. A stdout write error is reported once on stderr.
 - **One record per span.** A failure that crosses several `WithSpan` calls

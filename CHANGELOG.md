@@ -4023,6 +4023,33 @@ Unsupported instrumentation versions, task A10 (P18):
     behavior and limit. These include counting failures across layers,
     handled failures, Ok set earlier, reused objects, groups, Go type-name
     buckets, and Go stacks taken at the marking point.
+  - Go and Python: the record's `exception.stacktrace` starts at the
+    application's frame (2026-11-17, from the demo scorecard after DE12a).
+    - Go: the leading helper frames are skipped (`runtime/debug.Stack` and
+      the marking path; before, 4 for `RecordFailure` and 5 for `WithSpan`).
+      For a returned error the first frame is the caller of `WithSpan` or
+      `RecordFailure`. For a panic the stack starts at the runtime
+      `panic(...)` frame, then the panic site, in every layer of nested
+      `WithSpan` (the inner layers' re-panic frames are skipped too). The
+      `goroutine N [running]:` header stays. `debug.Stack` already keeps at
+      most 100 frames, but long paths can still make it large: above 12 KiB
+      the helper cuts it in the middle, keeping the innermost and outermost
+      frames around one `...N frames elided by otel-helper...` line. This
+      keeps the record under Loki's 64 KiB structured-metadata limit, and
+      keeps the stdout line under containerd's 16 KiB line split.
+    - Python: the traceback no longer starts with the helper's scope frame
+      (and, for a decorated function, its wrapper). It runs from the frame
+      that holds the `with traced(...)` block, or the decorated function, to
+      the raise site. The frames are matched by module name. The propagating
+      exception's own traceback is not changed.
+  - Node.js docs: `exception.stacktrace` is `err.stack`, which V8 cuts at
+    `Error.stackTraceLimit` (10 frames by default). Measured: an error created
+    synchronously in a `withSpan` callback spends 8 of the 10 on the helper
+    and OpenTelemetry frames, leaving the error site and its direct caller.
+    An error created after an `await` holds the error site and the callers
+    that `await` the `withSpan` result (as `async` frames); a caller that
+    chains `.then()` without `await` is missing. Raise the limit with
+    `NODE_OPTIONS=--stack-trace-limit=50` (README and HOW-TO §16).
 
 - **Node.js: a process that ends on its own now flushes its telemetry (Phase
   B, B12 fix round, 2026-11-03; not released).** The first successful

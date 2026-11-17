@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"runtime"
 	"runtime/debug"
+	"strings"
 	"time"
 
 	"go.opentelemetry.io/otel/codes"
@@ -104,7 +106,9 @@ func WithSpan(ctx context.Context, tracer trace.Tracer, name string, fn func(con
 // not the span is recording. The record goes through the helper's slog
 // handler (the OTel bridge while a logs exporter is installed, the stdout
 // JSON fallback otherwise) with err's text as body and exception.type,
-// exception.message and exception.stacktrace (debug.Stack() at this call).
+// exception.message and exception.stacktrace (debug.Stack() at this call,
+// without the helper's leading frames: the first frame is the caller; cut
+// in the middle above 12 KiB).
 //
 // Use it for failures the application handles instead of returning them
 // (for example a rejected order answered normally). It marks whatever it is
@@ -168,11 +172,157 @@ func emitFailureRecord(ctx context.Context, f failure) {
 	r.AddAttrs(
 		slog.String(attrExceptionType, f.typ),
 		slog.String(attrExceptionMessage, f.message),
-		slog.String(attrExceptionStacktrace, string(debug.Stack())),
+		slog.String(attrExceptionStacktrace, failureStack()),
 	)
 	if err := h.Handle(ctx, r); err != nil {
 		warnOncePerProcess("failure-record-write", "otelhelper: a failure log record could not be written", "error", errorText(err))
 	}
+}
+
+// helperFramePrefix is how debug.Stack names a function of this package
+// ("github.com/staffops/otel-libs/go."), taken from the running code so that
+// a module rename, a major-version path or a fork keeps matching.
+var helperFramePrefix = packagePrefix()
+
+func packagePrefix() string {
+	pc := make([]uintptr, 1)
+	runtime.Callers(1, pc)
+	f, _ := runtime.CallersFrames(pc).Next()
+	return strings.TrimSuffix(f.Function, "packagePrefix")
+}
+
+// helperFrames are the functions between the marking point and the
+// application: debug.Stack itself and the helper's marking path.
+var helperFrames = map[string]bool{
+	"runtime/debug.Stack":                   true,
+	helperFramePrefix + "failureStack":      true,
+	helperFramePrefix + "emitFailureRecord": true,
+	helperFramePrefix + "applyFailure":      true,
+	helperFramePrefix + "failSpan":          true,
+	helperFramePrefix + "RecordFailure":     true,
+	helperFramePrefix + "WithSpan":          true,
+}
+
+// maxFailureStackBytes caps exception.stacktrace. debug.Stack already keeps
+// at most 100 frames (the runtime prints the innermost 50, a
+// "...N frames elided..." line, then the outermost 50), but long file paths
+// and argument lists can still make it tens of KiB. A backend can reject the
+// whole record above its limit (Loki's structured metadata is 64 KiB per
+// line), and on the stdout fallback a line over containerd's 16 KiB default
+// is split, so the JSON escaping (\n, \t) must also fit: 12 KiB of text.
+const maxFailureStackBytes = 12 << 10
+
+// failureStack is the record's exception.stacktrace: debug.Stack() trimmed
+// by trimHelperFrames.
+func failureStack() string {
+	return trimHelperFrames(string(debug.Stack()))
+}
+
+// trimHelperFrames removes the helper's frames from the top of a debug.Stack
+// text, so the first frame is the application's:
+//   - the leading run of marking frames (debug.Stack, failureStack, ...,
+//     RecordFailure, WithSpan and its closures): for a returned error the
+//     first frame is the caller of WithSpan or RecordFailure;
+//   - then, for a panic re-raised by inner WithSpan calls, each leading
+//     "panic(...)" + WithSpan-closure pair (the inner re-panic), so every
+//     layer's record starts at the original "panic(...)" frame followed by
+//     the panic site.
+//
+// The "goroutine N [running]:" header and every later line stay as
+// debug.Stack writes them (two lines per frame: the function, then a tab and
+// file:line; one line for the runtime's "...N frames elided..." and the
+// "created by" pair); a later helper frame (an enclosing WithSpan below the
+// application's frames) is kept. A text made only of helper frames is
+// returned unchanged. A text longer than maxFailureStackBytes is cut in the
+// middle, as the runtime does: the innermost and the outermost frames stay,
+// with one "...N frames elided by otel-helper..." line between them.
+func trimHelperFrames(raw string) string {
+	lines := strings.Split(raw, "\n")
+	if len(lines) < 3 {
+		return raw
+	}
+	isFrame := func(i int) bool { return i+1 < len(lines) && strings.HasPrefix(lines[i+1], "\t") }
+	i := 1
+	for isFrame(i) && isHelperFrame(lines[i]) {
+		i += 2
+	}
+	for isFrame(i) && isFrame(i+2) && strings.HasPrefix(lines[i], "panic(") && isHelperClosure(lines[i+2]) {
+		i += 4
+	}
+	if i >= len(lines) || (i == len(lines)-1 && lines[i] == "") {
+		return raw
+	}
+	out := lines[0] + "\n" + strings.Join(lines[i:], "\n")
+	if len(out) <= maxFailureStackBytes {
+		return out
+	}
+	// Blocks: a frame (two lines) or any other single line.
+	var blocks []string
+	var frames []bool
+	for j := i; j < len(lines); {
+		if isFrame(j) {
+			blocks, frames = append(blocks, lines[j]+"\n"+lines[j+1]), append(frames, true)
+			j += 2
+			continue
+		}
+		blocks, frames = append(blocks, lines[j]), append(frames, false)
+		j++
+	}
+	budget := maxFailureStackBytes - len(lines[0]) - 64 // the header and the marker line
+	tail, used := len(blocks), 0
+	for tail > 0 && used+len(blocks[tail-1])+1 <= budget/2 {
+		tail--
+		used += len(blocks[tail]) + 1
+	}
+	head := 0
+	for head < tail && used+len(blocks[head])+1 <= budget {
+		used += len(blocks[head]) + 1
+		head++
+	}
+	// The count includes the frames of a runtime "...N frames elided..." line
+	// inside the cut.
+	elided := 0
+	for k, f := range frames[head:tail] {
+		var n int
+		switch {
+		case f:
+			elided++
+		case strings.HasPrefix(blocks[head+k], "..."):
+			if _, err := fmt.Sscanf(blocks[head+k], "...%d frames elided...", &n); err == nil {
+				elided += n
+			}
+		}
+	}
+	noun := "frames"
+	if elided == 1 {
+		noun = "frame"
+	}
+	parts := append([]string{lines[0]}, blocks[:head]...)
+	parts = append(parts, fmt.Sprintf("...%d %s elided by otel-helper...", elided, noun))
+	parts = append(parts, blocks[tail:]...)
+	return strings.Join(parts, "\n")
+}
+
+// frameName is the function name of a debug.Stack function line
+// ("pkg.Func(args)" → "pkg.Func").
+func frameName(line string) string {
+	if j := strings.LastIndexByte(line, '('); j > 0 {
+		return line[:j]
+	}
+	return line
+}
+
+// isHelperFrame reports whether a debug.Stack function line names a helper
+// marking frame or a WithSpan closure.
+func isHelperFrame(line string) bool {
+	return helperFrames[frameName(line)] || isHelperClosure(line)
+}
+
+// isHelperClosure reports whether a function line names a closure of
+// WithSpan, in any naming the compiler uses ("WithSpan.func1",
+// "WithSpan.func1.1", "WithSpan.1").
+func isHelperClosure(line string) bool {
+	return strings.HasPrefix(frameName(line), helperFramePrefix+"WithSpan.")
 }
 
 // describeError returns the type and message of err.

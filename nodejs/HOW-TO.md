@@ -1237,7 +1237,21 @@ has no event name), logger name and scope `otel-helper`, body = the message
 (`err.message`; the string form of a non-`Error` value), attributes
 `exception.type` (= `error.type`), `exception.message` (= the body) and
 `exception.stacktrace` (`err.stack`, where the error was created; a primitive
-has none). It is written in the marked span's context, so it carries that
+has none). V8 keeps only `Error.stackTraceLimit` frames (10 by default).
+Measured on Node.js 22 after `setup()`: an error created synchronously in the
+`withSpan` callback (before its first `await`) spends 8 of the 10 on the
+helper and OpenTelemetry (an anonymous helper frame, `AsyncLocalStorage.run`,
+`AsyncLocalStorageContextManager.with`, `ContextAPI.with`,
+`Tracer.startActiveSpan`, `ForwardingTracer.startActiveSpan`, `run`,
+`withSpan`), so only the error site and its direct caller remain. An error
+created after an `await` holds the error site, then the callers that `await`
+the `withSpan` result (V8's `async` frames, which exist only at await
+points). A caller that chains `.then()` without `await` does not appear,
+whatever the limit.
+For deeper stacks, start the process with `NODE_OPTIONS=--stack-trace-limit=50`
+(or `node --stack-trace-limit=50`, or set `Error.stackTraceLimit = 50` at
+startup). The helper does not change it: it is a process-wide setting, and
+deeper stacks cost time at every `new Error()`. It is written in the marked span's context, so it carries that
 span's ids even when you pass a span that is not active, or the span is not
 sampled. It goes where every helper record goes ([§5](#5-logs)): OTLP with a
 logs exporter, else one JSON line on stdout with `trace_id` and `span_id`.

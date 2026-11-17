@@ -115,9 +115,35 @@ def _message(exc: BaseException) -> str:
         return f"[unprintable {type(exc).__name__}]"
 
 
+# The helper's own package: traceback frames from its modules at the head of a
+# failure's traceback are the helper's (the scope's `yield`, a decorator wrapper).
+# Matched on the module name, not the file path, so a sourceless or relocated
+# install trims the same frames.
+_HELPER_PACKAGE = __name__.rpartition(".")[0]
+
+
+def _is_helper_frame(tb) -> bool:
+    module = tb.tb_frame.f_globals.get("__name__", "")
+    return module == _HELPER_PACKAGE or module.startswith(_HELPER_PACKAGE + ".")
+
+
+def _skip_helper_frames(tb):
+    """The traceback without its leading helper frames (the exception is not touched).
+
+    With ``traced`` the traceback starts at the scope's ``yield`` (the exception
+    is thrown into it) and, for a decorated function, the helper's wrapper. A
+    traceback made only of helper frames is kept as it is.
+    """
+    head = tb
+    while head is not None and _is_helper_frame(head):
+        head = head.tb_next
+    return head if head is not None else tb
+
+
 def _stacktrace(exc: BaseException) -> str:
     try:
-        return "".join(traceback.format_exception(type(exc), exc, exc.__traceback__)).rstrip()
+        tb = _skip_helper_frames(exc.__traceback__)
+        return "".join(traceback.format_exception(type(exc), exc, tb)).rstrip()
     except Exception:  # noqa: BLE001
         return ""
 

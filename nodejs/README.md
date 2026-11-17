@@ -300,7 +300,12 @@ failures in every language. Details and recipes:
   `exception`, body = the message (`err.message`, or the string form of a
   non-`Error` value), attributes `exception.type` (= `error.type`, never the
   error's `code`), `exception.message` and `exception.stacktrace`
-  (`err.stack`; none for a primitive), in the span's context, so it carries
+  (`err.stack`; none for a primitive; V8 cuts it at `Error.stackTraceLimit`,
+  10 frames by default: an error created synchronously in the `withSpan`
+  callback spends 8 of them on helper and OpenTelemetry frames, and one
+  created after an `await` keeps only the callers that `await` the
+  `withSpan` result; raise the limit with
+  `NODE_OPTIONS=--stack-trace-limit=50`), in the span's context, so it carries
   the span's `trace_id` and `span_id` even when the span is not recording.
   Logger name and scope `otel-helper`. It follows the normal per-record rule:
   OTLP with a logs exporter, else one JSON line on stdout (no `eventName`

@@ -351,7 +351,10 @@ What a failure gives:
   logger `staffops_otel_helper.failure`, in that span's context (its `trace_id` and `span_id`, also when the span you pass
   to `record_failure` is not current or not recording): body = `str(exc)`,
   attributes `exception.type` (= `error.type`), `exception.message` and
-  `exception.stacktrace` (`traceback.format_exception`). It is exported through
+  `exception.stacktrace` (`traceback.format_exception`, without the helper's
+  own leading frames: it runs from the frame that holds the `with traced(...)`
+  block, or the decorated function, to the raise site; frames above that are
+  not in a Python traceback; the helper's frames are matched by module name). It is exported through
   OTLP with a logs exporter, written as stdout JSON without one, and never to
   stderr. The span is marked even when no log pipeline keeps the record.
 - **The exception** propagates unchanged (the same object).
