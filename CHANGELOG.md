@@ -4128,6 +4128,31 @@ Unsupported instrumentation versions, task A10 (P18):
 
 ### Internal
 
+- **Demo apps on Kubernetes (DE4; spec `specs/demo-environment/` r3.5).**
+  `testing/k8s/build-demo.sh` builds the twelve images
+  `otel-libs-demo-<lang>-<app>:<tag>` from a root `git archive HEAD`,
+  `linux/amd64`, one at a time, with a `MIN_FREE_GB` guard; it never tags or
+  pushes `latest` and never logs in (exit 4 when the registry refuses
+  authentication). The default tag (`testing/k8s/demo/demo-tag.sh`) is the
+  short sha of the newest commit that touches an image input (demo code, the
+  helpers the images pack), so docs-only commits do not change it.
+  `testing/k8s/demo/demo.sh apply --lang <l>|--all` runs worker, api and
+  backend per language on the shared backing services with their run id:
+  DE-D2 env, passwords as 0440 files with `fsGroup` = the image's user and
+  least privilege (worker and api: Redis; backend: its `demo_<lang>` role),
+  startup/readiness on api `GET /health` and backend `grpc.health.v1`, TCP
+  liveness, Budget-table requests with a memory limit only. With the default
+  tag it refuses before touching the cluster when an image does not exist.
+  The K-D2 pre-flight covers the app pods (an `--all` that does not fit
+  applies no app); `schedwatch.py` watches `FailedScheduling` during the
+  rollout and after it, scales this apply's apps to 0 on a hit, and fails the
+  apply when it could not read events at all. `delete --lang` removes one
+  language's apps (waiting for the pods) and keeps the backing services.
+  `testing/k8s/build-examples.sh` gains the same numeric disk guards. Tests:
+  `test_demo_apps.py` (selector-exact fake kubectl; a sentinel proves usage
+  errors never reach a cluster), `test_schedwatch.py`. Applied on k8s01
+  2026-11-16 (tag `d39da6b`, run `20261116t1812`): 12 app pods Ready, 0
+  restarts.
 - **Demo apps in all four languages (DE3a–DE3d; spec `specs/demo-environment/`
   r3.5).** `go/demo/{worker,api,backend}` (+ `internal/demokit`),
   `python/demo/`, `nodejs/demo/` (its own package and lockfile, outside the npm

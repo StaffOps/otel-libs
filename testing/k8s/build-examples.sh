@@ -24,6 +24,7 @@ TAG="${TAG:-$(git -C "$root" rev-parse --short HEAD)}"
 REGISTRY="${REGISTRY:-harbor.staffops.space/development}"
 BUILDER="${BUILDER:-multiarch}"
 MIN_FREE_GB="${MIN_FREE_GB:-3}"
+[[ "$MIN_FREE_GB" =~ ^[0-9]+$ ]] || { echo "build-examples: MIN_FREE_GB must be a whole number" >&2; exit 2; }
 apps=(api backend process)
 
 targets=()
@@ -63,6 +64,10 @@ for target in "${targets[@]}"; do
   [ -f "$df" ] || { echo "build-examples: no Dockerfile at ${df#"$ctx"/}" >&2; exit 1; }
 
   free=$(free_gb)
+  if ! [[ "$free" =~ ^[0-9]+$ ]]; then
+    echo "build-examples: could not read the free Docker disk; stopping before $target" >&2
+    exit 3
+  fi
   if [ "$free" -lt "$MIN_FREE_GB" ]; then
     echo "build-examples: only ${free} GB free on the Docker disk (< ${MIN_FREE_GB}); stopping before $target" >&2
     exit 3

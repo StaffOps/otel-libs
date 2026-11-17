@@ -764,6 +764,12 @@ list).
   `DEMO_REDIS_ADDR`, and `DEMO_API_URL` (worker → api), `DEMO_BACKEND_ADDR`
   (api → backend)) are plain env, as are the listen ports `DEMO_HTTP_PORT`
   (api, 8080) and `DEMO_GRPC_PORT` (backend, 50051). DE4 renders the mounts.)*
+  *(r3.5, 2026-11-16, DE4: least privilege — the worker and the api mount
+  only `demo-redis-auth/password`, the backend only
+  `demo-postgres-auth/demo_<lang>`; `fsGroup` is each image's user. Probes:
+  startup and readiness use api `GET /health` and backend `grpc.health.v1`;
+  liveness is a TCP check, so a PostgreSQL or Redis blip makes a pod unready
+  instead of restarting it; the worker has no probe (no listener).)*
 - **Proof**: check g.secret (DE-D11): the anchored 48-hex scan over every
   span of the run and over the Loki records (line and structured metadata)
   of the run's pods and the two backing services.

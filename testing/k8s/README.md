@@ -14,7 +14,9 @@ run of the deferred soak Phase K check K2
 | `build-examples.sh` | Builds and pushes the twelve example images (`otel-libs-example-<lang>-<app>`) |
 | `smoke-jobs.sh` | One Job per language x {grpc, http}; `apply [--verify]`, `delete`, `render` |
 | `examples/examples.sh` | The example apps as Deployments; `apply`, `delete`, `render` |
-| `verify.py` | Read-only checks in Tempo, Loki and Prometheus; `smoke --run <id>`, `examples` |
+| `build-demo.sh` | Builds and pushes the twelve demo images (`otel-libs-demo-<lang>-<app>`, tag from `demo/demo-tag.sh`); `MIN_FREE_GB` disk guard, exit 4 when the registry refuses authentication (specs/demo-environment DE4) |
+| `demo/demo.sh` | The demo environment: shared PostgreSQL + Redis and the worker/api/backend apps per language; `apply [--lang <lang> \| --all]` (K-D2 pre-flight + FailedScheduling watch), `delete --lang <lang> \| --all`, `render` (DE2, DE4) |
+| `verify.py` | Read-only checks in Tempo, Loki and Prometheus; `smoke --run <id>`, `examples`, `demo --run <id>` (demo checks a–g against `demo/expected.json`, `--dry-run` = pre-flight only; specs/demo-environment DE-D11) |
 | `images/<lang>.Dockerfile` | Smoke images; `images/python-smoke.py` is the Python smoke program |
 
 ## Prerequisites
