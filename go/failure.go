@@ -69,7 +69,8 @@ func WithSpan(ctx context.Context, tracer trace.Tracer, name string, fn func(con
 	returned, ended := false, false
 	// The span is ended from this closure, never by a deferred span.End: the
 	// SDK's End, run directly by defer, recovers a panic in flight and adds an
-	// exception event with the message and the stack, which ADR-014 rules out.
+	// exception event with the panic message (and the stack with
+	// trace.WithStackTrace(true)), which ADR-014 rules out.
 	defer func() {
 		// Ends the span on every path: a panic, Goexit, or failSpan itself
 		// panicking. span.End is called by this closure, not deferred directly,
