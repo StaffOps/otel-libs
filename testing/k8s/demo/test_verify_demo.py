@@ -250,7 +250,10 @@ class ExpectationTest(unittest.TestCase):
         self.assertEqual(e["dotnet"]["d.grpc"]["expect"], "pass")
         self.assertEqual(e["dotnet"]["e.trace"]["expect"], "pass")
         for cell in verify.EXEMPLAR_CELLS:
-            self.assertEqual(e["node"][cell]["expect"], "n/a:upstream-no-sdk-exemplars")
+            want = "n/a:upstream-no-rpc-metrics" if cell == "b.rpc_server" else "n/a:upstream-no-sdk-exemplars"
+            self.assertEqual(e["node"][cell]["expect"], want)  # DE6: Node.js emits no RPC metrics
+        for lang in ("go", "python", "node"):
+            self.assertIn("A44", e[lang]["d.db"]["also"])
         tasks = {v["expect"] for cells in e.values() for v in cells.values() if v["expect"].startswith("xfail:")}
         self.assertEqual(tasks, {"xfail:A36", "xfail:A37", "xfail:A38", "xfail:A40"})
         self.assertEqual(e["dotnet"]["d.http"]["also"], ["A42"])
@@ -301,7 +304,7 @@ class ExpectationTest(unittest.TestCase):
         self.assertTrue(rep.failed())  # XPASS does
         rep.matrix(["go"])
         text = out.getvalue()
-        self.assertIn("XFAIL       go d.db: x [expected xfail:A36] (ref: XSAM", text)
+        self.assertIn("XFAIL       go d.db: x [expected xfail:A36+A44] (ref: XSAM", text)
         self.assertIn("XPASS       go d.http", text)
         self.assertIn("verify demo: PASS 1, XFAIL 1, XPASS 1; FAIL", text)
         rep2 = report()

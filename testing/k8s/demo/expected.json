@@ -54,7 +54,10 @@
           "run token on client span",
           "no correlated ERROR record"
         ],
-        "reason_notes": "db.response.status_code None: no owning task yet (A36 covers the exception detail and the correlated record, not the SQLSTATE attribute); DE8 files the task, listed under A36 until then"
+        "reason_notes": "db.response.status_code None: owned by A44 (also_xfail); A36 covers the exception detail and the correlated record",
+        "also_xfail": [
+          "A44"
+        ]
       },
       "e.trace": "pass",
       "e.edges": "pass",
@@ -112,7 +115,10 @@
           "exception events []",
           "no correlated ERROR record"
         ],
-        "reason_notes": "db.response.status_code None: no owning task yet (A36 covers the exception detail and the correlated record, not the SQLSTATE attribute); DE8 files the task, listed under A36 until then"
+        "reason_notes": "db.response.status_code None: owned by A44 (also_xfail); A36 covers the exception detail and the correlated record",
+        "also_xfail": [
+          "A44"
+        ]
       },
       "e.trace": "pass",
       "e.edges": "pass",
@@ -135,9 +141,8 @@
         "requires_series": true
       },
       "b.rpc_server": {
-        "expect": "n/a:upstream-no-sdk-exemplars",
-        "ref": "README.md:329; @opentelemetry/sdk-metrics 3.0.0 has no exemplar code",
-        "requires_series": true
+        "expect": "n/a:upstream-no-rpc-metrics",
+        "ref": "README.md:312 (Node.js gRPC: no RPC metrics); measured DE6 2026-11-17: series absent"
       },
       "b.db_client": {
         "expect": "n/a:upstream-no-sdk-exemplars",
@@ -174,7 +179,10 @@
           "exception events [['exception.message']]",
           "no correlated ERROR record"
         ],
-        "reason_notes": "db.response.status_code None: pg gives the wrapper no code (nodejs/HOW-TO.md:617-620), no owning task yet (A36 covers the exception detail and the correlated record, not the SQLSTATE attribute); DE8 files the task, listed under A36 until then"
+        "reason_notes": "db.response.status_code None: owned by A44 (also_xfail); A36 covers the exception detail and the correlated record",
+        "also_xfail": [
+          "A44"
+        ]
       },
       "e.trace": "pass",
       "e.edges": "pass",

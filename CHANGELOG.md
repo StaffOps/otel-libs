@@ -4128,6 +4128,16 @@ Unsupported instrumentation versions, task A10 (P18):
 
 ### Internal
 
+- **Demo baseline on k8s01 (DE6, 2026-11-17).** Run `20261116t1812` with
+  images `1d36be4`: `verify.py demo` over a 15-minute window gives NA 6,
+  PASS 44, XFAIL 14 and exits 0 across Go, Python, Node.js and .NET; every
+  xfail cell names its open task (A36, A37, A38, A40, A42, A44). The
+  observability scorecard of the same window is ≈ 9.1/10 (log ↔ trace
+  correlation, exemplars, custom metrics, ADR-014 errors). `expected.json`:
+  Node.js `b.rpc_server` is `n/a:upstream-no-rpc-metrics` (the gRPC
+  instrumentation emits no RPC metrics); the Go, Python and Node.js d.db cells
+  also cite A44. A39 is closed: the Node.js demo trace holds the http SERVER,
+  express and gRPC spans with a single `setup()` on the cluster.
 - **`verify.py demo` (DE5; spec `specs/demo-environment/` DE-D10, DE-D11 r3.3,
   r3.6, r3.7).** `python3 -I testing/k8s/verify.py demo --run <id> [--langs]
   [--window 15m] [--settle 2m] [--expected] [--dry-run]` checks a live demo
