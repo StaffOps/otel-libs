@@ -424,6 +424,26 @@ test('redis and ioredis loaded (and clients built) before redisInstrumentation()
   }
 });
 
+test('A39: redisInstrumentation() with OTLP over gRPC: the core http and gRPC spans are recorded, in the Redis span trace', async () => {
+  const fake = await startRespFake();
+  try {
+    const out = await runNode([path.join(FIXTURES, 'grpc-otlp.cjs')], { env: { REDIS_FAKE_URL: fake.url } });
+    assert.equal(out.status, 0, out.stderr);
+    const find = (scope, kind) => out.spans.find((s) => s.scope === scope && s.kind === kind);
+    const server = find('@opentelemetry/instrumentation-http', 1);
+    assert.ok(server, `http SERVER span: ${JSON.stringify(out.spans)}`);
+    const grpcClient = find('@opentelemetry/instrumentation-grpc', 2);
+    const grpcServer = find('@opentelemetry/instrumentation-grpc', 1);
+    assert.ok(grpcClient && grpcServer, `gRPC CLIENT and SERVER spans: ${JSON.stringify(out.spans)}`);
+    assert.equal(grpcClient.name, 'a39.v1.Orders/Place');
+    const set = out.spans.find((s) => s.name === 'SET' && s.scope === '@opentelemetry/instrumentation-redis');
+    assert.ok(set, `Redis SET span: ${JSON.stringify(out.spans)}`);
+    assert.deepEqual([...new Set([server, grpcClient, grpcServer, set].map((s) => s.traceId))], [server.traceId], 'one trace per request');
+  } finally {
+    await fake.close();
+  }
+});
+
 test('OTEL_SEMCONV_STABILITY_OPT_IN=database: only db.system.name', async () => {
   const fake = await startRespFake();
   try {

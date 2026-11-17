@@ -606,10 +606,13 @@ test('globals: a registration the API refuses anyway is reported (context manage
     const key = Symbol.for('opentelemetry.js.api.1');
     const { loadedApiVersion } = require('./dist/internal/globals.js');
     const reg = { version: loadedApiVersion() };
-    // Empty for the helper's check, taken for the API's duplicate check.
+    // Empty for the helper's check (registeredGlobal), taken for every other
+    // read: the API's duplicate check and, since A39, the instrumentation
+    // constructors that run before the helper registers its globals. Depends
+    // on the function name registeredGlobal (src/internal/globals.ts) staying
+    // in the stack: renaming it breaks this test, not the helper.
     for (const type of ['context', 'trace', 'metrics', 'logs']) {
-      let reads = 0;
-      Object.defineProperty(reg, type, { get: () => (reads++ === 0 ? undefined : {}), set: () => {}, configurable: true });
+      Object.defineProperty(reg, type, { get: () => (new Error().stack.includes('registeredGlobal') ? undefined : {}), set: () => {}, configurable: true });
     }
     globalThis[key] = reg;
     const lines = [];
@@ -618,15 +621,16 @@ test('globals: a registration the API refuses anyway is reported (context manage
     console.log(JSON.stringify(lines));
   `);
   const lines = lastJson(res);
-  assert.deepEqual(lines.slice(0, 4), [
+  // The instrumentation constructors read the (broken) globals too (B6; built before the
+  // exporters since A39, so reported first): setup() still returns.
+  assert.equal(lines.length, 5);
+  assert.match(lines[0], /^otelhelper: the instrumentations could not be built; http, fetch, express and gRPC are not instrumented error=/);
+  assert.deepEqual(lines.slice(1), [
     'otelhelper: the OpenTelemetry API refused the global context manager; in-process context is not propagated',
     "otelhelper: the OpenTelemetry API refused the global TracerProvider; the helper's traces are inactive signal=traces",
     "otelhelper: the OpenTelemetry API refused the global MeterProvider; the helper's metrics are inactive signal=metrics",
     "otelhelper: the OpenTelemetry API refused the global LoggerProvider; OpenTelemetry Logs API callers get no logs, the helper's loggers (createLogger) still export through the helper's provider signal=logs",
   ]);
-  // The instrumentation constructors read the (broken) globals too (B6): reported, setup() still returns.
-  assert.equal(lines.length, 5);
-  assert.match(lines[4], /^otelhelper: the instrumentations could not be built; http, fetch, express and gRPC are not instrumented error=/);
 });
 
 test('R8 credentials placed in the path never reach a diagnostic or an error', () => {

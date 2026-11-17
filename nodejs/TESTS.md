@@ -141,7 +141,7 @@ The example apps run against the same Collector: see
 | `exporters.test.cjs` | exporter construction: env masking, headers, timeout and export deadline, compression, BSP/BLRP and limits, gRPC credentials, TLS files |
 | `signals.test.cjs` | `OTEL_{TRACES,METRICS,LOGS}_EXPORTER`, console exporters, `OTEL_SDK_DISABLED`, `OTEL_CONFIG_FILE`, the metric interval |
 | `tracing.test.cjs` | sampler, health sampler, propagators, debug marker |
-| `instrumentation.test.cjs` | http, undici, express and gRPC instrumentation, health exclusion, the gRPC status rule, the loaded-before-setup report |
+| `instrumentation.test.cjs` | http, undici, express and gRPC instrumentation, health exclusion, the gRPC status rule, the loaded-before-setup report, an instrumentation built before `setup()` with OTLP over gRPC and `http/protobuf` (A39) |
 | `metrics.test.cjs` | the `/metrics` listener, `metricsHandler()` status table, unit suffixes, busy port |
 | `exit.test.cjs` | the `beforeExit` flush of a process that ends on its own: exported once, no loop, no repeat after an app `shutdown()`, no stacking on re-setup, none after a failed setup or in a worker thread, removed by `reset()`, a failure reported |
 | `logging.test.cjs` | `createLogger()`: OTel path vs stdout, levels, attribute conversion, the bridges' flushes |

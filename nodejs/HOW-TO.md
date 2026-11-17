@@ -579,7 +579,22 @@ Rules shared by the three:
   re-setup.
 - **Create it, and call `setup()`, before loading the library.** A library
   loaded earlier is still patched on the first enable (the helper re-requires
-  its cached files), but load order is the reliable path.
+  its cached files), but load order is the reliable path. Do not load other
+  modules between creating the factory result and calling `setup()`: the
+  instrumentation installs the shared require hook when it is created, and a
+  module loaded through it before `setup()` (`node:http`, express,
+  `@grpc/grpc-js`) is never patched by the core instrumentations — create it
+  inside the call, `setup({ instrumentations: [redisInstrumentation()] })`.
+  Requiring `@staffops/otel-helper` itself after the factory counts (it loads
+  `node:http`): require the helper first. When `node:http` ends up
+  uninstrumented this way, the first `setup()` reports it once on stderr:
+  `otelhelper: node:http is not instrumented: it was loaded after an
+  instrumentation was built and before setup(), …`. express and
+  `@grpc/grpc-js` loaded in that window get only the `was loaded before
+  setup()` line, and stay uninstrumented (task A41).
+  (In `0.3.0-rc.1`, fixed by task A39, the gRPC OTLP
+  exporters themselves triggered this: no http, express or gRPC spans with a
+  factory and OTLP over gRPC.)
 - Instrumentations are matched by name: passing a raw contrib instrumentation
   (`PgInstrumentation`, `IORedisInstrumentation`, `AwsInstrumentation`) next
   to the factory, or one the core already installs

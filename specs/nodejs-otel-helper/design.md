@@ -75,6 +75,53 @@ the instrumentation; Node gives an ESM-loaded CJS `Module` no `parent`); CJS
 cache hits are still reported.* *Reworded 2026-11-02 (B9): `/register` now
 calls `setup()`, so the report names it as the cure again:
 `<module> was loaded before setup(); apps, routers and clients created before setup() may lack spans or have an incomplete http.route — start the process with --import @staffops/otel-helper/register (or a preload that imports @staffops/otel-helper/hooks and calls setup()) so setup() runs before the app loads`.*
+*Amended 2026-11-16 (contract task A39, found by demo task DE3c): the core
+instrumentations are **built** (disabled) before the exporters, still bound
+and **enabled** after the providers are registered. Cause, reproduced by
+`test/instrumentation.test.cjs` "A39" (fails on the B6 order with OTLP over
+gRPC: no span at all; passes over `http/protobuf`): every
+`InstrumentationBase` constructor creates the process-wide
+`RequireInTheMiddleSingleton` (`@opentelemetry/instrumentation` 0.300,
+`dist/platform/node/instrumentation.cjs:21`), one require-in-the-middle 8.0.1
+`Hook(null, { internals: true })` that dispatches through a trie of the hooks
+registered *so far* (`RequireInTheMiddleSingleton.cjs`, `_initialize`).
+require-in-the-middle caches the exports of every module it processed —
+non-core on the `require.cache` entry, built-ins in a private `Map`
+(`require-in-the-middle/index.js:44-95`) — and returns that cache on every
+later `require` without calling the hook again (`index.js:195-197`). An opt-in
+factory (`redisInstrumentation()`, `sqlInstrumentation()`, any app-built
+instrumentation) is constructed before `setup()`, so the hook exists when the
+gRPC exporters load `@grpc/grpc-js` (`exporters.ts` `grpcBase()` →
+`otlp-grpc-exporter-base/dist/create-service-client-constructor.cjs:2`), which
+loads `http` (`@grpc/grpc-js/build/src/http_proxy.js:25`). Neither reached the
+core hooks (not registered yet) and the first enable's re-require got the
+cached, unpatched exports: grpc-js and `http` never patched, express without
+a parent span records nothing either. With the core instrumentations
+built first, their (disabled) hooks record the modules
+(`instrumentation.cjs` `_onRequire` keeps `moduleExports` while disabled) and
+`enable()` patches them. B6's reason for building late — the constructors
+read the API globals — does not hold: `bindProviders` sets every core
+instrumentation's tracer and meter provider before enabling, and none uses
+its logger. Residual (not fixed structurally): a module the app itself
+loads between building an instrumentation and calling `setup()` stays cached
+unpatched for the same reason, `require('@staffops/otel-helper')` after the
+factory included (the helper's index loads `node:http`), and at first nothing
+reported it (`node:http` is not in `INSTRUMENTED_PACKAGES`; for express and grpc-js the
+"loaded before setup()" line fires but the re-require gets the cached
+exports). The documented order (helper required first, factory inside the
+`setup()` call, before the app loads) is unaffected. Code-review round, same
+day: after the first enable, an enabled instrumentation-http whose
+`node:http` `request` is not wrapped (`isWrapped`) is reported once
+(`instrumentation.ts` `reportUnpatchedHttp`, line `node:http is not
+instrumented: …`); the structural fix (`contribRegistry` builds the core
+instrumentations before the first contrib one) is contract task A41. The
+"loaded before setup()" set is now taken once, by the setup that builds the
+core instrumentations (`Runtime.loadedBeforeHooks`): a setup that fails after
+its exporters loaded grpc-js no longer makes the retry report grpc-js as the
+app's early load. A failed build is now reported even when the exporters
+then throw, and after a failed *build* the next setup's retry cannot patch
+what the exporters loaded through an already installed hook (a setup failing
+after the build is retried fine: test "A39 … fault").*
 **Justification**: ADR-012; 3.0
 registers no context manager (without it no in-process parent link).
 **Trade-offs**: more code than `NodeSDK`. **When wrong / reversal / alternatives**: ADR-012.

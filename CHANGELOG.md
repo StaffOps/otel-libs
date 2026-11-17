@@ -4001,6 +4001,32 @@ Unsupported instrumentation versions, task A10 (P18):
 
 ### Fixed
 
+- **Node.js: an opt-in factory with OTLP over gRPC no longer turns off the
+  core http, express and gRPC spans (task A39, found by the demo, 2026-11-16).**
+  With `redisInstrumentation()`, `sqlInstrumentation()` (or any
+  instrumentation built before `setup()`) in `setup({ instrumentations })` and
+  a signal exported over gRPC, the `node:http`, express and `@grpc/grpc-js`
+  instrumentations recorded nothing: the factory's instrumentation installs
+  `@opentelemetry/instrumentation`'s shared require-in-the-middle hook, which
+  caches every module it loads, and the gRPC exporters loaded `@grpc/grpc-js`
+  (and the `http` it requires) before the core instrumentations had registered
+  their hooks, so those modules were never patched. `setup()` now builds the
+  core instrumentations before the exporters (they are still enabled after the
+  providers are registered), so a failed instrumentation build is now reported
+  before the exporters are built. Over `http/protobuf`, and without a factory,
+  spans were already recorded. Still unpatched for the same reason, and not
+  reported: a module the app itself loads between building an instrumentation
+  and calling `setup()`, `require('@staffops/otel-helper')` included — require
+  the helper first and build the factory inside the `setup()` call, as the
+  HOW-TO shows (Node design D-JS1, amendment of 2026-11-16). When this leaves
+  `node:http` uninstrumented, the first `setup()` now says so once on stderr
+  (`otelhelper: node:http is not instrumented: it was loaded after an
+  instrumentation was built and before setup(), …`); express and grpc-js
+  loaded in that window keep only the "loaded before setup()" line. The
+  structural fix is task A41. A `setup()` retried after a failed one no longer
+  reports `@grpc/grpc-js` as "loaded before setup()" when the failed attempt's
+  gRPC exporters loaded it.
+
 - **Python: `OTEL_PROPAGATORS=none` failed every server request (task A34,
   owner decision 2026-11-10 to fix ahead of the queue).** The helper installed
   an empty `CompositePropagator`, whose `extract()` returns the `context`

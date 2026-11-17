@@ -99,6 +99,14 @@ interface Runtime {
   /** The `diag` registry entry the helper's DiagLogger produced; `undefined` = not installed. */
   diagLogger: unknown;
   /**
+   * The instrumented packages the app had loaded when the core
+   * instrumentations were built (their require hooks registered): what the
+   * first enable reports as "loaded before setup()". Taken by the setup that
+   * builds them, so a failed setup's own exporter loads are not reported by
+   * the retry (A39 code review).
+   */
+  loadedBeforeHooks?: ReadonlySet<string>;
+  /**
    * The core instrumentations, built by the first setup that instruments and
    * kept for the process: every later setup re-binds them (design D-JS7).
    * `undefined` = not built yet, or the last build failed (retried by the
@@ -420,7 +428,8 @@ interface Providers {
 function buildProviders(plan: Plan, base: Resource, options: SetupOptions): Providers {
   const resource = buildResource(base, plan.resourceAttributes);
   // The gRPC exporters load @grpc/grpc-js only when a gRPC signal is
-  // configured, before the instrumentations are enabled; an app loading
+  // configured, after the core instrumentations are built (their require
+  // hooks registered, A39) and before they are enabled; an app loading
   // grpc-js later is still patched by the require hooks (spike B1c F6,
   // asserted in test/instrumentation.test.cjs).
   const pipelines = buildPipelines(plan);
@@ -864,8 +873,25 @@ function install(rt: Runtime, plan: Plan, options: SetupOptions, base: Resource,
   captureHeaderValues();
   step('diag');
   const { sdkDisabled } = plan.resolved;
-  // Before the exporters load grpc-js: what the app had loaded itself.
-  const loadedBeforeSetup = sdkDisabled ? new Set<string>() : loadedPackages();
+  const instrumentable = foreignApi === undefined && !sdkDisabled;
+  // Before the exporters load grpc-js: what the app had loaded itself when the
+  // core hooks did not exist yet (taken once, by the setup that builds them).
+  if (instrumentable && rt.instrumentations === undefined) rt.loadedBeforeHooks = loadedPackages();
+  const loadedBeforeSetup = rt.loadedBeforeHooks ?? new Set<string>();
+  // The core instrumentations are built (disabled) before the exporters load
+  // anything (task A39, design D-JS1 amended 2026-11-16): any instrumentation
+  // built earlier — an opt-in factory passed to setup() — installed the
+  // shared require-in-the-middle hook, which then caches every module loaded
+  // through it with the hooks registered at that moment. The gRPC exporters
+  // load @grpc/grpc-js (and grpc-js `http`) here: loaded before the core
+  // hooks are registered, neither ever reached them, and a re-require returns
+  // the cached, unpatched exports. Registered first, the disabled
+  // instrumentations record those modules and the enable below patches them.
+  // Not under OTEL_SDK_DISABLED=true nor into a foreign API registry (as below).
+  // A build failure is reported even if buildProviders then throws, and a
+  // retry by the next setup cannot patch what the exporters loaded meanwhile
+  // through an already installed hook.
+  const prebuilt = instrumentable ? instrumentationsOf(rt) : undefined;
   const built = sdkDisabled ? undefined : buildProviders(plan, base, options);
   attempt.built = built;
   step('built');
@@ -914,8 +940,10 @@ function install(rt: Runtime, plan: Plan, options: SetupOptions, base: Resource,
     forwardTo(fw.loggerProvider, ownsLoggerProvider ? built.loggerProvider : undefined, attempt);
   }
   step('providers');
-  // The instrumentations, after the providers are registered: their
-  // constructors read the API globals (design D-JS1, amended by B6). Not
+  // The instrumentations, enabled after the providers are registered (design
+  // D-JS1, amended by B6; built above since A39: their constructors resolve
+  // the API globals; bindProviders rebinds the tracer and meter, and none of
+  // the four core instrumentations uses its logger). Not
   // under OTEL_SDK_DISABLED=true (Python: no instrumentation) nor into a
   // foreign API registry. Bound to the forwarding providers when they are the
   // globals (so a re-setup needs no re-bind), else to the global ones (a
@@ -930,7 +958,7 @@ function install(rt: Runtime, plan: Plan, options: SetupOptions, base: Resource,
         loggerProvider: ownsLoggerProvider ? fw.loggerProvider : logs.getLoggerProvider(),
       }
     : undefined;
-  const instrumentations = bound !== undefined ? instrumentationsOf(rt) : undefined;
+  const instrumentations = bound !== undefined ? prebuilt : undefined;
   if (bound !== undefined && instrumentations !== undefined) {
     attempt.instrumented = tryEnableInstrumentations(instrumentations, plan, bound, loadedBeforeSetup);
     // Spec JS5: in an ES module process, import-in-the-middle only sees later

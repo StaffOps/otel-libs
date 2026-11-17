@@ -320,6 +320,13 @@ D-JS2) or the `@opentelemetry/api` peer range:
 - **`InstrumentationBase` still enables in its constructor**
   (`@opentelemetry/instrumentation`), which the opt-in contrib registry
   relies on (B6 final review).
+- **Require-hook cache (task A39, design D-JS1 amendment 2026-11-16).** The
+  four core instrumentation packages (`@opentelemetry/instrumentation-{http,undici,express,grpc}`)
+  must not load `http`, `https`, express or `@grpc/grpc-js` at top level
+  (grep their `dist` requires); require-in-the-middle still returns its cached
+  exports without calling the hook again; `_onRequire` still records
+  `moduleExports` while an instrumentation is disabled. Tests "A39" in
+  `otel-helper/test/instrumentation.test.cjs` and `otel-helper-redis/test/redis.test.cjs`.
 - **API proxies (G1 rollback, `setup.ts` `releaseGlobal`).** The `logs` API's
   private `_proxyLoggerProvider._setDelegate` and the trace
   `ProxyTracerProvider`'s `setDelegate` still exist with the same shape —

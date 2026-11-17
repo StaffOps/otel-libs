@@ -635,6 +635,55 @@ test('D-JS1: the app grpc-js is patched when only gRPC OTLP export is configured
   assert.deepEqual(lastJson(res), { loadedByExporter: true, client: true, server: true, preloadedReports: [] });
 });
 
+// Task A39: an opt-in instrumentation built before setup() installs the shared
+// require-in-the-middle hook; the gRPC exporter's grpc-js (and the http it
+// loads) must still reach the core instrumentations. The http/protobuf leg is
+// the control: it loaded neither before the fix.
+// `fault`: a first setup() fails after the exporters loaded grpc-js, the retry
+// still patches it (the instrumentations were built before them); `resetup`:
+// setup() → shutdown() → setup().
+for (const [protocol, mode] of [['grpc'], ['http/protobuf'], ['grpc', 'fault'], ['grpc', 'resetup']]) {
+  test(`A39: an opt-in instrumentation built before setup(), OTLP over ${protocol}${mode ? `, ${mode}` : ''}: core http, express and gRPC spans are recorded`, () => {
+    const res = runNode([path.join(__dirname, 'fixtures', 'optin-before-setup.cjs'), protocol, ...(mode ? [mode] : [])]);
+    const { spans, reports } = lastJson(res);
+    // No "loaded before setup()" (the exporters loaded grpc-js), "could not be built/enabled" or "not instrumented" line.
+    assert.deepEqual(reports.filter((l) => /loaded before setup|could not be|is not instrumented/.test(l)), []);
+    const has = (scope, kind, name) => spans.some((s) => s.scope === scope && s.kind === kind && (name === undefined || s.name === name));
+    assert.ok(has('@opentelemetry/instrumentation-http', SERVER, 'GET /orders'), `http SERVER span: ${JSON.stringify(spans)}`);
+    assert.ok(has('@opentelemetry/instrumentation-http', CLIENT), `http CLIENT span: ${JSON.stringify(spans)}`);
+    assert.ok(has('@opentelemetry/instrumentation-express', api.SpanKind.INTERNAL, 'request handler - /orders'), `express span: ${JSON.stringify(spans)}`);
+    assert.ok(has('@opentelemetry/instrumentation-grpc', SERVER, 'a39.v1.Orders/Place'), `gRPC SERVER span: ${JSON.stringify(spans)}`);
+    assert.ok(has('@opentelemetry/instrumentation-grpc', CLIENT, 'a39.v1.Orders/Place'), `gRPC CLIENT span: ${JSON.stringify(spans)}`);
+  });
+}
+
+test('A39: node:http loaded after an instrumentation was built and before setup() is reported once as not instrumented', () => {
+  const res = runCjs(`
+    for (const k of Object.keys(process.env)) if (k.startsWith('OTEL_')) delete process.env[k];
+    process.env.OTEL_SERVICE_NAME = 'svc';
+    process.env.OTEL_HELPER_METRICS_PORT = '0';
+    const { InstrumentationBase, InstrumentationNodeModuleDefinition } = require('@opentelemetry/instrumentation');
+    class OptIn extends InstrumentationBase {
+      constructor() { super('a39-opt-in', '0.0.0', {}); }
+      init() { return [new InstrumentationNodeModuleDefinition('a39-not-installed', ['*'])]; }
+    }
+    const optIn = new OptIn();
+    // The wrong order: the helper (which loads node:http) after the instrumentation.
+    const lines = [];
+    require('@staffops/otel-helper/testing').setDiagnosticSink((l, m) => { if (m.origin === 'helper') lines.push(l); });
+    const helper = require('@staffops/otel-helper');
+    helper.setup({ instrumentations: [optIn] });
+    helper.shutdown().then(() => {
+      helper.setup({ instrumentations: [optIn] });
+      console.log(JSON.stringify(lines.filter((l) => l.includes('node:http is not instrumented'))));
+      process.exit(0);
+    });
+  `);
+  const lines = lastJson(res);
+  assert.equal(lines.length, 1, 'once per process');
+  assert.match(lines[0], /^otelhelper: node:http is not instrumented: it was loaded after an instrumentation was built and before setup\(\), so HTTP servers and clients get no spans — require @staffops\/otel-helper first and build opt-in instrumentations inside the setup\(\) call .* module=node:http$/);
+});
+
 test('express and grpc-js required before setup() are instrumented and reported once each (CJS)', () => {
   const res = runCjs(`
     const express = require('express');

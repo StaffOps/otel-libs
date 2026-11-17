@@ -40,6 +40,7 @@ import type * as http from 'node:http';
 import { syncBuiltinESMExports } from 'node:module';
 import * as path from 'node:path';
 import type { LoggerProvider, MeterProvider, TracerProvider } from '@opentelemetry/api';
+import type * as InstrumentationApi from '@opentelemetry/instrumentation';
 import type { Instrumentation } from '@opentelemetry/instrumentation';
 import type * as Express from '@opentelemetry/instrumentation-express';
 import type * as Grpc from '@opentelemetry/instrumentation-grpc';
@@ -50,6 +51,9 @@ import { isHelperServer } from './metrics-endpoint';
 import { getState } from './state';
 import type { OtlpPlan } from './otlp';
 import { grpcNamingTracerProvider, normalizeHealthPath } from './tracing';
+
+/** `instrumentationName` of instrumentation-http. */
+const HTTP_INSTRUMENTATION = '@opentelemetry/instrumentation-http';
 
 /** `instrumentationName` of instrumentation-grpc. */
 const GRPC_INSTRUMENTATION = '@opentelemetry/instrumentation-grpc';
@@ -407,6 +411,7 @@ export function loadedPackages(): ReadonlySet<string> {
 export function enableInstrumentations(holder: HelperInstrumentations, exclusions: ClientExclusions, loadedBeforeSetup: ReadonlySet<string>): void {
   holder.exclusions = exclusions;
   for (const instrumentation of holder.instrumentations) instrumentation.enable();
+  const first = !holder.preloadChecked;
   if (!holder.preloadChecked) {
     holder.preloadChecked = true;
     const mode = getState()?.hooks;
@@ -429,10 +434,38 @@ export function enableInstrumentations(holder: HelperInstrumentations, exclusion
     }
   }
   /* eslint-disable @typescript-eslint/no-require-imports */
-  require('node:http');
+  const nodeHttp = require('node:http') as typeof http;
   require('node:https');
   /* eslint-enable @typescript-eslint/no-require-imports */
   syncBuiltinESMExports();
+  if (first) reportUnpatchedHttp(holder, nodeHttp);
+}
+
+/**
+ * Task A39 (principle 8: failures are loud): after the first enable, an
+ * enabled instrumentation-http whose `node:http` is still unpatched. The
+ * shared require-in-the-middle hook caches every module it processes, so
+ * `node:http` loaded through it before the core instrumentations were built
+ * (an instrumentation built before `setup()`, then the helper or the app
+ * required) never reaches instrumentation-http and the re-require above gets
+ * the cached exports. Reported once per process; never throws.
+ */
+function reportUnpatchedHttp(holder: HelperInstrumentations, nodeHttp: typeof http): void {
+  try {
+    const httpInstrumentation = holder.instrumentations.find((i) => i.instrumentationName === HTTP_INSTRUMENTATION);
+    // `isEnabled()` is on InstrumentationBase, not on the Instrumentation interface.
+    if ((httpInstrumentation as { isEnabled?: () => boolean } | undefined)?.isEnabled?.() !== true) return;
+    // eslint-disable-next-line @typescript-eslint/no-require-imports -- loaded with the instrumentations
+    const { isWrapped } = require('@opentelemetry/instrumentation') as typeof InstrumentationApi;
+    if (isWrapped(nodeHttp.request)) return;
+    reportOnce(
+      'unpatched:node:http',
+      'node:http is not instrumented: it was loaded after an instrumentation was built and before setup(), so HTTP servers and clients get no spans — require @staffops/otel-helper first and build opt-in instrumentations inside the setup() call (setup({ instrumentations: [redisInstrumentation()] }))',
+      { module: 'node:http' },
+    );
+  } catch {
+    // A diagnostic only.
+  }
 }
 
 /**
