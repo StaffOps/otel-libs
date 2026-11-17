@@ -14,24 +14,21 @@ public class FailureTests
 
         using (var span = DemoTelemetry.Source.StartActivity("demo.order.process"))
         {
-            Failure.Record(span, error, logger, ("order.id", "ord-3"));
+            Failure.Record(span, error, logger);
         }
 
         var recorded = spans.Single("demo.order.process");
         Assert.Equal(ActivityStatusCode.Error, recorded.Status);
         Assert.Null(recorded.StatusDescription);
         Assert.Equal("OrderRejectedError", recorded.GetTagItem("error.type"));
-        var ev = Assert.Single(recorded.Events);
-        Assert.Equal("exception", ev.Name);
-        var tag = Assert.Single(ev.Tags);
-        Assert.Equal(("exception.type", (object?)"OrderRejectedError"), (tag.Key, tag.Value));
+        Assert.Empty(recorded.Events);
         Assert.DoesNotContain(recorded.Tags, t => t.Value?.Contains("rej-r1") == true);
 
         var log = Assert.Single(logger.Entries);
         Assert.Equal(LogLevel.Error, log.Level);
         Assert.Equal("amount over limit rej-r1", log.Message);
         Assert.Same(error, log.Exception);
-        Assert.Equal("ord-3", log.Attributes["order.id"]);
+        Assert.Empty(log.Attributes); // only the bridge's exception.* attributes, as the helper's record
         Assert.Equal(recorded.TraceId.ToHexString(), log.TraceId);
         Assert.Equal(recorded.SpanId.ToHexString(), log.SpanId);
     }
@@ -52,14 +49,15 @@ public class FailureTests
         using var spans = new SpanCollector();
         using (var span = DemoTelemetry.Source.StartActivity("demo.order.accept"))
         {
-            Failure.Propagate(span);
+            Failure.Propagate(span, 422);
         }
 
         var recorded = spans.Single("demo.order.accept");
         Assert.Equal(ActivityStatusCode.Error, recorded.Status);
         Assert.Null(recorded.StatusDescription);
+        Assert.Equal("422", recorded.GetTagItem("error.type"));
         Assert.Empty(recorded.Events);
-        Failure.Propagate(null);
+        Failure.Propagate(null, 502);
     }
 
     [Fact]

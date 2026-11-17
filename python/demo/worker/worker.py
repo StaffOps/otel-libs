@@ -18,7 +18,7 @@ Environment: ``DEMO_API_URL`` (``http://demo-python-api:8080``),
 
 # staffops_otel_helper first: it must run before any opentelemetry import so unsupported
 # OTEL_PROPAGATORS values are skipped instead of raising (isort would move it).
-import staffops_otel_helper  # isort: skip  # noqa: F401
+import staffops_otel_helper  # isort: skip
 
 import asyncio
 import logging
@@ -39,9 +39,10 @@ logger = logging.getLogger("demo.worker")
 async def drive_once(http, api_url: str, tracer: Tracer, seq: int) -> int | None:
     """Send the ``seq``-th order in a new root span ``demo.drive``; return the HTTP status."""
     order = dc.order_for(seq)
+    # Only propagates the outcome (DE-D8): every failure is caught and marked by hand below,
+    # so the helper's rule (an exception leaving the span, D15) never records here.
     with staffops_otel_helper.start_root_span(
         tracer, "demo.drive", attributes={"demo.scenario": order.scenario},
-        record_exception=False, set_status_on_exception=False,
     ) as span:
         try:
             response = await http.post(f"{api_url}/orders", json=order.to_json())

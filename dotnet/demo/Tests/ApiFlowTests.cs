@@ -70,7 +70,8 @@ public sealed class ApiFlowTests : IDisposable
 
         var accept = _spans.Single("demo.order.accept");
         Assert.Equal(ActivityStatusCode.Error, accept.Status);
-        Assert.Null(accept.GetTagItem("error.type"));
+        Assert.Null(accept.StatusDescription);
+        Assert.Equal(expected.ToString(System.Globalization.CultureInfo.InvariantCulture), accept.GetTagItem("error.type"));
         Assert.Empty(accept.Events);
         Assert.Empty(_logger.Entries);
         Assert.Empty(_redis.Added);
@@ -85,7 +86,7 @@ public sealed class ApiFlowTests : IDisposable
 
         var accept = _spans.Single("demo.order.accept");
         Assert.Equal(ActivityStatusCode.Error, accept.Status);
-        Assert.Null(accept.GetTagItem("error.type"));
+        Assert.Equal("502", accept.GetTagItem("error.type"));
         Assert.Empty(accept.Events);
         Assert.Empty(_logger.Entries);
     }

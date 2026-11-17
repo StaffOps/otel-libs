@@ -14,7 +14,7 @@ Environment: ``DEMO_GRPC_PORT`` (50051), ``DEMO_PG_HOST`` (``host[:port]``),
 
 # staffops_otel_helper first: it must run before any opentelemetry import so unsupported
 # OTEL_PROPAGATORS values are skipped instead of raising (isort would move it).
-import staffops_otel_helper  # isort: skip  # noqa: F401
+import staffops_otel_helper  # isort: skip
 
 import asyncio
 import logging
@@ -114,20 +114,20 @@ class OrderLogic:
         Synchronous on purpose: it runs in a worker thread (``asyncio.to_thread``
         copies the context, so the gRPC server span stays the parent).
         """
-        with self._tracer.start_as_current_span(
-            "demo.order.process",
+        # The owning span of the backend's failures (DE-D8): the helper's traced marks it when
+        # an exception leaves (status ERROR without description, error.type, no exception
+        # event) and writes the one ERROR record with the message and the stack (D15).
+        with staffops_otel_helper.traced(
+            "demo.order.process", tracer=self._tracer,
             attributes={"demo.scenario": scenario, "order.id": order_id},
-            record_exception=False, set_status_on_exception=False,
-        ) as span:
+        ):
             started = time.perf_counter()
             attrs = {"demo.scenario": scenario, "demo.outcome": "ok"}
             try:
                 stored = self._process(order_id, customer, amount, scenario)
             except Exception as e:
-                # The two scenario errors and any unexpected failure alike: ADR-014 in the
-                # owning span, error.type = the type name (DE-D8, r3.5).
-                attrs = {**attrs, "demo.outcome": "error",
-                         "error.type": dc.record_failure(span, logger, e)}
+                # The two scenario errors and any unexpected failure alike (DE-D8, r3.5).
+                attrs = {**attrs, "demo.outcome": "error", "error.type": dc.error_type(e)}
                 raise
             else:
                 logger.info("order processed", extra={"order.id": stored, "demo.scenario": scenario})

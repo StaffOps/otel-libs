@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import json
 import logging
 from collections import Counter
 
 import pytest
+import staffops_otel_helper
 from opentelemetry.trace import StatusCode
 
 import democommon as dc
@@ -103,23 +105,48 @@ def test_orders_ids_amounts_and_customers():
     assert not any(dc.order_for(i).order_id.startswith(("rej-", "dup-", "unh-")) for i in range(1, 1000))
 
 
-def test_record_failure_follows_adr_014(otel):
-    logger = logging.getLogger("demo.backend")
-    with otel.tracer.start_as_current_span("demo.order.process") as span:
-        try:
-            raise dc.OrderRejectedError("amount over limit rej-r1")
-        except dc.OrderRejectedError as e:
-            assert dc.record_failure(span, logger, e) == "OrderRejectedError"
+@pytest.mark.parametrize("exc", [dc.OrderRejectedError("amount over limit rej-r1"),
+                                 dc.OrderExistsError("order dup-r1 exists"),
+                                 dc.DemoUnhandledError("boom unh-r1")])
+def test_traced_uses_the_pinned_literals(otel, exc):
+    """The demo's wiring of the A45 API (D15): the helper reads __otel_error_type__."""
+    literal = type(exc).__name__
+    assert dc.error_type(exc) == literal
+    with pytest.raises(type(exc)):
+        with staffops_otel_helper.traced("demo.order.process", tracer=otel.tracer):
+            raise exc
     (s,) = otel.finished("demo.order.process")
     assert s.status.status_code is StatusCode.ERROR
     assert s.status.description is None
-    assert s.attributes["error.type"] == "OrderRejectedError"
-    assert [(e.name, dict(e.attributes)) for e in s.events] == [
-        ("exception", {"exception.type": "OrderRejectedError"})]
+    assert s.attributes["error.type"] == literal
+    assert not s.events
+    assert not any("-r1" in str(v) for v in s.attributes.values())
     (rec,) = otel.records()
-    assert rec.body == "amount over limit rej-r1"
+    assert rec.body == str(exc)
     assert rec.severity_number.value >= 17
     assert rec.trace_id == s.context.trace_id and rec.span_id == s.context.span_id
-    assert rec.attributes["exception.type"] == "OrderRejectedError"
-    assert rec.attributes["exception.message"] == "amount over limit rej-r1"
+    assert rec.attributes["exception.type"] == literal
+    assert rec.attributes["exception.message"] == str(exc)
     assert "Traceback" in rec.attributes["exception.stacktrace"]
+
+
+@pytest.mark.parametrize("exc", [RuntimeError("x"), TimeoutError(), KeyError("k"),
+                                 dc.OrderRejectedError("m"), dc.OrderExistsError("m"),
+                                 dc.DemoUnhandledError("m"), json.JSONDecodeError("m", "d", 0)])
+def test_error_type_equals_the_helper(exc):
+    """The metric value (dc.error_type) is the helper's span value for the same exception."""
+    from staffops_otel_helper import _failure
+
+    assert dc.error_type(exc) == _failure.error_type(exc)
+
+
+def test_error_type_mirrors_the_helper_default():
+    assert dc.error_type(RuntimeError("x")) == "RuntimeError"
+
+    class Local(Exception):
+        __otel_error_type__ = ""
+
+    assert dc.error_type(Local()) == f"{__name__}.test_error_type_mirrors_the_helper_default.<locals>.Local"
+    assert dc.error_type(dc.OrderRejectedError("x")) == "OrderRejectedError"
+    assert dc.error_type(TimeoutError()) == "TimeoutError"
+

@@ -171,6 +171,7 @@ def test_backend_errors_map_to_4xx_without_event_or_log(otel, code, status):
     assert r.status_code == status
     (accept,) = otel.finished("demo.order.accept")
     assert accept.status.status_code is StatusCode.ERROR and accept.status.description is None
+    assert accept.attributes["error.type"] == str(status)  # the answered status (DE-D8 note)
     assert not accept.events and not otel.records()
     assert not redis.stream and not otel.finished(f"send {dc.STREAM}")
 
@@ -184,7 +185,7 @@ def test_other_grpc_failures_are_a_502_with_accept_error_only(otel, code):
     assert r.status_code == 502 and r.json() == {"error": "backend failed"}
     (accept,) = otel.finished("demo.order.accept")
     assert accept.status.status_code is StatusCode.ERROR and accept.status.description is None
-    assert "error.type" not in accept.attributes and not accept.events and not otel.records()
+    assert accept.attributes["error.type"] == "502" and not accept.events and not otel.records()
     assert not redis.stream
 
 
@@ -242,7 +243,7 @@ def test_unhandled_is_recorded_in_accept_then_500(otel):
     (accept,) = otel.finished("demo.order.accept")
     assert accept.status.status_code is StatusCode.ERROR and accept.status.description is None
     assert accept.attributes["error.type"] == "DemoUnhandledError"
-    assert [dict(e.attributes) for e in accept.events] == [{"exception.type": "DemoUnhandledError"}]
+    assert not accept.events  # A45: no exception event (DE-D8 note 2026-11-17)
     (rec,) = [r for r in otel.records() if r.attributes.get("exception.type") == "DemoUnhandledError"]
     assert rec.body == "boom unh-r1"
     assert rec.trace_id == accept.context.trace_id and rec.span_id == accept.context.span_id

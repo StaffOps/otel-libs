@@ -67,9 +67,12 @@ def test_business_error_owning_span_and_log(otel):
     (span,) = otel.finished("demo.order.process")
     assert span.status.status_code is StatusCode.ERROR and span.status.description is None
     assert span.attributes["error.type"] == "OrderRejectedError"
-    assert [dict(e.attributes) for e in span.events] == [{"exception.type": "OrderRejectedError"}]
-    (rec,) = otel.records()
+    assert not span.events  # A45: no exception event (DE-D8 note 2026-11-17)
+    (rec,) = otel.records()  # the helper's one record, in the owning span
     assert rec.span_id == span.context.span_id and rec.attributes["exception.stacktrace"]
+    assert rec.attributes["exception.type"] == "OrderRejectedError"
+    assert rec.body == rec.attributes["exception.message"] == "amount over limit rej-r1"
+    assert rec.severity_number.value >= 17
     ((_, cp),) = otel.points(dc.METRIC_PROCESSED)
     assert dict(cp.attributes) == {"demo.scenario": "business_error", "demo.outcome": "error",
                                    "error.type": "OrderRejectedError"}
@@ -103,7 +106,7 @@ def test_unexpected_failure_is_recorded_like_a_scenario_error(otel):
     (span,) = otel.finished("demo.order.process")
     assert span.status.status_code is StatusCode.ERROR and span.status.description is None
     assert span.attributes["error.type"] == "RuntimeError"
-    assert [dict(e.attributes) for e in span.events] == [{"exception.type": "RuntimeError"}]
+    assert not span.events
     (rec,) = otel.records()
     assert rec.span_id == span.context.span_id and rec.attributes["exception.type"] == "RuntimeError"
     expected = {"demo.scenario": "ok", "demo.outcome": "error", "error.type": "RuntimeError"}

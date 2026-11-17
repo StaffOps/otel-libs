@@ -2,7 +2,7 @@
 // queue producer (node-redis through @staffops/otel-helper-redis), gRPC
 // client of demo-node-backend. specs/demo-environment DE3c; span
 // demo.order.accept, PRODUCER span (DE-D6), ADR-014 failure for the
-// unhandled scenario (DE-D8). Settings from the environment only:
+// unhandled scenario through the helper's withSpan (DE-D8, A45). Settings from the environment only:
 //   DEMO_HTTP_PORT (8080), DEMO_BACKEND_ADDR (demo-node-backend:50051),
 //   DEMO_REDIS_ADDR (demo-redis:6379), DEMO_REDIS_PASSWORD_FILE (required).
 //
@@ -10,7 +10,15 @@
 // instrumented library (express, @grpc/grpc-js and redis) is required here, after setup().
 'use strict';
 
-const { getTracer, shutdown } = require('@staffops/otel-helper');
+const { getTracer, shutdown, withSpan } = require('@staffops/otel-helper');
+
+// withSpan is the A45 span function (contract design D15); the published
+// 0.3.0-rc.1 pins in package.json predate it. Without it every failure would
+// go unrecorded, so stop here instead.
+if (typeof withSpan !== 'function') {
+  throw new Error('@staffops/otel-helper has no withSpan (A45): build the demo image from the workspace '
+    + '(the Dockerfile packs nodejs/packages over the published pins)');
+}
 
 const http = require('node:http');
 const { SpanStatusCode, context: contextApi } = require('@opentelemetry/api');
@@ -23,7 +31,7 @@ const { loadOrderService } = require('../lib/assets');
 const { healthClient, isServing } = require('../lib/health');
 const { LANG, envOr, parseHostPort, portEnv, readSecretFile, runId } = require('../lib/config');
 const { DemoUnhandledError } = require('../lib/errors');
-const { DEMO_SCOPE, errorTypeOf, ownFailure } = require('../lib/failure');
+const { DEMO_SCOPE, errorTypeOf, markPropagated } = require('../lib/failure');
 const { httpStatusForGrpc } = require('../lib/grpc-status');
 const { createDemoLogger } = require('../lib/logging');
 const { injectCarrier, producerSpan, quoteKey, streamKey } = require('../lib/messaging');
@@ -104,39 +112,30 @@ async function publish(order) {
 }
 
 /**
- * The work of POST /orders in demo.order.accept. The unhandled scenario throws
- * here: the span records it, the ERROR record is written while it is current,
- * the span ends, and only then is the error rethrown for express to answer 500
- * (DE-D7 r3.4: end the span before re-raising).
+ * The work of POST /orders in demo.order.accept, run by the helper's withSpan
+ * (contract design D15). The unhandled scenario throws here: withSpan marks
+ * the span (status ERROR without description, error.type DemoUnhandledError,
+ * no exception event), writes the one ERROR record with the message and the
+ * stack in its context, ends it, and only then rethrows for express to answer
+ * 500 (DE-D7 r3.4: end the span before re-raising).
  */
 function accept(order) {
-  return tracer.startActiveSpan('demo.order.accept', {
-    attributes: { 'demo.scenario': order.scenario, 'order.id': order.order_id },
-  }, async (span) => {
-    let result;
-    try {
-      if (order.scenario === 'unhandled') throw new DemoUnhandledError(`boom unh-${RUN}`);
-      await refreshQuote(order.customer);
-      const placed = await placeOrder(order);
-      if (placed.code !== undefined) {
-        // The backend owns the failure (its span and log name it): ERROR only,
-        // no description, error.type, event or log here (DE-D7 r3.4); 422 /
-        // 409 for the business codes, 502 for any other (r3.5).
-        span.setStatus({ code: SpanStatusCode.ERROR });
-        const status = httpStatusForGrpc(placed.code);
-        result = { status, body: { detail: http.STATUS_CODES[status] } };
-      } else {
-        await publish(order);
-        result = { status: 201, body: { order_id: placed.reply.order_id, status: placed.reply.status } };
-      }
-    } catch (err) {
-      ownFailure(span, log, err, { 'demo.scenario': order.scenario });
-      span.end();
-      throw err;
+  return withSpan('demo.order.accept', async (span) => {
+    if (order.scenario === 'unhandled') throw new DemoUnhandledError(`boom unh-${RUN}`);
+    await refreshQuote(order.customer);
+    const placed = await placeOrder(order);
+    if (placed.code !== undefined) {
+      // The backend owns the failure (its span and record name it): ERROR
+      // without description, error.type = the answered HTTP status (as the
+      // worker's demo.drive), no event, no record here (DE-D8 note of
+      // 2026-11-17); 422 / 409 for the business codes, 502 for any other (r3.5).
+      const status = httpStatusForGrpc(placed.code);
+      markPropagated(span, status);
+      return { status, body: { detail: http.STATUS_CODES[status] } };
     }
-    span.end();
-    return result;
-  });
+    await publish(order);
+    return { status: 201, body: { order_id: placed.reply.order_id, status: placed.reply.status } };
+  }, { tracer, attributes: { 'demo.scenario': order.scenario, 'order.id': order.order_id } });
 }
 
 const app = express();

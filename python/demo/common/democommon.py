@@ -2,8 +2,10 @@
 
 Settings come from environment variables only (DR0, DE-D13 r3.3); passwords
 are read once from the files named by ``DEMO_PG_PASSWORD_FILE`` and
-``DEMO_REDIS_PASSWORD_FILE`` and are never logged. The ADR-014 failure pattern
-of DE-D8 lives here so the api and the backend apply it the same way.
+``DEMO_REDIS_PASSWORD_FILE`` and are never logged. Owning demo spans use the
+helper's ``staffops_otel_helper.traced`` (contract design D15, A45), which applies
+the ADR-014 failure pattern of DE-D8; the demo errors pin their ``error.type``
+through ``__otel_error_type__``.
 """
 
 from __future__ import annotations
@@ -12,8 +14,6 @@ import logging
 import os
 from dataclasses import dataclass
 from urllib.parse import unquote
-
-from opentelemetry.trace import Span, Status, StatusCode
 
 # Language segment of the stream, key prefix, database and service names (DE-D2, DE-D4).
 LANG = "python"
@@ -60,13 +60,20 @@ BACKEND_SCENARIOS = (OK, BUSINESS_ERROR, DB_ERROR)
 class OrderRejectedError(Exception):
     """Business rule violation in the backend (business_error)."""
 
+    # The pinned literal (DE-D8), read by the helper instead of ``democommon.OrderRejectedError``.
+    __otel_error_type__ = "OrderRejectedError"
+
 
 class OrderExistsError(Exception):
     """The database refused the order as a duplicate (db_error)."""
 
+    __otel_error_type__ = "OrderExistsError"
+
 
 class DemoUnhandledError(Exception):
     """Failure the api does not handle; the framework maps it to 500 (unhandled)."""
+
+    __otel_error_type__ = "DemoUnhandledError"
 
 
 def run_id(environ: dict[str, str] | None = None) -> str:
@@ -182,22 +189,19 @@ def order_for(seq: int) -> OrderRequest:
     return OrderRequest(f"{prefix}-{seq % 500}", customer, amount, scenario)
 
 
-def record_failure(span: Span, logger: logging.Logger, exc: BaseException) -> str:
-    """Apply DE-D8 / ADR-014 to ``exc`` in its owning span; return the error type.
+def error_type(exc: BaseException) -> str:
+    """The ``error.type`` the helper gives ``exc`` (contract design D15), for the metric attributes.
 
-    The span gets status ERROR without a description, ``error.type`` and one
-    ``exception`` event carrying only ``exception.type``; the message and the
-    stack go to one ERROR log record emitted while ``span`` is current, so it
-    carries that span's trace and span ids. The caller must hold ``span`` as
-    the current span and rethrow (or map) afterwards.
+    So the metric attribute (DE-D9) equals the span attribute: a non-empty ``str``
+    ``__otel_error_type__`` (the pinned literals), else ``module.qualname``, bare
+    for ``builtins`` and ``__main__``.
     """
-    error_type = type(exc).__name__
-    span.set_status(Status(StatusCode.ERROR))
-    span.set_attribute("error.type", error_type)
-    span.add_event("exception", {"exception.type": error_type})
-    # The stdlib bridge turns exc_info into exception.type / .message / .stacktrace.
-    logger.error(str(exc), exc_info=exc)
-    return error_type
+    override = getattr(exc, "__otel_error_type__", None)
+    if isinstance(override, str) and override:
+        return override
+    cls = type(exc)
+    module = cls.__module__
+    return cls.__qualname__ if module in ("builtins", "__main__") else f"{module}.{cls.__qualname__}"
 
 
 async def ensure_group(redis_client) -> bool:

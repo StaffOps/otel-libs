@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
+	otelhelper "github.com/staffops/otel-libs/go"
 	"github.com/staffops/otel-libs/go/demo/internal/demokit"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
@@ -77,30 +78,34 @@ type orderService struct {
 	run    string
 }
 
-// PlaceOrder handles one order in the demo span demo.order.process: the
-// custom metrics are recorded inside it (so they get trace_based exemplars)
-// and a failure is recorded on it per ADR-014 before the gRPC status (with a
-// constant message) is returned.
+// PlaceOrder handles one order in the demo span demo.order.process, the owning
+// span of the backend's failures (DE-D8). otelhelper.WithSpan applies the A45
+// rule to it (contract design D15): a returned error marks it (status ERROR
+// without description, error.type from the error's ErrorType() method, no
+// exception event) and writes the one ERROR record with the message and the
+// stack in its context. The custom metrics are recorded inside the span (so
+// they get trace_based exemplars); the gRPC status, with a constant message,
+// is built after the span ended.
 func (s *orderService) PlaceOrder(ctx context.Context, req *demov1.PlaceOrderRequest) (*demov1.PlaceOrderResponse, error) {
 	if !demokit.ValidScenario(req.GetScenario()) {
 		return nil, status.Error(codes.InvalidArgument, "unknown scenario")
 	}
-	ctx, span := s.tracer.Start(ctx, "demo.order.process", trace.WithAttributes(
+	var id string
+	err := otelhelper.WithSpan(ctx, s.tracer, "demo.order.process", func(ctx context.Context) error {
+		start := time.Now()
+		var err error
+		id, err = s.process(ctx, req)
+		if err == nil {
+			s.logger.InfoContext(ctx, "order processed", "order.id", id, "demo.scenario", req.GetScenario())
+		}
+		attrs := metric.WithAttributes(demokit.MetricAttributes(req.GetScenario(), err)...)
+		s.ins.Processed.Add(ctx, 1, attrs)
+		s.ins.Duration.Record(ctx, time.Since(start).Seconds(), attrs)
+		return err
+	}, trace.WithAttributes(
 		demokit.Scenario(req.GetScenario()),
 		attribute.String("order.id", req.GetOrderId()),
 	))
-	defer span.End()
-
-	start := time.Now()
-	id, err := s.process(ctx, req)
-	if err != nil {
-		demokit.RecordFailure(ctx, span, s.logger, err)
-	} else {
-		s.logger.InfoContext(ctx, "order processed", "order.id", id, "demo.scenario", req.GetScenario())
-	}
-	attrs := metric.WithAttributes(demokit.MetricAttributes(req.GetScenario(), err)...)
-	s.ins.Processed.Add(ctx, 1, attrs)
-	s.ins.Duration.Record(ctx, time.Since(start).Seconds(), attrs)
 	if err != nil {
 		code, msg := grpcStatus(err)
 		return nil, status.Error(code, msg)

@@ -4200,6 +4200,33 @@ Unsupported instrumentation versions, task A10 (P18):
 
 ### Internal
 
+- **Demo apps on the A45 API (DE12a, 2026-11-17).**
+  - **Go, Python, Node.js:** the demo apps use `otelhelper.WithSpan` /
+    `staffops_otel_helper.traced` / `withSpan` on the owning spans only:
+    backend `demo.order.process`, and api `demo.order.accept` on
+    `unhandled`. That gives one ERROR record per failure.
+    - The pinned `error.type` literals come from the per-error override.
+    - The hand-written failure helpers are removed.
+    - The Python worker no longer passes the arguments A45 rejects.
+  - **.NET** (demo code only; the library is unchanged): it keeps
+    hand-written marking, without the type-only `exception` event, and its
+    failure records carry only `exception.*`.
+  - **Propagating spans** (`demo.order.accept` on 422/409/502,
+    `demo.drive`) are marked ERROR with `error.type` = the HTTP status and
+    write no record.
+  - **`verify.py demo`, check d:**
+    - the owning span has an empty description and no exception event;
+    - there is exactly one ERROR record per failure trace on or below the
+      demo spans, on the owning span, with the pinned `exception_type` in
+      all four languages;
+    - the shape of the propagating spans is checked.
+
+    The .NET Kestrel record (A37) and the d.db record are outside that
+    budget.
+  - **`verify.py demo`, check c:** the metric `error_type` equals the pinned
+    literal.
+  - Spec: dated DE-D8 note, DE-D7/D9/D11 updates, tasks row DE12a.
+
 - **Demo DE7 and DE9 (2026-11-17).** Requests recalibrated from the live run
   (`testing/k8s/demo/demo.sh`): all four languages plus PostgreSQL and Redis
   now request 195 m CPU / 1056 Mi (was 450 m / 1424 Mi), memory limits ≥ 2×

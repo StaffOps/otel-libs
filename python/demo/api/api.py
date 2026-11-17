@@ -15,7 +15,7 @@ Environment: ``DEMO_HTTP_PORT`` (8080), ``DEMO_BACKEND_ADDR``
 
 # staffops_otel_helper first: it must run before any opentelemetry import so unsupported
 # OTEL_PROPAGATORS values are skipped instead of raising (isort would move it).
-import staffops_otel_helper  # isort: skip  # noqa: F401
+import staffops_otel_helper  # isort: skip
 
 import asyncio
 import logging
@@ -148,18 +148,16 @@ async def publish_order(deps: Deps, order_id: str, scenario: str) -> str:
 
 async def accept_order(deps: Deps, body: OrderBody) -> tuple[int, dict]:
     """The work of ``POST /orders`` inside ``demo.order.accept``; returns (status, payload)."""
-    with deps.tracer.start_as_current_span(
-        "demo.order.accept",
+    # The owning span of the unhandled scenario (DE-D8): the helper's traced marks it when
+    # the exception leaves (status ERROR without description, error.type, no exception
+    # event) and writes the one ERROR record inside it, before the framework sees the
+    # exception (D15, DE-D8 r3).
+    with staffops_otel_helper.traced(
+        "demo.order.accept", tracer=deps.tracer,
         attributes={"demo.scenario": body.scenario, "order.id": body.order_id},
-        record_exception=False, set_status_on_exception=False,
     ) as span:
         if body.scenario == dc.UNHANDLED:
-            try:
-                raise dc.DemoUnhandledError(f"boom unh-{deps.run}")
-            except dc.DemoUnhandledError as e:
-                # Logged here, inside the owning span, before the rethrow (DE-D8 r3).
-                dc.record_failure(span, logger, e)
-                raise
+            raise dc.DemoUnhandledError(f"boom unh-{deps.run}")
         # The cache is not essential (r3.5): a failure is one WARN and no quote.
         try:
             quote = await cached_quote(deps, body.customer)
@@ -171,11 +169,13 @@ async def accept_order(deps: Deps, body: OrderBody) -> tuple[int, dict]:
                 order_id=body.order_id, customer=body.customer,
                 amount=body.amount, scenario=body.scenario))
         except grpc.aio.AioRpcError as e:
-            # Propagates the backend's failure: ERROR only, no description, no
-            # error.type, no event, no log (DE-D8, r3.4). 422/409 for the two business
-            # codes, 502 for any other gRPC failure (r3.5).
-            span.set_status(Status(StatusCode.ERROR))
+            # Propagates the backend's failure: ERROR without description, error.type =
+            # the HTTP status it answers (as the worker's demo.drive), no event, no record
+            # (DE-D8 note of 2026-11-17). 422/409 for the two business codes, 502 for any
+            # other gRPC failure (r3.5).
             status = HTTP_FOR_GRPC.get(e.code(), 502)
+            span.set_status(Status(StatusCode.ERROR))
+            span.set_attribute("error.type", str(status))
             return status, {"error": e.details() if status != 502 else "backend failed"}
         if body.scenario == dc.OK:
             try:

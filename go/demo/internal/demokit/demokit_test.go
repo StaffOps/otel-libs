@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 	"net"
 	"net/url"
 	"os"
@@ -13,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	otelhelper "github.com/staffops/otel-libs/go"
 	"github.com/staffops/otel-libs/go/demo/internal/demotest"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
@@ -156,52 +156,62 @@ func TestTypeNameUsesTheRootError(t *testing.T) {
 	}
 }
 
-func TestRecordFailureFollowsADR014(t *testing.T) {
-	tracer, rec := demotest.Tracer()
-	logs := &demotest.Logs{}
-	ctx, span := tracer.Start(context.Background(), "demo.order.process")
-	got := RecordFailure(ctx, span, logs.Logger(), &OrderRejectedError{Run: "r9"})
-	span.End()
-	if got != TypeOrderRejected {
-		t.Fatalf("RecordFailure returned %q", got)
+// TestHelperUsesThePinnedLiterals checks the demo's wiring of the A45 API
+// (contract design D15): the helper reads the ErrorType() methods, so the
+// owning span and its one failure record carry the pinned literal, and the
+// span gets no exception event (DE-D8 note of 2026-11-17).
+func TestHelperUsesThePinnedLiterals(t *testing.T) {
+	driver := errors.New("duplicate order dup-r9")
+	cases := []struct {
+		err error
+		typ string
+	}{
+		{&OrderRejectedError{Run: "r9"}, TypeOrderRejected},
+		{&OrderExistsError{ID: "dup-r9", Err: driver}, TypeOrderExists},
+		{&DemoUnhandledError{Run: "r9"}, TypeDemoUnhandled},
 	}
-
-	s := rec.Ended()[0]
-	if s.Status().Code != codes.Error || s.Status().Description != "" {
-		t.Errorf("status = %+v, want ERROR without description", s.Status())
-	}
-	if v := attr(s.Attributes(), "error.type"); v != TypeOrderRejected {
-		t.Errorf("error.type = %q", v)
-	}
-	if len(s.Events()) != 1 || s.Events()[0].Name != "exception" {
-		t.Fatalf("events = %+v, want one exception event", s.Events())
-	}
-	ev := s.Events()[0].Attributes
-	if len(ev) != 1 || ev[0].Key != "exception.type" || ev[0].Value.AsString() != TypeOrderRejected {
-		t.Errorf("exception event attributes = %v, want only exception.type", ev)
-	}
-	for _, kv := range s.Attributes() {
-		if strings.Contains(kv.Value.Emit(), "rej-r9") {
-			t.Errorf("span attribute %s leaks the run token", kv.Key)
-		}
-	}
-
-	r := logs.Records()
-	if len(r) != 1 {
-		t.Fatalf("records = %d, want 1", len(r))
-	}
-	l := r[0]
-	if l.Level != slog.LevelError || l.Message != "amount over limit rej-r9" {
-		t.Errorf("record = %v %q", l.Level, l.Message)
-	}
-	if l.SpanContext.SpanID() != s.SpanContext().SpanID() || l.SpanContext.TraceID() != s.SpanContext().TraceID() {
-		t.Error("the record must be written while the owning span is current")
-	}
-	if l.Attrs["exception.type"] != TypeOrderRejected || l.Attrs["exception.message"] != "amount over limit rej-r9" {
-		t.Errorf("record attrs = %v", l.Attrs)
-	}
-	if !strings.Contains(l.Attrs["exception.stacktrace"], "goroutine") || !strings.Contains(l.Attrs["exception.stacktrace"], "RecordFailure") {
-		t.Errorf("stacktrace = %q, want debug.Stack() output", l.Attrs["exception.stacktrace"])
+	for _, c := range cases {
+		t.Run(c.typ, func(t *testing.T) {
+			out := demotest.CaptureStdout(t)
+			tracer, rec := demotest.Tracer()
+			got := otelhelper.WithSpan(context.Background(), tracer, "demo.order.process", func(context.Context) error { return c.err })
+			if got != c.err {
+				t.Fatalf("WithSpan returned %v, want the error unchanged", got)
+			}
+			if ErrorType(c.err) != c.typ {
+				t.Errorf("ErrorType = %q, want %q (metric attribute = span attribute)", ErrorType(c.err), c.typ)
+			}
+			s := rec.Ended()[0]
+			if s.Status().Code != codes.Error || s.Status().Description != "" {
+				t.Errorf("status = %+v, want ERROR without description", s.Status())
+			}
+			if v := attr(s.Attributes(), "error.type"); v != c.typ {
+				t.Errorf("error.type = %q, want %q", v, c.typ)
+			}
+			if len(s.Events()) != 0 {
+				t.Errorf("events = %+v, want none", s.Events())
+			}
+			for _, kv := range s.Attributes() {
+				if strings.Contains(kv.Value.Emit(), "-r9") {
+					t.Errorf("span attribute %s leaks the run token", kv.Key)
+				}
+			}
+			r := out.Records()
+			if len(r) != 1 {
+				t.Fatalf("stdout records = %v, want one", r)
+			}
+			l := r[0]
+			if demotest.String(l, "level") != "ERROR" || demotest.String(l, "msg") != c.err.Error() {
+				t.Errorf("record = %v", l)
+			}
+			if demotest.String(l, "exception.type") != c.typ || demotest.String(l, "exception.message") != c.err.Error() ||
+				!strings.Contains(demotest.String(l, "exception.stacktrace"), "goroutine") {
+				t.Errorf("record attributes = %v", l)
+			}
+			if demotest.String(l, "trace_id") != s.SpanContext().TraceID().String() || demotest.String(l, "span_id") != s.SpanContext().SpanID().String() {
+				t.Errorf("record ids = %s/%s, want the owning span's", demotest.String(l, "trace_id"), demotest.String(l, "span_id"))
+			}
+		})
 	}
 }
 

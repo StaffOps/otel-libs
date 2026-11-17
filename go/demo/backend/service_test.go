@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"net"
 	"strings"
 	"testing"
 	"time"
@@ -65,6 +66,7 @@ type fixture struct {
 	store  *fakeStore
 	spans  *tracetest.SpanRecorder
 	logs   *demotest.Logs
+	stdout *demotest.Stdout // the helper's failure records (no logs pipeline in tests)
 	reader *sdkmetric.ManualReader
 }
 
@@ -86,6 +88,7 @@ func newFixture(t *testing.T) *fixture {
 		store:  st,
 		spans:  rec,
 		logs:   logs,
+		stdout: demotest.CaptureStdout(t),
 		reader: reader,
 	}
 }
@@ -134,6 +137,9 @@ func TestPlaceOrderOK(t *testing.T) {
 	if logs[0].SpanContext.SpanID() != s.SpanContext().SpanID() {
 		t.Error("INFO record must be inside demo.order.process")
 	}
+	if r := f.stdout.Records(); len(r) != 0 {
+		t.Errorf("a success writes no failure record: %v", r)
+	}
 	if got := f.points(t); got["ok/ok/"] != 1 || len(got) != 1 {
 		t.Errorf("metric points = %v", got)
 	}
@@ -173,8 +179,8 @@ func TestPlaceOrderErrors(t *testing.T) {
 				t.Errorf("store calls = %q, want %q", got, c.calls)
 			}
 			s := f.spans.Ended()[0]
-			if s.Status().Code != otelcodes.Error || s.Status().Description != "" {
-				t.Errorf("span status = %+v", s.Status())
+			if s.Status().Code != otelcodes.Error || s.Status().Description != "" || len(s.Events()) != 0 {
+				t.Errorf("span status = %+v events = %v, want ERROR, no description, no event", s.Status(), s.Events())
 			}
 			var et string
 			for _, kv := range s.Attributes() {
@@ -188,9 +194,14 @@ func TestPlaceOrderErrors(t *testing.T) {
 			if et != c.errType {
 				t.Errorf("error.type = %q", et)
 			}
-			logs := f.logs.Records()
-			if len(logs) != 1 || logs[0].Message != c.logMsg || logs[0].Attrs["exception.type"] != c.errType {
-				t.Errorf("logs = %+v", logs)
+			if logs := f.logs.Records(); len(logs) != 0 {
+				t.Errorf("the demo logger writes nothing on a failure: %+v", logs)
+			}
+			// One record by otelhelper.WithSpan, in the owning span's context (DE-D8).
+			recs := f.stdout.Records()
+			if len(recs) != 1 || demotest.String(recs[0], "msg") != c.logMsg || demotest.String(recs[0], "exception.type") != c.errType ||
+				demotest.String(recs[0], "exception.message") != c.logMsg || demotest.String(recs[0], "span_id") != s.SpanContext().SpanID().String() {
+				t.Errorf("failure records = %+v", recs)
 			}
 			if got := f.points(t); got[c.point] != 1 || len(got) != 1 {
 				t.Errorf("metric points = %v", got)
@@ -210,8 +221,23 @@ func TestPlaceOrderUnexpectedFailures(t *testing.T) {
 	if s := f.spans.Ended()[0]; s.Status().Code != otelcodes.Error {
 		t.Errorf("unexpected failure must be recorded on demo.order.process: %v", s.Status())
 	}
-	if r := f.logs.Records(); len(r) != 1 || r[0].Attrs["exception.type"] != "*errors.errorString" {
+	if r := f.stdout.Records(); len(r) != 1 || demotest.String(r[0], "exception.type") != "*errors.errorString" {
 		t.Errorf("unexpected failure log = %+v", r)
+	}
+
+	// A %w-wrapped unexpected error: the metric error.type equals the span's (the helper's
+	// rule strips the single %w wrapper; the root type, *errors.errorString, is not used).
+	f = newFixture(t)
+	f.store.insertErr = fmt.Errorf("insert: %w", &net.OpError{Op: "dial", Net: "tcp", Err: errors.New("connection refused")})
+	_, _ = f.svc.PlaceOrder(context.Background(), &demov1.PlaceOrderRequest{OrderId: "ord-6", Scenario: "db_error"})
+	var spanType string
+	for _, kv := range f.spans.Ended()[0].Attributes() {
+		if kv.Key == "error.type" {
+			spanType = kv.Value.AsString()
+		}
+	}
+	if spanType != "*net.OpError" || f.points(t)["db_error/error/"+spanType] != 1 {
+		t.Errorf("span error.type %q, metric points %v: want the same *net.OpError on both", spanType, f.points(t))
 	}
 
 	f = newFixture(t)

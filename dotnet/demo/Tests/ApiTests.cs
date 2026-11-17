@@ -58,9 +58,10 @@ public class ApiTests
         Assert.Equal(ActivityStatusCode.Error, accept.Status);
         Assert.Null(accept.StatusDescription);
         Assert.Equal("DemoUnhandledError", accept.GetTagItem("error.type"));
-        Assert.Equal("exception", Assert.Single(accept.Events).Name);
+        Assert.Empty(accept.Events);
         var log = Assert.Single(logger.Entries);
         Assert.Equal((LogLevel.Error, "boom unh-r1"), (log.Level, log.Message));
+        Assert.Empty(log.Attributes); // no demo.scenario / order.id (DE-D8 note of 2026-11-17)
         Assert.Equal(accept.SpanId.ToHexString(), log.SpanId);
     }
 }

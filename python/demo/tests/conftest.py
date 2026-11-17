@@ -5,7 +5,9 @@
   Dockerfiles do at build time (DE-D3);
 - gives each test in-memory OpenTelemetry providers: a tracer, a meter (with
   the SDK's default ``trace_based`` exemplar filter) and a logger whose
-  handler sits on the demo loggers, so a test can check span ↔ log ↔ exemplar ids.
+  handler sits on the demo loggers and on the helper's failure logger
+  (``staffops_otel_helper.failure``, the records of ``traced``, D15), so a test can
+  check span ↔ log ↔ exemplar ids.
 """
 
 from __future__ import annotations
@@ -55,7 +57,7 @@ try:  # renamed across SDK releases
 except ImportError:  # pragma: no cover - older SDK
     from opentelemetry.sdk._logs.export import InMemoryLogExporter as _InMemoryLogs  # noqa: E402
 
-DEMO_LOGGERS = ("demo.backend", "demo.api", "demo.worker")
+DEMO_LOGGERS = ("demo.backend", "demo.api", "demo.worker", "staffops_otel_helper.failure")
 
 
 @dataclass

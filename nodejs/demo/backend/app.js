@@ -1,7 +1,7 @@
 // demo-node-backend: gRPC server (demo.v1.OrderService) with a PostgreSQL
 // client (pg through @staffops/otel-helper-sql). specs/demo-environment
 // DE3c; span demo.order.process, custom metrics (DE-D9), ADR-014 failures
-// (DE-D8). Settings from the environment only (DE-D2, DE-D13):
+// through the helper's withSpan (DE-D8, A45). Settings from the environment only (DE-D2, DE-D13):
 //   DEMO_GRPC_PORT (50051), DEMO_PG_HOST (demo-postgres, host[:port]),
 //   DEMO_PG_DB (demo_node), DEMO_PG_USER (demo_node), DEMO_PG_PASSWORD_FILE
 //   (required), DEMO_SCHEMA_FILE (default
@@ -12,7 +12,15 @@
 // instrumented library (pg and @grpc/grpc-js) is required here, after setup().
 'use strict';
 
-const { getMeter, getTracer, shutdown } = require('@staffops/otel-helper');
+const { getMeter, getTracer, shutdown, withSpan } = require('@staffops/otel-helper');
+
+// withSpan is the A45 span function (contract design D15); the published
+// 0.3.0-rc.1 pins in package.json predate it. Without it every failure would
+// go unrecorded, so stop here instead.
+if (typeof withSpan !== 'function') {
+  throw new Error('@staffops/otel-helper has no withSpan (A45): build the demo image from the workspace '
+    + '(the Dockerfile packs nodejs/packages over the published pins)');
+}
 
 const { setTimeout: sleep } = require('node:timers/promises');
 const { ValueType } = require('@opentelemetry/api');
@@ -23,10 +31,11 @@ const pg = require('pg');
 const { loadOrderService, readSchema } = require('../lib/assets');
 const { healthHandlers, healthServiceDefinition } = require('../lib/health');
 const { LANG, envOr, parseHostPort, portEnv, readSecretFile, runId } = require('../lib/config');
-const { DEMO_SCOPE, errorTypeOf, ownFailure } = require('../lib/failure');
-const { CODE, grpcErrorFor } = require('../lib/grpc-status');
+const { DEMO_SCOPE, errorTypeOf } = require('../lib/failure');
+const { CODE } = require('../lib/grpc-status');
 const { createDemoLogger } = require('../lib/logging');
-const { INSERT_SQL, SELECT_SQL, UPSERT_SQL, isBackendScenario, processOrder, toOrderMessage } = require('../lib/orders');
+const { INSERT_SQL, SELECT_SQL, UPSERT_SQL, toOrderMessage } = require('../lib/orders');
+const { placeOrderInSpan } = require('../lib/place-order');
 
 const env = process.env;
 const RUN = runId(env);
@@ -69,30 +78,9 @@ const db = {
   select: async (id) => (await pool.query(SELECT_SQL, [id])).rows[0],
 };
 
-/** PlaceOrder in the owning span demo.order.process; the reply goes out after the span ended. */
-async function placeOrder(request) {
-  // An unknown scenario is a caller error, not a processing failure (DE-D7 r3.5).
-  if (!isBackendScenario(request.scenario)) return { error: { code: CODE.INVALID_ARGUMENT, details: 'invalid scenario' } };
-  return tracer.startActiveSpan('demo.order.process', {
-    attributes: { 'demo.scenario': request.scenario, 'order.id': request.order_id },
-  }, async (span) => {
-    const started = performance.now();
-    let attrs = { 'demo.scenario': request.scenario, 'demo.outcome': 'ok' };
-    try {
-      const row = await processOrder(request, RUN, db);
-      log.info({ 'order.id': row.id, 'demo.scenario': request.scenario }, 'order processed');
-      return { reply: { order_id: row.id, status: 'processed' } };
-    } catch (err) {
-      const type = ownFailure(span, log, err, { 'demo.scenario': request.scenario });
-      attrs = { ...attrs, 'demo.outcome': 'error', 'error.type': type };
-      return { error: grpcErrorFor(err) };
-    } finally {
-      // Recorded while demo.order.process is the active span (trace_based exemplars, DE-D9).
-      duration.record((performance.now() - started) / 1000, attrs);
-      processed.add(1, attrs);
-      span.end();
-    }
-  });
+/** PlaceOrder in the owning span demo.order.process (lib/place-order.js, DE-D8, DE-D9). */
+function placeOrder(request) {
+  return placeOrderInSpan({ withSpan, tracer, db, run: RUN, log, processed, duration }, request);
 }
 
 async function getOrder(request) {

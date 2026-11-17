@@ -10,16 +10,20 @@ shared contract (proto, schema, connection table) is in [`demo/`](../../demo/REA
 | worker | [`worker/worker.py`](worker/worker.py) | One `POST <DEMO_API_URL>/orders` at a fixed rate of one per `DEMO_INTERVAL_SECONDS` (5; a tick, each request its own task) in a root span `demo.drive`, cycling `ok ok business_error ok ok db_error ok ok unhandled ok` (DE-D7); polls `demo:python:orders` every `DEMO_POLL_SECONDS` (2) with `XREADGROUP COUNT 10` (no `BLOCK`) and processes each event in a CONSUMER span whose parent and link are the producer (DE-D6) |
 | api | [`api/api.py`](api/api.py) | FastAPI on `DEMO_HTTP_PORT` (8080), `GET /health`: demo span `demo.order.accept`, Redis quote cache (TTL 30 s), `grpc.aio` call to `PlaceOrder`, PRODUCER span `send demo:python:orders` + `XADD` with `traceparent`/`tracestate`/`baggage` fields; answers 201 / 400 (invalid body) / 422 / 409 / 502 (any other gRPC failure) / 500 (`unhandled`); a cache or publish failure is one WARN and the answer stays 201 |
 | backend | [`backend/backend.py`](backend/backend.py) | `grpc.aio` server on `DEMO_GRPC_PORT` (50051) with `grpc.health.v1`: applies `demo/sql/schema.sql` at start (one command, no bind parameters), validates `scenario` (`INVALID_ARGUMENT`), demo span `demo.order.process` (any failure there, expected or not, follows ADR-014; an unexpected one answers `INTERNAL` `order failed`) with the custom metrics `demo.orders.processed` / `demo.order.duration`, SQLAlchemy 2 + psycopg 3 |
-| shared | [`common/democommon.py`](common/democommon.py) | Settings, scenario cycle, error types, the ADR-014 failure pattern |
+| shared | [`common/democommon.py`](common/democommon.py) | Settings, scenario cycle, error types (pinned `error.type` through `__otel_error_type__`), the metric `error.type` value |
 
 Telemetry comes from `staffops-otel-helper` with the `redis` and `sql` extras,
 installed from the local tree; `instrument_redis()` / `instrument_sql()` are
 called before `setup_telemetry()`. Demo spans and instruments use the scope
-`otel-libs-demo`. Every failure follows ADR-014 in its owning span: status
-ERROR without description, `error.type` (`OrderRejectedError`,
-`OrderExistsError`, `DemoUnhandledError`), one `exception` event with only
-`exception.type`, and one ERROR log record, emitted while that span is
-current, with `exception.message` and `exception.stacktrace`.
+`otel-libs-demo`. Every failure follows ADR-014 in its owning span
+(`demo.order.process`, `demo.order.accept`), which runs in the helper's
+`staffops_otel_helper.traced` (contract design D15, A45): status ERROR without
+description, `error.type` (`OrderRejectedError`, `OrderExistsError`,
+`DemoUnhandledError`, from each class's `__otel_error_type__`), no `exception`
+event, and one ERROR record on the logger `staffops_otel_helper.failure` in that
+span's context, with `exception.message` and `exception.stacktrace`. Spans that
+only propagate a failure (`demo.order.accept` on 422/409/502, `demo.drive`) are
+marked by hand and write no failure record.
 
 ## Configuration
 

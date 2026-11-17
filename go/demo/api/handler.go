@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -106,8 +105,8 @@ func (a *api) routes() http.Handler {
 }
 
 // recoverer is the api's top-level handler for the unhandled scenario: it
-// maps an escaped panic to 500 and logs nothing (the owning span
-// demo.order.accept already recorded and logged it, DE-D8).
+// maps an escaped panic to 500 and logs nothing (otelhelper.WithSpan already
+// marked the owning span demo.order.accept and wrote its record, DE-D8).
 // http.ErrAbortHandler keeps its net/http meaning.
 func recoverer(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -123,14 +122,28 @@ func recoverer(next http.Handler) http.Handler {
 	})
 }
 
-// placeOrder runs in the demo span demo.order.accept.
+// placeOrder runs in the demo span demo.order.accept through
+// otelhelper.WithSpan (contract design D15): the unhandled scenario's panic is
+// recovered there, marks the span (status ERROR without description,
+// error.type DemoUnhandledError, no exception event), writes the one ERROR
+// record with the message and the stack (taken at the recover, so it shows
+// the panic site) in the span's context, ends the span and is re-panicked for
+// recoverer (DE-D8). WithSpan ends the span in a way the SDK's End cannot
+// recover the panic, so the span gets no SDK exception event with the message
+// (the DE-D7 r3.4 rule).
 func (a *api) placeOrder(w http.ResponseWriter, r *http.Request) {
-	ctx, span := a.tracer.Start(r.Context(), "demo.order.accept")
-	defer span.End()
-	// Runs before span.End: records and logs a panic while the span is
-	// current, then re-panics for recoverer (DE-D8 Go rule).
-	defer a.recordPanic(ctx, span)
+	_ = otelhelper.WithSpan(r.Context(), a.tracer, "demo.order.accept", func(ctx context.Context) error {
+		a.accept(ctx, w, r)
+		return nil
+	})
+}
 
+// accept is the work of placeOrder inside demo.order.accept. A backend
+// failure only propagates here: it is marked by hand (ERROR without
+// description, error.type = the answered HTTP status, no record) and
+// answered, so WithSpan sees no error.
+func (a *api) accept(ctx context.Context, w http.ResponseWriter, r *http.Request) {
+	span := trace.SpanFromContext(ctx)
 	var req demokit.OrderRequest
 	if err := json.NewDecoder(io.LimitReader(r.Body, maxBody)).Decode(&req); err != nil || !demokit.ValidScenario(req.Scenario) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid order"})
@@ -154,36 +167,17 @@ func (a *api) placeOrder(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		// A parent span that only propagates the failure: ERROR without
-		// description, no error.type, no event, no log; only the owning span
-		// (the backend's demo.order.process) names it (DE-D7 r3.4, DE-D8).
-		span.SetStatus(codes.Error, "")
+		// description, error.type = the HTTP status it answers (as the worker's
+		// demo.drive), no event, no record; only the owning span (the backend's
+		// demo.order.process) names the failure (DE-D8 note of 2026-11-17).
 		httpStatus, msg := httpStatusFor(status.Code(err))
+		span.SetStatus(codes.Error, "")
+		span.SetAttributes(attribute.String("error.type", strconv.Itoa(httpStatus)))
 		writeJSON(w, httpStatus, map[string]string{"error": msg})
 		return
 	}
 	a.publish(ctx, resp.GetOrderId(), req.Scenario)
 	writeJSON(w, http.StatusCreated, map[string]string{"order_id": resp.GetOrderId(), "status": resp.GetStatus()})
-}
-
-// recordPanic is deferred by placeOrder; recover must be called directly by
-// the deferred function.
-func (a *api) recordPanic(ctx context.Context, span trace.Span) {
-	v := recover()
-	if v == nil {
-		return
-	}
-	err, ok := v.(error)
-	if !ok {
-		err = fmt.Errorf("%v", v)
-	}
-	demokit.RecordFailure(ctx, span, a.logger, err)
-	// End the span here, while no panic is in flight: the Go SDK's End,
-	// when deferred during a panic, recovers it and adds its own exception
-	// event with exception.message (sdk/trace span.go End), which would put
-	// the run token on the span (ADR-014, DR12). The deferred span.End then
-	// returns early on the ended span, before its recover.
-	span.End()
-	panic(v)
 }
 
 // quote reads the customer's cached quote and stores one on a miss. The cache

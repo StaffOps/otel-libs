@@ -5,9 +5,10 @@ namespace StaffOps.OtelLibs.Demo;
 
 /// <summary>
 /// The ADR-014 pattern every owning demo span uses (DR3, DE-D8): the span keeps status ERROR
-/// without description, <c>error.type</c> = the short type name and one <c>exception</c> event
-/// with <c>exception.type</c> only; the message and stack trace go to one ERROR log record written
-/// while the span is current, so it carries the span's trace_id / span_id.
+/// without description and <c>error.type</c> = the short type name, with no <c>exception</c>
+/// event (the A45 rule of the other languages, ADR-016; DE-D8 note of 2026-11-17); the message
+/// and stack trace go to one ERROR log record written while the span is current, so it carries
+/// the span's trace_id / span_id.
 /// </summary>
 public static class Failure
 {
@@ -15,9 +16,12 @@ public static class Failure
     public static string ErrorType(Exception exception) => exception.GetType().Name;
 
     /// <summary>
-    /// Records <paramref name="exception"/> on <paramref name="span"/> (type only) and logs its
-    /// detail in an ERROR record whose body is the exception message. Call it while
-    /// <paramref name="span"/> is <see cref="Activity.Current"/>, before any rethrow.
+    /// Marks <paramref name="span"/> (status and <c>error.type</c>, no event) and logs its
+    /// detail in an ERROR record whose body is the exception message. The owning demo spans pass
+    /// no <paramref name="attributes"/>, so their record carries only the bridge's
+    /// <c>exception.*</c> attributes, like the helper's record in the other languages (DE-D8 note
+    /// of 2026-11-17). Call it while <paramref name="span"/> is <see cref="Activity.Current"/>,
+    /// before any rethrow.
     /// </summary>
     public static void Record(Activity? span, Exception exception, ILogger logger, params (string Key, object? Value)[] attributes)
     {
@@ -28,8 +32,6 @@ public static class Failure
         {
             span.SetStatus(ActivityStatusCode.Error);
             span.SetTag("error.type", type);
-            span.AddEvent(new ActivityEvent("exception",
-                tags: new ActivityTagsCollection { ["exception.type"] = type }));
         }
 
         // The logging bridge writes exception.type / exception.message / exception.stacktrace.
@@ -37,11 +39,13 @@ public static class Failure
     }
 
     /// <summary>
-    /// Marks a parent demo span that only propagates a failure (DE-D8): status ERROR, no event, no log.
+    /// Marks a parent demo span that only propagates a failure (DE-D8 note of 2026-11-17): status
+    /// ERROR without description, <c>error.type</c> = the HTTP status the api answers, no event, no log.
     /// </summary>
-    public static void Propagate(Activity? span)
+    public static void Propagate(Activity? span, int httpStatus)
     {
         span?.SetStatus(ActivityStatusCode.Error);
+        span?.SetTag("error.type", httpStatus.ToString(System.Globalization.CultureInfo.InvariantCulture));
     }
 }
 

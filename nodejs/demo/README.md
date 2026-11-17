@@ -23,9 +23,18 @@ with tracing suppressed). The queue read (`XREADGROUP`) always runs with
 tracing suppressed, as in the other languages; each message's CONSUMER span
 and its `XACK` are traced.
 
-`lib/` holds the logic the three share (scenario cycle, ADR-014 failure
-recording, gRPC status mapping, messaging attributes and propagation, order
-processing); it is unit-tested in `test/`.
+`lib/` holds the logic the three share (scenario cycle, error types,
+gRPC status mapping, messaging attributes and propagation, order
+processing); it is unit-tested in `test/`. The owning spans
+`demo.order.process` and `demo.order.accept` run in the helper's `withSpan`
+(contract design D15, A45): a failure leaving them sets status ERROR without
+description and `error.type` (the class's `Symbol.for('otel.error_type')`
+value: `OrderRejectedError`, `OrderExistsError`, `DemoUnhandledError`), no
+`exception` event, and one correlated ERROR record with the message and the
+stack. Spans that only propagate a failure are marked by hand (`lib/failure.js`
+`markPropagated`, or a plain status) and write no failure record. The unit
+tests install the published helper pins, so `withSpan` itself is exercised by
+the image smoke, not by `test/`.
 
 ## Environment
 

@@ -100,16 +100,18 @@ public sealed class OrderEndpoint(
         }
         catch (RpcException ex)
         {
-            // The backend (or the transport) owns the failure; this span only propagates it (DE-D8,
-            // r3.5): ERROR, no error.type, no event, no log. The constant gRPC message is the body.
-            Failure.Propagate(accept);
-            return Results.Json(new { error = ex.Status.Detail }, statusCode: HttpStatusFor(ex.StatusCode));
+            // The backend (or the transport) owns the failure; this span only propagates it (DE-D8
+            // note of 2026-11-17): ERROR, error.type = the answered HTTP status, no event, no log.
+            // The constant gRPC message is the body.
+            var status = HttpStatusFor(ex.StatusCode);
+            Failure.Propagate(accept, status);
+            return Results.Json(new { error = ex.Status.Detail }, statusCode: status);
         }
         catch (Exception ex)
         {
             // Owning span of unhandled (and of any unexpected failure): type on the span, detail in
             // the log written here, while demo.order.accept is current, before the rethrow (DR3).
-            Failure.Record(accept, ex, logger, ("order.id", order.OrderId), ("demo.scenario", order.Scenario));
+            Failure.Record(accept, ex, logger);
             throw;
         }
     }

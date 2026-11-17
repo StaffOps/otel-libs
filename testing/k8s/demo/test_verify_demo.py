@@ -4,7 +4,11 @@ Standard library unittest; no cluster access. Tempo traces are recorded from the
 DE3 local smokes (fixtures/tempo-<lang>-<scenario>.json: the Collector file
 exporter's OTLP JSON re-encoded as Tempo's /api/traces answer, base64 ids) and, for
 Python, read from Tempo on k8s01 for run 20261116t1812 (long strings cut at 240);
-Loki and Prometheus answers are built inline in their API shapes.
+Loki and Prometheus answers are built inline in their API shapes. Edited
+2026-11-17 (A45, DE-D8 note): the type-only ``exception`` event of each owning
+demo span (``demo.order.process`` / ``demo.order.accept``, scope
+``otel-libs-demo``) was removed, as the demo apps no longer write it; every other
+span, DB spans included, is as recorded.
 """
 
 from __future__ import annotations
@@ -498,7 +502,7 @@ def range_series(scen: str, outcome: str, values: list[tuple[int, float]], **lab
 def metric_series(name: str, scen: str, outcome: str, **labels: str) -> dict:
     out = {"__name__": name, "demo_scenario": scen, "demo_outcome": outcome, **labels}
     if outcome == "error":
-        out.setdefault("error_type", "OrderRejectedError")
+        out.setdefault("error_type", verify.PINNED_TYPES.get(scen, "OrderRejectedError"))
     return out
 
 
@@ -531,6 +535,25 @@ class CheckCTest(unittest.TestCase):
         self.assertEqual(verify.series_increase([[WSTART, "3"], [WSTART + 30, "1"]], WSTART), 1)  # reset
         self.assertEqual(verify.series_increase([[WSTART + 60, "4"], [WSTART + 90, "6"]], WSTART), 6)  # born
         self.assertEqual(verify.series_increase([], WSTART), 0)
+
+    def test_metric_error_type_equals_the_span_value(self) -> None:
+        """DE-D9: error_type on business_error / db_error series is the pinned literal."""
+        self.b.series[2]["error_type"] = "OrderRejectedError"  # db_error series with the wrong type
+        obs = verify.check_c(self.b, self.run, "go")
+        self.assertEqual(obs.state, "fail")
+        self.assertIn("demo_orders_processed_total{demo_scenario=db_error} error_type 'OrderRejectedError' "
+                      "(want OrderExistsError)", obs.detail)
+        self.b.series[2]["error_type"] = "*errors.errorString"
+        self.b.series.append(metric_series("demo_order_duration_seconds_count", "business_error", "error",
+                                           error_type="democommon.OrderRejectedError"))
+        obs = verify.check_c(self.b, self.run, "go")
+        self.assertEqual(len(obs.problems), 2, obs.problems)
+        self.assertIn("demo_order_duration_seconds_count{demo_scenario=business_error} error_type "
+                      "'democommon.OrderRejectedError'", obs.detail)
+        # An ok series carries no error_type and is not compared; the right values pass.
+        self.b.series[2]["error_type"] = "OrderExistsError"
+        self.b.series[-1]["error_type"] = "OrderRejectedError"
+        self.assertEqual(verify.check_c(self.b, self.run, "go").state, "pass")
 
     def test_unhandled_series_is_unexpected(self) -> None:
         self.b.ranges["demo_orders_processed_total"].append(range_series("unhandled", "error", [(WEND, 1)]))
@@ -569,6 +592,31 @@ class CheckCTest(unittest.TestCase):
         self.assertEqual(verify.check_c(self.b, self.run, "go").state, "error")
 
 
+def record_lines(lang: str, owner: bool = True, extra: tuple = ()):
+    """Loki fake for check d: per fixture trace, the owning span's one ERROR record (A45)
+    and the helper record of each failed PostgreSQL span; ``extra`` adds (trace id, labels).
+    Answers trace-wide queries and span-scoped ones (``| span_id="..."``)."""
+    recs = []
+    for sc in verify.ERROR_SCENARIOS:
+        app, name = verify.OWNER[sc]
+        for sp in spans_of(lang, sc):
+            base = {"service_name": sp.service, "span_id": sp.span_id, "severity_number": "17",
+                    "exception_stacktrace": "at x"}
+            if owner and sp.scope == verify.DEMO_SCOPE and sp.name == name and sp.service == verify.svc(lang, app):
+                recs.append((sp.trace_id, {**base, "exception_type": verify.PINNED_TYPES[sc]}))
+            if sp.is_postgres() and sp.status == "error":
+                recs.append((sp.trace_id, {**base, "exception_type": "PostgresException"}))
+    recs.extend(extra)
+
+    def lines(q, s, e, limit):
+        tid = q.split('trace_id="', 1)[1].split('"', 1)[0] if 'trace_id="' in q else None
+        sid = q.rsplit('span_id="', 1)[1].split('"', 1)[0] if 'span_id="' in q else None
+        return [(dict(labels), "msg") for t, labels in recs
+                if (tid is None or verify.norm_trace(t) == tid)
+                and (sid is None or verify.norm_span(labels["span_id"]) == sid)]
+    return lines
+
+
 class CheckDTest(unittest.TestCase):
     """DR3 / DE-D11 d: owning span, gRPC, HTTP and DB span sets on the recorded smokes."""
 
@@ -579,25 +627,7 @@ class CheckDTest(unittest.TestCase):
             b.search.append(((f'span.demo.scenario="{scen}"',), [{"traceID": tid.lstrip("0")}]))
         b.search.append((("span.error.type !~",), [{"spanSet": {"matched": 2}}]))
         if records:
-            def lines(q, s, e, limit):
-                svc = q.split('service_name="', 1)[1].split('"', 1)[0]
-                app = "backend" if svc.endswith("backend") else "api"
-                scen_type = {"backend": "OrderRejectedError", "api": "DemoUnhandledError"}[app]
-                if "dup" in q:  # never: ids only
-                    return []
-                span = q.rsplit('span_id="', 1)[1].split('"', 1)[0]
-                owner_types = {}
-                for sc in verify.ERROR_SCENARIOS:
-                    for s in spans_of(lang, sc):
-                        if s.scope == verify.DEMO_SCOPE and s.status == "error" and s.name != "demo.drive":
-                            owner_types[s.span_id] = s.attrs.get("error.type", scen_type)
-                        if s.is_postgres() and s.status == "error":
-                            owner_types[s.span_id] = "PostgresException"
-                if span not in owner_types:
-                    return []
-                return [({"severity_number": "17", "exception_type": owner_types[span],
-                          "exception_stacktrace": "at x"}, "msg")]
-            b.loki_lines_fn = lines
+            b.loki_lines_fn = record_lines(lang)
         return b
 
     def cells(self, lang: str, b: FakeBackends | None = None, out: io.StringIO | None = None) -> dict:
@@ -653,7 +683,7 @@ class CheckDTest(unittest.TestCase):
 
     def test_missing_records_and_traces(self) -> None:
         c = self.cells("go", self.setup_lang("go", records=False))
-        self.assertIn("0 ERROR records at the owning span", c["d.demo"].detail)
+        self.assertIn("0 ERROR records on or below demo spans, 0 at the owning span", c["d.demo"].detail)
         b = FakeBackends()
         c = self.cells("go", b)
         self.assertTrue(all(o.state == "nodata" for o in c.values()))
@@ -667,16 +697,115 @@ class CheckDTest(unittest.TestCase):
         owner.attrs["error.type"] = "Wrong"
         owner.events.append(("exception", {"exception.type": "X", "exception.message": "m"}))
         owner.status = "unset"
+        owner.message = "amount over limit"
         b = FakeBackends()
-        b.loki_lines_fn = lambda *a: [({"severity_number": "17"}, "x")]
+        b.loki_lines_fn = record_lines("go")
         problems = verify._d_demo(b, make_run(), "go", "business_error", spans)
         self.assertEqual(len(problems), 4, problems)
+        self.assertIn("has a status description (want empty)", problems[1])
+        self.assertIn("(want none)", problems[3])
         spans = [s for s in spans if s.name != "demo.order.process"]
         self.assertIn("missing", verify._d_demo(b, make_run(), "go", "business_error", spans)[0])
-        b.loki_lines_fn = lambda *a: [({"severity_number": "17", "exception_type": "Other",
-                                        "exception_stacktrace": "s"}, "x")]
-        problems = verify._d_demo(b, make_run(), "go", "business_error", spans_of("go", "business_error"))
-        self.assertIn("Go record exception_type 'Other'", problems[0])
+
+    def test_all_fixture_traces_pass_d_demo(self) -> None:
+        """Every language and error scenario: one record at the owning span, propagating spans clean."""
+        for lang in ("go", "python", "node", "dotnet"):
+            b = FakeBackends()
+            b.loki_lines_fn = record_lines(lang)
+            for scen in verify.ERROR_SCENARIOS:
+                self.assertEqual(verify._d_demo(b, make_run(lang), lang, scen, spans_of(lang, scen)), [],
+                                 f"{lang} {scen}")
+
+    def test_owning_span_wants_no_exception_event(self) -> None:
+        """A45 (DE-D8 note 2026-11-17): even a type-only event on the owning span fails."""
+        for lang in ("go", "python", "node", "dotnet"):
+            b = FakeBackends()
+            b.loki_lines_fn = record_lines(lang)
+            spans = spans_of(lang, "business_error")
+            owner = next(s for s in spans if s.name == "demo.order.process")
+            owner.events.append(("exception", {"exception.type": "OrderRejectedError"}))
+            problems = verify._d_demo(b, make_run(lang), lang, "business_error", spans)
+            self.assertEqual(problems, ["business_error: demo.order.process exception events "
+                                        "[['exception.type']] (want none)"], lang)
+
+    def test_record_type_is_pinned_in_every_language(self) -> None:
+        """The record's exception_type equals the pinned literal, .NET included (DE-D8 measured the short name)."""
+        for lang in ("go", "python", "node", "dotnet"):
+            spans = spans_of(lang, "business_error")
+            owner = next(s for s in spans if s.name == "demo.order.process")
+            b = FakeBackends()
+            b.loki_lines_fn = lambda *a, o=owner: [({"span_id": o.span_id, "severity_number": "17",
+                                                      "exception_type": "Other", "exception_stacktrace": "s"}, "x")]
+            problems = verify._d_demo(b, make_run(lang), lang, "business_error", spans)
+            self.assertEqual(problems, [f"business_error: {lang} record exception_type 'Other'"], lang)
+            b.loki_lines_fn = lambda *a, o=owner: [({"span_id": o.span_id, "severity_number": "17"}, "x")]
+            self.assertEqual(verify._d_demo(b, make_run(lang), lang, "business_error", spans),
+                             ["business_error: ERROR record without exception_stacktrace/exception_type"])
+
+    def test_trace_record_budget(self) -> None:
+        """Exactly one ERROR record per failure on or below demo spans, and it is on the owning span."""
+        spans = spans_of("go", "db_error")
+        tid = spans[0].trace_id
+        accept = next(s for s in spans if s.name == "demo.order.accept")
+        drive = next(s for s in spans if s.name == "demo.drive")
+        server = next(s for s in spans if s.kind == "server" and "PlaceOrder" in s.name)
+        client = next(s for s in spans if s.kind == "client" and "PlaceOrder" in s.name)
+        # Not counted: the DB span's record (d.db's, in record_lines), an INFO/WARN record, and a
+        # framework record on a span outside every demo span (the gRPC SERVER span, A37 debt).
+        warn = (tid, {"service_name": drive.service, "span_id": drive.span_id, "severity_number": "13"})
+        framework = (tid, {"service_name": server.service, "span_id": server.span_id, "severity_number": "17"})
+        b = FakeBackends()
+        b.loki_lines_fn = record_lines("go", extra=(warn, framework))
+        self.assertEqual(verify._d_demo(b, make_run(), "go", "db_error", spans), [])
+        # A second ERROR record below a demo span (the api's gRPC CLIENT span under accept) counts.
+        extra = (tid, {"service_name": client.service, "span_id": client.span_id, "severity_number": "17"})
+        b.loki_lines_fn = record_lines("go", extra=(extra,))
+        (problem,) = verify._d_demo(b, make_run(), "go", "db_error", spans)
+        self.assertIn("2 ERROR records on or below demo spans, 1 at the owning span", problem)
+        self.assertIn(f"others at ['{client.service}/{client.span_id}']", problem)
+        # The only record sits on a propagating span instead of the owning span.
+        moved = (tid, {"service_name": accept.service, "span_id": accept.span_id, "severity_number": "17",
+                       "exception_type": "OrderExistsError", "exception_stacktrace": "s"})
+        b.loki_lines_fn = record_lines("go", owner=False, extra=(moved,))
+        problems = verify._d_demo(b, make_run(), "go", "db_error", spans)
+        self.assertIn("1 ERROR records on or below demo spans, 0 at the owning span", problems[0])
+        self.assertIn("1 ERROR records at the propagating span demo.order.accept (want 0)", problems[1])
+        # A record without span_id is counted and named.
+        nospan = (tid, {"service_name": accept.service, "severity_number": "17"})
+        b.loki_lines_fn = record_lines("go", extra=(nospan,))
+        self.assertIn("no span_id", verify._d_demo(b, make_run(), "go", "db_error", spans)[0])
+
+    def test_propagating_span_shapes(self) -> None:
+        """api demo.order.accept on 422/409 and worker demo.drive: ERROR, no description,
+        error.type = the HTTP status code, no exception event (DE-D8, design item 3)."""
+        for scen in ("business_error", "db_error"):
+            spans = spans_of("node", scen)
+            accept = next(s for s in spans if s.name == "demo.order.accept")
+            drive = next(s for s in spans if s.name == "demo.drive")
+            accept.attrs.pop("error.type")
+            accept.message = "x"
+            accept.events.append(("exception", {"exception.type": "X"}))
+            drive.attrs["error.type"] = "Error"
+            b = FakeBackends()
+            b.loki_lines_fn = record_lines("node")
+            problems = verify._d_demo(b, make_run("node"), "node", scen, spans)
+            code = verify.HTTP_CODES[scen]
+            self.assertEqual(problems, [
+                f"{scen}: demo.drive error.type 'Error' (want {code})",
+                f"{scen}: demo.order.accept status error description set (want error, empty)",
+                f"{scen}: demo.order.accept error.type None (want {code})",
+                f"{scen}: demo.order.accept has an exception event (want none)"], scen)
+        # unhandled: demo.order.accept is the owner; only demo.drive is checked as propagating.
+        spans = spans_of("node", "unhandled")
+        drive = next(s for s in spans if s.name == "demo.drive")
+        drive.status = "unset"
+        b = FakeBackends()
+        b.loki_lines_fn = record_lines("node")
+        self.assertEqual(verify._d_demo(b, make_run("node"), "node", "unhandled", spans),
+                         ["unhandled: demo.drive status unset description empty (want error, empty)"])
+        spans = [s for s in spans_of("node", "unhandled") if s.name != "demo.drive"]
+        self.assertEqual(verify._d_demo(b, make_run("node"), "node", "unhandled", spans),
+                         ["unhandled: propagating span demo-node-worker demo.drive missing"])
 
     def test_grpc_and_http_rules(self) -> None:
         spans = spans_of("go", "business_error")

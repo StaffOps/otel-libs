@@ -153,13 +153,13 @@ public sealed class OrderProcessorTests : IDisposable
         Assert.Equal(ActivityStatusCode.Error, span.Status);
         Assert.Null(span.StatusDescription);
         Assert.Equal(errorType, span.GetTagItem("error.type"));
-        var ev = Assert.Single(span.Events);
-        Assert.Equal(("exception", errorType), (ev.Name, Assert.Single(ev.Tags).Value as string));
+        Assert.Empty(span.Events);
         Assert.DoesNotContain(span.Tags, t => t.Value?.Contains("-r1") == true);
 
         var log = Assert.Single(_logger.Entries);
         Assert.Equal((LogLevel.Error, message), (log.Level, log.Message));
         Assert.Equal(span.SpanId.ToHexString(), log.SpanId);
+        Assert.Empty(log.Attributes); // no demo.scenario / order.id: the record matches the helper's (DE-D8 note)
 
         Assert.All(_measurements, m =>
         {

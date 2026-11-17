@@ -329,7 +329,9 @@ file outside its module; the others may embed it but honor the variable).
 **Health**: every backend serves `grpc.health.v1`; every api serves
 `GET /health`. **Accept span on 4xx**: `demo.order.accept` is ERROR with no
 description, no `error.type`, no event and no log (only the owning span names
-the failure, DE-D8). **Panic/exception at span end**: an SDK that records an
+the failure, DE-D8). *(Corrected 2026-11-17, DE-D8 A45 note: on 422 / 409 /
+502 it carries `error.type` = the HTTP status it answers, as `demo.drive`
+does; still no description, no event, no record.)* **Panic/exception at span end**: an SDK that records an
 exception when a span ends during unwinding (Go `span.End()` deferred in a
 panic adds `exception.message`) must not see it — end the span before
 re-raising.)*
@@ -427,6 +429,96 @@ for `unhandled`); audit #7 — run-token messages distinct from the gRPC
 messages; audit #18 — semconv deviation stated, log `exception.type`
 measured for .NET; N8/audit #14 — Python gRPC client and server calls
 pinned.)*
+*(Corrected 2026-11-17, A45 migration — task DE12a, split from DE12: the demo apps in
+Go, Python and Node.js now use the helper's application-span API
+([ADR-016](../decisions/ADR-016-application-span-failure-status.md), contract
+design D15) instead of their hand-written failure code, which is removed
+(Go `demokit.RecordFailure`, Python `democommon.record_failure`, Node.js
+`ownFailure` / `recordFailure` / `logFailure`). The "Owning span" pattern and
+the "Per-language calls" above are replaced as follows; .NET keeps its
+hand-written `Failure.Record` (its library has no A45 API, parked) and the
+.NET library is unchanged.*
+- *No `exception` event in any language. A45 writes none, and the .NET
+  demo's `Failure.Record` no longer adds its type-only event, so the owning
+  span carries status ERROR without description and `error.type` only; the
+  detail is in the one correlated record. Instrumentation spans keep their
+  own events (d.db is unchanged, A36).*
+- *Pinned literals through the per-error override of D15: Go an
+  `ErrorType() string` method on `OrderRejectedError`, `OrderExistsError`,
+  `DemoUnhandledError` (found before the wrapped driver error); Python the
+  class attribute `__otel_error_type__`; Node.js a prototype getter under
+  `Symbol.for('otel.error_type')`; .NET the short type name as before. The
+  metric attribute `error.type` (DE-D9) comes from a demo function that
+  mirrors the helper's rule (override, else the helper's default), so the
+  metric value equals the span value also for an unexpected failure.*
+- *Owning spans run in the span function: Go `otelhelper.WithSpan`, Python
+  `staffops_otel_helper.traced`, Node.js `withSpan` — backend
+  `demo.order.process` (the failure is returned or thrown out of it, then
+  mapped to the gRPC status after the span ended) and api
+  `demo.order.accept` (`unhandled` leaves it as a panic or exception; the
+  helper marks the span, writes the record, ends the span and re-raises for
+  the framework's 500). The custom metrics are still recorded inside the
+  span.*
+- *Propagating spans are not marked by the helper: they keep a hand marking
+  with the helper's shape (status ERROR without description, `error.type`,
+  no event) and write no record — api `demo.order.accept` on 422 / 409 / 502:
+  `error.type` = the HTTP status it answers (`422`, `409`, `502`; until this
+  note it had no `error.type`), all four languages; worker `demo.drive`:
+  `error.type` = the status code, or the root cause's type name on a
+  transport failure, plus one WARN. The failure never leaves the span function
+  there — it is answered or caught inside — so the helper adds no record.
+  `demo.drive` stays on each language's root-span starter: Go `StartRootSpan`
+  is a plain span starter (no failure rule); Python `start_root_span` (now
+  without `record_exception` / `set_status_on_exception`, which A45 rejects
+  with `TypeError`) and Node.js `startRootSpan` apply the A45 rule, but it
+  never fires because every failure is caught inside.*
+- *Record count: **one ERROR record per failure, at the owning span**, as
+  before. Why this mapping and not "every demo span records": D15 writes one
+  record per helper span a failure crosses and advises using the span
+  function only at the layers that should report; semconv recording-errors
+  says a propagated exception SHOULD be recorded once; the common practice
+  is the same (Java `@WithSpan` and the Python SDK mark each span an
+  exception leaves; the application logs the exception once, where it is
+  handled).
+  Letting the failure cross the propagating spans as an exception would add
+  one record per layer — for `business_error` and `db_error` a second on
+  `demo.order.accept` and a third on `demo.drive` — each with no new
+  information, and each in another service's logs.*
+- *Record source: Go, Python and Node.js records now come from the helper's
+  failure channel (Go: the helper's slog handler, logger `otel-helper` on
+  stdout; Python: logger `staffops_otel_helper.failure`; Node.js: the helper's
+  `write()` path, scope `otel-helper`), body = message, `exception.type` = the
+  pinned literal. The Node.js record no longer carries `demo.scenario`; the Go
+  stack is `debug.Stack()` at `WithSpan`'s marking (for a returned error it
+  shows the `WithSpan` frames, D15; for a panic it is taken at the recover and
+  shows the panic site). The .NET `Failure.Record` calls of the owning spans
+  no longer pass `demo.scenario` / `order.id`, so in all four languages the
+  record carries only the `exception.*` attributes.*
+- *Node.js: `api/app.js` and `backend/app.js` stop at load when the helper
+  has no `withSpan` (an image not built from the workspace); the backend's
+  PlaceOrder body is `lib/place-order.js` `placeOrderInSpan`, unit-tested with
+  a fake `withSpan`; `lib/failure.js` `errorTypeOf` follows the helper's rule
+  (instance and `static` override, `AbortError` caused by a `TimeoutError` →
+  `TimeoutError`, an override on a non-Error, a throwing getter falls through).*
+- *Check d.demo (DE-D11): per inspected error trace, the owning span has
+  status ERROR, an **empty** description, the pinned `error.type` and **no**
+  `exception` event; the trace holds **exactly one** ERROR record
+  (`severity_number ≥ 17`) on or below the demo spans of the language's three
+  services, and it sits on the owning span, with `exception_type` = the pinned
+  literal in all four languages (.NET: the measured short name). Not counted:
+  the helper record of a failed PostgreSQL span (d.db's) and records on
+  framework spans outside every demo span (the .NET Kestrel record on the api
+  SERVER span for `unhandled`, design r3.5 "Framework logs on the unhandled
+  path", A37). The propagating spans are checked too: api `demo.order.accept`
+  (`business_error`, `db_error`) and worker `demo.drive` have status ERROR,
+  no description, `error.type` = `HTTP_CODES[scenario]` (`422` / `409` /
+  `500`), no `exception` event and no ERROR record. Check c requires the
+  metric `error_type` of the `business_error` / `db_error` series to equal
+  the pinned literal (= the span value).*
+- *The recorded fixtures of `testing/k8s/demo/fixtures/` were edited by hand
+  for this note (owning-span events removed, `error.type` added on the 4xx
+  `demo.order.accept` spans); they are re-recorded from the cluster after the
+  next run. The examples replacement (the rest of DE12) is still open.*
 **Justification**: ADR-014 decision 4 applies to new code; instrumentation
 gaps map to open tasks (A36, `specs/config-contract-v0.3/tasks.md:58`; A37,
 `tasks.md:59`; inventory root `README.md:367`). A record written while the
@@ -464,6 +556,12 @@ labels `demo_scenario`, `demo_outcome`, `error_type`, `job=dev-otel-libs/demo-<l
 the examples' series; seconds avoid the SDK millisecond defaults
 (`main.go:140-141`); recording inside the span attaches `trace_based` exemplars.
 **Trade-offs**: none new.
+*(Note 2026-11-17, A45 migration: a cancellation leaves the helper's span
+Unset with no record (contract design D15), but the demo's metric code still
+counts it as `demo.outcome=error` with its `error.type`, because it runs
+inside the span on any exception. No demo scenario reaches that path (the
+backend is never cancelled by the cycle), so span and metric cannot disagree
+in a run; documented, not handled.)*
 **When it would be wrong**: the translation strategy changes.
 **Reversal action**: derive the expected names in `verify.py demo` from the
 pre-flight's read of `spec.otlp`.
@@ -567,16 +665,25 @@ flag is `flags & 1` (never `flags="1"`: Python records carry `3`, audit).
   counter has `_total` and no `_bucket`; the histogram has `_bucket` with
   `le="+Inf"`, `_sum` and `_count`; `le` values compared as floats against
   the DE-D9 bounds; labels ⊇ {`demo_scenario`, `demo_outcome`}, `error_type`
-  on and only on `demo_outcome="error"`.
+  on and only on `demo_outcome="error"`, and on the `business_error` /
+  `db_error` series equal to the pinned literal (= the owning span's
+  `error.type`; *added 2026-11-17, DE-D8 A45 note*).
 - **d (error routes)**: per error scenario, TraceQL
   `{resource.service.name="demo-<lang>-worker" && resource.otel_libs.run="<run>" && span.demo.scenario="<s>"}`;
   ≥ 1 trace per scenario per language, up to 5 inspected. Per span set, each
   with its own cell:
-  - **d.demo** — scope `otel-libs-demo`: the owning span has ERROR, the
-    pinned `error.type`, one `exception` event with only `exception.type`;
-    Loki `{service_name="demo-<lang>-<app>", service_instance_id!=""} | trace_id="<id>" | span_id="<owning span>"`
-    has one record with `severity_number ≥ 17`, non-empty
-    `exception_stacktrace` and `exception_type`.
+  - **d.demo** — scope `otel-libs-demo`: the owning span has ERROR, an
+    empty description, the pinned `error.type`, no `exception` event;
+    Loki `{service_name=~"demo-<lang>-(worker|api|backend)", service_instance_id!=""} | trace_id="<id>"`
+    holds exactly one record with `severity_number ≥ 17` on or below the
+    demo spans (PostgreSQL-span and framework-span records not counted), on
+    the owning span, with non-empty `exception_stacktrace` and
+    `exception_type` = the pinned literal; the propagating spans (api
+    `demo.order.accept` on 422 / 409, worker `demo.drive`) have ERROR, an
+    empty description, `error.type` = the HTTP status, no event, no record.
+    (*Corrected 2026-11-17, A45 migration, DE-D8 note: was one event with only
+    `exception.type` and one record at the owning span, `exception_type`
+    compared for Go only.*)
   - **d.grpc** — client (api) and server (backend) spans. Client: ERROR
     for every non-OK code; a description equal to the constant gRPC message
     (`order rejected` / `order exists`) is allowed — semconv-compliant, and

@@ -70,7 +70,7 @@ public sealed class OrderProcessor
         {
             tags.Add("demo.outcome", "error");
             tags.Add("error.type", Failure.ErrorType(ex));
-            Failure.Record(span, ex, _logger, ("order.id", request.OrderId), ("demo.scenario", request.Scenario));
+            Failure.Record(span, ex, _logger);
             throw ex switch
             {
                 OrderRejectedError => new RpcException(new Status(StatusCode.FailedPrecondition, RejectedMessage)),

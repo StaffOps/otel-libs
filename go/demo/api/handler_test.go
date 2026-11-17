@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -81,6 +82,7 @@ type apiFixture struct {
 	queue  *fakeQueue
 	orders *fakeOrders
 	logs   *demotest.Logs
+	stdout *demotest.Stdout // the helper's failure records (no logs pipeline in tests)
 	spans  interface {
 		Ended() []sdktrace.ReadOnlySpan
 	}
@@ -91,7 +93,7 @@ func newAPI(t *testing.T) *apiFixture {
 	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(propagation.TraceContext{}, propagation.Baggage{}))
 	tracer, rec := demotest.Tracer()
 	logs := &demotest.Logs{}
-	f := &apiFixture{cache: &fakeCache{data: map[string]string{}}, queue: &fakeQueue{}, orders: &fakeOrders{}, logs: logs, spans: rec}
+	f := &apiFixture{cache: &fakeCache{data: map[string]string{}}, queue: &fakeQueue{}, orders: &fakeOrders{}, logs: logs, stdout: demotest.CaptureStdout(t), spans: rec}
 	f.a = &api{logger: logs.Logger(), tracer: tracer, cache: f.cache, queue: f.queue, orders: f.orders, run: "run5", redisHost: "demo-redis", redisPort: 6379}
 	return f
 }
@@ -178,13 +180,17 @@ func TestPlaceOrderErrorAnswers(t *testing.T) {
 			if accept.Status().Description != "" {
 				t.Errorf("accept description = %q", accept.Status().Description)
 			}
+			var et string
 			for _, kv := range accept.Attributes() {
 				if kv.Key == "error.type" {
-					t.Errorf("accept must not carry error.type (DE-D7 r3.4), got %q", kv.Value.AsString())
+					et = kv.Value.AsString()
 				}
 			}
-			if len(f.logs.Records()) != 0 || len(f.queue.values) != 0 {
-				t.Errorf("no log and no publish on a propagated failure: %v %v", f.logs.Records(), f.queue.values)
+			if et != strconv.Itoa(c.code) {
+				t.Errorf("accept error.type = %q, want the answered status %d (DE-D8 note 2026-11-17)", et, c.code)
+			}
+			if len(f.logs.Records()) != 0 || len(f.stdout.Records()) != 0 || len(f.queue.values) != 0 {
+				t.Errorf("no log and no publish on a propagated failure: %v %v %v", f.logs.Records(), f.stdout.Records(), f.queue.values)
 			}
 		})
 	}
@@ -200,19 +206,37 @@ func TestPlaceOrderUnhandledRecordsInsideTheOwningSpan(t *testing.T) {
 		t.Error("unhandled must fail before the cache and the backend call")
 	}
 	accept := f.span(t, "demo.order.accept")
-	if accept.Status().Code != otelcodes.Error || accept.Status().Description != "" || len(accept.Events()) != 1 {
+	// otelhelper.WithSpan marks the owning span: ERROR, no description,
+	// error.type DemoUnhandledError, no exception event (DE-D8 note 2026-11-17).
+	if accept.Status().Code != otelcodes.Error || accept.Status().Description != "" || len(accept.Events()) != 0 {
 		t.Errorf("accept = %v events=%v", accept.Status(), accept.Events())
 	}
-	logs := f.logs.Records()
-	if len(logs) != 1 {
-		t.Fatalf("logs = %+v, want one record (recoverer logs nothing)", logs)
+	var et string
+	for _, kv := range accept.Attributes() {
+		if kv.Key == "error.type" {
+			et = kv.Value.AsString()
+		}
+		if strings.Contains(kv.Value.Emit(), "unh-run5") {
+			t.Errorf("accept attribute %s leaks the run token", kv.Key)
+		}
 	}
-	l := logs[0]
-	if l.Message != "boom unh-run5" || l.Attrs["exception.type"] != "DemoUnhandledError" || l.SpanContext.SpanID() != accept.SpanContext().SpanID() {
+	if et != "DemoUnhandledError" {
+		t.Errorf("accept error.type = %q", et)
+	}
+	if logs := f.logs.Records(); len(logs) != 0 {
+		t.Errorf("demo logger records = %+v, want none (recoverer logs nothing)", logs)
+	}
+	recs := f.stdout.Records()
+	if len(recs) != 1 {
+		t.Fatalf("failure records = %+v, want one (WithSpan's)", recs)
+	}
+	l := recs[0]
+	if demotest.String(l, "msg") != "boom unh-run5" || demotest.String(l, "exception.type") != "DemoUnhandledError" ||
+		demotest.String(l, "span_id") != accept.SpanContext().SpanID().String() || demotest.String(l, "level") != "ERROR" {
 		t.Errorf("record = %+v", l)
 	}
-	if !strings.Contains(l.Attrs["exception.stacktrace"], "placeOrder") {
-		t.Error("the stack must be the panicking goroutine's (deferred recover)")
+	if !strings.Contains(demotest.String(l, "exception.stacktrace"), "(*api).accept") {
+		t.Error("the stack must be the panicking goroutine's (taken at the recover)")
 	}
 }
 

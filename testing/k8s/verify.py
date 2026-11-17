@@ -1147,6 +1147,15 @@ def check_c(b: Backends, run: DemoRun, lang: str) -> Obs:
                 problems.append(f"{s['__name__']}{{demo_outcome={s.get('demo_outcome')}}} "
                                 f"error_type {'present' if 'error_type' in s else 'absent'}")
                 break
+    # The metric error_type equals the owning span's error.type (DE-D9, DE-D8 pinned literals).
+    wrong = sorted({(s.get("__name__", ""), s.get("demo_scenario", ""), s.get("error_type", ""))
+                    for s in names
+                    if s.get("__name__", "").startswith(("demo_orders_processed", "demo_order_duration"))
+                    and s.get("demo_scenario") in PINNED_TYPES and s.get("demo_outcome") == "error"
+                    and s.get("error_type") != PINNED_TYPES[s["demo_scenario"]]})
+    for metric, scen, value in wrong[:3]:
+        problems.append(f"{metric}{{demo_scenario={scen}}} error_type {value!r} "
+                        f"(want {PINNED_TYPES[scen]})")
     shown = " ".join(f"{scen}={increases['demo_orders_processed_total'].get(scen, 0):.0f}"
                      for scen in BACKEND_SCENARIOS)
     return _result(f"processed increase {shown}; {len(names)} series", problems)
@@ -1176,31 +1185,88 @@ def _loki_at_span(b: Backends, run: DemoRun, service: str, trace_id: str, span_i
     return [labels for labels, _ in b.loki_lines(q, run.window_start - 300, run.now, limit=50)]
 
 
+def _loki_in_trace(b: Backends, run: DemoRun, lang: str, trace_id: str) -> list[dict]:
+    """Every record of the language's demo services (worker, api, backend) in one trace."""
+    q = (f'{{service_name=~{_quote(f"demo-{lang}-(worker|api|backend)")}, service_instance_id!=""}}'
+         f" | trace_id={_quote(norm_trace(trace_id))}")
+    return [labels for labels, _ in b.loki_lines(q, run.window_start - 300, run.now, limit=200)]
+
+
+def _demo_span(spans: list[Span], lang: str, app: str, name: str) -> Span | None:
+    return next((s for s in spans if s.service == svc(lang, app) and s.name == name
+                 and s.scope == DEMO_SCOPE), None)
+
+
 def _d_demo(b: Backends, run: DemoRun, lang: str, scen: str, spans: list[Span]) -> list[str]:
+    """Owning span, propagating demo spans and the trace's ERROR-record budget (DE-D8, A45).
+
+    One failure gives exactly one ERROR record in the trace, and it sits on the owning span.
+    Counted: records on a demo span or below one in the same service, and records whose
+    span id is missing or not in the trace. Not counted: the helper record of a failed
+    PostgreSQL span (d.db's) and records on framework spans outside every demo span (the
+    .NET Kestrel record on the api SERVER span for ``unhandled``: A37 debt, design r3.5
+    "Framework logs on the unhandled path"). Propagating demo
+    spans (api ``demo.order.accept`` on 422/409, worker ``demo.drive``) carry status ERROR
+    without description, ``error.type`` = the HTTP status code, no event, no record.
+    """
     app, name = OWNER[scen]
-    owners = [s for s in spans if s.service == svc(lang, app) and s.name == name and s.scope == DEMO_SCOPE]
-    if not owners:
+    s = _demo_span(spans, lang, app, name)
+    if s is None:
         return [f"{scen}: owning span {svc(lang, app)} {name} missing"]
-    s = owners[0]
     out = []
     if s.status != "error":
         out.append(f"{scen}: {name} status {s.status}")
+    if s.message:
+        out.append(f"{scen}: {name} has a status description (want empty)")
     if s.attrs.get("error.type") != PINNED_TYPES[scen]:
         out.append(f"{scen}: {name} error.type {s.attrs.get('error.type')!r}")
+    # A45 (contract design D15, DE-D8 note of 2026-11-17): no exception event on the
+    # owning span in any language; the detail is in the one correlated record.
     excs = [a for n, a in s.events if n == "exception"]
-    if len(excs) != 1 or set(excs[0]) != {"exception.type"}:
-        out.append(f"{scen}: {name} exception events {[sorted(a) for a in excs]} "
-                   "(want one with only exception.type)")
-    records = [r for r in _loki_at_span(b, run, svc(lang, app), s.trace_id, s.span_id)
-               if severity_number(r) >= 17]
-    if len(records) != 1:
-        out.append(f"{scen}: {len(records)} ERROR records at the owning span (want 1)")
-    else:
-        r = records[0]
+    if excs:
+        out.append(f"{scen}: {name} exception events {[sorted(a) for a in excs]} (want none)")
+    by_id = {norm_span(x.span_id): x for x in spans}
+
+    def counted(r: dict) -> bool:
+        sid = norm_span(r.get("span_id", ""))
+        at = by_id.get(sid)
+        if at is None:
+            return True
+        return not at.is_postgres() and under_demo(at, spans)
+
+    records = [r for r in _loki_in_trace(b, run, lang, s.trace_id)
+               if severity_number(r) >= 17 and counted(r)]
+    at_owner = [r for r in records if norm_span(r.get("span_id", "")) == norm_span(s.span_id)]
+    elsewhere = sorted({f"{r.get('service_name', '?')}/{norm_span(r.get('span_id', '')) or 'no span_id'}"
+                        for r in records if r not in at_owner})
+    if len(records) != 1 or len(at_owner) != 1:
+        out.append(f"{scen}: {len(records)} ERROR records on or below demo spans, "
+                   f"{len(at_owner)} at the owning span (want 1, at the owning span)"
+                   + (f"; others at {elsewhere}" if elsewhere else ""))
+    if at_owner:
+        r = at_owner[0]
         if not r.get("exception_stacktrace") or not r.get("exception_type"):
             out.append(f"{scen}: ERROR record without exception_stacktrace/exception_type")
-        elif lang == "go" and r.get("exception_type") != PINNED_TYPES[scen]:
-            out.append(f"{scen}: Go record exception_type {r.get('exception_type')!r}")
+        elif r.get("exception_type") != PINNED_TYPES[scen]:
+            out.append(f"{scen}: {lang} record exception_type {r.get('exception_type')!r}")
+    propagating = [("worker", "demo.drive")]
+    if app != "api":
+        propagating.append(("api", "demo.order.accept"))
+    for papp, pname in propagating:
+        p = _demo_span(spans, lang, papp, pname)
+        if p is None:
+            out.append(f"{scen}: propagating span {svc(lang, papp)} {pname} missing")
+            continue
+        if p.status != "error" or p.message:
+            out.append(f"{scen}: {pname} status {p.status} description "
+                       f"{'set' if p.message else 'empty'} (want error, empty)")
+        if p.attrs.get("error.type") != HTTP_CODES[scen]:
+            out.append(f"{scen}: {pname} error.type {p.attrs.get('error.type')!r} (want {HTTP_CODES[scen]})")
+        if any(n == "exception" for n, _ in p.events):
+            out.append(f"{scen}: {pname} has an exception event (want none)")
+        n = sum(1 for r in records if norm_span(r.get("span_id", "")) == norm_span(p.span_id))
+        if n:
+            out.append(f"{scen}: {n} ERROR records at the propagating span {pname} (want 0)")
     return out
 
 
