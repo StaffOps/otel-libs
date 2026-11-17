@@ -4128,6 +4128,26 @@ Unsupported instrumentation versions, task A10 (P18):
 
 ### Internal
 
+- **`verify.py demo` (DE5; spec `specs/demo-environment/` DE-D10, DE-D11 r3.3,
+  r3.6, r3.7).** `python3 -I testing/k8s/verify.py demo --run <id> [--langs]
+  [--window 15m] [--settle 2m] [--expected] [--dry-run]` checks a live demo
+  run read-only through the API-server service proxy: 16 cells per language
+  (a logs → traces, b exemplars per metric, c custom metrics, d span sets
+  demo/gRPC/HTTP/DB, e trace structure and service-graph edges, g secret
+  hygiene and run-token sentinels), verdicts PASS / FAIL / XFAIL / XPASS / NA /
+  UNEXPECTED / BLOCKED and a matrix; exit 1 on FAIL, XPASS, UNEXPECTED or
+  BLOCKED, 2 on usage. Strict expectations in `testing/k8s/demo/expected.json`:
+  an xfail cell names its task and the problems it owns (any other problem is
+  FAIL), an n/a cell can require that its series exist. Pre-flight BLOCKED when
+  exemplar storage is off or unreadable, and when the window starts < 60 s
+  after the youngest app pod start. Ids are normalised (base64 / hex, zero
+  padding) before any comparison; the Loki scan covers the line and every
+  structured-metadata field; hits print kind, span id and field label only.
+  `tools/spec_lint.py` checks the xfail tasks in `expected.json` (also
+  `also_xfail`); `tools/trace_matrix.py` knows `DR<n>` ids. Fixtures: recorded
+  Tempo traces of the four languages × four scenarios. New contract task A44
+  (Go, Python, Node.js DB spans without `db.response.status_code`). Not yet
+  run against the cluster (DE6).
 - **Demo apps, r3.6 (scorecard of the first k8s01 run, 2026-11-16).** The
   worker waits before its first `demo.drive` until the api's `GET /health`
   answers 200, and the api answers 200 only when Redis is connected and the

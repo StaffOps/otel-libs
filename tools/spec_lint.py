@@ -40,7 +40,10 @@ Rules (finding id in brackets):
         "Reversal action".
 
 [xfail-task]
-    Every "xfail:<task>" status in parity/cases.json names a task id that
+    Every "xfail:<task>" status in parity/cases.json, and every "xfail:<task>"
+    expected cell in testing/k8s/demo/expected.json (specs/demo-environment
+    DE-D11; a cell is a string or an object with "expect" and optional
+    "also_xfail": [<task>, ...]), names a task id that
     exists in an active tasks.md table and is not marked done. Task ids are
     the first token of a table row's first cell (A1, A7-go, B, C, S0, T4);
     "phase-<x>" names task "<x>". A row is done when its status cell — the
@@ -92,6 +95,8 @@ REVERSAL_RE = re.compile(r"reversal action", re.IGNORECASE)
 TBD_RE = re.compile(r"\b(TBD|TODO)\b")
 NOTE_RE = re.compile(r"\b(Corrected|Amended)\b")
 ISO_DATE_RE = re.compile(r"\b\d{4}-\d{2}-\d{2}\b")
+# Expected cells of verify.py demo (specs/demo-environment DE-D11), checked by xfail-task.
+DEMO_EXPECTED = "testing/k8s/demo/expected.json"
 INLINE_CODE_RE = re.compile(r"`[^`]*`")
 QUOTED_RE = re.compile(r'"[^"\n]*"|“[^”\n]*”')
 TASK_ID_RE = re.compile(r"^([A-Z][A-Za-z0-9]*(?:-[a-z0-9]+)?)\b")
@@ -214,29 +219,49 @@ def collect_tasks(root: Path) -> dict[str, tuple[bool, str]]:
     return tasks
 
 
-def check_xfail_tasks(root: Path) -> list[Finding]:
-    cases_path = root / "parity" / "cases.json"
-    if not cases_path.is_file():
-        return []
-    cases = json.loads(cases_path.read_text(encoding="utf-8"))["cases"]
-    tasks = collect_tasks(root)
-    seen: dict[str, list[str]] = {}
-    for case in cases:
-        for lang, status in (case.get("status") or {}).items():
-            if isinstance(status, str) and status.startswith("xfail:"):
-                seen.setdefault(status[len("xfail:"):], []).append(f"{case['id']}[{lang}]")
+def _xfail_statuses(root: Path) -> list[tuple[str, str, str]]:
+    """(source file, task, where) for every xfail status in the fixtures that cite tasks."""
     out = []
-    for task, where in sorted(seen.items()):
+    cases_path = root / "parity" / "cases.json"
+    if cases_path.is_file():
+        for case in json.loads(cases_path.read_text(encoding="utf-8"))["cases"]:
+            for lang, status in (case.get("status") or {}).items():
+                if isinstance(status, str) and status.startswith("xfail:"):
+                    out.append(("parity/cases.json", status[len("xfail:"):], f"{case['id']}[{lang}]"))
+    demo_path = root / DEMO_EXPECTED
+    if demo_path.is_file():
+        expected = json.loads(demo_path.read_text(encoding="utf-8")).get("expected") or {}
+        for lang, cells in sorted(expected.items()):
+            for cell, value in sorted((cells or {}).items()):
+                status = value.get("expect") if isinstance(value, dict) else value
+                if isinstance(status, str) and status.startswith("xfail:"):
+                    out.append((DEMO_EXPECTED, status[len("xfail:"):], f"{lang}.{cell}"))
+                    # Further tasks the cell needs ("also_xfail": ["A42"]) are checked the same way.
+                    for task in (value.get("also_xfail") or []) if isinstance(value, dict) else []:
+                        out.append((DEMO_EXPECTED, str(task), f"{lang}.{cell}"))
+    return out
+
+
+def check_xfail_tasks(root: Path) -> list[Finding]:
+    statuses = _xfail_statuses(root)
+    if not statuses:
+        return []
+    tasks = collect_tasks(root)
+    seen: dict[tuple[str, str], list[str]] = {}
+    for source, task, where in statuses:
+        seen.setdefault((source, task), []).append(where)
+    out = []
+    for (source, task), where in sorted(seen.items()):
         key = task.lower()
         if key.startswith("phase-"):
             key = key[len("phase-"):]
         found = tasks.get(key)
         example = f"{len(where)} statuses, e.g. {where[0]}"
         if found is None:
-            out.append(Finding("xfail-task", f"parity/cases.json#xfail:{task}",
+            out.append(Finding("xfail-task", f"{source}#xfail:{task}",
                                f"task '{task}' not found in any active tasks.md ({example})"))
         elif found[0]:
-            out.append(Finding("xfail-task", f"parity/cases.json#xfail:{task}",
+            out.append(Finding("xfail-task", f"{source}#xfail:{task}",
                                f"task '{task}' is marked done in {found[1]} ({example})"))
     return out
 

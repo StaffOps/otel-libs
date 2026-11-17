@@ -702,6 +702,22 @@ A42), A43 (Go and .NET DB-client exemplars on the parent span; b.db_client
 keeps "a span of the trace" until A43 is decided); A37 evidence extended.
 (4) `otelcol_connector_servicegraph_dropped_spans` returns no data on this
 gateway: the info line prints `unmeasured` instead of 0.)*
+*(r3.7, 2026-11-16, DE5 code review: (1) an `xfail` cell carries a `reason`
+list in `expected.json`; it is XFAIL only when every observed problem contains
+one of the reasons, any other problem makes it FAIL (so an xfail cannot hide a
+new defect). (2) An `n/a` b cell marked `requires_series` (Node.js: metrics
+without SDK exemplars) is NA only while the metric's series exist. (3) Check a
+counts toward the minimum only the records on a demo span or below one in the
+same service (estimated as total × the sampled demo share; ≥ 1 per service).
+(4) An exemplar or record without `span_id`, or with an id that does not
+decode, is a problem. (5) Check g: the hygiene token also matches upper-case
+hex, resource attributes are scanned, hits print the span kind, span id and
+field label only; Loki slices share their midpoint (records de-duplicated);
+Tempo paging is cross-checked against a TraceQL `count_over_time()` of root
+spans for one aligned minute, and a mismatch is a problem. (6) The grace check
+uses each pod's latest start (container restarts included), the g scan the
+earliest `status.startTime`. (7) Service-graph edges are not run-scoped (no
+run label); the report line says so.)*
 **Justification**: read-only through the API server proxy like the existing
 modes (`testing/k8s/README.md:181-184`); strict xfail per ADR-008; minimums
 from the deterministic cycle (DE-D7) make empty data a failure.

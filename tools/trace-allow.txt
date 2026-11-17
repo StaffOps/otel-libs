@@ -43,3 +43,21 @@ DN8 pending C13 (logging)
 DN9 pending C14a, C14b, C14c, C15 (opt-in packages)
 DN10 done by C2; enforced by the CI build-lib pack assertion (five StaffOps.OtelHelper* packages), not by a test file
 DN12 pending C0 (runtime retarget, last)
+#
+# demo-environment (draft spec): "DR<n> pending DE<x>" = no test on a citation path cites the
+# id yet (testing/k8s is not a citation path; verify.py demo checks run on the cluster in DE6).
+# Owner task from specs/demo-environment/tasks.md (Covers column); added by DE5, 2026-11-16.
+DR0 pending DE1, DE3a-d (one topology, four languages; checked on the cluster by DE6)
+DR1 pending DE2 (backing services; demo.sh checks, testing/k8s/demo/test_*.py)
+DR2 pending DE3a-d (queue propagation; verify.py demo check e, run in DE6)
+DR3 pending DE3a-d (error routes; verify.py demo check d, run in DE6)
+DR4 pending DE3a-d (custom signals; verify.py demo check c, run in DE6)
+DR5 pending DE5 (verify.py demo check a; unit tests in testing/k8s/demo, not a citation path)
+DR6 pending DE5 (verify.py demo check b; unit tests in testing/k8s/demo, not a citation path)
+DR7 pending DE5 (verify.py demo check c; unit tests in testing/k8s/demo, not a citation path)
+DR8 pending DE5 (verify.py demo check e; unit tests in testing/k8s/demo, not a citation path)
+DR9 pending DE5, DE8 (expected.json strict xfail / n/a; spec_lint xfail-task rule)
+DR10 pending DE9 (manual Explore check, run report)
+DR11 pending DE2, DE4 (cluster constraints and credentials; demo.sh)
+DR12 pending DE5 (verify.py demo check g; unit tests in testing/k8s/demo, not a citation path)
+DR13 pending DE11, DE12 (docs and the examples-replacement pass)

@@ -149,7 +149,19 @@ is not running fails.
 python3 -I testing/k8s/verify.py smoke --run r2
 python3 -I testing/k8s/verify.py --langs node,dotnet examples
 python3 -I testing/k8s/verify.py --langs go,python --fresh 15 examples
+python3 -I testing/k8s/verify.py demo --run "$RUN" --dry-run          # pre-flight only
+python3 -I testing/k8s/verify.py demo --run "$RUN" --window 15m --settle 2m
 ```
+
+`demo` (specs/demo-environment DE-D11) checks the window `[now − settle − W,
+now − settle]` against `testing/k8s/demo/expected.json` and prints one line per
+language × cell plus a matrix. Exit codes: `0` every cell PASS, XFAIL (all
+problems match the cell's `reason` list) or NA; `1` any FAIL, XPASS,
+UNEXPECTED or BLOCKED (exemplar storage absent, or the window starts less than
+60 s after the youngest app pod start); `2` usage errors (`--settle` under
+120 s, a bad `expected.json`). `--dry-run` exits `1` only when the pre-flight
+is BLOCKED. Service-graph edges carry no run label: check e scopes them by
+service name only.
 
 Options before the mode: `--context` (`KUBE_CONTEXT`, `k8s01`), `--namespace`
 (`NAMESPACE`, `dev-otel-libs`), `--since` (smoke look-back window, `6h`),

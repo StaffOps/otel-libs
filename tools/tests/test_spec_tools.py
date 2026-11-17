@@ -154,6 +154,22 @@ class SpecLintTest(Tree):
         self.assertIn("marked done", found["parity/cases.json#xfail:A1"])
         self.assertIn("not found", found["parity/cases.json#xfail:Z9"])
 
+    def test_xfail_tasks_in_demo_expected(self) -> None:
+        # specs/demo-environment DE5: expected.json cells (string or {"expect"}) are checked too.
+        expected = {"expected": {
+            "go": {"a": "pass", "d.db": {"expect": "xfail:A7-go", "ref": "x"}, "e": "xfail:A1"},
+            "node": {"b": "n/a:upstream-no-sdk-exemplars", "d": {"expect": "xfail:Z9"}},
+            "dotnet": {"h": {"expect": "xfail:A7-go", "also_xfail": ["Z8"]}},
+        }}
+        write(self.root, spec_lint.DEMO_EXPECTED, json.dumps(expected))
+        found = {f.location: f.message for f in spec_lint.run(self.root)}
+        loc = spec_lint.DEMO_EXPECTED
+        self.assertEqual(set(found), {f"{loc}#xfail:A1", f"{loc}#xfail:Z9", f"{loc}#xfail:Z8"})
+        self.assertIn("dotnet.h", found[f"{loc}#xfail:Z8"])
+        self.assertIn("marked done", found[f"{loc}#xfail:A1"])
+        self.assertIn("go.e", found[f"{loc}#xfail:A1"])
+        self.assertIn("not found", found[f"{loc}#xfail:Z9"])
+
     def test_done_only_in_status_column(self) -> None:
         write(self.root, "specs/alpha/tasks.md", """\
             | Task | Status | Notes |
@@ -291,6 +307,14 @@ class TraceTest(Tree):
         self.assertIn("| R91 | alpha | yes | `go/x_test.go:2` | covered |", out)
         code, out = run_main(trace_tool.main, ["--root", str(self.root), "--gaps"])
         self.assertEqual(out.split(), ["P99", "alpha"])
+
+    def test_demo_requirement_ids(self) -> None:
+        # DR<n> ids (specs/demo-environment) are requirements, distinct from R<n>.
+        write(self.root, "specs/beta/requirements.md", "### DR95 — Demo\nIt SHALL run.\n")
+        write(self.root, "go/y_test.go", "func TestY(t *testing.T) { // DR95, not R95\n}\n")
+        reqs = self.reqs()
+        self.assertIn("DR95", reqs)
+        self.assertEqual(reqs["DR95"].citations, ["go/y_test.go:1"])
 
     def test_duplicate_id_is_an_error(self) -> None:
         write(self.root, "specs/beta/requirements.md", "### R91 — again\nSHALL\n")

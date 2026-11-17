@@ -59,7 +59,7 @@ from pathlib import Path
 
 from speclib import REPO_ROOT, active_spec_dirs, rel
 
-ID_PATTERN = r"(?:SR|RT|JS|DN|R|G|P)\d+"
+ID_PATTERN = r"(?:SR|RT|JS|DN|DR|R|G|P)\d+"
 DEF_HEADING_RE = re.compile(rf"^#{{2,4}}\s+({ID_PATTERN})\b")
 DEF_BULLET_RE = re.compile(rf"^\s*[-*]\s+\*\*({ID_PATTERN})\b")
 HEADING_RE = re.compile(r"^#{1,6}\s")

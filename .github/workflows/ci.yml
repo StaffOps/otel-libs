@@ -600,7 +600,7 @@ jobs:
         run: python -m unittest discover -s tools/tests
       - name: Spec lint
         run: python tools/spec_lint.py
-      - name: Demo helper tests (testing/k8s/demo, specs/demo-environment DE2)
+      - name: Demo helper and verify.py demo tests (testing/k8s/demo, specs/demo-environment DE2, DE5)
         run: python -m unittest discover -s testing/k8s/demo -p 'test_*.py'
       - name: python/LICENSE matches the root LICENSE
         run: cmp LICENSE python/LICENSE

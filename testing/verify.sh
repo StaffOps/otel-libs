@@ -137,8 +137,9 @@ step_tools_tests() {
       python -m unittest discover -s tools/tests'
 }
 
-# specs/demo-environment DE2: the SCRAM verifier and K-D2 pre-flight helpers of
-# testing/k8s/demo (stdlib unittest, no cluster access).
+# specs/demo-environment DE2, DE5: the SCRAM verifier and K-D2 pre-flight helpers of
+# testing/k8s/demo and `verify.py demo` against recorded fixtures (stdlib unittest,
+# no cluster access).
 step_demo_tests() { tools_run python -m unittest discover -s testing/k8s/demo -p 'test_*.py'; }
 
 # specs/demo-environment DE1: committed Go stubs match a regeneration; go/demo
