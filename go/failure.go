@@ -153,6 +153,7 @@ func failSpan(ctx context.Context, span trace.Span, value any) {
 func applyFailure(ctx context.Context, span trace.Span, f failure) {
 	span.SetStatus(codes.Error, "")
 	span.SetAttributes(semconv.ErrorTypeKey.String(f.typ))
+	noteServerFailure(ctx, span, f.typ) // the HTTP metric's value, sampled or not (D16)
 	emitFailureRecord(ctx, f)
 }
 

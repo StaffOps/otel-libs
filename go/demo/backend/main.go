@@ -130,7 +130,8 @@ func openDB() (*sql.DB, func() error, error) {
 	cfg.Database = demokit.EnvOr("DEMO_PG_DB", "demo_"+demokit.Lang)
 	cfg.User = demokit.EnvOr("DEMO_PG_USER", "demo_"+demokit.Lang)
 	cfg.Password = password
-	db, closeDB, err := otelsql.Open("pgx", stdlib.RegisterConnConfig(cfg))
+	// A RegisterConnConfig key is not a DSN: name the database (db.namespace, D16).
+	db, closeDB, err := otelsql.Open("pgx", stdlib.RegisterConnConfig(cfg), otelsql.WithDBNamespace(cfg.Database))
 	if err != nil {
 		return nil, nil, fmt.Errorf("open database: %w", err)
 	}

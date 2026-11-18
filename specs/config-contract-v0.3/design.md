@@ -1320,6 +1320,43 @@ span metrics, which break the error rate down by `error.type`.
 > rename (rounds 2–3) cannot work, because contrib sets the namespace keys
 > before the system attribute; Python SQLite is a documented residual
 > instead.*
+>
+> *Corrected 2026-11-18 (Go implementation review: `observability`, `dev`,
+> `code-review`). These points supersede the text below where they differ:*
+> 1. *An explicit `WithDBNamespace` value applies to SQLite too and is used
+>    as given (not validated: a SQL Server name such as `my db` is
+>    legitimate); "SQLite gets no `db.namespace`" covers only the DSN step.*
+> 2. *Go HTTP metric precedence: the `RecordFailure`/`WithSpan` type recorded
+>    for the request's own SERVER span (a per-request holder, written only
+>    when the marked span's SpanContext equals the server span's, so a failing
+>    child span never counts; sampled or not), else an `error.type` already
+>    on the recording server span, else an application Labeler value (the
+>    helper adds nothing), else the status code. With no valid local server
+>    span context (no TracerProvider, or traces disabled: the no-op tracer
+>    hands back the caller's remote context) the metric gets the status
+>    code (review round 2).*
+> 3. *SQLSTATEs without a digit, including application-defined letter-only
+>    codes, become `_OTHER`.*
+> 4. *gRPC code above 16: the span gets `_OTHER`, otelgrpc's own metric gets
+>    `CODE(n)` (documented difference).*
+> 5. *Parity cases are deferred to the end of the batch, after Node.js: the
+>    four runners reject unknown expect fields and the drivers cannot answer
+>    a 5xx or a gRPC error, so the cases and the runner/driver changes land in
+>    one change; A46 stays open until then. The snapshot fields are
+>    `server_span_error_type` and `client_span_error_type`, not one
+>    `span_error_type`.*
+> 6. *Go DSN parsing hardening (secret-leak review; URL rule and keyword
+>    rule revised in review round 2): `postgres://`, `postgresql://` and
+>    `sqlserver://` URLs are parsed with `url.Parse` as pgx does (path, then
+>    `?dbname=` / `?database=`), and a parse error makes the DSN unknown;
+>    a keyword `dbname` containing `=` is rejected by the name check; a MySQL
+>    candidate containing `@`, `(` or `)` is unknown; ADO/ODBC values honor
+>    `{...}` (with the `}}` escape) and quotes, and an unterminated value makes
+>    the DSN unknown; any name from the DSN or `PGDATABASE` containing
+>    `@ : , = ( ) { }` or whitespace is unknown (no attribute, the diagnostics
+>    line); pgx `database=` / `?database=` are read (`dbname` wins); a DSN
+>    with `service=` skips the `PGDATABASE` fallback; the diagnostics line is
+>    written once per driver name per process.*
 
 **Owner decisions 2026-11-17** (asked with the design research of the three
 languages):

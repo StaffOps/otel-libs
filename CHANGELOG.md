@@ -2682,6 +2682,80 @@ renamed span or a dropped metric.
 
 ### Go — detailed changes
 
+- **Protocol span error attributes (requirement R12, design D16, tasks A38,
+  A40, A44, A46; 2026-11-18; Python and Node.js follow in later tasks).**
+  - `ext/otelsql`: `Open(driverName, dsn string, opts ...Option)` (variadic:
+    calls compile unchanged, but `Open` is no longer assignable to a variable
+    of the old function type) and `WithDBNamespace(name)`. Spans, the duration metric
+    and the `db.sql.*` pool metrics carry `db.namespace` (legacy `db.name`
+    with the legacy keys): the option, else the database parsed from the DSN
+    (PostgreSQL URL and keyword forms, go-sql-driver/mysql, SQL Server; the
+    standard library only), else `PGDATABASE` for `pgx`, `pgx/v5`,
+    `postgres`, `postgresql` (not with a `service=` DSN), else none and one
+    stderr line per driver name per process, naming the driver only
+    (`otelhelper: db.namespace unknown for driver <name>; pass
+    otelsql.WithDBNamespace`). A parsed name holding `@ : , = ( ) { }` or
+    whitespace is treated as unknown (no `PGDATABASE` fallback then); URLs are
+    parsed with `net/url` as pgx and go-mssqldb parse them, malformed keyword
+    and ADO/ODBC strings and a MySQL DSN without `/dbname` are unknown, so no
+    credential or host reaches the attribute. A MySQL `/orders` DSN, libpq's
+    `%2F` socket host and an empty `?dbname=` (no name, as in pgx) are read
+    as the drivers read them; multi-host IPv6 URLs, unencoded `?`/`#` in a
+    password and names with whitespace get no name (documented).
+    pgx's `database=` / `?database=` aliases are read. SQLite gets none and
+    no line (an explicit `WithDBNamespace` still applies). A pgx
+    `stdlib.RegisterConnConfig` key needs `WithDBNamespace`.
+  - `ext/otelsql`: a failed span carries `db.response.status_code` =
+    `error.type` = the PostgreSQL SQLSTATE (`SQLState()` method, `^[0-9A-Z]{5}$`
+    with a digit) or the MySQL server error number (`MySQLError.Number` by
+    reflection, 1–65535 outside 2000–2999), else `error.type=_OTHER`;
+    `db.client.operation.duration` gets `db.response.status_code` (its
+    `error.type` stays XSAM's Go type name, a documented gap).
+    `driver.ErrSkip` no longer marks the span ERROR or the metric failed
+    (`SpanOptions.DisableErrSkip`, `WithDisableSkipErrMeasurement`).
+    **Dashboard/alert behavior change** for go-sql-driver/mysql with
+    `interpolateParams=false`: the skipped attempt is still a near-zero
+    `sql.conn.exec` / `sql.conn.query` span and one measurement before the
+    prepare + `stmt.exec` retry, now counted as a success, so SQL error ratios
+    drop and latency percentiles shift down. Use `interpolateParams=true` or
+    filter those points. Letter-only application SQLSTATEs give `_OTHER`.
+  - `NewHTTPHandler`: a 5xx or 600–999 response gets `error.type` = the status
+    code on the recording server span (when absent) and on
+    `http.server.request.duration` whether sampled or not; an application
+    value (`RecordFailure` on the span, then the otelhttp Labeler) wins on the
+    metric — a `RecordFailure` on the server span is remembered per request,
+    so the metric gets the application's value on unsampled requests too,
+    while a failing `WithSpan` child leaves the status code (with traces off
+    the metric always gets the status code); a Labeler-only
+    value reaches the metric but not the span. With
+    `OTEL_HELPER_HTTP_OPT_IN_METRICS=true` the body-size histograms carry the
+    same `error.type`. The status is tracked as otelhttp's `RespWriterWrapper` does
+    (`httpsnoop.Wrap`; `Flusher`, `Hijacker`, `ReaderFrom` preserved).
+    `github.com/felixge/httpsnoop` v1.1.0 is now a direct dependency (it was
+    indirect through otelhttp).
+  - `GRPCClientHandler` / `GRPCServerHandler`: a failed RPC's span gets
+    `error.type` = the canonical code name (client: every non-OK code,
+    `_OTHER` above 16; server: `UNKNOWN`, `DEADLINE_EXCEEDED`, `UNIMPLEMENTED`,
+    `INTERNAL`, `UNAVAILABLE`, `DATA_LOSS`), written on `*stats.End` before
+    otelgrpc ends the span, only when absent. The returned `stats.Handler` is
+    now a helper wrapper around otelgrpc's. A filtered client health call
+    made inside a gRPC handler writes nothing on the handler's server span.
+    Above code 16 the span gets `_OTHER`, otelgrpc's metric `CODE(<n>)`.
+  - Every write yields to an existing value (read through
+    `sdktrace.ReadOnlySpan`; a non-SDK span is not written to). No message
+    text reaches these attributes.
+  - Demo backend passes `otelsql.WithDBNamespace(cfg.Database)` (its DSN is a
+    `RegisterConnConfig` key).
+  - Tests: `errortype_test.go` (HTTP status table, unsampled and health-path
+    metrics, `RecordFailure`, Labeler, `Flusher`/`Hijacker`, bufconn gRPC with
+    one bidi call), `ext/otelsql/d16_test.go` (DSN table, precedence,
+    diagnostics line, error getter table, a fake driver for codes and
+    `ErrSkip`, a real SQLite failure). The four D16 parity cases are not in
+    `parity/cases.json` yet: every language's runner needs the new snapshot
+    fields (`server_span_error_type`, `client_span_error_type`) and new driver
+    inputs (a 5xx handler, FAILED_PRECONDITION and INTERNAL methods) first;
+    they land with those runner changes at the end of the batch (design D16).
+
 - **A30 owner rulings of 2026-11-06 (design D1 "HTTP opt-in metrics", "AWS
   RPC keys", "AWS service attribute values").** `Options.HTTPOptInMetrics` /
   `WithHTTPOptInMetrics(bool)` / `OTEL_HELPER_HTTP_OPT_IN_METRICS` (code >

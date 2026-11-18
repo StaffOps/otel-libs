@@ -264,6 +264,45 @@ otelhttp server instrumentation: a server span per request and
 ignored since 0.3.0 (kept for source compatibility). Health checks are
 measured; their spans are dropped by the sampler.
 
+A response with a 5xx status, or a code 600–999, gets `error.type` = the
+status code (`"500"`) on the server span and on
+`http.server.request.duration` (design D16, A40: otelhttp v0.72 sets it on
+client spans only):
+
+- **Span:** only when the span is recording, is an SDK span and has no
+  `error.type` yet (a `RecordFailure` value is kept). 4xx and 1xx–3xx get none.
+- **Metric, always, sampled or not** (an inbound `traceparent …-00`, a health
+  path whose span the sampler drops): the `error.type` `RecordFailure` (or a
+  `WithSpan` returning an error) gave **the server span itself** — remembered
+  per request, so an unsampled span gives the same value as a sampled one —
+  or one set on the recording server span directly; else an `error.type` the
+  application added to the otelhttp `Labeler` (`otelhttp.LabelerFromContext`;
+  the helper adds nothing then, so the point has exactly the application's
+  value); else the status code. A failing child span (`WithSpan` inside the
+  handler) does not count: the server span keeps the status code, sampled or
+  not. A Labeler-only value makes the span say `500` and the metric say the
+  application's value; use `RecordFailure` on the request context to keep
+  both the same. `RecordFailure` is the supported way to set the value (the
+  last call wins); a direct `SetAttributes` of `error.type` on the server
+  span reaches the metric only when no `RecordFailure` value exists. The
+  server span is recognized by its own (local) span context, so with no
+  TracerProvider installed or with traces disabled the metric gets the status
+  code, whatever the handler records (an inbound `traceparent` is the
+  caller's context, not the server span).
+- With `OTEL_HELPER_HTTP_OPT_IN_METRICS=true` the body-size histograms
+  (`http.server.request.body.size`, `http.server.response.body.size`) carry
+  the same `error.type`: otelhttp records them with the same attributes.
+- **Status as otelhttp reads it:** the first `WriteHeader` (1xx other than
+  101 ignored), an implicit 200 on the first `Write` or `Flush`, 200 when the
+  handler writes nothing; a body sent with `ReadFrom` (`io.Copy` onto the
+  writer) before any `WriteHeader` is not seen (200). So `error.type` and
+  `http.response.status_code` never disagree.
+- The handler's writer keeps the server writer's optional interfaces
+  (`http.Flusher`, `http.Hijacker`, `io.ReaderFrom`, `http.Pusher`;
+  `httpsnoop`, a direct dependency since 0.3.0) and gains none.
+- A panicking handler gets no `error.type` (otelhttp re-panics before the
+  helper runs).
+
 ### `NewHTTPTransport(base http.RoundTripper) http.RoundTripper`
 
 otelhttp client instrumentation (`nil` wraps `http.DefaultTransport`): client
@@ -288,6 +327,24 @@ Metrics: `rpc.server.call.duration` / `rpc.client.call.duration` (seconds,
 `rpc.system.name`, `rpc.method="pkg.Svc/Method"`). Server-side
 `grpc.health.v1.Health/*` calls are counted, their spans dropped; client-side
 health calls get neither span nor metric.
+
+Failed RPCs get `error.type` = the canonical status code name on the span
+(design D16, A46; otelgrpc v0.72 sets it on the metrics only), when the span
+is recording, is an SDK span and has none:
+
+| Span | Gets `error.type` for | Value |
+|------|-----------------------|-------|
+| CLIENT | every non-OK status | `CANCELLED` … `UNAUTHENTICATED` (`FAILED_PRECONDITION`, not Go's `FailedPrecondition`); `_OTHER` for a code above 16 |
+| SERVER | the six codes otelgrpc marks ERROR: `UNKNOWN`, `DEADLINE_EXCEEDED`, `UNIMPLEMENTED`, `INTERNAL`, `UNAVAILABLE`, `DATA_LOSS` | the same names; any other code leaves the span Unset with no `error.type` |
+
+grpc-go reports an error without a code (a handler returning
+`errors.New(...)`) as `UNKNOWN`, so Go gives `_OTHER` only for a code above
+16. For a code above 16 the span gets `_OTHER` while otelgrpc's
+`rpc.client.call.duration` gets `CODE(<n>)` (its own name table). Unary,
+server, client and bidi streaming calls take the same path. A filtered client
+health call has no span, and no other span is written to on its behalf — not
+the caller's, and not the enclosing server span when the call is made inside
+a gRPC handler with the handler's context.
 
 ### Logging: `NewSlogHandler()`, `NewLogger(env, debug)`, `DefaultLogLevel(env, debug)`
 
@@ -431,9 +488,101 @@ defer closeDB() // instead of db.Close(): unregisters the pool-metrics callback,
 |--------|---------------------|
 | `ext/otelaws` | AWS SDK v2 calls (S3, SQS, DynamoDB, …): spans `<Service>.<Operation>`, CLIENT except SQS/SNS send and publish (PRODUCER) and SQS receive (CONSUMER), with the legacy `rpc.system=aws-api`, `rpc.service`, `rpc.method=<Operation>` (`OTEL_SEMCONV_STABILITY_OPT_IN=rpc`: `rpc.system.name`, `rpc.method=<Service>/<Operation>`; `rpc/dup`: both), `server.address`/`server.port` of the request, `messaging.system` `aws.sns` / `aws_sqs`, `messaging.operation.name` = the AWS operation (`Publish`, `SendMessage`), DynamoDB `db.system.name=aws.dynamodb` plus the legacy `db.system=dynamodb` (same opt-in rule as `ext/otelsql`) |
 | `ext/otelredis` | go-redis commands: spans named by the uppercased command (`SET`, `CLUSTER INFO`; a pipeline `SET GET`; the dial span `connect`) with `db.system.name=redis`, `db.operation.name` as go-redis provides it (`set`), no command values (`db.statement`) and no connection string; `db.client.connections.*` pool metrics (Prometheus `db_client_connections_usage`, `_max`, `_idle_max`, `_idle_min`, `_waits_total`, `_timeouts_total`, `_hits_total`, `_misses_total`, …) |
-| `ext/otelsql` | `database/sql` queries and `db.sql.*` pool metrics. `db.system.name` from the driver: `pgx`, `pgx/v5`, `postgres` → `postgresql`; `sqlite`, `sqlite3` → `sqlite`; `mysql`; `sqlserver`, `mssql` → `microsoft.sql_server`; else `other_sql`. The legacy `db.system` key is emitted too until 1.0, unless `OTEL_SEMCONV_STABILITY_OPT_IN` contains `database` without `database/dup`. A pool-metrics registration failure is returned by `Open` (the DB is closed) |
+| `ext/otelsql` | `database/sql` queries and `db.sql.*` pool metrics. `db.system.name` from the driver: `pgx`, `pgx/v5`, `postgres` → `postgresql`; `sqlite`, `sqlite3` → `sqlite`; `mysql`; `sqlserver`, `mssql` → `microsoft.sql_server`; else `other_sql`. The legacy `db.system` key is emitted too until 1.0, unless `OTEL_SEMCONV_STABILITY_OPT_IN` contains `database` without `database/dup`. `db.namespace` (and legacy `db.name` with the legacy keys) = the database name, see below. Failed operations carry `db.response.status_code` / `error.type`, see below. A pool-metrics registration failure is returned by `Open` (the DB is closed) |
 
-([design D14](https://github.com/StaffOps/otel-libs/blob/main/specs/config-contract-v0.3/design.md#d14--go-ext-modules-api-a10-validation))
+#### `ext/otelsql`: `db.namespace` and error attributes (design D16, A38, A44)
+
+`Open(driverName, dsn string, opts ...otelsql.Option)` (variadic since 0.3.0,
+source compatible). `db.namespace` is resolved once per `Open`, in this order:
+
+1. `otelsql.WithDBNamespace(name)` (an empty name is ignored);
+2. the database name parsed from the DSN (standard library only):
+   - PostgreSQL URL `postgres://` / `postgresql://`, parsed with `net/url`
+     as pgx parses it (a parse error, such as an unencoded `/` in the
+     password, is unknown): the path, with `?dbname=` (or pgx's `?database=`)
+     winning — also when present but empty, which gives no name, as in pgx;
+     libpq's percent-encoded socket host (`postgres://%2Fvar%2Frun%2Fpostgresql/db`)
+     is read too; userinfo, query and fragment never reach the namespace;
+   - PostgreSQL keyword form `dbname=…` or pgx's `database=…` (`dbname` wins;
+     quoted `dbname='orders'`, backslash escapes, the last occurrence wins;
+     an unquoted value may hold `=`, such as a base64 password). A malformed
+     string — an unterminated quote, a key without `=` — is unknown. An empty
+     `dbname=` reads the next keyword as its value, which the name check
+     below rejects (no `PGDATABASE` fallback, one line);
+   - go-sql-driver/mysql `[user[:pass]@][net[(addr)]]/dbname[?params]`, cut at
+     the last `/` (a password may contain `/`), path-unescaped; a candidate
+     holding `@`, `(` or `)` (a DSN with no `/dbname` whose password has a
+     `/`) is unknown, and so is a DSN with neither `@` nor `(` (`u:a/b`)
+     unless it starts with `/` (`/orders`: no user, default address);
+   - SQL Server: the URL's `?database=` (parsed with `net/url`, as
+     go-mssqldb does), or `database=` /
+     `initial catalog=` in the ADO and `odbc:` forms, tokenized on `;` with
+     `{braces}` (`}}` = `}`) and `"`/`'` quotes (doubled = literal); an
+     unbalanced or trailing-text value makes the whole string unknown. The
+     database only, also with a named instance (a documented deviation from
+     semconv `sql-server.md`);
+3. for the drivers mapped to `postgresql` (`pgx`, `pgx/v5`, `postgres`,
+   `postgresql`), the `PGDATABASE` environment variable — not when the DSN
+   names a `service=` (the service file decides the database);
+4. else none, and one line on stderr per driver name per process, naming the
+   driver only (never the DSN): `otelhelper: db.namespace unknown for driver
+   <name>; pass otelsql.WithDBNamespace`.
+
+A name from steps 2–3 that holds `@ : , = ( ) { }` or whitespace is treated
+as unknown (step 4; a rejected DSN name does not fall back to `PGDATABASE`): a parse gone wrong never puts a credential or a host in
+an attribute. The `WithDBNamespace` value is used as given.
+
+Valid pgx URLs that get no `db.namespace` (no attribute and one diagnostics
+line, never a leak; pass `WithDBNamespace` instead): a multi-host list of
+IPv6 addresses with ports (`postgres://[::1]:5432,[::2]:5433/db`, which
+`net/url` rejects), a password with an unencoded `?` or `#`, and a database
+name with whitespace (`my%20db`), which the name check rejects on purpose.
+
+SQLite (`sqlite`, `sqlite3`) gets no `db.namespace` from the DSN (a file path
+is not a namespace and may leak) and no line; `WithDBNamespace` still sets
+one. A DSN registered with pgx `stdlib.RegisterConnConfig` is a key, not a
+DSN: pass `WithDBNamespace(cfg.Database)`. With no database in the DSN and no
+`PGDATABASE`, pgx and libpq connect to the database named after the user;
+the helper does not guess it (no attribute, one line). MySQL: the namespace
+is the database given at connect time; a later `USE other` is not reflected
+(semconv `mysql.md` asks for this to be documented). A schema given at connect time
+(`search_path`, `options`) is not part of the namespace (semconv
+`postgresql.md` allows the database alone). The name goes on every span, on
+`db.client.operation.duration` and on the `db.sql.*` pool metrics.
+
+A failed operation (status ERROR, no description, as before):
+
+| Driver error | Span | `db.client.operation.duration` |
+|--------------|------|------------|
+| PostgreSQL SQLSTATE (`SQLState()` method: pgx `*pgconn.PgError`, lib/pq `*pq.Error`), accepted as `^[0-9A-Z]{5}$` with at least one digit (`EPIPE` is rejected, and so is an application-defined code of letters only, `RAISE ... USING ERRCODE = 'ABCDE'`: `_OTHER`) | `db.response.status_code` = `error.type` = `23505` | `db.response.status_code=23505`; `error.type` = the Go type name (XSAM's, see the root README gaps) |
+| MySQL server error (`Number` field of a struct named `MySQLError`, go-sql-driver `*mysql.MySQLError`, read by reflection), 1–65535 outside the client range 2000–2999 | `1062` on both | `db.response.status_code=1062`; `error.type` = the Go type name |
+| none of these (connection refused, a client error such as MySQL 2003, SQLite, other databases) | `error.type=_OTHER`, no `db.response.status_code` | `error.type` = the Go type name |
+| `driver.ErrSkip` (go-sql-driver returns it for every statement with arguments when `interpolateParams=false`) | Unset, no attribute, no exception event | no `error.type` (counted as a success) |
+
+The code is searched along the error's `Unwrap` chain (`%w`, `errors.Join`);
+message text never reaches an attribute. Only errors are recorded (PostgreSQL
+warnings and notices are not). The values are written only where none is set:
+XSAM writes neither attribute itself and the helper installs no XSAM
+attributes getter. Exception: XSAM can call the getter twice for one
+`sql.rows` span (from `Next` and from `Close`): the second error's attributes
+overwrite the same keys, so a code-less second error leaves the first
+`db.response.status_code` next to `error.type=_OTHER`.
+
+`driver.ErrSkip`, the full story: database/sql retries a skipped
+`ExecContext`/`QueryContext` as prepare + `stmt.exec`/`stmt.query`. The
+skipped attempt is still a near-zero `sql.conn.exec` / `sql.conn.query` span
+and one `db.client.operation.duration` measurement, now Unset and counted as
+a success (before: span ERROR with an exception event; measurement
+`error.type=database/sql/driver.ErrSkip`). With go-sql-driver/mysql and
+`interpolateParams=false`, every statement with arguments adds one such span
+and point: error ratios drop and latency percentiles shift down. Set
+`interpolateParams=true` (one round trip, no prepare; go-sql-driver refuses
+it with some multibyte connection charsets such as BIG5, CP932, GB2312, GBK
+and SJIS), or filter `db_operation_name` / the span name in queries and
+dashboards.
+
+([design D14](https://github.com/StaffOps/otel-libs/blob/main/specs/config-contract-v0.3/design.md#d14--go-ext-modules-api-a10-validation),
+[D16](https://github.com/StaffOps/otel-libs/blob/main/specs/config-contract-v0.3/design.md#d16--protocol-span-error-attributes-r12-tasks-a38-a40-a44-a46-a43-upstream))
 
 ---
 

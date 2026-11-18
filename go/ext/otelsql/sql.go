@@ -12,10 +12,17 @@
 // and, until 1.0, the legacy db.system key (v1.26.0 values) so existing
 // dashboards keep working during the migration. OTEL_SEMCONV_STABILITY_OPT_IN
 // containing "database" (and not "database/dup") emits only db.system.name.
+//
+// They also carry db.namespace (the database name; legacy db.name with the
+// legacy keys), resolved by WithDBNamespace, the DSN or PGDATABASE (see
+// Open), and a failed operation's span carries db.response.status_code and
+// error.type: the PostgreSQL SQLSTATE or the MySQL server error number, or
+// error.type=_OTHER without one (design D16).
 package otelsql
 
 import (
 	"database/sql"
+	"database/sql/driver"
 	"errors"
 	"fmt"
 	"os"
@@ -30,18 +37,72 @@ import (
 // envSemconvOptIn is the standard semantic-convention migration switch.
 const envSemconvOptIn = "OTEL_SEMCONV_STABILITY_OPT_IN"
 
+// Option configures Open.
+type Option func(*config)
+
+type config struct {
+	namespace string
+}
+
+// WithDBNamespace sets db.namespace (and legacy db.name) on every span and
+// measurement of the pool: the database name. It wins over the name parsed
+// from the DSN and over PGDATABASE; an empty name is ignored. Pass it when
+// the DSN carries no database name the helper can read — a key returned by
+// pgx stdlib.RegisterConnConfig, a driver the helper does not parse — or for
+// SQLite, which otherwise gets no db.namespace.
+func WithDBNamespace(name string) Option {
+	return func(c *config) {
+		if name != "" {
+			c.namespace = name
+		}
+	}
+}
+
 // Open wraps sql.Open with OpenTelemetry instrumentation (traces, metrics and
 // db.sql.* pool metrics). The driver name is mapped to a semantic-convention
 // database system (see systemAttributes).
+//
+// db.namespace is resolved in this order (design D16): WithDBNamespace; the
+// database name parsed from dataSourceName (PostgreSQL URL or keyword form,
+// go-sql-driver/mysql, SQL Server); for the drivers mapped to postgresql
+// (pgx, pgx/v5, postgres, postgresql) the PGDATABASE environment variable;
+// else none, and one line on stderr naming the driver (never the DSN).
+// SQLite (sqlite, sqlite3) gets none from the DSN (a file path is not a
+// namespace) and no line.
+//
+// A failed operation's span gets db.response.status_code and error.type set
+// to the PostgreSQL SQLSTATE or the MySQL server error number, else
+// error.type=_OTHER; the duration metric gets db.response.status_code (its
+// error.type stays the XSAM value, the Go error type name). driver.ErrSkip
+// is not a failure: the span stays Unset and the metric has no error.type.
 //
 // closeDB unregisters the pool-metrics callback and closes the pool; call it
 // instead of db.Close, or every open/close cycle leaks a callback that keeps
 // reporting a closed pool. If the pool metrics can't be registered the
 // database is closed and the error returned: telemetry failures are never
 // silently dropped.
-func Open(driverName, dataSourceName string) (db *sql.DB, closeDB func() error, err error) {
-	attrs := otelsql.WithAttributes(systemAttributes(driverName, legacyKeysEnabled())...)
-	db, err = otelsql.Open(driverName, dataSourceName, attrs)
+func Open(driverName, dataSourceName string, opts ...Option) (db *sql.DB, closeDB func() error, err error) {
+	var cfg config
+	for _, o := range opts {
+		if o != nil {
+			o(&cfg)
+		}
+	}
+	legacy := legacyKeysEnabled()
+	kv := systemAttributes(driverName, legacy)
+	if ns := resolveNamespace(driverName, dataSourceName, cfg.namespace); ns != "" {
+		kv = append(kv, semconv.DBNamespace(ns))
+		if legacy {
+			kv = append(kv, attribute.String("db.name", ns))
+		}
+	}
+	attrs := otelsql.WithAttributes(kv...)
+	db, err = otelsql.Open(driverName, dataSourceName, attrs,
+		otelsql.WithSpanOptions(otelsql.SpanOptions{DisableErrSkip: true}),
+		otelsql.WithDisableSkipErrMeasurement(true),
+		otelsql.WithSpanErrorAttributesGetter(spanErrorAttributes),
+		otelsql.WithInstrumentErrorAttributesGetter(instrumentErrorAttributes),
+	)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -51,6 +112,37 @@ func Open(driverName, dataSourceName string) (db *sql.DB, closeDB func() error, 
 		return nil, nil, fmt.Errorf("otelsql: register db.sql pool metrics for driver %q: %w", driverName, err)
 	}
 	return db, func() error { return errors.Join(reg.Unregister(), db.Close()) }, nil
+}
+
+// spanErrorAttributes is the XSAM span error getter. XSAM calls it for every
+// non-nil error while the span records, before SetStatus. XSAM itself writes
+// neither attribute and the helper installs no attributes getter, so on a
+// statement span they are absent when it runs (design D16 "only if absent").
+// The sql.rows span is the exception: XSAM can call the getter twice for it,
+// from Next (rows.go:173) and from Close (rows.go:149, XSAM v0.44.0). The
+// second error's attributes overwrite the same keys, so a code-less second
+// error leaves the first db.response.status_code next to error.type=_OTHER.
+func spanErrorAttributes(err error) []attribute.KeyValue {
+	if errors.Is(err, driver.ErrSkip) {
+		return nil // not a failure; XSAM calls the getter regardless of DisableErrSkip
+	}
+	if code, ok := responseStatusCode(err); ok {
+		return []attribute.KeyValue{semconv.DBResponseStatusCode(code), semconv.ErrorTypeKey.String(code)}
+	}
+	return []attribute.KeyValue{semconv.ErrorTypeOther}
+}
+
+// instrumentErrorAttributes is the XSAM metric error getter: the accepted
+// code as db.response.status_code. XSAM appends its own error.type (the Go
+// type name) after this output, so the helper adds none.
+func instrumentErrorAttributes(err error) []attribute.KeyValue {
+	if errors.Is(err, driver.ErrSkip) {
+		return nil
+	}
+	if code, ok := responseStatusCode(err); ok {
+		return []attribute.KeyValue{semconv.DBResponseStatusCode(code)}
+	}
+	return nil
 }
 
 // trimChars is the contract trim set (design D1 "Trimmed character set"): not

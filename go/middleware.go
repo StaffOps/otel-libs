@@ -21,8 +21,20 @@ import (
 // (for example "GET /orders/{id}"), or just "<METHOD>" when no pattern
 // matched. Since 0.3.0 operation is ignored; it is kept for source
 // compatibility.
+//
+// A response with a 5xx status, or a code 600–999, gets error.type = the
+// status code ("500") on the server span, when it is recording and has none,
+// and on http.server.request.duration, sampled or not (design D16, A40;
+// otelhttp sets error.type only on client spans). On the metric, an
+// error.type the application set on the span (RecordFailure) wins, then one
+// it added to the otelhttp Labeler, then the status code. The status is read
+// as otelhttp reads it: the first WriteHeader (1xx other than 101 ignored),
+// an implicit 200 on the first Write or Flush, 200 when the handler writes
+// nothing; a ReadFrom (io.Copy) is not seen. A panicking handler gets no
+// error.type. The writer the handler receives keeps the optional interfaces
+// of the server's (http.Flusher, http.Hijacker, io.ReaderFrom, http.Pusher).
 func NewHTTPHandler(handler http.Handler, operation string) http.Handler {
-	return otelhttp.NewHandler(handler, operation)
+	return otelhttp.NewHandler(httpErrorTypeHandler{next: handler}, operation)
 }
 
 // NewHTTPTransport wraps an http.RoundTripper with OTel tracing for outgoing requests.
@@ -56,8 +68,13 @@ func NewHTTPTransport(base http.RoundTripper) http.RoundTripper {
 // rpc.server.call.duration and failing probes would go unnoticed. Health RPCs
 // are counted like any other RPC; their server spans are dropped by the
 // sampler Setup installs (design D5).
+//
+// A SERVER span the semantic conventions mark ERROR (UNKNOWN,
+// DEADLINE_EXCEEDED, UNIMPLEMENTED, INTERNAL, UNAVAILABLE, DATA_LOSS) gets
+// error.type = the canonical code name, when it has none (design D16, A46);
+// otelgrpc sets it on the metric only.
 func GRPCServerHandler() stats.Handler {
-	return otelgrpc.NewServerHandler()
+	return grpcErrorTypeHandler{Handler: otelgrpc.NewServerHandler(), server: true}
 }
 
 // GRPCClientHandler returns a gRPC stats.Handler that traces and meters client
@@ -66,10 +83,15 @@ func GRPCServerHandler() stats.Handler {
 // Unlike the server side, health calls are filtered: client calls to grpc.health.v1.Health/* (Check, Watch, List) get no
 // span and no metric (design D6 "A5 validation rulings" — the same rule as
 // NewHTTPTransport): a client has no sampler-level way to drop only the span.
+//
+// A CLIENT span that ends with any non-OK status gets error.type = the
+// canonical code name (FAILED_PRECONDITION), or _OTHER for a code above 16,
+// when it has none (design D16, A46). grpc-go reports an error without a
+// code as UNKNOWN.
 func GRPCClientHandler() stats.Handler {
-	return otelgrpc.NewClientHandler(otelgrpc.WithFilter(func(info *stats.RPCTagInfo) bool {
+	return grpcErrorTypeHandler{Handler: otelgrpc.NewClientHandler(otelgrpc.WithFilter(func(info *stats.RPCTagInfo) bool {
 		return !isGRPCHealthMethod(info.FullMethodName)
-	}))
+	}))}
 }
 
 // GRPCServerOption returns the grpc.NewServer option that installs

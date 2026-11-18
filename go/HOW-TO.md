@@ -83,6 +83,42 @@ exact, case-insensitive) get no span but still count in
 `http.server.request.duration`. Replace the list with
 `otelhelper.WithHealthPaths(...)`.
 
+A 5xx response (or a code 600–999) gets `error.type` = the status code on the
+server span and on `http.server.request.duration` (design D16). The metric
+gets it whether or not the span is sampled, health paths included, so an
+error-rate query by `error_type` works on unsampled traffic. To report your
+own value instead, call `otelhelper.RecordFailure(r.Context(), err)` (span and
+metric then carry its `error.type`) or add one to the otelhttp Labeler (metric
+only):
+
+```go
+mux.Handle("POST /orders", otelhelper.NewHTTPHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+    if err := place(r.Context()); err != nil {
+        if l, ok := otelhttp.LabelerFromContext(r.Context()); ok {
+            // Metric only: the span still gets "503". Use RecordFailure for both.
+            l.Add(attribute.String("error.type", "inventory_down"))
+        }
+        http.Error(w, "unavailable", http.StatusServiceUnavailable)
+        return
+    }
+    w.WriteHeader(http.StatusCreated)
+}), ""))
+```
+
+`RecordFailure(r.Context(), err)` keeps span and metric equal, sampled or not
+(the last call wins; it is the supported way: a direct `SetAttributes` of
+`error.type` is not reflected in the metric when a `RecordFailure` value
+exists, and with traces off the metric always gets the status code);
+a Labeler-only value makes the span say `503` and the metric
+`inventory_down`. A failing `WithSpan` child inside the handler does not
+change the server's value (`503` on both).
+
+The status is the first `WriteHeader`, else 200 on the first `Write`/`Flush`
+(otelhttp's rule); a body streamed with `io.Copy` (`ReadFrom`) before any
+`WriteHeader` counts as 200. 4xx responses get no `error.type`. The writer the
+handler receives still implements `http.Flusher` / `http.Hijacker` when the
+server's does.
+
 ---
 
 ## 1b. HTTP client instrumentation
@@ -132,6 +168,16 @@ by the helper sampler. Client calls to `grpc.health.v1.Health/*` through
 `GRPCDialOption()` get no client span and no `rpc.client.call.duration`.
 Long-lived `Watch` streams inflate tail latency: exclude
 `rpc_method=~"grpc.health.v1.Health/.*"` in SLO queries.
+
+A failed RPC's span gets `error.type` = the canonical status code name
+(design D16): on the client for every non-OK code (`FAILED_PRECONDITION`,
+`ALREADY_EXISTS`; `_OTHER` above code 16), on the server only for the codes
+the semantic conventions count as server errors (`UNKNOWN`,
+`DEADLINE_EXCEEDED`, `UNIMPLEMENTED`, `INTERNAL`, `UNAVAILABLE`,
+`DATA_LOSS`). So a `NOT_FOUND` answer is an error on the caller's CLIENT span
+and a normal outcome on the SERVER span. A handler returning a plain
+`errors.New` error is `UNKNOWN` on both sides. A value already on the span
+(`RecordFailure` in the handler) is kept.
 
 ---
 
@@ -726,9 +772,12 @@ separate modules; usage, attributes and metrics are in the
 [README](README.md#opt-in-extensions-ext). The two API points to remember:
 
 ```go
-db, closeDB, err := otelsql.Open("pgx", dsn)
+db, closeDB, err := otelsql.Open("pgx", dsn) // db.namespace from the DSN or PGDATABASE
 if err != nil { return err }
 defer closeDB() // not db.Close(): also unregisters the pool-metrics callback
+
+// pgx config registered with stdlib: the "DSN" is a key, so name the database.
+db, closeDB, err = otelsql.Open("pgx", stdlib.RegisterConnConfig(cfg), otelsql.WithDBNamespace(cfg.Database))
 
 if err := otelredis.Instrument(rdb); err != nil { // once per client
     return err // tracing is already installed when the metrics step fails
@@ -773,6 +822,32 @@ rdb := redis.NewClient(&redis.Options{
 ```
 
 (Node.js design D-JS14, A26 fix round.)
+
+SQL spans and metrics carry `db.namespace` (design D16): the
+`WithDBNamespace` name, else the database parsed from a PostgreSQL URL or
+keyword DSN, a go-sql-driver/mysql DSN or a SQL Server DSN, else `PGDATABASE`
+for the PostgreSQL drivers. When none is found, `Open` writes one stderr line
+naming the driver only (`otelhelper: db.namespace unknown for driver mysql;
+pass otelsql.WithDBNamespace`); SQLite gets none and no line. A failed query's
+span gets `db.response.status_code` and `error.type` = the SQLSTATE
+(`23505`) or the MySQL server error number (`1062`), else
+`error.type=_OTHER`; the duration metric gets `db.response.status_code` but
+keeps XSAM's Go type name as `error.type`. For SQL error rates select the
+failures by `error_type` and break them down by the code:
+
+```promql
+sum by (db_response_status_code) (rate(db_client_operation_duration_seconds_count{error_type!=""}[5m]))
+  / on() group_left
+sum(rate(db_client_operation_duration_seconds_count[5m]))
+```
+
+`driver.ErrSkip` (go-sql-driver, `interpolateParams=false`) no longer marks
+the span ERROR or the measurement failed; the skipped attempt still records a
+near-zero span and point before the prepare + `stmt.exec` retry, which
+lowers error ratios and latency percentiles. Prefer `interpolateParams=true`.
+Names that look like credentials or hosts are never used, the line is
+written once per driver name, and `service=` DSNs skip `PGDATABASE`. Full rules: the
+[README](README.md#extotelsql-dbnamespace-and-error-attributes-design-d16-a38-a44).
 
 `OTEL_HELPER_EXTRA_INSTRUMENTATION` has no effect in Go (warned once).
 
