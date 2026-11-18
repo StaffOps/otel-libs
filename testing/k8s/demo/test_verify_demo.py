@@ -997,6 +997,69 @@ class HygieneTest(unittest.TestCase):
         self.assertEqual(verify.scan_secret("postgres://u:p@h/db"), ["userinfo"])
         self.assertEqual(verify.scan_secret("http://h/db"), [])
 
+    def test_scan_intervals_window_plus_startup(self) -> None:
+        # DE-D11 M7 (owner 2026-11-18): run window + STARTUP_SCAN after each pod start.
+        old = WSTART - 14 * 3600
+        self.assertEqual(verify.scan_intervals([old, old + 100], WSTART, WEND),
+                         [(old, old + 100 + verify.STARTUP_SCAN), (WSTART, WEND)])
+        # A start inside the window or touching it merges; one after window_end is dropped.
+        self.assertEqual(verify.scan_intervals([WSTART - 200, WEND + 5], WSTART, WEND),
+                         [(WSTART - 200, WEND)])
+        self.assertEqual(verify.scan_intervals([], WSTART, WEND), [(WSTART, WEND)])
+        touch = WSTART - verify.STARTUP_SCAN
+        self.assertEqual(verify.scan_intervals([touch], WSTART, WEND), [(touch, WEND)])
+        self.assertEqual(verify.scan_intervals([touch - 1], WSTART, WEND),
+                         [(touch - 1, WSTART - 1), (WSTART, WEND)])
+        self.assertEqual(verify.scan_intervals([WEND], WSTART, WEND), [(WSTART, WEND)])
+
+    def test_g_scan_bounded_to_intervals(self) -> None:
+        # A pod 14 h old: no Tempo search or Loki query spans the hours between its
+        # first minutes and the run window.
+        old = WSTART - 14 * 3600
+        b = FakeBackends()
+        spans: list[tuple[int, int]] = []
+
+        def rec(s, e, limit):
+            spans.append((s, e))
+            return []
+        b.search.append((("resource.otel_libs.run",), rec))
+        verify.check_g(b, make_run(pods={"go": [("demo-go-api-1-x", old)]}, latest_starts=[old]),
+                       "go", cache(b), {})
+        # The three server-side token searches keep the full range (one search each, up
+        # to 1000 traces fetched per search); every listing search is bounded.
+        self.assertEqual(spans.count((old, WEND)), 3)
+        self.assertEqual(sorted(set(spans) - {(old, WEND)}), [(old, old + verify.STARTUP_SCAN), (WSTART, WEND)])
+        loki: list[tuple[int, int]] = []
+
+        def lines(q, s, e, limit):
+            loki.append((s, e))
+            return []
+        b.loki_lines_fn = lines
+        verify.loki_hygiene(b, make_run(pods={"go": [("demo-go-api-1-x", old)]}))
+        self.assertEqual(sorted(loki), [(old, old + verify.STARTUP_SCAN), (WSTART, WEND)])
+        # A later container start of the pod adds its own interval.
+        spans.clear()
+        verify.check_g(b, make_run(pods={"go": [("demo-go-api-1-x", old)]}, latest_starts=[old + 3600]),
+                       "go", cache(b), {})
+        self.assertEqual(sorted(set(spans) - {(old, WEND)}),
+                         [(old, old + verify.STARTUP_SCAN), (old + 3600, old + 3600 + verify.STARTUP_SCAN),
+                          (WSTART, WEND)])
+
+    def test_g_startup_roots_are_scanned(self) -> None:
+        # The old connection-time guarantee: a root found only in a pod's first minutes
+        # is fetched and scanned.
+        old = WSTART - 14 * 3600
+        b = FakeBackends()
+        data = fixture("go", "ok")
+        data["batches"][0]["scopeSpans"][0]["spans"][0]["attributes"].append(
+            {"key": "db.connection_string", "value": {"stringValue": "password=x"}})
+        tid = b.add_trace(data)
+        b.search.append((("resource.otel_libs.run",),
+                         lambda s, e, limit: [{"traceID": tid}] if (s, e) == (old, old + verify.STARTUP_SCAN) else []))
+        c = verify.check_g(b, make_run(pods={"go": [("demo-go-api-1-x", old)]}), "go", cache(b), {})
+        self.assertEqual(c["g.secret"].state, "fail")
+        self.assertIn("password=", c["g.secret"].detail)
+
     def test_tempo_page_splits_and_caps(self) -> None:
         b = FakeBackends()
 

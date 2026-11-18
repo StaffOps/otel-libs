@@ -735,6 +735,16 @@ flag is `flags & 1` (never `flags="1"`: Python records carry `3`, audit).
   and then excluded. Connection-time roots from the first 5 minutes after
   each pod start, with fully anchored TraceQL regexes:
   `{resource.otel_libs.run="<run>" && (name=~".*connect.*" || name=~"(?i)(auth|hello|startup)")}`.
+  > *Corrected 2026-11-18 (M7, owner decision option A):* the span set and
+  > the Loki scan cover the run window plus the first 300 s after each pod
+  > start (`status.startTime` and the latest container start of each pod;
+  > earlier restarts of the same pod are not covered), merged where they
+  > touch (`verify.py` `scan_intervals`, `STARTUP_SCAN`), not "from pod start
+  > to the window end". Every root in those startup intervals is listed, so the
+  > name-filtered connection-time query above is no longer a separate search.
+  > The three server-side token counts below keep the full range from the
+  > earliest pod start of the language (one search each, at most 1000 traces
+  > fetched per search).
   Server-side TraceQL counts —
   `{resource.otel_libs.run="<run>" && statusMessage=~".*(dup|rej|unh)-<run>.*"}`,
   the same on `event.exception.message` and `span.db.query.text` — are

@@ -4422,6 +4422,19 @@ Unsupported instrumentation versions, task A10 (P18):
   the six cases (ten assertions) in every language. The release skill's
   .NET SDK-bump checklist says these cases pin upstream .NET behavior.
 
+- **Demo verifier: check g bounded to the run window and startup minutes
+  (2026-11-18, DE-D11 M7, owner decision option A).** `verify.py demo` check g
+  and the Loki hygiene scan no longer read everything since the earliest pod
+  start: they cover the run window plus the first 300 s after each pod's
+  `status.startTime` and its latest container start (`scan_intervals`,
+  `STARTUP_SCAN`); earlier restarts of the same pod get no interval. On pods about 14 h
+  old the old scan meant about 10 000 trace fetches and about 19 minutes. A
+  secret that shows up only in traffic outside both windows is no longer seen
+  by `verify.py`; the run's own traffic covers every demo route. The
+  name-filtered connection-time search is folded into the startup intervals.
+  The three server-side run-token searches keep the full range. The detail
+  line names the interval count instead of the connection-time root count.
+
 - **Demo verifier on the Python and Node.js D16 run, and transport retries
   (2026-11-18).** `testing/k8s/demo/expected.json`: Python and Node.js `d.db`
   stay `xfail:A36` without the A44 reason (`db.response.status_code None`,

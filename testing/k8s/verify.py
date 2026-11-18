@@ -416,6 +416,10 @@ LOG_RECORDS_PER_SECOND = 360 / 900
 OK_ORDERS_PER_SECOND = 7 / 50
 MIN_SETTLE = 120  # DE-D11: the service_graph connector flushes every 60 s.
 STARTUP_GRACE = 60  # DE-D11 r3.6: the window starts >= 60 s after the youngest app pod start.
+# DE-D11 M7 (owner decision 2026-11-18, option A): check g scans the run window plus
+# the first STARTUP_SCAN seconds after each pod start, not everything since the
+# earliest start (pods about 14 h old meant about 10 000 trace fetches).
+STARTUP_SCAN = 300
 RETRY_DELAY = 60  # DE-D11 r3.3: a late trace / span is retried once after 60 s.
 MAX_EXEMPLAR_TRACES = 20
 MAX_D_TRACES = 5
@@ -1604,6 +1608,32 @@ def servicegraph_dropped(b: Backends, run: DemoRun, rep: DemoReport) -> None:
 
 # ── check g: hygiene (DR12) ──
 
+def scan_intervals(starts: list[int], window_start: int, window_end: int) -> list[tuple[int, int]]:
+    """The run window plus [start, start + STARTUP_SCAN] per pod start, clipped to
+    ``window_end``, sorted and merged where they touch (DE-D11 M7)."""
+    ivs = [(window_start, window_end)] + [(t, min(t + STARTUP_SCAN, window_end)) for t in starts]
+    merged: list[tuple[int, int]] = []
+    for a, e in sorted(iv for iv in ivs if iv[1] > iv[0]):
+        if merged and a <= merged[-1][1]:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], e))
+        else:
+            merged.append((a, e))
+    return merged
+
+
+def tempo_page_intervals(b: Backends, q: str,
+                         intervals: list[tuple[int, int]]) -> tuple[list[dict], bool]:
+    """``tempo_page`` over each interval, traces de-duplicated by id."""
+    seen: dict[str, dict] = {}
+    capped = False
+    for a, e in intervals:
+        traces, cap = tempo_page(b, q, a, e)
+        capped = capped or cap
+        for t in traces:
+            seen.setdefault(norm_trace(t.get("traceID", "")), t)
+    return list(seen.values()), capped
+
+
 def tempo_page(b: Backends, q: str, start: int, end: int,
                limit: int = TEMPO_PAGE_LIMIT, min_slice: int = MIN_SLICE) -> tuple[list[dict], bool]:
     """Every trace of a search, splitting the interval while a slice hits ``limit``.
@@ -1689,15 +1719,17 @@ def check_g(b: Backends, run: DemoRun, lang: str, cache: TraceCache,
     if not pods:
         nod = Obs(OBS_NODATA, f"no pod labelled otel-libs/run={run.run} for {lang}")
         return {c: nod for c in cells}
-    start = min(t for _, t in pods)  # earliest status.startTime (M7)
-    last_start = max(run.latest_starts or [t for _, t in pods])  # youngest start, restarts included
+    start = min(t for _, t in pods)  # earliest status.startTime: the server-side token searches
+    # DE-D11 M7: the trace scan covers the run window plus each pod's first minutes
+    # (status.startTime and each pod's latest container start, run.latest_starts;
+    # earlier restarts of the same pod get no interval).
+    intervals = scan_intervals([t for _, t in pods] + list(run.latest_starts),
+                               run.window_start, run.window_end)
     base = f"resource.otel_libs.run={_quote(run.run)} && resource.service.name=~{_quote(f'demo-{lang}-.*')}"
     tokens = run_tokens(run.run)
     token_re = "|".join(t.split("-", 1)[0] for t in tokens)
     try:
-        listed, capped = tempo_page(b, f"{{{base}}}", start, run.window_end)
-        conn, ccap = tempo_page(b, f'{{{base} && (name=~".*connect.*" || name=~"(?i)(auth|hello|startup)")}}',
-                                start, min(last_start + 300, run.window_end))
+        listed, capped = tempo_page_intervals(b, f"{{{base}}}", intervals)
         sentinel_counts = {}
         extra: list[dict] = []
         for label, field_q in (("status", "statusMessage"), ("event", "event.exception.message"),
@@ -1709,12 +1741,12 @@ def check_g(b: Backends, run: DemoRun, lang: str, cache: TraceCache,
     except QueryError as exc:
         err = Obs(OBS_ERROR, f"query error: {exc}")
         return {c: err for c in cells}
-    cross_detail, cross_problem = paging_crosscheck(b, base, listed, start, run.window_end)
+    cross_detail, cross_problem = paging_crosscheck(b, base, listed, run.window_start, run.window_end)
     polls = [t for t in listed if _is_poll_root(t)]
     others = [t for t in listed if not _is_poll_root(t)]
     stride = max(1, len(polls) // POLL_ROOT_SAMPLE)
     sample = polls[::stride][:POLL_ROOT_SAMPLE]
-    ids = list(dict.fromkeys(norm_trace(t.get("traceID", "")) for t in others + sample + conn + extra))
+    ids = list(dict.fromkeys(norm_trace(t.get("traceID", "")) for t in others + sample + extra))
     ids = [i for i in ids if i]
     hits = {c: [] for c in cells}
     counted = {c: 0 for c in cells}
@@ -1743,12 +1775,13 @@ def check_g(b: Backends, run: DemoRun, lang: str, cache: TraceCache,
     secret_loki = loki_hits.get(lang, []) + loki_hits.get("*", [])
     hits["g.secret"] += secret_loki
     common = (f"{len(ids)} traces scanned ({len(sample)} of {len(polls)} poll roots sampled, "
-              f"{len(conn)} connection-time roots), server-side token counts "
+              f"{len(intervals)} scan interval(s): run window + {STARTUP_SCAN}s after each pod start), "
+              f"server-side token counts "
               + " ".join(f"{k}={v}" for k, v in sentinel_counts.items()) + f"; {cross_detail}")
     out = {}
     for c in cells:
         problems = []
-        if capped or ccap:
+        if capped:
             problems.append(f"a {MIN_SLICE}s slice still hit the {TEMPO_PAGE_LIMIT}-trace limit")
         if cross_problem:
             problems.append(cross_problem)
@@ -1779,11 +1812,17 @@ def loki_hygiene(b: Backends, run: DemoRun) -> tuple[dict[str, list[str]], str]:
     names = [n for pods in run.pods.values() for n, _ in pods if POD_RE.match(n)]
     if not names:
         return {}, ""
-    start = min(t for pods in run.pods.values() for _, t in pods)
+    # DE-D11 M7: the run window plus each pod's first minutes, as in check g.
+    starts = [t for pods in run.pods.values() for _, t in pods] + list(run.latest_starts)
     q = (f'{{k8s_namespace_name={_quote(run.namespace)}, '
          f'k8s_pod_name=~{_quote("|".join(names + [BACKING_PODS]))}}}')
+    lines: list[tuple[dict, str]] = []
+    capped = False
     try:
-        lines, capped = loki_page(b, q, start, run.window_end)
+        for a, e in scan_intervals(starts, run.window_start, run.window_end):
+            got, cap = loki_page(b, q, a, e)
+            lines += got
+            capped = capped or cap
     except QueryError as exc:
         return {}, str(exc)
     out: dict[str, list[str]] = {}
