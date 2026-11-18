@@ -8,6 +8,8 @@ metadata:
   description: "OpenTelemetry helper libraries for Go, Python, .NET and Node.js: one functionally equivalent setup per language (OTLP to the Collector, env-var contract, parity-tested)"
   annotations:
     github.com/project-slug: StaffOps/otel-libs
+    backstage.io/techdocs-ref: dir:.
+  tags: [opentelemetry, csharp, dotnet, python, go, nodejs, typescript, mkdocs]
   links:
     - url: https://github.com/StaffOps/otel-libs
       title: Repository
@@ -24,6 +26,7 @@ metadata:
   description: "Go OpenTelemetry helper, module github.com/staffops/otel-libs/go, with opt-in ext modules (otelsql, otelredis, otelaws)"
   annotations:
     github.com/project-slug: StaffOps/otel-libs
+    backstage.io/techdocs-ref: dir:.
   tags: [go, opentelemetry]
 spec:
   type: library
@@ -39,6 +42,7 @@ metadata:
   description: "Python OpenTelemetry helper, package staffops-otel-helper (import staffops_otel_helper), extras aws, redis, sql"
   annotations:
     github.com/project-slug: StaffOps/otel-libs
+    backstage.io/techdocs-ref: dir:.
   tags: [python, opentelemetry]
 spec:
   type: library
@@ -54,6 +58,7 @@ metadata:
   description: ".NET OpenTelemetry helper, NuGet StaffOps.OtelHelper with StaffOps.OtelHelper.AWS, .Redis, .Sql and .Profiling (0.3 line)"
   annotations:
     github.com/project-slug: StaffOps/otel-libs
+    backstage.io/techdocs-ref: dir:.
   tags: [csharp, dotnet, opentelemetry]
 spec:
   type: library
@@ -69,6 +74,7 @@ metadata:
   description: "Legacy .NET package names OtelHelper, OtelHelper.AWS, .Redis, .Sql, .Profiling: the 0.2.x line, kept published, not republished under the new names"
   annotations:
     github.com/project-slug: StaffOps/otel-libs
+    backstage.io/techdocs-ref: dir:.
   tags: [csharp, dotnet, opentelemetry, legacy]
 spec:
   type: library
@@ -84,6 +90,7 @@ metadata:
   description: "Node.js OpenTelemetry helper, npm @staffops/otel-helper with -sql, -redis, -aws, -pino and -winston"
   annotations:
     github.com/project-slug: StaffOps/otel-libs
+    backstage.io/techdocs-ref: dir:.
   tags: [nodejs, typescript, opentelemetry]
 spec:
   type: library
@@ -99,6 +106,7 @@ metadata:
   description: "Go opt-in module github.com/staffops/otel-libs/go/ext/otelsql: database/sql instrumentation"
   annotations:
     github.com/project-slug: StaffOps/otel-libs
+    backstage.io/techdocs-ref: dir:.
   tags: [go, opentelemetry]
 spec:
   type: library
@@ -115,6 +123,7 @@ metadata:
   description: "Go opt-in module github.com/staffops/otel-libs/go/ext/otelredis: go-redis instrumentation"
   annotations:
     github.com/project-slug: StaffOps/otel-libs
+    backstage.io/techdocs-ref: dir:.
   tags: [go, opentelemetry]
 spec:
   type: library
@@ -131,6 +140,7 @@ metadata:
   description: "Go opt-in module github.com/staffops/otel-libs/go/ext/otelaws: AWS SDK v2 instrumentation"
   annotations:
     github.com/project-slug: StaffOps/otel-libs
+    backstage.io/techdocs-ref: dir:.
   tags: [go, opentelemetry]
 spec:
   type: library
@@ -147,6 +157,7 @@ metadata:
   description: "Python extra aws: botocore instrumentation"
   annotations:
     github.com/project-slug: StaffOps/otel-libs
+    backstage.io/techdocs-ref: dir:.
   tags: [python, opentelemetry]
 spec:
   type: library
@@ -163,6 +174,7 @@ metadata:
   description: "Python extra redis: redis-py instrumentation"
   annotations:
     github.com/project-slug: StaffOps/otel-libs
+    backstage.io/techdocs-ref: dir:.
   tags: [python, opentelemetry]
 spec:
   type: library
@@ -179,6 +191,7 @@ metadata:
   description: "Python extra sql: SQLAlchemy instrumentation"
   annotations:
     github.com/project-slug: StaffOps/otel-libs
+    backstage.io/techdocs-ref: dir:.
   tags: [python, opentelemetry]
 spec:
   type: library
@@ -195,6 +208,7 @@ metadata:
   description: "NuGet StaffOps.OtelHelper.AWS: AWS SDK instrumentation"
   annotations:
     github.com/project-slug: StaffOps/otel-libs
+    backstage.io/techdocs-ref: dir:.
   tags: [csharp, opentelemetry]
 spec:
   type: library
@@ -211,6 +225,7 @@ metadata:
   description: "NuGet StaffOps.OtelHelper.Redis: StackExchange.Redis instrumentation"
   annotations:
     github.com/project-slug: StaffOps/otel-libs
+    backstage.io/techdocs-ref: dir:.
   tags: [csharp, opentelemetry]
 spec:
   type: library
@@ -227,6 +242,7 @@ metadata:
   description: "NuGet StaffOps.OtelHelper.Sql: SqlClient instrumentation"
   annotations:
     github.com/project-slug: StaffOps/otel-libs
+    backstage.io/techdocs-ref: dir:.
   tags: [csharp, opentelemetry]
 spec:
   type: library
@@ -243,6 +259,7 @@ metadata:
   description: "NuGet StaffOps.OtelHelper.Profiling: Pyroscope continuous profiling (opt-in)"
   annotations:
     github.com/project-slug: StaffOps/otel-libs
+    backstage.io/techdocs-ref: dir:.
   tags: [csharp, opentelemetry]
 spec:
   type: library
@@ -259,6 +276,7 @@ metadata:
   description: "npm @staffops/otel-helper-sql: pg and mysql2 instrumentation"
   annotations:
     github.com/project-slug: StaffOps/otel-libs
+    backstage.io/techdocs-ref: dir:.
   tags: [nodejs, opentelemetry]
 spec:
   type: library
@@ -275,6 +293,7 @@ metadata:
   description: "npm @staffops/otel-helper-redis: redis and ioredis instrumentation"
   annotations:
     github.com/project-slug: StaffOps/otel-libs
+    backstage.io/techdocs-ref: dir:.
   tags: [nodejs, opentelemetry]
 spec:
   type: library
@@ -291,6 +310,7 @@ metadata:
   description: "npm @staffops/otel-helper-aws: AWS SDK v3 instrumentation"
   annotations:
     github.com/project-slug: StaffOps/otel-libs
+    backstage.io/techdocs-ref: dir:.
   tags: [nodejs, opentelemetry]
 spec:
   type: library
@@ -307,6 +327,7 @@ metadata:
   description: "npm @staffops/otel-helper-pino: pino destination that sends records through the helper logs pipeline"
   annotations:
     github.com/project-slug: StaffOps/otel-libs
+    backstage.io/techdocs-ref: dir:.
   tags: [nodejs, opentelemetry]
 spec:
   type: library
@@ -323,6 +344,7 @@ metadata:
   description: "npm @staffops/otel-helper-winston: winston transport that sends records through the helper logs pipeline"
   annotations:
     github.com/project-slug: StaffOps/otel-libs
+    backstage.io/techdocs-ref: dir:.
   tags: [nodejs, opentelemetry]
 spec:
   type: library
