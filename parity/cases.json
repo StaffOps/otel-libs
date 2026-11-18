@@ -4081,6 +4081,177 @@
       }
     },
     {
+      "id": "http.server_5xx_error_type",
+      "kind": "http_server",
+      "requirement": "R12",
+      "note": "Design D16 (2026-11-17, task A46 owns the cases): an HTTP SERVER span whose response is 5xx carries error.type = the status code as a string (semconv v1.43 HTTP server). The handler answers 500 without an exception.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc"
+      },
+      "code": {},
+      "input": {
+        "requests": [
+          "/work"
+        ],
+        "response_status": 500,
+        "allow_server_error": true
+      },
+      "expect": {
+        "response_statuses": [
+          500
+        ],
+        "server_spans": 1,
+        "server_span_error_type": "500"
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "pass",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "grpc.client_failed_precondition_error_type",
+      "kind": "grpc_server",
+      "requirement": "R12",
+      "note": "Design D16 (task A46): a failed gRPC call's CLIENT span carries error.type = the canonical code name. FAILED_PRECONDITION is not a server error (A22 rule), so the SERVER span stays UNSET and without error.type.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc"
+      },
+      "code": {},
+      "input": {
+        "method": "/parity.v1.Echo/FailedPrecondition"
+      },
+      "expect": {
+        "call_ok": false,
+        "client_span_error_type": "FAILED_PRECONDITION",
+        "server_spans": 1,
+        "server_span_status": "UNSET",
+        "server_span_error_type": {
+          "absent": true
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "pass",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "grpc.server_internal_error_type",
+      "kind": "grpc_server",
+      "requirement": "R12",
+      "note": "Design D16 (task A46): INTERNAL is a server error (A22 rule), so the SERVER span is ERROR with error.type INTERNAL; the CLIENT span carries INTERNAL too.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc"
+      },
+      "code": {},
+      "input": {
+        "method": "/parity.v1.Echo/Internal"
+      },
+      "expect": {
+        "call_ok": false,
+        "server_spans": 1,
+        "server_span_status": "ERROR",
+        "server_span_error_type": "INTERNAL",
+        "client_span_error_type": "INTERNAL"
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "pass",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "grpc.server_not_found_no_error_type",
+      "kind": "grpc_server",
+      "requirement": "R12",
+      "note": "Design D16 (task A46): error.type only on ERROR spans; a SERVER NOT_FOUND span stays UNSET (A22, case grpc.server_not_found_status_unset) without error.type, while the CLIENT span carries NOT_FOUND.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc"
+      },
+      "code": {},
+      "input": {
+        "method": "/parity.v1.Echo/NotFound"
+      },
+      "expect": {
+        "call_ok": false,
+        "server_spans": 1,
+        "server_span_error_type": {
+          "absent": true
+        },
+        "client_span_error_type": "NOT_FOUND"
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "pass",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "http.server_4xx_no_error_type",
+      "kind": "http_server",
+      "requirement": "R12",
+      "note": "Design D16 (task A46), negative case: a 4xx is not a server error (semconv v1.43 HTTP server), so the SERVER span has no error.type.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc"
+      },
+      "code": {},
+      "input": {
+        "requests": [
+          "/work"
+        ],
+        "response_status": 404
+      },
+      "expect": {
+        "response_statuses": [
+          404
+        ],
+        "server_spans": 1,
+        "server_span_error_type": {
+          "absent": true
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "pass",
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "grpc.server_ok_no_error_type",
+      "kind": "grpc_server",
+      "requirement": "R12",
+      "note": "Design D16 (task A46), negative case: a successful call leaves both the SERVER and the CLIENT span without error.type.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc"
+      },
+      "code": {},
+      "input": {
+        "method": "/parity.v1.Echo/Ping"
+      },
+      "expect": {
+        "call_ok": true,
+        "server_spans": 1,
+        "server_span_error_type": {
+          "absent": true
+        },
+        "client_span_error_type": {
+          "absent": true
+        }
+      },
+      "status": {
+        "go": "pass",
+        "python": "pass",
+        "dotnet": "pass",
+        "nodejs": "pass"
+      }
+    },
+    {
       "id": "logging.console_when_no_exporter",
       "kind": "logging",
       "requirement": "D6/G3/P10",

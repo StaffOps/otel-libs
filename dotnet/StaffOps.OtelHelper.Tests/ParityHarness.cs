@@ -50,8 +50,8 @@ internal static class ParityHarness
         ["export"] = new[] { "received" },
         ["sampler"] = new[] { "sampled", "attributes" },
         ["propagation"] = new[] { "headers" },
-        ["http_server"] = new[] { "server_spans", "server_continues_inbound", "response_statuses", "requests_counted", "handler_child_spans", "scrape" },
-        ["grpc_server"] = new[] { "server_spans", "rpcs_counted", "call_ok", "server_span_status", "server_span_name", "client_span_name" },
+        ["http_server"] = new[] { "server_spans", "server_continues_inbound", "response_statuses", "requests_counted", "handler_child_spans", "scrape", "server_span_error_type" },
+        ["grpc_server"] = new[] { "server_spans", "rpcs_counted", "call_ok", "server_span_status", "server_span_name", "client_span_name", "server_span_error_type", "client_span_error_type" },
         ["logging"] = Array.Empty<string>(),
         ["metrics_scrape"] = new[] { "scrape", "scrape_status" },
         ["metrics_listener"] = new[] { "listener_statuses" },
@@ -61,7 +61,7 @@ internal static class ParityHarness
     private static readonly Dictionary<string, string[]> InputSchema = new(StringComparer.Ordinal)
     {
         ["sampler"] = new[] { "scenario" },
-        ["http_server"] = new[] { "requests", "traceparent", "child_span", "allow_server_error" },
+        ["http_server"] = new[] { "requests", "traceparent", "child_span", "allow_server_error", "response_status" },
         ["grpc_server"] = new[] { "method" },
         ["metrics_listener"] = new[] { "requests", "connect_host" },
         ["logging"] = new[] { "attributes", "in_span" },
@@ -222,6 +222,15 @@ internal static class ParityHarness
         return errs;
     }
 
+    /// <summary>
+    /// input.response_status as written: an integer literal from 200 to 599 (500.0 and 5e2 are rejected, as in
+    /// the Go, Python and Node.js runners), readable as the int the driver reads (D16 parity cases, 2026-11-18).
+    /// </summary>
+    internal static bool IsResponseStatus(JsonNode? val) =>
+        val is JsonValue n && n.GetValueKind() == JsonValueKind.Number
+        && Regex.IsMatch(n.ToJsonString(), "^-?[0-9]+$")
+        && n.TryGetValue<int>(out var status) && status is >= 200 and <= 599;
+
     private static void ValidateInput(JsonObject c, string kind, List<string> errs)
     {
         var input = c["input"] as JsonObject ?? new JsonObject();
@@ -242,6 +251,10 @@ internal static class ParityHarness
             else if ((key is "child_span" or "allow_server_error" or "in_span") && !(val is JsonValue b && b.TryGetValue<bool>(out _)))
             {
                 errs.Add($"input.{key} must be a boolean");
+            }
+            else if (key == "response_status" && !IsResponseStatus(val))
+            {
+                errs.Add("input.response_status must be an integer literal from 200 to 599");
             }
             else if (key == "attributes" && !(val is JsonObject attrs && attrs.All(kv => kv.Value is JsonValue v && v.TryGetValue<string>(out _))))
             {

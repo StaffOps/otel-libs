@@ -355,6 +355,31 @@ def _server_span_name(exporter) -> str:
     return "none"
 
 
+def _error_type_value(value) -> str:
+    """A string error.type as is; any other type is "<non-string:T>" (T: bool, int64, float64 or slice, the same
+    vocabulary in the four drivers), so an int 500 never matches "500"."""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, bool):
+        return "<non-string:bool>"
+    if isinstance(value, int):
+        return "<non-string:int64>"
+    if isinstance(value, float):
+        return "<non-string:float64>"
+    return "<non-string:slice>"
+
+
+def _span_error_type(snap: dict, field: str, exporter, kind) -> None:
+    """``error.type`` of the first span of ``kind`` into ``snap[field]``: "none" without such a span, the field
+    left out when the span has none (fixture fields server_span_error_type / client_span_error_type; D16, R12)."""
+    for s in exporter.get_finished_spans():
+        if s.kind == kind:
+            if "error.type" in (s.attributes or {}):
+                snap[field] = _error_type_value(s.attributes["error.type"])
+            return
+    snap[field] = "none"
+
+
 def _client_span_name(exporter) -> str:
     """Name of the first CLIENT span, or "none" (fixture field client_span_name; A30, 2026-11-08)."""
     from opentelemetry.trace import SpanKind
@@ -398,20 +423,32 @@ def kind_http_server(case: dict) -> dict:
         return snap
     exporter = _record_spans()
     # Imported after setup on purpose: FastAPIInstrumentor patches the class.
-    from fastapi import FastAPI
+    from fastapi import FastAPI, Response
     from fastapi.testclient import TestClient
 
     from opentelemetry import trace
+    from opentelemetry.trace import SpanKind
 
     child_span = bool(case["input"].get("child_span"))
+    response_status = case["input"].get("response_status")  # D16, 2026-11-18; unset: the handler as before
     headers = {"traceparent": case["input"]["traceparent"]} if case["input"].get("traceparent") else {}
     app = FastAPI()
 
-    @app.get("/{path:path}")
-    def _any(path: str) -> str:
-        if child_span:
-            trace.get_tracer("parity").start_span("handler-child").end()
-        return "ok"
+    if response_status is None:
+
+        @app.get("/{path:path}")
+        def _any(path: str) -> str:
+            if child_span:
+                trace.get_tracer("parity").start_span("handler-child").end()
+            return "ok"
+
+    else:
+
+        @app.get("/{path:path}")
+        def _with_status(path: str) -> Response:
+            if child_span:
+                trace.get_tracer("parity").start_span("handler-child").end()
+            return Response(content="ok", status_code=response_status, media_type="text/plain")
 
     # A request that fails inside the instrumentation is a 500 to the caller, as on a real server,
     # not a driver crash (strict xfail needs a snapshot; task A34, 2026-11-10).
@@ -420,6 +457,7 @@ def kind_http_server(case: dict) -> dict:
     snap["response_statuses"] = statuses
     snap["server_spans"] = _server_spans(exporter)
     snap["server_continues_inbound"] = _server_continues_inbound(exporter, case["input"].get("traceparent"))
+    _span_error_type(snap, "server_span_error_type", exporter, SpanKind.SERVER)
     snap["handler_child_spans"] = sum(1 for s in exporter.get_finished_spans() if s.name == "handler-child")
     snap["scrape"] = _scrape()
     snap["requests_counted"] = _scrape_count(r"^http_server(_request)?_duration[a-z_]*_count[{ ]")
@@ -444,6 +482,12 @@ async def _grpc_call(method: str) -> None:
     async def not_found(request, context):  # noqa: ANN001
         await context.abort(grpc.StatusCode.NOT_FOUND, "not found")
 
+    async def failed_precondition(request, context):  # D16, 2026-11-18
+        await context.abort(grpc.StatusCode.FAILED_PRECONDITION, "failed precondition")
+
+    async def internal(request, context):  # D16, 2026-11-18
+        await context.abort(grpc.StatusCode.INTERNAL, "internal")
+
     server = grpc.aio.server()
     server.add_generic_rpc_handlers((
         grpc.method_handlers_generic_handler("grpc.health.v1.Health", {
@@ -453,6 +497,8 @@ async def _grpc_call(method: str) -> None:
         grpc.method_handlers_generic_handler("parity.v1.Echo", {
             "Ping": grpc.unary_unary_rpc_method_handler(unary),
             "NotFound": grpc.unary_unary_rpc_method_handler(not_found),
+            "FailedPrecondition": grpc.unary_unary_rpc_method_handler(failed_precondition),
+            "Internal": grpc.unary_unary_rpc_method_handler(internal),
         }),
     ))
     port = server.add_insecure_port("127.0.0.1:0")
@@ -485,6 +531,10 @@ def kind_grpc_server(case: dict) -> dict:
     snap["server_span_status"] = _server_span_status(exporter)
     snap["server_span_name"] = _server_span_name(exporter)
     snap["client_span_name"] = _client_span_name(exporter)
+    from opentelemetry.trace import SpanKind
+
+    _span_error_type(snap, "server_span_error_type", exporter, SpanKind.SERVER)
+    _span_error_type(snap, "client_span_error_type", exporter, SpanKind.CLIENT)
     snap["rpcs_counted"] = _scrape_count(r"^rpc_server(_call)?_duration[a-z_]*_count[{ ]")
     _flush_and_shutdown()
     return snap

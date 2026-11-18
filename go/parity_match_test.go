@@ -5,6 +5,7 @@ package otelhelper
 // the format is documented in parity/README.md.
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"reflect"
@@ -32,8 +33,8 @@ var snapshotSchema = map[string][]string{
 	"export":           {"received"},
 	"sampler":          {"sampled", "attributes"},
 	"propagation":      {"headers"},
-	"http_server":      {"server_spans", "server_continues_inbound", "response_statuses", "requests_counted", "handler_child_spans", "scrape"},
-	"grpc_server":      {"server_spans", "rpcs_counted", "call_ok", "server_span_status", "server_span_name", "client_span_name"},
+	"http_server":      {"server_spans", "server_continues_inbound", "response_statuses", "requests_counted", "handler_child_spans", "scrape", "server_span_error_type"},
+	"grpc_server":      {"server_spans", "rpcs_counted", "call_ok", "server_span_status", "server_span_name", "client_span_name", "server_span_error_type", "client_span_error_type"},
 	"logging":          {},
 	"metrics_scrape":   {"scrape", "scrape_status"},
 	"metrics_listener": {"listener_statuses"},
@@ -45,7 +46,7 @@ var listenerRequestRe = regexp.MustCompile(`^[A-Z]+ /\S*$`)
 
 var inputSchema = map[string][]string{
 	"sampler":          {"scenario"},
-	"http_server":      {"requests", "traceparent", "child_span", "allow_server_error"},
+	"http_server":      {"requests", "traceparent", "child_span", "allow_server_error", "response_status"},
 	"grpc_server":      {"method"},
 	"metrics_listener": {"requests", "connect_host"},
 	"logging":          {"attributes", "in_span"},
@@ -65,6 +66,22 @@ func contains(list []string, s string) bool {
 		}
 	}
 	return false
+}
+
+// integerLiteral is a JSON number written without fraction or exponent.
+var integerLiteral = regexp.MustCompile(`^-?[0-9]+$`)
+
+// validResponseStatus checks input.response_status as written in the fixture
+// (c.raw is decoded with UseNumber): an integer literal from 200 to 599, so
+// 500.0 and 5e2 are rejected as in the Python, Node.js and .NET runners.
+func validResponseStatus(c parityCase) bool {
+	in, _ := c.raw["input"].(map[string]any)
+	n, ok := in["response_status"].(json.Number)
+	if !ok || !integerLiteral.MatchString(n.String()) {
+		return false
+	}
+	v, err := n.Int64()
+	return err == nil && v >= 200 && v <= 599
 }
 
 // validateCase returns fixture-format errors (not behavior mismatches). It
@@ -114,6 +131,10 @@ func validateCase(c parityCase) []string {
 		case "child_span", "allow_server_error", "in_span":
 			if _, ok := v.(bool); !ok {
 				errs = append(errs, fmt.Sprintf("input.%s must be a boolean", k))
+			}
+		case "response_status":
+			if !validResponseStatus(c) {
+				errs = append(errs, "input.response_status must be an integer literal from 200 to 599")
 			}
 		case "connect_host":
 			if h, _ := v.(string); h != "127.0.0.1" && h != "localhost" {
@@ -553,4 +574,28 @@ func truncate(s string) string {
 		return s[:300] + "…"
 	}
 	return s
+}
+
+// TestParityResponseStatusLiteral: input.response_status is accepted only as an
+// integer literal from 200 to 599 (D16 parity cases, 2026-11-18).
+func TestParityResponseStatusLiteral(t *testing.T) {
+	for literal, want := range map[string]bool{
+		"200": true, "404": true, "500": true, "599": true,
+		"199": false, "600": false, "500.0": false, "5e2": false, `"500"`: false, "true": false,
+	} {
+		text := `{"id": "x", "kind": "http_server", "env": {}, "code": {}, "input": {"requests": ["/"], "response_status": ` +
+			literal + `}, "expect": {}, "status": {"go": "pass", "python": "pass", "dotnet": "pass", "nodejs": "pass"}}`
+		var c parityCase
+		if err := json.Unmarshal([]byte(text), &c); err != nil {
+			t.Fatalf("%s: %v", literal, err)
+		}
+		dec := json.NewDecoder(strings.NewReader(text))
+		dec.UseNumber()
+		if err := dec.Decode(&c.raw); err != nil {
+			t.Fatalf("%s: %v", literal, err)
+		}
+		if got := len(validateCase(c)) == 0; got != want {
+			t.Errorf("response_status %s: valid=%v, want %v (%v)", literal, got, want, validateCase(c))
+		}
+	}
 }

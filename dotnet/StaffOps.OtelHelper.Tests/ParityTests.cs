@@ -228,6 +228,24 @@ public class ParityHarnessTests
         Assert.Contains(ParityHarness.ValidateCase(Obj(json)), e => e.Contains(error, StringComparison.Ordinal));
     }
 
+    // D16 parity cases (2026-11-18): the same rule in the Go, Python and Node.js runners.
+    [Theory]
+    [InlineData("200", true)]
+    [InlineData("404", true)]
+    [InlineData("500", true)]
+    [InlineData("599", true)]
+    [InlineData("199", false)]
+    [InlineData("600", false)]
+    [InlineData("500.0", false)]
+    [InlineData("5e2", false)]
+    [InlineData("\"500\"", false)]
+    [InlineData("true", false)]
+    public void ValidateCase_response_status_is_an_integer_literal_200_to_599(string literal, bool valid)
+    {
+        var c = Obj("""{"id": "x", "kind": "http_server", "env": {}, "code": {}, "expect": {}, "status": {"go": "pass", "python": "pass", "dotnet": "pass", "nodejs": "pass"}, "input": {"requests": ["/"], "response_status": """ + literal + "}}");
+        Assert.Equal(valid, ParityHarness.ValidateCase(c).Count == 0);
+    }
+
     [Fact]
     public void BaseChildEnvironment_resets_otel_identity_and_host_mapped_keys()
     {

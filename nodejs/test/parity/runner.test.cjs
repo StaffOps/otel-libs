@@ -35,7 +35,7 @@ const path = require('node:path');
 const tls = require('node:tls');
 const {
   CASES_PATH, PERMANENT_SKIPS, SCHEMA, NeedsReceiver,
-  loadCases, nodeStatus, validateCase, receiver, expand, destIps, childEnv, runCase, matchExpect, verdict,
+  loadCases, parseFixture, nodeStatus, validateCase, receiver, expand, destIps, childEnv, runCase, matchExpect, verdict,
 } = require('./harness.cjs');
 
 // ── tests ───────────────────────────────────────────────────────────────
@@ -156,6 +156,14 @@ describe('parity harness (matcher and schema are test infrastructure)', () => {
     assert.ok(matchExpect({ received: { traces: { port: 443 } } }, snap).length);
     assert.ok(matchExpect({ received: { traces: { absent: true } } }, snap).length);
     assert.ok(matchExpect({ received: { logs: {} } }, {}).length);
+  });
+
+  test('response_status is an integer literal from 200 to 599 (D16, 2026-11-18)', () => {
+    const literals = { 200: true, 404: true, 500: true, 599: true, 199: false, 600: false, '500.0': false, '5e2': false, '"500"': false, true: false };
+    for (const [literal, valid] of Object.entries(literals)) {
+      const c = parseFixture(`{"cases": [{"id": "x", "kind": "http_server", "env": {}, "code": {}, "expect": {}, "status": {"go": "pass", "python": "pass", "dotnet": "pass", "nodejs": "pass"}, "input": {"requests": ["/"], "response_status": ${literal}}}]}`).cases[0];
+      assert.equal(validateCase(c).length === 0, valid, literal);
+    }
   });
 
   test('schema rejects fixture typos', () => {

@@ -1420,6 +1420,20 @@ span metrics, which break the error rate down by `error.type`.
 >    (`extractMetadataOrSplice(args, 4)` puts the metadata after the
 >    callback). Generated clients pass metadata and are not affected;
 >    documented in the Node.js HOW-TO §3.*
+>
+> *Amended 2026-11-18 (batch close, A46):* the parity cases landed with the
+> fields `server_span_error_type` / `client_span_error_type` and the
+> `http_server` input `response_status`: `http.server_5xx_error_type`,
+> `http.server_4xx_no_error_type`, `grpc.client_failed_precondition_error_type`,
+> `grpc.server_internal_error_type`, `grpc.server_not_found_no_error_type`,
+> `grpc.server_ok_no_error_type` (393 cases). All six pass in Go, Python,
+> Node.js and .NET; the .NET runner measured what the Values table marked
+> unmeasured: an HTTP 500 without an exception gives SERVER `error.type`
+> `500`, gRPC SERVER `INTERNAL` gives `INTERNAL`, NOT_FOUND and
+> FAILED_PRECONDITION give none, and the GrpcNetClient CLIENT span carries
+> the code name. Cluster runs (k8s01, run `20261116t1812`): Go `ea25d10`,
+> Python and Node.js `2eb28e6` confirmed every Values row; the Node.js live
+> PostgreSQL / MySQL tests passed (55/55).*
 
 **Owner decisions 2026-11-17** (asked with the design research of the three
 languages):

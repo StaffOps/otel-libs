@@ -4391,6 +4391,55 @@ Unsupported instrumentation versions, task A10 (P18):
 
 ### Internal
 
+- **D16 parity cases (2026-11-18, design D16, R12, task A46).** Four new cases
+  in `parity/cases.json` (391 cases): `http.server_5xx_error_type` (an HTTP
+  SERVER span answering 500 carries `error.type=500`),
+  `grpc.client_failed_precondition_error_type` (CLIENT `FAILED_PRECONDITION`,
+  SERVER UNSET without `error.type`), `grpc.server_internal_error_type`
+  (SERVER ERROR and CLIENT both `INTERNAL`) and
+  `grpc.server_not_found_no_error_type` (no SERVER `error.type`, CLIENT
+  `NOT_FOUND`). New fixture surface, documented in `parity/README.md`: the
+  `http_server` input `response_status`, the snapshot fields
+  `server_span_error_type` (`http_server`, `grpc_server`) and
+  `client_span_error_type` (`grpc_server`), and the Echo methods
+  `FailedPrecondition` and `Internal`. The four runners (Go, Python, Node.js,
+  .NET) accept them and the four drivers implement them; .NET changes only its
+  test harness and driver. Status `pass` in every language, each measured
+  locally without the fake receiver (these cases need none); a mutated copy of
+  the cases fails all seven `error.type` assertions in every language.
+  Review round (2026-11-18; 393 cases): two negative cases,
+  `http.server_4xx_no_error_type` (a 404 SERVER span has no `error.type`) and
+  `grpc.server_ok_no_error_type` (a successful call leaves SERVER and CLIENT
+  without it), `pass` in all four languages. The snapshot reports a
+  non-string `error.type` as `<non-string:T>` (T `bool`, `int64`, `float64`
+  or `slice`, the same in the four drivers), so an int64 500 never matches
+  `"500"`. Every runner accepts `response_status` only as a JSON integer
+  literal from 200 to 599 (`500.0` and `5e2` are rejected; Go decodes the
+  raw case with `UseNumber`, Node.js reads the literal through the
+  `JSON.parse` reviver source, .NET checks the literal text and an `int`
+  read), with a unit test in each runner. Without `response_status` the
+  `http_server` handlers run exactly as before. The mutation check covers
+  the six cases (ten assertions) in every language. The release skill's
+  .NET SDK-bump checklist says these cases pin upstream .NET behavior.
+
+- **Demo verifier on the Python and Node.js D16 run, and transport retries
+  (2026-11-18).** `testing/k8s/demo/expected.json`: Python and Node.js `d.db`
+  stay `xfail:A36` without the A44 reason (`db.response.status_code None`,
+  `reason_notes`, `also_xfail`); the Node.js `ref` points at A36 and the D16
+  section of `nodejs/HOW-TO.md`. Measured on k8s01, run `20261116t1812`,
+  images `2eb28e6`: the failed `INSERT demo_python` and
+  `pg.query:INSERT demo_node` spans carry `db.response.status_code=23505` and
+  `error.type=23505`. The eight Python and Node.js Tempo fixtures were
+  re-recorded read-only from that run (traces after 07:25 UTC, strings cut at
+  240, not edited). `verify.py`: a backend request that fails in transport
+  (`Unable to connect to the server`, `connection reset`, `TLS handshake
+  timeout`, `i/o timeout`, or kubectl's own 60 s timeout) is tried up to three
+  times, 1 s and 3 s apart; an HTTP error answer (`Error from server …`) never
+  is. Check g fetches one trace per request from the earliest pod start, so a
+  single dropped connection on a long-lived run no longer fails the cell. The
+  `demo` tally line now counts pre-flight BLOCKED lines
+  (`…; pre-flight BLOCKED 1; FAIL`).
+
 - **Demo verifier on the Go D16 run (2026-11-18).** `testing/k8s/demo/expected.json`:
   Go `d.http` and `e.edge.db` are expected to pass, and Go `d.db` stays
   `xfail:A36` without the A44 reason. Measured on k8s01, run `20261116t1812`,

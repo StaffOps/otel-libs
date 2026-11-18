@@ -552,6 +552,7 @@ internal static class CaseKinds
         var childSpan = c["input"]?["child_span"]?.GetValue<bool>() ?? false;
         var requests = StringList(c["input"]?["requests"]);
         var traceparent = (string?)c["input"]?["traceparent"];
+        var responseStatus = c["input"]?["response_status"]?.GetValue<int>(); // D16, 2026-11-18; unset: as before
 
         PrepareListenerPort(c);
         var handlerSource = new ActivitySource(ParityScope);
@@ -562,6 +563,11 @@ internal static class CaseKinds
                 using (handlerSource.StartActivity("handler-child"))
                 {
                 }
+            }
+
+            if (responseStatus is { } status)
+            {
+                context.Response.StatusCode = status;
             }
 
             await context.Response.WriteAsync("ok");
@@ -588,6 +594,7 @@ internal static class CaseKinds
         // A SERVER span exists and every SERVER span is in the inbound traceparent's trace.
         var inboundTrace = traceparent?.Split('-') is { Length: 4 } parts ? parts[1] : null;
         snap["server_continues_inbound"] = inboundTrace is not null && servers.Count > 0 && servers.All(a => a.TraceId.ToHexString() == inboundTrace);
+        SpanErrorType(snap, "server_span_error_type", servers);
         snap["handler_child_spans"] = run.Spans.Ended().Count(a => a.DisplayName == "handler-child");
         var (_, text) = await ScrapeAsync(ListenerPort(run));
         snap["scrape"] = text;
@@ -600,6 +607,35 @@ internal static class CaseKinds
 
         return snap;
     }
+
+    /// <summary>
+    /// error.type of the first span into snap[field]: "none" without a span, the field left out when the span
+    /// has none (fixture fields server_span_error_type / client_span_error_type; D16, R12, 2026-11-18).
+    /// </summary>
+    private static void SpanErrorType(JsonObject snap, string field, List<Activity> spans)
+    {
+        if (spans.Count == 0)
+        {
+            snap[field] = "none";
+        }
+        else if (spans[0].GetTagItem("error.type") is { } value)
+        {
+            snap[field] = ErrorTypeValue(value);
+        }
+    }
+
+    /// <summary>
+    /// A string error.type as is; any other type is "&lt;non-string:T&gt;" (T: bool, int64, float64 or slice, the
+    /// same vocabulary in the four drivers), so an int 500 never matches "500".
+    /// </summary>
+    private static string ErrorTypeValue(object value) => value switch
+    {
+        string s => s,
+        bool => "<non-string:bool>",
+        sbyte or byte or short or ushort or int or uint or long or ulong => "<non-string:int64>",
+        float or double or decimal => "<non-string:float64>",
+        _ => "<non-string:slice>",
+    };
 
     private static List<Activity> ServerSpans(SpanCapture spans) => spans.Ended().Where(a => a.Kind == ActivityKind.Server).ToList();
 
@@ -657,6 +693,8 @@ internal static class CaseKinds
         snap["server_span_name"] = server.Count == 0 ? "none" : server[0].DisplayName;
         var client = spans.Where(a => a.Kind == ActivityKind.Client).ToList();
         snap["client_span_name"] = client.Count == 0 ? "none" : client[0].DisplayName;
+        SpanErrorType(snap, "server_span_error_type", server);
+        SpanErrorType(snap, "client_span_error_type", client);
         // Not a fixture field: every CLIENT span in end order, for task C11 (one CLIENT span per call).
         snap["client_span_names"] = ToJsonArray(client.Select(a => $"{a.Source.Name}:{a.DisplayName}"));
         var (_, text) = await ScrapeAsync(ListenerPort(run));

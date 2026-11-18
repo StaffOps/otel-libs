@@ -29,8 +29,8 @@ const SCHEMA = {
   export: ['received'],
   sampler: ['sampled', 'attributes'],
   propagation: ['headers'],
-  http_server: ['server_spans', 'server_continues_inbound', 'response_statuses', 'requests_counted', 'handler_child_spans', 'scrape'],
-  grpc_server: ['server_spans', 'rpcs_counted', 'call_ok', 'server_span_status', 'server_span_name', 'client_span_name'],
+  http_server: ['server_spans', 'server_continues_inbound', 'response_statuses', 'requests_counted', 'handler_child_spans', 'scrape', 'server_span_error_type'],
+  grpc_server: ['server_spans', 'rpcs_counted', 'call_ok', 'server_span_status', 'server_span_name', 'client_span_name', 'server_span_error_type', 'client_span_error_type'],
   logging: [],
   metrics_scrape: ['scrape', 'scrape_status'],
   metrics_listener: ['listener_statuses'],
@@ -38,7 +38,7 @@ const SCHEMA = {
 };
 const INPUT_SCHEMA = {
   sampler: ['scenario'],
-  http_server: ['requests', 'traceparent', 'child_span', 'allow_server_error'],
+  http_server: ['requests', 'traceparent', 'child_span', 'allow_server_error', 'response_status'],
   grpc_server: ['method'],
   metrics_listener: ['requests', 'connect_host'],
   logging: ['attributes', 'in_span'],
@@ -52,8 +52,22 @@ const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v)
 const isNumber = (v) => typeof v === 'number';
 const has = (obj, k) => Object.prototype.hasOwnProperty.call(obj, k);
 
+/**
+ * Parses fixture text. `response_status` must be an integer literal as written (500.0 and 5e2 are
+ * rejected, as in the Go, Python and .NET runners): another number literal is kept as its source text,
+ * which the schema then rejects (D16 parity cases, 2026-11-18). Needs the reviver `source` (Node 21+).
+ */
+function parseFixture(text) {
+  return JSON.parse(text, (key, val, ctx) => {
+    if (key === 'response_status' && typeof val === 'number' && ctx !== undefined && !/^-?[0-9]+$/.test(ctx.source)) {
+      return `<non-integer-literal:${ctx.source}>`;
+    }
+    return val;
+  });
+}
+
 function loadCases(file = CASES_PATH) {
-  return JSON.parse(fs.readFileSync(file, 'utf8')).cases;
+  return parseFixture(fs.readFileSync(file, 'utf8')).cases;
 }
 
 /** The nodejs status (no per-version override exists for Node). */
@@ -108,6 +122,7 @@ function validateCase(c) {
     else if (key === 'requests' && !(Array.isArray(val) && val.every((x) => typeof x === 'string'))) errs.push('input.requests must be a list of strings');
     else if (['method', 'scenario', 'traceparent'].includes(key) && typeof val !== 'string') errs.push(`input.${key} must be a string`);
     else if ((key === 'child_span' || key === 'allow_server_error' || key === 'in_span') && typeof val !== 'boolean') errs.push(`input.${key} must be a boolean`);
+    else if (key === 'response_status' && !(Number.isInteger(val) && val >= 200 && val <= 599)) errs.push('input.response_status must be an integer literal from 200 to 599');
     else if (key === 'connect_host' && val !== '127.0.0.1' && val !== 'localhost') errs.push('input.connect_host must be "127.0.0.1" or "localhost"');
     else if (key === 'attributes' && !(isObject(val) && Object.values(val).every((x) => typeof x === 'string'))) errs.push('input.attributes must be an object of strings');
   }
@@ -428,5 +443,5 @@ function verdict(c, snap, { requireReceiver = Boolean(process.env.PARITY_REQUIRE
 
 module.exports = {
   CASES_PATH, CHILD_TIMEOUT_MS, PERMANENT_SKIPS, SCHEMA, NeedsReceiver,
-  loadCases, nodeStatus, validateCase, receiver, expand, destIps, childEnv, runCase, matchExpect, verdict,
+  loadCases, parseFixture, nodeStatus, validateCase, receiver, expand, destIps, childEnv, runCase, matchExpect, verdict,
 };

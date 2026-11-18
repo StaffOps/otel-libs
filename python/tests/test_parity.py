@@ -45,8 +45,10 @@ _SCHEMA = {
     "export": {"received"},
     "sampler": {"sampled", "attributes"},
     "propagation": {"headers"},
-    "http_server": {"server_spans", "server_continues_inbound", "response_statuses", "requests_counted", "handler_child_spans", "scrape"},
-    "grpc_server": {"server_spans", "rpcs_counted", "call_ok", "server_span_status", "server_span_name", "client_span_name"},
+    "http_server": {"server_spans", "server_continues_inbound", "response_statuses", "requests_counted", "handler_child_spans", "scrape",
+                    "server_span_error_type"},
+    "grpc_server": {"server_spans", "rpcs_counted", "call_ok", "server_span_status", "server_span_name", "client_span_name",
+                    "server_span_error_type", "client_span_error_type"},
     "logging": set(),
     "metrics_scrape": {"scrape", "scrape_status"},
     "metrics_listener": {"listener_statuses"},
@@ -54,7 +56,7 @@ _SCHEMA = {
 }
 _INPUT_SCHEMA = {
     "sampler": {"scenario"},
-    "http_server": {"requests", "traceparent", "child_span", "allow_server_error"},
+    "http_server": {"requests", "traceparent", "child_span", "allow_server_error", "response_status"},
     "grpc_server": {"method"},
     "metrics_listener": {"requests", "connect_host"},
     "logging": {"attributes", "in_span"},
@@ -131,6 +133,8 @@ def validate_case(case: dict) -> list[str]:
             errs.append(f"input.{key} must be a string")
         elif key in ("child_span", "allow_server_error", "in_span") and not isinstance(val, bool):
             errs.append(f"input.{key} must be a boolean")
+        elif key == "response_status" and not (isinstance(val, int) and not isinstance(val, bool) and 200 <= val <= 599):
+            errs.append("input.response_status must be an integer literal from 200 to 599")
         elif key == "connect_host" and val not in ("127.0.0.1", "localhost"):
             errs.append('input.connect_host must be "127.0.0.1" or "localhost"')
         elif key == "attributes" and not (isinstance(val, dict) and all(isinstance(x, str) for x in val.values())):
@@ -447,6 +451,15 @@ def test_fixture_is_well_formed() -> None:
 
 class TestHarness:
     """The matcher and schema are test infrastructure; pin their semantics."""
+
+    def test_response_status_is_an_integer_literal_200_to_599(self):
+        # D16 parity cases (2026-11-18): the same rule in the Go, Node.js and .NET runners.
+        for literal, valid in {"200": True, "404": True, "500": True, "599": True, "199": False, "600": False,
+                               "500.0": False, "5e2": False, '"500"': False, "true": False}.items():
+            case = json.loads('{"id": "x", "kind": "http_server", "env": {}, "code": {}, "expect": {}, '
+                              '"status": {"go": "pass", "python": "pass", "dotnet": "pass", "nodejs": "pass"}, '
+                              '"input": {"requests": ["/"], "response_status": ' + literal + '}}')
+            assert (validate_case(case) == []) is valid, literal
 
     def test_operators(self):
         snap = {"a": "unknown_service:python", "n": 3, "log": "x OTEL_FOO y", "diagnostics": "OTEL_FOO\nOTEL_FOO"}

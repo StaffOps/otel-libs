@@ -453,6 +453,11 @@ task C3, 1.15.x → 1.20.x):
   Next to it, the endpoint metadata type the helper matches by name,
   `Grpc.AspNetCore.Server.GrpcMethodMetadata` (`GrpcServerTracingCheck.GrpcMethodMetadataType`;
   canary `The_Grpc_Metadata_Type_Name_Is_The_Pinned_One`), on a Grpc.AspNetCore bump.
+- **D16 parity cases pin upstream .NET behavior (added 2026-11-18).** The .NET helper sets no
+  `error.type` itself: ASP.NET Core writes `error.type=500` on a 5xx SERVER span, the GrpcNetClient
+  instrumentation writes the canonical code name on CLIENT spans, and the AspNetCore gRPC server rule
+  gives `INTERNAL` but nothing for `NOT_FOUND` / `FAILED_PRECONDITION`. Re-run `ParityTests` after any
+  bump (`http.server_*_error_type`, `http.server_4xx_no_error_type`, `grpc.*_error_type`).
 - **SDK fields read by reflection (tests only).** `ExporterSettingsTests.Timeout_Bounds_…`
   and the batch-size tests read the export timeout and batch size of
   `BatchExportProcessor<T>` and `PeriodicExportingMetricReader` through

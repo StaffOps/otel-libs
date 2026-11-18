@@ -106,6 +106,15 @@ fails them instead of skipping); the Node.js legs reach it by DNS name
 server name — see [testing/README.md](https://github.com/StaffOps/otel-libs/blob/main/testing/README.md).
 Format and adapter rules: [parity/README.md](https://github.com/StaffOps/otel-libs/blob/main/parity/README.md).
 
+D16 (2026-11-18, A46): `harness.cjs` knows the `http_server` input `response_status` and the snapshot
+fields `server_span_error_type` / `client_span_error_type`; `driver.cjs` answers the status from the
+express handler and adds FailedPrecondition and Internal to the grpc-js Echo service. The four cases
+`http.server_5xx_error_type`, `grpc.client_failed_precondition_error_type`, `grpc.server_internal_error_type`, `grpc.server_not_found_no_error_type` pass on Node 22.15.0 (no receiver needed). Review round (2026-11-18): the negative cases
+`http.server_4xx_no_error_type` and `grpc.server_ok_no_error_type` pass; a non-string `error.type` is reported as `<non-string:T>`;
+`parseFixture` keeps a `response_status` number that is not an integer literal (`500.0`, `5e2`) as its
+source text, so the schema rejects it (runner test `response_status is an integer literal from 200 to
+599`); without `response_status` the handler calls `res.send('ok')` as before.
+
 ## e2e smoke against a real Collector
 
 ```bash

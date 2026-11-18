@@ -14,6 +14,8 @@ public static class GrpcMethods
     public static readonly Method<byte[], byte[]> HealthWatch = new(MethodType.ServerStreaming, "grpc.health.v1.Health", "Watch", Raw, Raw);
     public static readonly Method<byte[], byte[]> EchoPing = new(MethodType.Unary, "parity.v1.Echo", "Ping", Raw, Raw);
     public static readonly Method<byte[], byte[]> EchoNotFound = new(MethodType.Unary, "parity.v1.Echo", "NotFound", Raw, Raw);
+    public static readonly Method<byte[], byte[]> EchoFailedPrecondition = new(MethodType.Unary, "parity.v1.Echo", "FailedPrecondition", Raw, Raw);
+    public static readonly Method<byte[], byte[]> EchoInternal = new(MethodType.Unary, "parity.v1.Echo", "Internal", Raw, Raw);
 
     public static readonly byte[] Serving = { 0x08, 0x01 }; // HealthCheckResponse{status: SERVING}
 
@@ -39,6 +41,12 @@ public static class GrpcMethods
             case "/parity.v1.Echo/NotFound":
                 await invoker.AsyncUnaryCall(EchoNotFound, null, default, Array.Empty<byte>()).ResponseAsync;
                 break;
+            case "/parity.v1.Echo/FailedPrecondition":
+                await invoker.AsyncUnaryCall(EchoFailedPrecondition, null, default, Array.Empty<byte>()).ResponseAsync;
+                break;
+            case "/parity.v1.Echo/Internal":
+                await invoker.AsyncUnaryCall(EchoInternal, null, default, Array.Empty<byte>()).ResponseAsync;
+                break;
             default:
                 throw new AdapterException($"unknown gRPC method \"{target}\"");
         }
@@ -50,7 +58,10 @@ public sealed class GrpcHealthService
 {
 }
 
-/// <summary>parity.v1.Echo: Ping answers OK, NotFound answers NOT_FOUND (fixture A22).</summary>
+/// <summary>
+/// parity.v1.Echo: Ping answers OK, NotFound answers NOT_FOUND (fixture A22), FailedPrecondition and Internal
+/// answer their codes (D16, 2026-11-18).
+/// </summary>
 public sealed class GrpcEchoService
 {
 }
@@ -75,6 +86,10 @@ internal sealed class GrpcEchoMethods : IServiceMethodProvider<GrpcEchoService>
             (_, _, _) => Task.FromResult(GrpcMethods.Serving));
         context.AddUnaryMethod(GrpcMethods.EchoNotFound, Array.Empty<object>(),
             (_, _, _) => throw new RpcException(new Status(StatusCode.NotFound, "not found")));
+        context.AddUnaryMethod(GrpcMethods.EchoFailedPrecondition, Array.Empty<object>(),
+            (_, _, _) => throw new RpcException(new Status(StatusCode.FailedPrecondition, "failed precondition")));
+        context.AddUnaryMethod(GrpcMethods.EchoInternal, Array.Empty<object>(),
+            (_, _, _) => throw new RpcException(new Status(StatusCode.Internal, "internal")));
     }
 }
 

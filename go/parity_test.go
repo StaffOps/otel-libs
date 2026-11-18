@@ -267,7 +267,11 @@ func loadParityCases(t *testing.T) []parityCase {
 		if err := json.Unmarshal(rc, &c); err != nil {
 			c = parityCase{ID: fmt.Sprintf("malformed-case-%d", i), Kind: "<malformed>"}
 		}
-		_ = json.Unmarshal(rc, &c.raw)
+		// UseNumber keeps number literals as written (input.response_status must be
+		// an integer literal: 500.0 and 5e2 are rejected, as in the other runners).
+		dec := json.NewDecoder(bytes.NewReader(rc))
+		dec.UseNumber()
+		_ = dec.Decode(&c.raw)
 		cases = append(cases, c)
 	}
 	return cases
@@ -910,6 +914,40 @@ func serverSpanName(exp *tracetest.InMemoryExporter) string {
 	return "none"
 }
 
+// paritySpanErrorType sets snap[field] to the error.type attribute of the first
+// span of the kind: "none" without such a span, the field left out when the
+// span has no error.type (fixture fields server_span_error_type and
+// client_span_error_type; added 2026-11-18, design D16, R12).
+func paritySpanErrorType(snap map[string]any, field string, exp *tracetest.InMemoryExporter, kind trace.SpanKind) {
+	for _, s := range exp.GetSpans() {
+		if s.SpanKind != kind {
+			continue
+		}
+		for _, kv := range s.Attributes {
+			if kv.Key == "error.type" {
+				snap[field] = errorTypeValue(kv.Value)
+				return
+			}
+		}
+		return
+	}
+	snap[field] = "none"
+}
+
+// errorTypeValue is a string error.type as is; any other type becomes
+// "<non-string:T>" (T: bool, int64, float64 or slice, the same vocabulary in
+// the four drivers), so an int64 500 never matches "500".
+func errorTypeValue(v attribute.Value) string {
+	switch v.Type() {
+	case attribute.STRING:
+		return v.AsString()
+	case attribute.BOOL, attribute.INT64, attribute.FLOAT64:
+		return "<non-string:" + strings.ToLower(v.Type().String()) + ">"
+	default:
+		return "<non-string:slice>"
+	}
+}
+
 // clientSpanName is the name of the first CLIENT span, or "none" without one
 // (fixture field client_span_name; added 2026-11-08, A30).
 func clientSpanName(exp *tracetest.InMemoryExporter) string {
@@ -957,10 +995,14 @@ func runHTTPServer(t *testing.T, opts []Option, input map[string]any) map[string
 	}
 	exp := recordSpans(t)
 	childSpan, _ := input["child_span"].(bool)
+	responseStatus, setStatus := input["response_status"].(float64)
 	h := NewHTTPHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if childSpan {
 			_, s := GetTracer("parity").Start(r.Context(), "handler-child")
 			s.End()
+		}
+		if setStatus { // input.response_status (D16, 2026-11-18); unset: the implicit 200 as before
+			w.WriteHeader(int(responseStatus))
 		}
 		_, _ = w.Write([]byte("ok"))
 	}), "parity")
@@ -983,6 +1025,7 @@ func runHTTPServer(t *testing.T, opts []Option, input map[string]any) map[string
 	}
 	snap["server_spans"] = countSpans(exp, isServer)
 	snap["server_continues_inbound"] = serverContinuesInbound(exp, tp)
+	paritySpanErrorType(snap, "server_span_error_type", exp, trace.SpanKindServer)
 	snap["handler_child_spans"] = countSpans(exp, func(s tracetest.SpanStub) bool { return s.Name == "handler-child" })
 	snap["scrape"] = scrapeText()
 	snap["requests_counted"] = scrapeCount(httpServerCountRe)
@@ -999,13 +1042,19 @@ func runGRPCServer(t *testing.T, opts []Option, input map[string]any) map[string
 	lis := bufconn.Listen(1 << 20)
 	srv := grpc.NewServer(
 		GRPCServerOption(),
-		grpc.UnknownServiceHandler(func(_ any, s grpc.ServerStream) error { // "/parity.v1.Echo/Ping", ".../NotFound"
+		grpc.UnknownServiceHandler(func(_ any, s grpc.ServerStream) error { // "/parity.v1.Echo/Ping", ".../NotFound", ...
 			var m emptypb.Empty
 			if err := s.RecvMsg(&m); err != nil {
 				return err
 			}
-			if name, _ := grpc.MethodFromServerStream(s); strings.HasSuffix(name, "/NotFound") {
+			name, _ := grpc.MethodFromServerStream(s)
+			switch {
+			case strings.HasSuffix(name, "/NotFound"):
 				return grpcstatus.Error(codes.NotFound, "not found")
+			case strings.HasSuffix(name, "/FailedPrecondition"): // D16, 2026-11-18
+				return grpcstatus.Error(codes.FailedPrecondition, "failed precondition")
+			case strings.HasSuffix(name, "/Internal"): // D16, 2026-11-18
+				return grpcstatus.Error(codes.Internal, "internal")
 			}
 			return s.SendMsg(&emptypb.Empty{})
 		}),
@@ -1042,6 +1091,8 @@ func runGRPCServer(t *testing.T, opts []Option, input map[string]any) map[string
 	snap["server_span_status"] = serverSpanStatus(exp)
 	snap["server_span_name"] = serverSpanName(exp)
 	snap["client_span_name"] = clientSpanName(exp)
+	paritySpanErrorType(snap, "server_span_error_type", exp, trace.SpanKindServer)
+	paritySpanErrorType(snap, "client_span_error_type", exp, trace.SpanKindClient)
 	snap["rpcs_counted"] = scrapeCount(rpcServerCountRe)
 	return snap
 }

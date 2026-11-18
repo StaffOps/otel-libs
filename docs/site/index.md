@@ -295,7 +295,7 @@ profiling, no counterpart in the other languages; see the gap row below).
 ## Cross-language parity
 
 Parity is enforced, not promised. [`parity/cases.json`](https://github.com/StaffOps/otel-libs/blob/main/parity/cases.json) is a
-hand-maintained, language-neutral fixture (387 cases on 2026-11-12: 45 added by later contract and .NET tasks to the 342 counted at A29 — 187 after A13, 17 added by the Node B3 review, 6 by A16, 40 by Node B4a and its rulings, 16 by A17, 2 by Node B4b, 13 by A18, 14 by A19 and its fix round, 1 by Node B5, 5 by A20, 3 by Node B7, 11 by A21, 6 by the B7/A21 fix rounds, 2 by A22 from the Node B6 fix round, 1 by A23 from Node B8, 18 by A29)
+hand-maintained, language-neutral fixture (393 cases on 2026-11-18, 6 added by D16 / A46; 387 cases on 2026-11-12: 45 added by later contract and .NET tasks to the 342 counted at A29 — 187 after A13, 17 added by the Node B3 review, 6 by A16, 40 by Node B4a and its rulings, 16 by A17, 2 by Node B4b, 13 by A18, 14 by A19 and its fix round, 1 by Node B5, 5 by A20, 3 by Node B7, 11 by A21, 6 by the B7/A21 fix rounds, 2 by A22 from the Node B6 fix round, 1 by A23 from Node B8, 18 by A29)
 that every language's test suite runs — config resolution, wire-level export
 against a fake OTLP receiver, sampling, propagation, health exclusion, logging
 and `/metrics` status

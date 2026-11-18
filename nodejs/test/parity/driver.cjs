@@ -372,6 +372,27 @@ function serverSpanName(exporter) {
   return span === undefined ? 'none' : span.name;
 }
 
+/**
+ * `error.type` of the first span of `kind` into `snap[field]`: "none" without such a span, the field left
+ * out when the span has none (fixture fields server_span_error_type / client_span_error_type; D16, R12).
+ */
+function spanErrorType(snap, field, exporter, kind) {
+  const span = exporter.getFinishedSpans().find((s) => s.kind === kind);
+  if (span === undefined) snap[field] = 'none';
+  else if (span.attributes['error.type'] !== undefined) snap[field] = errorTypeValue(span.attributes['error.type']);
+}
+
+/**
+ * A string error.type as is; any other type is "<non-string:T>" (T: bool, int64, float64 or slice, the same
+ * vocabulary in the four drivers), so a number 500 never matches "500".
+ */
+function errorTypeValue(value) {
+  if (typeof value === 'string') return value;
+  if (typeof value === 'boolean') return '<non-string:bool>';
+  if (typeof value === 'number') return Number.isInteger(value) ? '<non-string:int64>' : '<non-string:float64>';
+  return '<non-string:slice>';
+}
+
 /** Name of the first CLIENT span, or "none" (fixture field client_span_name; added 2026-11-08, A30). */
 function clientSpanName(exporter) {
   const span = exporter.getFinishedSpans().find((s) => s.kind === SPAN_KIND_CLIENT);
@@ -488,10 +509,12 @@ async function kindHttpServer(c) {
   const express = require('express');
   const { trace } = api();
   const childSpan = c.input?.child_span === true;
+  const responseStatus = c.input?.response_status; // D16, 2026-11-18; unset: the handler as before
   const app = express();
   app.use((_req, res) => {
     if (childSpan) trace.getTracer('parity').startSpan('handler-child').end();
-    res.send('ok');
+    if (responseStatus === undefined) res.send('ok');
+    else res.status(responseStatus).send('ok');
   });
   const server = await new Promise((resolve, reject) => {
     const srv = app.listen(0, '127.0.0.1', (err) => (err ? reject(err) : resolve(srv)));
@@ -510,6 +533,7 @@ async function kindHttpServer(c) {
   snap.response_statuses = statuses;
   snap.server_spans = serverSpans(exporter);
   snap.server_continues_inbound = serverContinuesInbound(exporter, c.input?.traceparent);
+  spanErrorType(snap, 'server_span_error_type', exporter, SPAN_KIND_SERVER);
   snap.handler_child_spans = exporter.getFinishedSpans().filter((s) => s.name === 'handler-child').length;
   const { text } = await scrape();
   snap.scrape = text;
@@ -551,8 +575,18 @@ async function grpcCall(grpc, target) {
     },
   );
   server.addService(
-    { Ping: method('/parity.v1.Echo/Ping', false), NotFound: method('/parity.v1.Echo/NotFound', false) },
-    { Ping: unary, NotFound: (_call, cb) => cb({ code: grpc.status.NOT_FOUND, message: 'not found' }) },
+    {
+      Ping: method('/parity.v1.Echo/Ping', false),
+      NotFound: method('/parity.v1.Echo/NotFound', false),
+      FailedPrecondition: method('/parity.v1.Echo/FailedPrecondition', false), // D16, 2026-11-18
+      Internal: method('/parity.v1.Echo/Internal', false), // D16, 2026-11-18
+    },
+    {
+      Ping: unary,
+      NotFound: (_call, cb) => cb({ code: grpc.status.NOT_FOUND, message: 'not found' }),
+      FailedPrecondition: (_call, cb) => cb({ code: grpc.status.FAILED_PRECONDITION, message: 'failed precondition' }),
+      Internal: (_call, cb) => cb({ code: grpc.status.INTERNAL, message: 'internal' }),
+    },
   );
   const port = await new Promise((resolve, reject) => {
     server.bindAsync('127.0.0.1:0', grpc.ServerCredentials.createInsecure(), (err, p) => (err ? reject(err) : resolve(p)));
@@ -606,6 +640,8 @@ async function kindGrpcServer(c) {
   snap.server_span_status = serverSpanStatus(exporter);
   snap.server_span_name = serverSpanName(exporter);
   snap.client_span_name = clientSpanName(exporter);
+  spanErrorType(snap, 'server_span_error_type', exporter, SPAN_KIND_SERVER);
+  spanErrorType(snap, 'client_span_error_type', exporter, SPAN_KIND_CLIENT);
   snap.rpcs_counted = await scrapeCount(/^rpc_server(_call)?_duration[a-z_]*_count[{ ]/);
   await shutdown();
   return snap;

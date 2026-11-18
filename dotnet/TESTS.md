@@ -96,6 +96,22 @@ Without the receiver (the plain `dotnet test` above), every case with a
 "not run" line. Without the repository root mounted, `Fixture_is_found` fails
 with "parity/cases.json not found; mount the repo root or set PARITY_CASES".
 
+*Added 2026-11-18 (design D16, task A46; test harness and driver only, no library change).*
+`ParityHarness` knows the `http_server` input `response_status` and the snapshot fields
+`server_span_error_type` / `client_span_error_type`; the driver answers the status from the
+ASP.NET Core handler (no exception), adds FailedPrecondition and Internal to the Echo service and
+reads `error.type` from the first SERVER / CLIENT `Activity`. The four cases
+`http.server_5xx_error_type`, `grpc.client_failed_precondition_error_type`, `grpc.server_internal_error_type`, `grpc.server_not_found_no_error_type` pass on `sdk:8.0` without the receiver (`PARITY_ONLY`, then the whole
+`ParityTests` class: 253 run and pass, 121 need the receiver, 17 D-NET15 skips of 391). Measured: the
+SERVER span carries `error.type=500` for a plain 500, `INTERNAL` for INTERNAL and none for
+NOT_FOUND / FAILED_PRECONDITION; the `GrpcNetClient` CLIENT span carries the code name.
+Review round (2026-11-18): the negative cases `http.server_4xx_no_error_type` and `grpc.server_ok_no_error_type` pass (255 run and pass,
+121 need the receiver, 17 D-NET15 skips of 393; `ParityTests` and `ParityHarnessTests` 431 passed);
+a non-string `error.type` is reported as `<non-string:T>`; `ParityHarness.IsResponseStatus` accepts
+only an integer literal from 200 to 599 that reads as an `int`, as the driver reads it
+(`ValidateCase_response_status_is_an_integer_literal_200_to_599`); without `response_status` the
+handler sets no status, as before.
+
 ---
 
 ## OptionsTests
