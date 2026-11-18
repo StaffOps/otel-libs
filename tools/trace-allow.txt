@@ -7,7 +7,6 @@ G4 uncovered at introduction (2026-10-28); owner task: A2 (done; build on otel v
 G5 uncovered at introduction (2026-10-28); owner task: A2 (done; add G5 to the route-name test)
 G6 uncovered at introduction (2026-10-28); owner task: A10 (done; add G6 to the go/ext tests)
 P15 uncovered at introduction (2026-10-28); owner task: A1 (done; enforced by the CI lower-deps matrix, not by a test file)
-R12 not implemented yet (spec 2026-11-17); owner tasks: A38, A40, A44, A46
 #
 # repo-tooling (draft spec).
 RT7 implemented as the CI job spec-checks (.github/workflows/ci.yml); no test file can cite it; owner task: T11 review

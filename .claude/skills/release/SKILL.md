@@ -317,6 +317,23 @@ D-JS2) or the `@opentelemetry/api` peer range:
 - **`Span.status` writable in `onEnding`** (sdk-trace): the
   `GrpcServerStatusProcessor` sets the server span status there — test "A22
   gRPC server status through a real TracerProvider".
+- **D16 SQL error codes (task A44): two private seams.** instrumentation-pg
+  still records `sanitizedErrorMessage` (`PostgreSQL error of type '<name>'
+  occurred (code: <code>)`, `dist/utils.cjs`) as the exception before
+  `setStatus`, and instrumentation-mysql2 still has
+  `_patchCallbackQuery(endSpan)` (called as `thisPlugin._patchCallbackQuery`
+  from `_patchQuery`, `endSpan(err, results)` calling `setStatus` and `end`
+  synchronously). Seam tests "D16 seam" in `otel-helper-sql/test/sql.test.cjs`;
+  a missing mysql2 method degrades to `_OTHER` with one WARN line. Re-check
+  whether either instrumentation now writes `db.response.status_code` itself
+  (then the helper's write is a no-op; remove it in the next minor).
+- **D16 gRPC `error.type` (task A46):** instrumentation-grpc still writes the
+  integer `rpc.grpc.status_code` and still sets no status on a callback-form
+  (unary, client-streaming) client error without a code (`clientUtils.cjs` `patchedCallback`); tests
+  "D16 (A46)" in `otel-helper/test/instrumentation.test.cjs`. Re-check whether
+  instrumentation-grpc now writes `error.type` or the stable
+  `rpc.response.status_code` itself (then the helper's write is a no-op or
+  reads the wrong key).
 - **`InstrumentationBase` still enables in its constructor**
   (`@opentelemetry/instrumentation`), which the opt-in contrib registry
   relies on (B6 final review).

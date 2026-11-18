@@ -292,6 +292,171 @@ test('A22 gRPC server status through a real TracerProvider: the exporter and a l
   await tp.shutdown();
 });
 
+test('D16 (A46) gRPC error.type on fake spans: CLIENT every non-OK code, SERVER only while still ERROR; _OTHER without a code; only if absent', () => {
+  const span = (kind, code, extra = {}, statusCode = api.SpanStatusCode.ERROR) => {
+    const attributes = { 'rpc.system': 'grpc', ...(code === undefined ? {} : { 'rpc.grpc.status_code': code }), ...extra };
+    return {
+      kind,
+      status: { code: statusCode },
+      attributes,
+      setAttribute(k, v) {
+        attributes[k] = v;
+        return this;
+      },
+    };
+  };
+  const p = new tracing.GrpcServerStatusProcessor();
+  const run = (s) => {
+    p.onEnding(s);
+    return [s.status.code, s.attributes['error.type']];
+  };
+  const ERROR = api.SpanStatusCode.ERROR;
+  const UNSET = api.SpanStatusCode.UNSET;
+  const names = ['CANCELLED', 'UNKNOWN', 'INVALID_ARGUMENT', 'DEADLINE_EXCEEDED', 'NOT_FOUND', 'ALREADY_EXISTS', 'PERMISSION_DENIED', 'RESOURCE_EXHAUSTED', 'FAILED_PRECONDITION', 'ABORTED', 'OUT_OF_RANGE', 'UNIMPLEMENTED', 'INTERNAL', 'UNAVAILABLE', 'DATA_LOSS', 'UNAUTHENTICATED'];
+  names.forEach((name, i) => assert.deepEqual(run(span(CLIENT, i + 1)), [ERROR, name], `client code ${i + 1}`));
+  for (const code of [2, 4, 12, 13, 14, 15]) assert.deepEqual(run(span(SERVER, code)), [ERROR, names[code - 1]], `server code ${code}`);
+  for (const code of [1, 3, 5, 6, 7, 8, 9, 10, 11, 16]) assert.deepEqual(run(span(SERVER, code)), [UNSET, undefined], `server code ${code}: Unset, no error.type`);
+  assert.deepEqual(run(span(CLIENT, undefined)), [ERROR, '_OTHER'], 'a streaming error without a code');
+  assert.deepEqual(run(span(CLIENT, 0)), [ERROR, '_OTHER'], 'code 0 on an ERROR span');
+  assert.deepEqual(run(span(CLIENT, 17)), [ERROR, '_OTHER'], 'a code above 16');
+  assert.deepEqual(run(span(CLIENT, 2.5)), [ERROR, '_OTHER']);
+  assert.deepEqual(run(span(CLIENT, '9')), [ERROR, '_OTHER'], 'a non-numeric code');
+  assert.deepEqual(run(span(SERVER, undefined)), [ERROR, 'UNKNOWN'], 'a SERVER span still ERROR without a code: UNKNOWN, what grpc-js sends');
+  assert.deepEqual(run(span(SERVER, '13')), [ERROR, 'UNKNOWN'], 'a SERVER span with a non-numeric code');
+  assert.deepEqual(run(span(SERVER, 17)), [UNSET, undefined], 'a SERVER code above 16 is not a server-fault code');
+  assert.deepEqual(run(span(CLIENT, 9, { 'error.type': 'app_value' })), [ERROR, 'app_value'], 'an existing error.type is kept');
+  assert.deepEqual(run(span(SERVER, 13, { 'error.type': 'app_value' })), [ERROR, 'app_value']);
+  assert.deepEqual(run(span(CLIENT, 9, {}, UNSET)), [UNSET, undefined], 'Unset (a unary callback error without a code): nothing');
+  assert.deepEqual(run(span(CLIENT, 9, {}, api.SpanStatusCode.OK)), [api.SpanStatusCode.OK, undefined]);
+  assert.deepEqual(run(span(CLIENT, 9, { 'rpc.system': 'connect_rpc' })), [ERROR, undefined], 'another rpc.system');
+  assert.deepEqual(run(span(api.SpanKind.INTERNAL, 9)), [ERROR, undefined], 'only CLIENT and SERVER spans');
+  assert.equal(tracing.grpcErrorType(16), 'UNAUTHENTICATED');
+  assert.equal(tracing.grpcErrorType(0), '_OTHER');
+  const frozen = Object.freeze({ kind: CLIENT, status: { code: ERROR }, attributes: Object.freeze({ 'rpc.system': 'grpc', 'rpc.grpc.status_code': 9 }), setAttribute() { throw new Error('ended'); } });
+  assert.doesNotThrow(() => p.onEnding(frozen), 'never throws on the RPC path');
+});
+
+test('D16 (A46) gRPC error.type through a real grpc-js server: unary, client stream, server stream, bidi, deadline, cancel, failures without a code', async () => {
+  const rec = recorder();
+  helper.setup({ spanProcessors: rec.spanProcessors });
+  const grpc = require('@grpc/grpc-js');
+  const identity = (b) => b;
+  const def = (path, requestStream, responseStream) => ({ path, requestStream, responseStream, requestSerialize: identity, requestDeserialize: identity, responseSerialize: identity, responseDeserialize: identity });
+  const fail = (code) => Object.assign(new Error('server text'), code === undefined ? {} : { code });
+  const P = '/d16.v1.Svc/';
+  const methods = {
+    Ok: [false, false, (_call, cb) => cb(null, Buffer.from([1]))],
+    Precondition: [false, false, (_call, cb) => cb(fail(grpc.status.FAILED_PRECONDITION))],
+    Exists: [false, false, (_call, cb) => cb(fail(grpc.status.ALREADY_EXISTS))],
+    Internal: [false, false, (_call, cb) => cb(fail(grpc.status.INTERNAL))],
+    Code17: [false, false, (_call, cb) => cb(fail(17))],
+    Slow: [false, false, (_call, cb) => setTimeout(() => cb(null, Buffer.from([1])), 300)],
+    CsInternal: [true, false, (call, cb) => { call.on('data', () => undefined); call.on('end', () => cb(fail(grpc.status.INTERNAL))); }],
+    CsNotFound: [true, false, (call, cb) => { call.on('data', () => undefined); call.on('end', () => cb(fail(grpc.status.NOT_FOUND))); }],
+    List: [false, true, (call) => { call.write(Buffer.from([1])); call.emit('error', fail(grpc.status.NOT_FOUND)); }],
+    ListNoCode: [false, true, (call) => { call.write(Buffer.from([1])); call.emit('error', fail(undefined)); }],
+    Hang: [false, true, (call) => { call.write(Buffer.from([1])); call.on('cancelled', () => call.end()); }],
+    Chat: [true, true, (call) => call.on('data', () => call.emit('error', fail(grpc.status.UNAVAILABLE)))],
+  };
+  const service = {};
+  const handlers = {};
+  for (const [name, [requestStream, responseStream, handler]] of Object.entries(methods)) {
+    service[name] = def(P + name, requestStream, responseStream);
+    handlers[name] = handler;
+  }
+  const server = new grpc.Server();
+  server.addService(service, handlers);
+  const port = await new Promise((resolve, reject) => {
+    server.bindAsync('127.0.0.1:0', grpc.ServerCredentials.createInsecure(), (err, p) => (err ? reject(err) : resolve(p)));
+  });
+  const client = new grpc.Client(`127.0.0.1:${port}`, grpc.credentials.createInsecure());
+  const unary = (name, options = {}) => new Promise((resolve) => client.makeUnaryRequest(P + name, identity, identity, Buffer.alloc(0), options, (err) => resolve(err?.code ?? 0)));
+  const drain = (call) =>
+    new Promise((resolve) => {
+      call.on('data', () => undefined);
+      call.on('error', (err) => resolve(err.code));
+      call.on('end', () => resolve(0));
+    });
+  const clientStream = (name) =>
+    new Promise((resolve) => {
+      // Metadata passed explicitly: instrumentation-grpc 0.300 splices a default one after the
+      // callback of a raw makeClientStreamRequest(path, ser, deser, cb), and that CLIENT span never ends.
+      const call = client.makeClientStreamRequest(P + name, identity, identity, new grpc.Metadata(), {}, (err) => resolve(err?.code ?? 0));
+      call.write(Buffer.from([1]));
+      call.end();
+    });
+  try {
+    assert.equal(await unary('Ok'), 0);
+    assert.equal(await unary('Precondition'), grpc.status.FAILED_PRECONDITION);
+    assert.equal(await unary('Exists'), grpc.status.ALREADY_EXISTS);
+    assert.equal(await unary('Internal'), grpc.status.INTERNAL);
+    assert.equal(await unary('Code17'), 17);
+    assert.equal(await unary('Slow', { deadline: Date.now() + 50 }), grpc.status.DEADLINE_EXCEEDED);
+    const cancelled = new Promise((resolve) => {
+      const call = client.makeUnaryRequest(`${P}Slow`, identity, identity, Buffer.alloc(0), (err) => resolve(err?.code ?? 0));
+      setTimeout(() => call.cancel(), 30);
+    });
+    assert.equal(await cancelled, grpc.status.CANCELLED);
+    assert.equal(await clientStream('CsInternal'), grpc.status.INTERNAL);
+    assert.equal(await clientStream('CsNotFound'), grpc.status.NOT_FOUND);
+    assert.equal(await drain(client.makeServerStreamRequest(`${P}List`, identity, identity, Buffer.alloc(0))), grpc.status.NOT_FOUND);
+    assert.equal(await drain(client.makeServerStreamRequest(`${P}ListNoCode`, identity, identity, Buffer.alloc(0))), grpc.status.UNKNOWN, 'grpc-js sends UNKNOWN');
+    const chat = client.makeBidiStreamRequest(`${P}Chat`, identity, identity);
+    const chatDone = drain(chat);
+    chat.write(Buffer.from([1]));
+    assert.equal(await chatDone, grpc.status.UNAVAILABLE);
+    // A streaming client error without a code (a local or interceptor error, instrumentation-grpc's errorMonitor path).
+    const hang = client.makeServerStreamRequest(`${P}Hang`, identity, identity, Buffer.alloc(0));
+    const hangDone = new Promise((resolve) => hang.on('status', resolve));
+    hang.on('error', () => undefined);
+    await new Promise((resolve) => hang.once('data', resolve));
+    hang.emit('error', new Error('local failure without a code'));
+    hang.cancel();
+    await hangDone;
+    // Every call has a CLIENT and a SERVER span (the slow handlers finish after the client gave up).
+    const want = 2 * (Object.keys(methods).length + 1);
+    const deadline = Date.now() + 5000;
+    const ours = () => rec.exporter.getFinishedSpans().filter((s) => s.name.startsWith('d16.v1.Svc/'));
+    while (ours().length < want && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 20));
+  } finally {
+    client.close();
+    await new Promise((resolve) => server.tryShutdown(() => resolve()));
+  }
+  const got = rec.exporter
+    .getFinishedSpans()
+    .filter((s) => s.name.startsWith('d16.v1.Svc/'))
+    .map((s) => `${s.kind === SERVER ? 'server' : 'client'} ${s.name.slice('d16.v1.Svc/'.length)} ${s.status.code} ${s.attributes['error.type'] ?? '-'}`)
+    .sort();
+  assert.deepEqual(got, [
+    'client Chat 2 UNAVAILABLE',
+    'client Code17 2 _OTHER',
+    'client CsInternal 2 INTERNAL',
+    'client CsNotFound 2 NOT_FOUND',
+    'client Exists 2 ALREADY_EXISTS',
+    'client Hang 2 _OTHER',
+    'client Internal 2 INTERNAL',
+    'client List 2 NOT_FOUND',
+    'client ListNoCode 2 UNKNOWN',
+    'client Ok 0 -',
+    'client Precondition 2 FAILED_PRECONDITION',
+    'client Slow 2 CANCELLED',
+    'client Slow 2 DEADLINE_EXCEEDED',
+    'server Chat 2 UNAVAILABLE',
+    'server Code17 0 -',
+    'server CsInternal 2 INTERNAL',
+    'server CsNotFound 0 -',
+    'server Exists 0 -',
+    'server Hang 0 -',
+    'server Internal 2 INTERNAL',
+    'server List 0 -',
+    'server ListNoCode 2 UNKNOWN',
+    'server Ok 0 -',
+    'server Precondition 0 -',
+    'server Slow 0 -',
+    'server Slow 0 -',
+  ]);
+});
+
 test('ignoreIncoming: only the helper /metrics listener; health requests are not ignored (the sampler drops their spans)', () => {
   assert.equal(instr.ignoreIncoming({ socket: { server: http.createServer() } }), false);
   assert.equal(instr.ignoreIncoming({ socket: null }), false);

@@ -214,6 +214,143 @@ test('A26: responseStatusCode sets db.response.status_code and error.type from t
   assert.equal(byName.empty.attributes['error.type'], '_OTHER');
 });
 
+test('D16 (A44): exceptionStatusCode reads the recorded exception; the first code wins; the event is kept; a throwing getter is no code', () => {
+  const seen = [];
+  const { exporter, wrapped } = tracerOf({
+    legacyKeys: false,
+    exceptionStatusCode: (e) => {
+      seen.push(e);
+      if (e === 'boom') throw new Error('getter');
+      return typeof e === 'string' ? /code: (\w+)\)$/.exec(e)?.[1] : undefined;
+    },
+  });
+  const tracer = wrapped.getTracer('t');
+  const coded = tracer.startSpan('coded');
+  coded.recordException('PostgreSQL error (code: 23505)');
+  coded.recordException('PostgreSQL error (code: 42P01)');
+  coded.setStatus({ code: api.SpanStatusCode.ERROR, message: 'duplicate key value violates unique constraint' });
+  coded.end();
+  const thrown = tracer.startSpan('thrown');
+  thrown.recordException('boom');
+  thrown.setStatus({ code: api.SpanStatusCode.ERROR });
+  thrown.end();
+  const objectException = tracer.startSpan('object');
+  objectException.recordException(new Error('server text (code: 23505)'));
+  objectException.setStatus({ code: api.SpanStatusCode.ERROR });
+  objectException.end();
+  const none = tracer.startSpan('none');
+  none.setStatus({ code: api.SpanStatusCode.ERROR, message: 'x' });
+  none.end();
+  const byName = Object.fromEntries(exporter.getFinishedSpans().map((s) => [s.name, s]));
+  assert.equal(byName.coded.attributes['db.response.status_code'], '23505', 'the first recorded code');
+  assert.equal(byName.coded.attributes['error.type'], '23505');
+  assert.deepEqual(byName.coded.status, { code: api.SpanStatusCode.ERROR }, 'description still dropped');
+  assert.deepEqual(byName.coded.events.map((e) => e.attributes['exception.message']), ['PostgreSQL error (code: 23505)', 'PostgreSQL error (code: 42P01)'], 'events kept');
+  assert.equal(byName.thrown.attributes['error.type'], '_OTHER');
+  assert.equal(byName.thrown.attributes['db.response.status_code'], undefined);
+  assert.equal(byName.thrown.events.length, 1, 'a throwing getter does not drop the event');
+  assert.equal(byName.object.attributes['error.type'], '_OTHER', 'the getter decides what it accepts');
+  assert.equal(byName.none.attributes['error.type'], '_OTHER');
+  assert.equal(seen.length, 3, 'not called again once a code is captured');
+});
+
+test('D16 (A44): pendingStatusCode is read once per setStatus(ERROR), never for another status; order exception > pending > description', () => {
+  let calls = 0;
+  let next;
+  const { exporter, wrapped } = tracerOf({
+    legacyKeys: false,
+    exceptionStatusCode: (e) => (e === 'coded' ? '22P02' : undefined),
+    pendingStatusCode: () => {
+      calls++;
+      if (next === 'throw') throw new Error('slot');
+      return next;
+    },
+    responseStatusCode: (d) => (d === 'WRONGTYPE x' ? 'WRONGTYPE' : undefined),
+    copyPresetStatusCode: true,
+  });
+  const tracer = wrapped.getTracer('t');
+  const run = (name, { exception, pending, message, start } = {}) => {
+    next = pending;
+    const span = tracer.startSpan(name, start === undefined ? undefined : { attributes: start });
+    if (exception !== undefined) span.recordException(exception);
+    span.setStatus({ code: api.SpanStatusCode.OK });
+    span.setStatus({ code: api.SpanStatusCode.ERROR, message });
+    span.end();
+  };
+  run('pending', { pending: '1062' });
+  run('exceptionFirst', { exception: 'coded', pending: '1064' });
+  run('pendingBeforeDescription', { pending: '1146', message: 'WRONGTYPE x' });
+  run('description', { message: 'WRONGTYPE x' });
+  run('throwing', { pending: 'throw' });
+  run('nonString', { pending: 1062 });
+  run('typed', { pending: '1062', start: { 'error.type': 'app' } });
+  run('preset', { pending: '1062', start: { 'db.response.status_code': '23505' } });
+  run('presetNumber', { start: { 'db.response.status_code': 1213 } });
+  run('presetBoolean', { start: { 'db.response.status_code': true } });
+  run('presetArray', { start: { 'db.response.status_code': ['a'] } });
+  assert.equal(calls, 11, 'once per ERROR status (not for OK), also when error.type is already set');
+  const attrs = Object.fromEntries(exporter.getFinishedSpans().map((s) => [s.name, s.attributes]));
+  const pair = (name) => [attrs[name]['db.response.status_code'], attrs[name]['error.type']];
+  assert.deepEqual(pair('pending'), ['1062', '1062']);
+  assert.deepEqual(pair('exceptionFirst'), ['22P02', '22P02']);
+  assert.deepEqual(pair('pendingBeforeDescription'), ['1146', '1146']);
+  assert.deepEqual(pair('description'), ['WRONGTYPE', 'WRONGTYPE']);
+  assert.deepEqual(pair('throwing'), [undefined, '_OTHER']);
+  assert.deepEqual(pair('nonString'), [undefined, '_OTHER'], 'only a string code');
+  assert.deepEqual(pair('typed'), [undefined, 'app'], 'an existing error.type: nothing written');
+  assert.deepEqual(pair('preset'), ['23505', '23505'], 'an existing status code is kept and copied into error.type');
+  assert.deepEqual(pair('presetNumber'), [1213, '1213']);
+  assert.deepEqual(pair('presetBoolean'), [true, 'true'], 'String(value), as Python');
+  assert.deepEqual(pair('presetArray'), [['a'], '_OTHER']);
+  const second = tracer.startSpan('twice');
+  next = '1062';
+  second.setStatus({ code: api.SpanStatusCode.ERROR });
+  next = '1213';
+  second.setStatus({ code: api.SpanStatusCode.ERROR });
+  second.end();
+  assert.deepEqual(exporter.getFinishedSpans().find((s) => s.name === 'twice').attributes['error.type'], '1062', 'the first ERROR status decides');
+});
+
+test('D16: copyPresetStatusCode unset (-redis, -aws): a preset db.response.status_code does not change the A26 rule', () => {
+  const { exporter, wrapped } = tracerOf({ legacyKeys: false, responseStatusCode: (d) => /^([A-Z]+) /.exec(d)?.[1] });
+  const tracer = wrapped.getTracer('t');
+  for (const [name, message] of [['coded', 'WRONGTYPE x'], ['plain', 'connect ECONNREFUSED']]) {
+    const span = tracer.startSpan(name, { attributes: { 'db.response.status_code': 'PRESET' } });
+    span.setStatus({ code: api.SpanStatusCode.ERROR, message });
+    span.end();
+  }
+  const attrs = Object.fromEntries(exporter.getFinishedSpans().map((s) => [s.name, s.attributes]));
+  assert.deepEqual([attrs.coded['db.response.status_code'], attrs.coded['error.type']], ['WRONGTYPE', 'WRONGTYPE']);
+  assert.deepEqual([attrs.plain['db.response.status_code'], attrs.plain['error.type']], ['PRESET', '_OTHER']);
+});
+
+test('D16: recordException is wrapped only with exceptionStatusCode; a span without recordException still gets the status wrapper', () => {
+  const plain = { setStatus() {}, recordException() {} };
+  const own = plain.recordException;
+  const tp = db.dbTracerProvider({ getTracer: () => ({ startSpan: () => plain }) }, { legacyKeys: false });
+  assert.equal(tp.getTracer('x').startSpan('y').recordException, own);
+  const seen = [];
+  const attributes = {};
+  const bare = {
+    attributes,
+    setStatus(status) {
+      seen.push(status);
+    },
+    setAttribute(k, v) {
+      attributes[k] = v;
+      return this;
+    },
+  };
+  const setStatus = bare.setStatus;
+  const coded = db.dbTracerProvider({ getTracer: () => ({ startSpan: () => bare }) }, { legacyKeys: false, exceptionStatusCode: () => 'X' });
+  const span = coded.getTracer('x').startSpan('y');
+  assert.notEqual(span.setStatus, setStatus, 'the status wrapper is installed first');
+  assert.equal(span.recordException, undefined);
+  span.setStatus({ code: api.SpanStatusCode.ERROR, message: 'server text bound-secret' });
+  assert.deepEqual(seen, [{ code: api.SpanStatusCode.ERROR }], 'the description is dropped (A25 never fails open)');
+  assert.equal(attributes['error.type'], '_OTHER');
+});
+
 test('B10c: sanitizeAttributes rewrites the start attributes and every setAttribute/setAttributes (after the legacy key)', () => {
   const seen = [];
   // Drops `secret`, aliases `a` to `b`, and is idempotent (as -aws's rule).

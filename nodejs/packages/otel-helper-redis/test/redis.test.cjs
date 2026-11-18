@@ -184,6 +184,24 @@ test('db.query.text: the command name uppercased and one ? per argument, never a
   assert.ok(!/[\ud800-\udbff]\.\.\.$/.test(wide), 'never cut inside a surrogate pair');
 });
 
+test('D16 scope: a preset db.response.status_code does not change the A26 rule on Redis spans (no -sql preset copy)', () => {
+  setupWith();
+  for (const child of childrenForTests(instrumentation)) {
+    for (const [name, message] of [['coded', 'WRONGTYPE x'], ['plain', 'Connection is closed.']]) {
+      const span = child.tracer.startSpan(`${child.instrumentationName} ${name}`, { attributes: { 'db.system.name': 'redis', 'db.response.status_code': 'PRESET', 'test.case': name } });
+      span.setStatus({ code: 2, message });
+      span.end();
+    }
+  }
+  const spans = exporter.getFinishedSpans();
+  assert.equal(spans.length, 2 * childrenForTests(instrumentation).length);
+  for (const s of spans) {
+    const want = s.attributes['test.case'] === 'coded' ? ['WRONGTYPE', 'WRONGTYPE'] : ['PRESET', '_OTHER'];
+    assert.deepEqual([s.attributes['db.response.status_code'], s.attributes['error.type']], want, `${s.name} ${s.attributes['test.case']}`);
+    assert.deepEqual(s.status, { code: 2 }, 'description dropped');
+  }
+});
+
 test('A26: the reply code is a known leading code (allowlist: WRONGTYPE, ERR, NOAUTH, MOVED, ...); else none', () => {
   assert.ok(statement.REPLY_CODES.has('WRONGPASS') && !statement.REPLY_CODES.has('NOTREADY'));
   for (const [message, want] of [

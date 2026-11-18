@@ -47,6 +47,7 @@ const TWO_POOLS = [
   'db_client_connection_pending_requests{db_client_connection_pool_name="unknown_host:unknown_port/unknown_database"} 0',
 ];
 
+// The D16 (A44) tests below also need these two URLs; nothing else (no OTLP endpoint: spans go to an in-memory exporter).
 const pgOpts = { skip: PG_URL === undefined && !REQUIRE ? 'SQL_TEST_POSTGRES unset' : false };
 const mysqlOpts = { skip: MYSQL_URL === undefined && !REQUIRE ? 'SQL_TEST_MYSQL unset' : false };
 
@@ -261,10 +262,9 @@ test('R1 (A25): ERROR spans keep the code and drop the database error text (pg i
   }
   const failed = exporter.getFinishedSpans().filter((s) => s.status.code === 2 /* ERROR */);
   assert.deepEqual(failed.map((s) => s.attributes['db.system.name']), ['postgresql', 'mysql', 'mysql']);
-  for (const span of failed) {
-    assert.deepEqual(span.status, { code: 2 }, span.name);
-    assert.equal(span.attributes['error.type'], '_OTHER', 'N1');
-  }
+  // D16 (A44): the SQLSTATE / MySQL server error number on both attributes.
+  assert.deepEqual(failed.map((s) => [s.attributes['db.response.status_code'], s.attributes['error.type']]), [['22P02', '22P02'], ['1062', '1062'], ['1064', '1064']]);
+  for (const span of failed) assert.deepEqual(span.status, { code: 2 }, span.name);
   assertNoSecrets(exporter.getFinishedSpans(), PG_URL, ['bound-secret-x', 'bound-secret-y', 'bound-secret-z']);
   // pg's exception event is upstream-sanitized (type and SQLSTATE only); mysql2 records none.
   const pgFailed = failed[0];
@@ -376,4 +376,59 @@ test('D-JS11 control: without the hooks the JS5 warning is printed, yet pg (Comm
   assert.match(out.stderr, /without the module hooks/);
   // An ES module import of a CommonJS package goes through require-in-the-middle.
   assert.ok(out.spans.some((s) => s.name.startsWith('pg.query')), JSON.stringify(out.spans));
+});
+
+test('D16 (A44): pg failures carry the SQLSTATE as db.response.status_code and error.type (42P01 promise, 23505 callback, connect)', pgOpts, async () => {
+  const client = new pg.Client({ connectionString: PG_URL });
+  await client.connect();
+  try {
+    await client.query('CREATE TABLE IF NOT EXISTS d16_uniq (v TEXT UNIQUE)');
+    await client.query('DELETE FROM d16_uniq');
+    await client.query('INSERT INTO d16_uniq (v) VALUES ($1)', ['bound-secret-d16']);
+    await assert.rejects(client.query('SELECT * FROM d16_no_such_table'));
+    await new Promise((resolve) => client.query('INSERT INTO d16_uniq (v) VALUES ($1)', ['bound-secret-d16'], () => resolve()));
+  } finally {
+    await client.end();
+  }
+  const bad = new URL(PG_URL);
+  bad.pathname = '/d16_no_such_database';
+  await assert.rejects(new pg.Client({ connectionString: bad.toString() }).connect());
+  const failed = exporter.getFinishedSpans().filter((s) => s.status.code === 2 /* ERROR */);
+  assert.deepEqual(
+    failed.map((s) => [s.name.split(' ')[0], s.attributes['db.response.status_code'], s.attributes['error.type']]),
+    [
+      ['pg.query:SELECT', '42P01', '42P01'],
+      ['pg.query:INSERT', '23505', '23505'],
+      ['pg.connect', '3D000', '3D000'],
+    ],
+  );
+  assertNoSecrets(exporter.getFinishedSpans(), PG_URL, ['bound-secret-d16']);
+});
+
+test('D16 (A44): mysql2 failures carry the server error number (1062 callback, 1146 promise, 1064 execute); the streaming form stays _OTHER', mysqlOpts, async () => {
+  const conn = mysql.createConnection(MYSQL_URL);
+  const query = (sql, values) => new Promise((resolve) => conn.query(sql, values, (err) => resolve(err)));
+  try {
+    await query('CREATE TABLE IF NOT EXISTS d16_uniq (v VARCHAR(64), UNIQUE KEY uv (v))');
+    await query('DELETE FROM d16_uniq');
+    await query('INSERT INTO d16_uniq (v) VALUES (?)', ['bound-secret-m16']);
+    assert.equal((await query('INSERT INTO d16_uniq (v) VALUES (?)', ['bound-secret-m16'])).errno, 1062);
+    await assert.rejects(conn.promise().query('SELECT * FROM d16_no_such_table'), (e) => e.errno === 1146);
+    await assert.rejects(conn.promise().execute('SELEC ?', [1]), (e) => e.errno === 1064);
+    const streamed = await new Promise((resolve) => conn.query('SELECT * FROM d16_no_such_table').on('error', resolve));
+    assert.equal(streamed.errno, 1146);
+  } finally {
+    await new Promise((resolve) => conn.end(resolve));
+  }
+  const failed = exporter.getFinishedSpans().filter((s) => s.status.code === 2 /* ERROR */);
+  assert.deepEqual(
+    failed.map((s) => [s.attributes['db.response.status_code'], s.attributes['error.type']]),
+    [
+      ['1062', '1062'],
+      ['1146', '1146'],
+      ['1064', '1064'],
+      [undefined, '_OTHER'], // streaming: ended from the error event, not through _patchCallbackQuery (documented)
+    ],
+  );
+  assertNoSecrets(exporter.getFinishedSpans(), MYSQL_URL, ['bound-secret-m16']);
 });

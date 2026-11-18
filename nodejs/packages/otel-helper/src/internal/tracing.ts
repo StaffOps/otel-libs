@@ -437,6 +437,40 @@ export class DebugMarkerProcessor implements SpanProcessor {
  */
 const GRPC_SERVER_ERROR_CODES: ReadonlySet<number> = new Set([2, 4, 12, 13, 14, 15]);
 
+/**
+ * The canonical gRPC status code names, 1 to 16 (`error.type` of a failed
+ * gRPC span, contract design D16, task A46; the names .NET emits). A static
+ * table: `@grpc/grpc-js` is never required here (task A39).
+ */
+const GRPC_CODE_NAMES: readonly string[] = Object.freeze([
+  'OK',
+  'CANCELLED',
+  'UNKNOWN',
+  'INVALID_ARGUMENT',
+  'DEADLINE_EXCEEDED',
+  'NOT_FOUND',
+  'ALREADY_EXISTS',
+  'PERMISSION_DENIED',
+  'RESOURCE_EXHAUSTED',
+  'FAILED_PRECONDITION',
+  'ABORTED',
+  'OUT_OF_RANGE',
+  'UNIMPLEMENTED',
+  'INTERNAL',
+  'UNAVAILABLE',
+  'DATA_LOSS',
+  'UNAUTHENTICATED',
+]);
+
+/**
+ * The `error.type` of a failed gRPC span from its `rpc.grpc.status_code`:
+ * the canonical name for 1–16, `_OTHER` for no code, 0 or any other value
+ * (a streaming error without a code; a code above 16).
+ */
+export function grpcErrorType(code: unknown): string {
+  return typeof code === 'number' && Number.isInteger(code) && code >= 1 && code <= 16 ? (GRPC_CODE_NAMES[code] ?? '_OTHER') : '_OTHER';
+}
+
 /** The writable status of an SDK span in `onEnding` (`setStatus` refuses UNSET). */
 interface MutableStatus {
   status: { code: SpanStatusCode; message?: string };
@@ -452,6 +486,14 @@ interface MutableStatus {
  * app's own `spanProcessors` too) sees the same status; an exporter wrapper
  * would leave those processors with the upstream ERROR. The span's
  * attributes (`rpc.grpc.status_code`, `grpc.error_*`) are kept.
+ *
+ * Then a CLIENT or SERVER `rpc.system=grpc` span still ERROR gets `error.type`
+ * = {@link grpcErrorType} of its `rpc.grpc.status_code`, only when it has none
+ * (design D16, R12, task A46); a SERVER span without an integer code (a
+ * server-stream or bidi handler that emitted an error without one) gets
+ * `UNKNOWN`, the status grpc-js sends. instrumentation-grpc sets no status on a
+ * callback-form (unary, client-streaming) error without a code, on either
+ * side, so those spans stay Unset and get nothing (documented gap).
  */
 export class GrpcServerStatusProcessor implements SpanProcessor {
   onStart(): void {
@@ -461,14 +503,22 @@ export class GrpcServerStatusProcessor implements SpanProcessor {
   onEnding(span: Span): void {
     // Runs inside span.end() on the app's RPC path: never throws.
     try {
-      if (span.kind !== SpanKind.SERVER || span.status.code !== SpanStatusCode.ERROR) return;
+      if (span.status.code !== SpanStatusCode.ERROR || (span.kind !== SpanKind.SERVER && span.kind !== SpanKind.CLIENT)) return;
       const attrs = span.attributes;
+      if (attrs['rpc.system'] !== 'grpc') return;
       const code = attrs['rpc.grpc.status_code'];
-      if (attrs['rpc.system'] !== 'grpc' || typeof code !== 'number' || GRPC_SERVER_ERROR_CODES.has(code)) return;
-      // Also clears an app's own setStatus(ERROR) on such a span (contract D1 row "gRPC server span status").
-      (span as unknown as MutableStatus).status = { code: SpanStatusCode.UNSET };
+      if (span.kind === SpanKind.SERVER && typeof code === 'number' && !GRPC_SERVER_ERROR_CODES.has(code)) {
+        // Also clears an app's own setStatus(ERROR) on such a span (contract D1 row "gRPC server span status").
+        (span as unknown as MutableStatus).status = { code: SpanStatusCode.UNSET };
+        return;
+      }
+      if (attrs['error.type'] !== undefined) return;
+      // A SERVER span still ERROR without an integer code: the handler failed without one, and
+      // grpc-js sends UNKNOWN (serverErrorToStatus), as Go records it.
+      const serverWithoutCode = span.kind === SpanKind.SERVER && !(typeof code === 'number' && Number.isInteger(code));
+      span.setAttribute('error.type', serverWithoutCode ? 'UNKNOWN' : grpcErrorType(code));
     } catch {
-      // A frozen or exotic span keeps its status.
+      // A frozen or exotic span keeps its status and attributes.
     }
   }
 

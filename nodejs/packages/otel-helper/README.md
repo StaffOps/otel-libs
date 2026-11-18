@@ -6,7 +6,10 @@ standard `OTEL_*` variables first, OTLP export to an OpenTelemetry
 Collector, sampling and resource enrichment at the Collector. Instruments
 `node:http`/`https`, `fetch`, express and `@grpc/grpc-js`; Prometheus
 `/metrics` when no OTLP endpoint is configured; a logger that exports
-through OpenTelemetry or writes JSON lines on stdout.
+through OpenTelemetry or writes JSON lines on stdout. A failed gRPC call's
+span carries `error.type` = the status code name (`FAILED_PRECONDITION`), as
+in the Go and Python helpers (CLIENT: every non-OK code; SERVER: the six
+server-fault codes; gaps in [HOW-TO §3](https://github.com/StaffOps/otel-libs/blob/main/nodejs/HOW-TO.md#3-grpc)).
 
 > **Release candidate `0.3.0-rc.1`**, published to npmjs (dist-tag `next`, with
 > provenance) and to GitHub Packages. Install an exact version:

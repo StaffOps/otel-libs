@@ -557,3 +557,261 @@ test('OTEL_SDK_DISABLED=true leaves it disabled (no instrumentation, as Python)'
   assert.equal(inst.getConfig().enabled, false);
   assert.ok(childrenForTests(inst).every((c) => !c.isEnabled()));
 });
+
+// ── failed-query status codes (contract design D16, R12, task A44) ──────
+
+const status = require('../dist/internal/status-codes.js');
+
+test('D16: SQLSTATE and pg sanitized-message table (23505 accepted; EPIPE, UNKNOWN, ECONNREFUSED and letter-only codes are _OTHER)', () => {
+  const pg = (code, name = 'error') => `PostgreSQL error of type '${name}' occurred (code: ${code})`;
+  const table = [
+    [pg('23505'), '23505'],
+    [pg('22P02'), '22P02'],
+    [pg('42P01'), '42P01'],
+    [pg('P0001', 'DatabaseError'), 'P0001'],
+    [pg('40001'), '40001'],
+    [pg('EPIPE'), undefined],
+    [pg('UNKNOWN'), undefined],
+    [pg('ECONNREFUSED', 'Error'), undefined],
+    [pg('ABCDE'), undefined], // no digit: an application-defined letter-only code is _OTHER (D16 note 3)
+    [pg('2350'), undefined],
+    [pg('235050'), undefined],
+    [pg('2350a'), undefined],
+    [pg('23505', "it's"), '23505'],
+    ['duplicate key value violates unique constraint (code: 23505)', undefined],
+    [`${pg('23505')} trailing`, undefined],
+    [new Error(pg('23505')), undefined], // only the string upstream records: an Error would carry server text
+    [undefined, undefined],
+  ];
+  for (const [input, want] of table) assert.equal(status.pgStatusCode(input), want, String(input));
+  assert.equal(status.sqlState('0A000'), '0A000');
+  assert.equal(status.sqlState(23505), undefined);
+});
+
+test('D16: MySQL server error number table (1062 accepted; client range 2000-2999, Node system errors and bad shapes are _OTHER)', () => {
+  const server = (errno, extra = {}) => Object.assign(new Error('Duplicate entry'), { errno, sqlState: '23000', code: 'ER_DUP_ENTRY', ...extra });
+  const table = [
+    [server(1062), '1062'],
+    [server(1064, { sqlState: '42000' }), '1064'],
+    [server(1), '1'],
+    [server(65535), '65535'],
+    [server(1999), '1999'],
+    [server(3024), '3024'],
+    [server(2003), undefined], // CR_CONN_HOST_ERROR: a client error
+    [server(2013), undefined],
+    [server(2000), undefined],
+    [server(2999), undefined],
+    [server(0), undefined],
+    [server(65536), undefined],
+    [server(1062.5), undefined],
+    [server('1062'), undefined],
+    [server(1062, { sqlState: undefined }), undefined],
+    [server(1062, { sqlState: 23000 }), undefined],
+    // A Node system error: negative errno, a code string, a syscall, no sqlState.
+    [Object.assign(new Error('connect ECONNREFUSED 127.0.0.1:1'), { errno: -111, code: 'ECONNREFUSED', syscall: 'connect' }), undefined],
+    [Object.assign(new Error('x'), { errno: 111, code: 'ECONNREFUSED', syscall: 'connect', sqlState: 'HY000' }), undefined],
+    [Object.assign(new Error('Connection lost'), { code: 'PROTOCOL_CONNECTION_LOST', fatal: true }), undefined],
+    [{ get errno() { throw new Error('getter'); }, sqlState: '23000' }, undefined],
+    [null, undefined],
+    ['1062', undefined],
+  ];
+  table.forEach(([input, want], i) => assert.equal(status.mysqlStatusCode(input), want, `row ${i}`));
+});
+
+test('D16 seam: instrumentation-pg still records the sanitized message, and the helper reads its code', () => {
+  const utils = require(path.join(path.dirname(require.resolve('@opentelemetry/instrumentation-pg')), 'utils.cjs'));
+  assert.equal(typeof utils.sanitizedErrorMessage, 'function', 'instrumentation-pg utils.sanitizedErrorMessage is gone (SDK-bump checklist)');
+  const err = Object.assign(new Error('duplicate key value violates unique constraint "u" (bound-secret)'), { name: 'error', code: '23505' });
+  const message = utils.sanitizedErrorMessage(err);
+  assert.equal(status.pgStatusCode(message), '23505', message);
+  assert.ok(!message.includes('bound-secret'));
+  assert.equal(status.pgStatusCode(utils.sanitizedErrorMessage(Object.assign(new Error('x'), { code: 'EPIPE' }))), undefined);
+  assert.equal(status.pgStatusCode(utils.sanitizedErrorMessage(new Error('no code'))), undefined, 'UNKNOWN');
+});
+
+test('D16 seam: instrumentation-mysql2 still has _patchCallbackQuery(endSpan) and the helper overrides it on the instance it builds', () => {
+  const { MySQL2Instrumentation } = require('@opentelemetry/instrumentation-mysql2');
+  const proto = MySQL2Instrumentation.prototype;
+  assert.equal(typeof proto._patchCallbackQuery, 'function', 'instrumentation-mysql2 _patchCallbackQuery is gone (SDK-bump checklist)');
+  assert.match(String(proto._patchCallbackQuery), /endSpan\(err, results\)/, 'the callback still ends the span with the error first');
+  assert.match(String(proto._patchQuery), /thisPlugin\._patchCallbackQuery\(endSpan\)/, 'the query patch still goes through the method');
+  const mysql2 = childrenForTests(sqlInstrumentation({ mysql2: true, pg: false }))[0];
+  assert.equal(mysql2.instrumentationName, '@opentelemetry/instrumentation-mysql2');
+  assert.ok(Object.prototype.hasOwnProperty.call(mysql2, '_patchCallbackQuery'), 'overridden on the instance');
+  assert.notEqual(mysql2._patchCallbackQuery, proto._patchCallbackQuery);
+  assert.equal(records.length, 0, records.join('\n'));
+});
+
+test('D16: the held mysql2 error is read once inside endSpan, and only there; a missing seam warns once per process', () => {
+  const seen = [];
+  const fake = {
+    _patchCallbackQuery(endSpan) {
+      return (cb) => (err, results) => {
+        endSpan(err, results);
+        return cb(err, results);
+      };
+    },
+  };
+  assert.equal(status.holdMysql2Errors(fake), true);
+  const endSpan = (err) => {
+    seen.push(status.mysql2PendingStatusCode());
+    seen.push(status.mysql2PendingStatusCode());
+    return err === undefined ? 'ok' : 'failed';
+  };
+  const wrapped = fake._patchCallbackQuery(endSpan)((e) => e);
+  const dup = Object.assign(new Error('dup'), { errno: 1062, sqlState: '23000' });
+  assert.equal(wrapped(dup, undefined), dup, 'the app callback still gets the error');
+  wrapped(undefined, []);
+  wrapped(null, []);
+  assert.deepEqual(seen, ['1062', undefined, undefined, undefined, undefined, undefined], 'read once; no error: none');
+  assert.equal(status.mysql2PendingStatusCode(), undefined, 'nothing held outside endSpan');
+  const throwing = { _patchCallbackQuery: (endSpan) => endSpan };
+  status.holdMysql2Errors(throwing);
+  assert.throws(() => throwing._patchCallbackQuery(() => {
+    throw new Error('upstream');
+  })(dup), /upstream/);
+  assert.equal(status.mysql2PendingStatusCode(), undefined, 'released when endSpan throws');
+  const odd = { _patchCallbackQuery: (x) => x };
+  status.holdMysql2Errors(odd);
+  assert.equal(odd._patchCallbackQuery('not a function'), 'not a function', 'a non-function endSpan is passed through');
+  assert.deepEqual(records, []);
+  assert.equal(status.holdMysql2Errors({}), false);
+  assert.equal(status.holdMysql2Errors({ _patchCallbackQuery: 'x' }), false);
+  assert.deepEqual(records, [
+    'otelhelper: @staffops/otel-helper-sql: @opentelemetry/instrumentation-mysql2 has no _patchCallbackQuery; failed mysql2 spans carry error.type=_OTHER without db.response.status_code',
+  ]);
+});
+
+/** A stub `pg` 8.x whose queries fail with `globalThis.__pgError` (callback and promise forms). */
+function failingPg(dir) {
+  const root = path.join(dir, 'node_modules', 'pg');
+  fs.mkdirSync(path.join(root, 'lib'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({ name: 'pg', version: '8.20.0', main: 'index.js' }));
+  fs.writeFileSync(path.join(root, 'lib', 'client.js'), `module.exports = class Client {
+    constructor() { this.connectionParameters = { database: 'shop', host: 'db.example', port: 5432 }; this.database = 'shop'; }
+    connect(cb) { if (cb) setImmediate(cb); else return Promise.resolve(); }
+    query(text, values, cb) {
+      if (typeof values === 'function') cb = values;
+      if (typeof cb === 'function') { setImmediate(() => cb(globalThis.__pgError)); return undefined; }
+      return Promise.reject(globalThis.__pgError);
+    }
+  };\n`);
+  fs.writeFileSync(path.join(root, 'index.js'), "module.exports = { Client: require('./lib/client.js') };\n");
+}
+
+/** A stub `mysql2` 3.x (lib/connection.js) whose queries fail with `globalThis.__mysqlError`. */
+function failingMysql2(dir) {
+  const root = path.join(dir, 'node_modules', 'mysql2');
+  fs.mkdirSync(path.join(root, 'lib'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'package.json'), JSON.stringify({ name: 'mysql2', version: '3.24.6', main: 'index.js' }));
+  fs.writeFileSync(path.join(root, 'lib', 'connection.js'), `const { EventEmitter } = require('node:events');
+    function run(values, cb) {
+      if (typeof values === 'function') cb = values;
+      if (typeof cb === 'function') { setImmediate(() => cb(globalThis.__mysqlError)); return {}; }
+      const q = new EventEmitter();
+      setImmediate(() => q.emit('error', globalThis.__mysqlError));
+      return q;
+    }
+    module.exports = class Connection {
+      constructor() { this.config = { host: 'db.example', port: 3306, database: 'shop' }; }
+      query(sql, values, cb) { return run(values, cb); }
+      execute(sql, values, cb) { return run(values, cb); }
+    };\n`);
+  fs.writeFileSync(path.join(root, 'index.js'), "module.exports = { Connection: require('./lib/connection.js'), format: (s) => s };\n");
+}
+
+const SDK_TRACE = JSON.stringify(require.resolve('@opentelemetry/sdk-trace'));
+
+test('D16 (A44) end to end through the real instrumentations on stub drivers: pg SQLSTATE, mysql2 server number, _OTHER otherwise', () => {
+  const dir = tempDir();
+  try {
+    failingPg(dir);
+    failingMysql2(dir);
+    const out = runIn(dir, `${SETUP_SRC}
+      const { InMemorySpanExporter, SimpleSpanProcessor } = require(${SDK_TRACE});
+      const exporter = new InMemorySpanExporter();
+      helper.setup({ instrumentations: [sqlInstrumentation()], spanProcessors: [new SimpleSpanProcessor({ exporter })] });
+      const pg = require('pg');
+      const { Connection } = require('mysql2');
+      const err = (props) => Object.assign(new Error('server text bound-secret'), props);
+      const pgCall = (label, props, form) => new Promise((resolve) => {
+        globalThis.__pgError = err(props);
+        const c = new pg.Client();
+        if (form === 'promise') c.query('INSERT INTO t VALUES ($1)', ['bound-secret']).catch(() => resolve(label));
+        else c.query('INSERT INTO t VALUES ($1)', ['bound-secret'], () => resolve(label));
+      });
+      const myCall = (label, props, method = 'query') => new Promise((resolve) => {
+        globalThis.__mysqlError = err(props);
+        const c = new Connection();
+        if (method === 'stream') c.query('INSERT INTO t VALUES (1)').on('error', () => resolve(label));
+        else c[method]('INSERT INTO t VALUES (?)', ['bound-secret'], () => resolve(label));
+      });
+      (async () => {
+        const order = [];
+        order.push(await pgCall('pg 23505 callback', { name: 'error', code: '23505' }));
+        order.push(await pgCall('pg 42P01 promise', { name: 'error', code: '42P01' }, 'promise'));
+        order.push(await pgCall('pg EPIPE', { code: 'EPIPE' }));
+        order.push(await pgCall('pg no code', {}));
+        order.push(await myCall('mysql 1062 query', { errno: 1062, sqlState: '23000', code: 'ER_DUP_ENTRY' }));
+        order.push(await myCall('mysql 1064 execute', { errno: 1064, sqlState: '42000', code: 'ER_PARSE_ERROR' }, 'execute'));
+        order.push(await myCall('mysql 2003', { errno: 2003, sqlState: 'HY000', code: 'CR_CONN_HOST_ERROR' }));
+        order.push(await myCall('mysql system error', { errno: -111, code: 'ECONNREFUSED', syscall: 'connect', fatal: true }));
+        order.push(await myCall('mysql 1062 stream', { errno: 1062, sqlState: '23000' }, 'stream'));
+        const spans = exporter.getFinishedSpans().map((s) => ({ system: s.attributes['db.system.name'], status: s.status, code: s.attributes['db.response.status_code'], type: s.attributes['error.type'], text: JSON.stringify([s.name, s.status, s.attributes, s.events.map((e) => e.attributes)]) }));
+        console.log(JSON.stringify({ order, spans }));
+      })();`);
+    const want = [
+      ['postgresql', '23505', '23505'],
+      ['postgresql', '42P01', '42P01'],
+      ['postgresql', undefined, '_OTHER'],
+      ['postgresql', undefined, '_OTHER'],
+      ['mysql', '1062', '1062'],
+      ['mysql', '1064', '1064'],
+      ['mysql', undefined, '_OTHER'],
+      ['mysql', undefined, '_OTHER'],
+      ['mysql', undefined, '_OTHER'], // the streaming form ends its span from the error event: not reachable (documented)
+    ];
+    assert.equal(out.spans.length, want.length, out.stderr);
+    out.spans.forEach((s, i) => {
+      assert.deepEqual([s.system, s.code, s.type], want[i], out.order[i]);
+      assert.deepEqual(s.status, { code: 2 }, `${out.order[i]}: ERROR without description`);
+      assert.ok(!s.text.includes('server text'), `${out.order[i]}: no message text`);
+    });
+    assert.doesNotMatch(out.stderr, /_patchCallbackQuery/);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('D16 (A44): real pg and mysql2 against a closed local port (no server): system errors give _OTHER, no status code', () => {
+  const dir = tempDir();
+  let out;
+  try {
+    out = runIn(dir, `${SETUP_SRC}
+    const net = require('node:net');
+    const { InMemorySpanExporter, SimpleSpanProcessor } = require(${SDK_TRACE});
+    const exporter = new InMemorySpanExporter();
+    helper.setup({ instrumentations: [sqlInstrumentation()], spanProcessors: [new SimpleSpanProcessor({ exporter })] });
+    const pg = require(${JSON.stringify(require.resolve('pg'))});
+    const mysql = require(${JSON.stringify(require.resolve('mysql2'))});
+    const closedPort = () => new Promise((resolve) => { const s = net.createServer().listen(0, '127.0.0.1', () => { const { port } = s.address(); s.close(() => resolve(port)); }); });
+    (async () => {
+      const port = await closedPort();
+      const pgError = await new pg.Client({ host: '127.0.0.1', port, user: 'u', password: 'p', database: 'd' }).connect().then(() => undefined, (e) => ({ code: e.code, errno: e.errno }));
+      const conn = mysql.createConnection({ host: '127.0.0.1', port, user: 'u', password: 'p', database: 'd' });
+      conn.on('error', () => undefined);
+      const myError = await new Promise((resolve) => conn.query('SELECT 1', (e) => resolve({ code: e.code, errno: e.errno, sqlState: e.sqlState })));
+      const spans = exporter.getFinishedSpans().map((s) => ({ name: s.name, status: s.status.code, code: s.attributes['db.response.status_code'], type: s.attributes['error.type'] }));
+      console.log(JSON.stringify({ pgError, myError, spans }));
+      conn.destroy();
+    })();`);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+  assert.equal(out.pgError.code, 'ECONNREFUSED');
+  assert.equal(out.myError.code, 'ECONNREFUSED');
+  const failed = out.spans.filter((s) => s.status === 2);
+  assert.ok(failed.some((s) => s.name === 'pg.connect'), JSON.stringify(out.spans));
+  assert.ok(failed.some((s) => s.name === 'SELECT'), JSON.stringify(out.spans));
+  for (const s of failed) assert.deepEqual([s.code, s.type], [undefined, '_OTHER'], s.name);
+});

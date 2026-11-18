@@ -11,8 +11,11 @@
  * - {@link dbTracerProvider}: the TracerProvider each contrib DB
  *   instrumentation is bound to. An ERROR status keeps its code and drops the
  *   description (contract D1 row "DB error status": the description is
- *   the server's error text, which can quote a value), with `error.type`
- *   `_OTHER` when the span has none; the legacy `db.system` on the span-start
+ *   the server's error text, which can quote a value); when the span has no
+ *   `error.type`, the response status code from the optional hooks
+ *   (`-redis` the reply code, `-sql` the SQLSTATE / MySQL error number,
+ *   design D16) becomes `db.response.status_code` and `error.type`, else
+ *   `error.type` is `_OTHER`; the legacy `db.system` on the span-start
  *   attributes; an optional span-name rule; an optional attribute sanitizer
  *   (`-aws`).
  * - {@link dbMeterProvider}: the legacy key on synchronous measurements, and a
@@ -156,6 +159,31 @@ export interface DbTracerOptions {
    */
   readonly responseStatusCode?: ((description: string) => string | undefined) | undefined;
   /**
+   * The accepted response status code carried by a recorded exception (`-sql`
+   * pg: instrumentation-pg's sanitized message `... (code: <SQLSTATE>)`,
+   * always recorded before `setStatus`; contract design D16, task A44). Read
+   * in `recordException`; the first code found is kept for the span's ERROR
+   * status. Must return only an accepted code (the attribute is bounded) and
+   * never throw (a throw counts as no code).
+   */
+  readonly exceptionStatusCode?: ((exception: unknown) => string | undefined) | undefined;
+  /**
+   * The accepted response status code of the failure being recorded right
+   * now (`-sql` mysql2: the error object held while upstream ends the span;
+   * D16, A44). Read once per `setStatus(ERROR)`, after
+   * {@link exceptionStatusCode}'s code and before {@link responseStatusCode}.
+   * Same rules as {@link exceptionStatusCode}.
+   */
+  readonly pendingStatusCode?: (() => string | undefined) | undefined;
+  /**
+   * When a failed span already carries `db.response.status_code` and no
+   * `error.type`, copy it into `error.type` (`String(value)`, as Python) and
+   * look up no code of its own (`-sql`, design D16: semconv's DB `error.type`
+   * SHOULD match the status code). Unset (`-redis`, A26; `-aws`): the hooks
+   * decide, as before.
+   */
+  readonly copyPresetStatusCode?: boolean | undefined;
+  /**
    * The attributes actually recorded (`-aws`): applied to
    * the span-start attributes (after the legacy key) and to every
    * `setAttribute`/`setAttributes`, so a value it removes never reaches the
@@ -165,30 +193,66 @@ export interface DbTracerOptions {
   readonly sanitizeAttributes?: ((attributes: Attributes) => Attributes) | undefined;
 }
 
+/** `read()`, or undefined when it throws (a status-code getter never breaks the instrumented call). */
+function safeCode(read: () => string | undefined): string | undefined {
+  try {
+    const code = read();
+    return typeof code === 'string' ? code : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /**
- * `span.setStatus` keeps an ERROR code and drops its description; when the
- * span has no `error.type` it gets `_OTHER` (semconv: the fallback value when
- * no specific type is known), so the failure stays classifiable (2026-11-03, N1).
+ * `span.setStatus` keeps an ERROR code and drops its description. When the
+ * span has no `error.type` it gets one (only if absent, contract design D16):
+ * with `copyPresetStatusCode` (set by `-sql` only), a `db.response.status_code`
+ * already on the span is copied (semconv: the DB `error.type` SHOULD match it);
+ * else the first accepted code of
+ * `exceptionStatusCode`, `pendingStatusCode` or `responseStatusCode` becomes
+ * both `db.response.status_code` and `error.type`; else `_OTHER` (semconv: the
+ * fallback value when no specific type is known), so the failure stays
+ * classifiable (2026-11-03, N1).
  * With `sanitizeAttributes`, `setAttribute`/`setAttributes` record only what it returns.
  */
 function wrapSpan(span: Span, opts: DbTracerOptions): Span {
   const original = span.setStatus.bind(span);
   const statusCode = opts.responseStatusCode;
+  const exceptionCode = opts.exceptionStatusCode;
+  const pendingCode = opts.pendingStatusCode;
+  const copyPreset = opts.copyPresetStatusCode === true;
+  // The code a recorded exception carried (pg records it before setStatus).
+  let captured: string | undefined;
   try {
+    // The status wrapper first: the description drop (A25) never depends on recordException.
     span.setStatus = (status: SpanStatus): Span => {
       if (status.code !== SpanStatusCode.ERROR) {
         original(status);
         return span;
       }
       original({ code: SpanStatusCode.ERROR });
+      // Read once per ERROR status, whether or not it is used (the slot behind it is per call).
+      const pending = pendingCode === undefined ? undefined : safeCode(pendingCode);
       const attributes = (span as { readonly attributes?: Attributes }).attributes;
       if (attributes?.['error.type'] === undefined) {
-        const code = statusCode?.(status.message ?? '');
+        const preset = copyPreset ? attributes?.['db.response.status_code'] : undefined;
+        if (preset !== undefined) {
+          span.setAttribute('error.type', typeof preset === 'string' || typeof preset === 'number' || typeof preset === 'boolean' ? String(preset) : '_OTHER');
+          return span;
+        }
+        const code = captured ?? pending ?? (statusCode === undefined ? undefined : safeCode(() => statusCode(status.message ?? '')));
         if (code !== undefined) span.setAttribute('db.response.status_code', code);
         span.setAttribute('error.type', code ?? '_OTHER');
       }
       return span;
     };
+    if (exceptionCode !== undefined && typeof span.recordException === 'function') {
+      const recordException = span.recordException.bind(span);
+      span.recordException = (exception: Parameters<Span['recordException']>[0], time?: Parameters<Span['recordException']>[1]): void => {
+        captured ??= safeCode(() => exceptionCode(exception));
+        recordException(exception, time);
+      };
+    }
     const sanitize = opts.sanitizeAttributes;
     const statement = opts.legacyKeys && opts.legacyStatement === true;
     if (sanitize !== undefined || statement) {

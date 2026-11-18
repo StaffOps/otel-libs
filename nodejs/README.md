@@ -369,7 +369,13 @@ The ones you meet first:
 
 - gRPC spans carry the legacy `rpc.*` attributes (named `<pkg.Svc>/<Method>`,
   as in Go and Python) and no RPC metrics; a handler that throws synchronously leaves its SERVER
-  span unended.
+  span unended. Failed gRPC and SQL spans carry the same `error.type` as Go
+  and Python (the status code name; the SQLSTATE or MySQL error number), except
+  callback-form gRPC calls (unary, client-streaming) whose handler or
+  callback fails without a code (that span Unset; the client usually still
+  gets `UNKNOWN`) and the mysql2 streaming form (`_OTHER`); a server-stream or
+  bidi handler error without a code is ERROR + `UNKNOWN`, as in Go
+  ([HOW-TO §3](HOW-TO.md#3-grpc), [§9 SQL](HOW-TO.md#sql-staffopsotel-helper-sql)).
 - Only two HTTP metrics (the default in every language since A30; `OTEL_HELPER_HTTP_OPT_IN_METRICS` has nothing to add in Node.js); `http.route` only with express; `node:http2` is not
   instrumented.
 - No runtime metrics and no exemplars.

@@ -141,7 +141,7 @@ The example apps run against the same Collector: see
 | `exporters.test.cjs` | exporter construction: env masking, headers, timeout and export deadline, compression, BSP/BLRP and limits, gRPC credentials, TLS files |
 | `signals.test.cjs` | `OTEL_{TRACES,METRICS,LOGS}_EXPORTER`, console exporters, `OTEL_SDK_DISABLED`, `OTEL_CONFIG_FILE`, the metric interval |
 | `tracing.test.cjs` | sampler, health sampler, propagators, debug marker |
-| `instrumentation.test.cjs` | http, undici, express and gRPC instrumentation, health exclusion, the gRPC status rule, the loaded-before-setup report, an instrumentation built before `setup()` with OTLP over gRPC and `http/protobuf` (A39) |
+| `instrumentation.test.cjs` | http, undici, express and gRPC instrumentation, health exclusion, the gRPC status rule and the D16 gRPC `error.type` (fake spans and a real in-process grpc-js server: unary, client stream, server stream, bidi, deadline, cancel, code 17, handler and client errors without a code), the loaded-before-setup report, an instrumentation built before `setup()` with OTLP over gRPC and `http/protobuf` (A39) |
 | `metrics.test.cjs` | the `/metrics` listener, `metricsHandler()` status table, unit suffixes, busy port |
 | `exit.test.cjs` | the `beforeExit` flush of a process that ends on its own: exported once, no loop, no repeat after an app `shutdown()`, no stacking on re-setup, none after a failed setup or in a worker thread, removed by `reset()`, a failure reported |
 | `logging.test.cjs` | `createLogger()`: OTel path vs stdout (with `trace_id`/`span_id` in a span context), levels, attribute conversion, the bridges' flushes |
@@ -151,7 +151,7 @@ The example apps run against the same Collector: see
 | `opt-in.test.cjs` | `setup({ instrumentations })`, name conflicts, the `OTEL_SEMCONV_STABILITY_OPT_IN` HTTP warning |
 | `api.test.cjs` | `getTracer`, `getMeter`, `startRootSpan` (settlement, root trace, the failure rule on the span) |
 | `failure.test.cjs` | `withSpan`, `recordFailure` and `startRootSpan` failure rule (contract R11, design D15): ERROR without description, `error.type` and its override, no event, cancellation Unset (an `AbortError` caused by a `TimeoutError` is a failure), one correlated record per marked span (3 nested spans give 3 records), `recordFailure` always records and rejects `undefined`/`null`, `root` validation, unsampled and non-current spans, marking without a log pipeline, the OTLP record (event name, attributes, ids), stdout `trace_id`/`span_id` (A23 amendment) |
-| `db.test.cjs`, `contrib.test.cjs` | the internal entries the opt-in packages share |
+| `db.test.cjs`, `contrib.test.cjs` | the internal entries the opt-in packages share (including the D16 status-code hooks `exceptionStatusCode` / `pendingStatusCode`) |
 | `dual-load.test.cjs`, `esm-wrapper.test.mjs`, `state.test.cjs`, `version.test.cjs`, `diagnostics.test.cjs` | one implementation and one state for `require` and `import`, the ESM wrappers, the shared state, the version, the diagnostics sink and redaction |
 | `types/` | type-level checks (`tsc`) of the public API |
 
@@ -159,7 +159,7 @@ The example apps run against the same Collector: see
 
 | Package | Modules |
 |---|---|
-| `-sql` | `sql.test.cjs` (no database: options, detection, statements, errors), `db.test.cjs` (real PostgreSQL and MySQL), `package.test.cjs`, `esm.test.mjs` |
+| `-sql` | `sql.test.cjs` (no database: options, detection, statements, errors; the D16 code tables, the pg sanitized-message and mysql2 `_patchCallbackQuery` seam tests, the missing-seam WARN, the real instrumentations on stub drivers, real pg and mysql2 against a closed local port), `wire.test.cjs` (real pg and mysql2 against an in-process PostgreSQL wire stub and mysql2's own `createServer()`: SQLSTATE and MySQL error numbers on callback, promise, execute and pool queries and on connect, no database needed), `db.test.cjs` (real PostgreSQL and MySQL, including the D16 codes `22P02`, `42P01`, `23505`, `1062`, `1064` and the streaming `_OTHER`), `package.test.cjs`, `esm.test.mjs` |
 | `-redis` | `redis.test.cjs` (RESP fake), `server.test.cjs` (real Redis; also one span per command issued before ioredis is `ready`), `package.test.cjs`, `esm.test.mjs` |
 | `-aws` | `aws.test.cjs` (no SDK), `sdk.test.cjs` (real `@aws-sdk/client-*` against the fake endpoint, the secrets sweep), `package.test.cjs`, `esm.test.mjs` |
 | `-pino` | `pino.test.cjs` (real pino; OTLP records decoded from a local receiver), `package.test.cjs` (package contract), `esm.test.mjs` |

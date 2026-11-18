@@ -231,7 +231,31 @@ server.addService(service, {
   and Python; instrumentation-grpc's own `grpc.` prefix is removed since
   contract task A30) and carry the legacy `rpc.system`, `rpc.service`,
   `rpc.method`, `rpc.grpc.status_code`; error spans add `grpc.error_name` /
-  `grpc.error_message` and no `error.type`. No RPC metrics are emitted.
+  `grpc.error_message`. No RPC metrics are emitted.
+- A failed call's span gets `error.type` = the canonical status code name
+  (`FAILED_PRECONDITION`, `ALREADY_EXISTS`, `INTERNAL`, ...; contract design
+  D16, R12), as in Go, Python and .NET: a CLIENT span for every non-OK code,
+  a SERVER span only while it stays ERROR (the six codes below). A streaming
+  call that fails without a code (an error emitted on the call by the app or
+  a library) gets `_OTHER`, and so does a code above 16. A value you set
+  yourself is kept. Gaps and edge cases:
+  - **Callback-form calls** (unary and client-streaming): a handler that
+    calls back with an error without a `code`, or a client callback error
+    without a `code`, leaves that span Unset with no `error.type` (upstream
+    instrumentation-grpc sets no status then). The client still receives
+    `UNKNOWN` from the server, so the CLIENT span is `UNKNOWN`; a client error
+    without a code is reached only by a local or interceptor error (grpc-js
+    client errors always carry one).
+  - **Server-stream and bidi handlers** that emit an error without a `code`:
+    the SERVER span is ERROR with `error.type=UNKNOWN`, the status grpc-js
+    sends (as Go), and the CLIENT span `UNKNOWN`.
+  - A unary handler that finishes after the client's deadline leaves its
+    SERVER span Unset (code 0), while the CLIENT span is
+    `DEADLINE_EXCEEDED` (upstream behavior).
+  - A raw `client.makeClientStreamRequest(path, serialize, deserialize, callback)`
+    without a `Metadata` argument produces a CLIENT span that never ends
+    (instrumentation-grpc 0.300 inserts its metadata after the callback);
+    pass `new grpc.Metadata()` or use a generated client.
 - A SERVER span is ERROR only for the server-fault codes (as the semconv gRPC
   rule): `UNKNOWN`, `DEADLINE_EXCEEDED`, `UNIMPLEMENTED`, `INTERNAL`,
   `UNAVAILABLE`, `DATA_LOSS`. The rule also clears an `ERROR` status your
@@ -634,10 +658,32 @@ sqlInstrumentation();                              // pg and mysql2, whichever t
 sqlInstrumentation({ pg: true, mysql2: false });   // true: warn once when pg does not resolve
 ```
 
-- A failed query's span gets `error.type=_OTHER` (pg and mysql2 give the
-  wrapper no error code); the SQLSTATE is only on pg's
-  `db.client.operation.duration` as `error.type`, and only for the callback
-  form (`pool.query(…, cb)`), not for a rejected `client.query()` promise.
+- A failed query's span carries the database's error code as both
+  `db.response.status_code` and `error.type` (contract design D16, R12; the
+  same values as Go, Python and .NET):
+  - **pg**: the SQLSTATE (`23505`, `42P01`, `22P02`), read from the sanitized
+    exception message instrumentation-pg records (`... (code: 23505)`), for
+    callback and promise queries, pool queries included, and for `connect`. Accepted only as five
+    characters of `0-9A-Z` with at least one digit, so a socket code
+    (`ECONNREFUSED`, `EPIPE`) or upstream's `UNKNOWN` gives `_OTHER`.
+  - **mysql2**: the server error number (`1062`, `1064`), for callback,
+    promise and prepared (`execute`) queries. Accepted only as an integer
+    1–65535 outside the client range 2000–2999 with a `sqlState` (pool
+    queries included): a refused
+    connection (a Node system error, `ECONNREFUSED`) or a client error
+    (`2003`, `2013`) gives `_OTHER`. The helper reads the error through
+    instrumentation-mysql2's private `_patchCallbackQuery`; if a release
+    removes it, failed mysql2 spans get `_OTHER` and one WARN line says so,
+    once per process. The **streaming** form (`connection.query(sql)`
+    without a callback, read through its `error` event) always gets `_OTHER`.
+  - No accepted code: `error.type=_OTHER`, no `db.response.status_code`. A
+    value already on the span is never overwritten (a `db.response.status_code`
+    set by someone else is copied into a missing `error.type`); message text
+    never reaches either attribute.
+
+  pg's `db.client.operation.duration` keeps upstream's own `error.type` (the
+  driver's `code`, so also `ECONNREFUSED`), and only for the callback form
+  (`pool.query(…, cb)`), not for a rejected `client.query()` promise.
 - Spans carry `db.system.name` (+ legacy `db.system` and `db.statement` = `db.query.text`, until 1.0 and unless `OTEL_SEMCONV_STABILITY_OPT_IN` holds `database` without `database/dup`; A30), `db.namespace`,
   `server.address`, `server.port` and `db.query.text` **as written**
   (placeholders kept, never the bound values; a literal you inline is kept).

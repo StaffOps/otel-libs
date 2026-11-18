@@ -24,10 +24,16 @@ const pg = require('pg'); // after setup()
   (`OTEL_SEMCONV_STABILITY_OPT_IN=database` drops the legacy keys; `db.system.name` is always written), `db.query.text` as
   written — never the bound values — and `server.address`, `server.port`,
   `db.namespace`. No connection string or credentials.
-- A failed query keeps status ERROR without a description and
-  `error.type=_OTHER`. The exception event: pg a sanitized message (error
-  type and SQLSTATE), mysql2 none. The SQLSTATE is on pg's
-  `db.client.operation.duration` (`error.type`, callback form only).
+- A failed query keeps status ERROR without a description, with
+  `db.response.status_code` and `error.type` = the PostgreSQL SQLSTATE
+  (`23505`) or the MySQL server error number (`1062`), pool queries included;
+  without one (a refused
+  connection, a client error, the mysql2 streaming form) `error.type=_OTHER`.
+  Message text never reaches these attributes. The exception event: pg a
+  sanitized message (error type and SQLSTATE), mysql2 none. pg's
+  `db.client.operation.duration` keeps upstream's `error.type` (callback
+  form only). mysql2 codes are read through a private method of
+  instrumentation-mysql2; without it, `_OTHER` and one WARN line.
 - pg also records `db.client.operation.duration` and pool metrics; mysql2
   records none.
 - One `sqlInstrumentation()` per process and per `setup()`; create it

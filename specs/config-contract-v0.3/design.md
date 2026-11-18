@@ -1388,6 +1388,38 @@ span metrics, which break the error rate down by `error.type`.
 >    at all (contrib `_aio_client.py` `_wrap_unary_response`); aio
 >    streaming-response calls end the span on any exception and get the
 >    "code 0 → `_OTHER`" rule, as sync calls do.*
+>
+> *Corrected 2026-11-18 (Node.js implementation review: `observability`,
+> `dev`, `code-review`). These points supersede the Node.js text below where
+> they differ:*
+> 1. *A gRPC SERVER span still ERROR with no integer `rpc.grpc.status_code`
+>    (a server-stream or bidi handler error without a code) gets `UNKNOWN`:
+>    the value grpc-js sends to the peer (`serverErrorToStatus`) and what Go
+>    writes. A protocol code exists on the wire, so owner decision 1
+>    (`_OTHER` when there is no code) does not apply; CLIENT spans without a
+>    code and codes above 16 keep `_OTHER`. The "SERVER `UNKNOWN` gap" below
+>    now covers only callback-form (unary, client-streaming) handlers, whose
+>    span stays Unset; the client-side gap also covers client-streaming calls
+>    and is reachable only through local or interceptor errors.*
+> 2. *Core `db.ts` order: the `setStatus` wrapper is installed first and
+>    `recordException` is wrapped only when present (the A25 description drop
+>    never fails open); the code comes from the captured exception, then the
+>    pending slot (read once per `setStatus(ERROR)`), then the description
+>    (Redis), else `_OTHER`. Copying a preset `db.response.status_code` into
+>    an absent `error.type` (`String(value)`, as Python) is enabled for `-sql`
+>    only; Redis keeps A26 and AWS is out of scope.*
+> 3. *mysql2: an error with a string `syscall` is never read (Node system
+>    errors), the counterpart of Python's `OSError` rule and Go's
+>    `MySQLError` type check. Pool and promise-pool queries reach the code
+>    through instrumentation-mysql2's `onResult` path. The pg path has no
+>    runtime signal if the sanitized-message format changes (seam test and
+>    the Node.js SDK-bump checklist only).*
+> 4. *Upstream gap found by the tests (instrumentation-grpc 0.300): a raw
+>    `client.makeClientStreamRequest(path, serialize, deserialize, callback)`
+>    without a `Metadata` argument leaves its CLIENT span unended
+>    (`extractMetadataOrSplice(args, 4)` puts the metadata after the
+>    callback). Generated clients pass metadata and are not affected;
+>    documented in the Node.js HOW-TO §3.*
 
 **Owner decisions 2026-11-17** (asked with the design research of the three
 languages):
@@ -1632,10 +1664,14 @@ in the A43 row.
   raises or calls back with a code-less error leaves the SERVER span Unset
   (`rpc.grpc.status_code` 0 or absent) while the peer receives `UNKNOWN`;
   Go marks it ERROR + `UNKNOWN`. Documented gap (README gap row) until a
-  task maps it.
+  task maps it. (Node.js: callback-form handlers only; server-stream and bidi
+  errors get ERROR + `UNKNOWN`, see the Node.js implementation review note,
+  item 1.)
 - **Node.js unary CLIENT callback error without a code:** the span stays
   Unset with no `error.type` (instrumentation-grpc 0.300.0
-  `clientUtils.cjs:27-31`). Same README gap row (owned by A46).
+  `clientUtils.cjs:27-31`). Same README gap row (owned by A46). (Also
+  client-streaming calls, callback form; reachable only through local or
+  interceptor errors, see the Node.js implementation review note, item 1.)
 - A37 (gRPC and HTTP description text), A36 (DB exception event detail):
   separate tasks; the Python capture added here is reusable by A36.
 

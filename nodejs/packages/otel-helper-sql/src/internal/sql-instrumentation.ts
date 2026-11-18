@@ -15,6 +15,7 @@ import { contribRegistry } from '@staffops/otel-helper/internal/contrib';
 import { legacyKeysMode } from '@staffops/otel-helper/internal/db';
 import { instrumentationLoadError, LIBRARIES, type Library } from './libraries';
 import { dbMeterProvider, dbTracerProvider } from './providers';
+import { holdMysql2Errors } from './status-codes';
 
 export const NAME = '@staffops/otel-helper-sql';
 /** Version of this package; a test keeps it equal to package.json `version`. */
@@ -67,7 +68,11 @@ function build(library: Library): Instrumentation {
   // Upstream formats the bound values into `db.query.text` unless masking is
   // on; the identity mask records the statement as written (placeholders
   // kept), as Go, Python and instrumentation-pg do.
-  return new MySQL2Instrumentation({ maskStatement: true, maskStatementHook: (query: string) => query, addSqlCommenterCommentToQueries: false });
+  const instrumentation = new MySQL2Instrumentation({ maskStatement: true, maskStatementHook: (query: string) => query, addSqlCommenterCommentToQueries: false });
+  // The server error number of a failed callback or promise query (D16, A44):
+  // held for the span's setStatus through upstream's private _patchCallbackQuery.
+  holdMysql2Errors(instrumentation);
+  return instrumentation;
 }
 
 /**
@@ -83,7 +88,7 @@ export const registry = contribRegistry<Library>({
   packages: { pg: ['pg'], mysql2: ['mysql2'] },
   build,
   patchedFiles: PATCHED_FILES,
-  tracerProvider: (library, provider) => dbTracerProvider(provider, { legacyKeys: legacyKeysMode(), normalizeSpanName: library === 'mysql2' }),
+  tracerProvider: (library, provider) => dbTracerProvider(provider, { legacyKeys: legacyKeysMode(), normalizeSpanName: library === 'mysql2', statusCodes: library }),
   // Always a new bind (core): instrumentation-pg re-creates its instruments
   // and moves the pool max onto them; the older instruments go quiet.
   meterProvider: (_library, provider, current) => dbMeterProvider(provider, { legacyKeys: legacyKeysMode(), current }),

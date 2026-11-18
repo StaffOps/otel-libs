@@ -4168,6 +4168,53 @@ Unsupported instrumentation versions, task A10 (P18):
     chains `.then()` without `await` is missing. Raise the limit with
     `NODE_OPTIONS=--stack-trace-limit=50` (README and HOW-TO §16).
 
+- **Node.js: protocol span error attributes (requirement R12, design D16,
+  tasks A44, A46 Node.js part; 2026-11-18; not released).** Only when the span
+  ends with status ERROR and has no `error.type`; values already on the span
+  are never overwritten and message text never reaches an attribute.
+  - `@staffops/otel-helper-sql`: a failed pg span (query, `connect`, callback
+    or promise) carries `db.response.status_code` = `error.type` = the
+    SQLSTATE read from instrumentation-pg's sanitized exception message
+    (`... (code: 23505)`; accepted as `^[0-9A-Z]{5}$` with a digit, so
+    `EPIPE`, `ECONNREFUSED` and upstream's `UNKNOWN` give `_OTHER`). A failed
+    mysql2 callback, promise or `execute` span carries the server error number
+    (`1062`; an integer `errno` 1–65535 outside the client range 2000–2999 with
+    a string `sqlState`; a Node system error never counts), read through an
+    override of instrumentation-mysql2's private `_patchCallbackQuery` on the
+    instance the package builds. Pool queries are covered too. Without that method: `_OTHER` and one WARN
+    line, once per process. The mysql2 streaming form (`query(sql)` without a
+    callback) stays `_OTHER` (documented). Previously every failed SQL span
+    had `error.type=_OTHER`.
+  - Core `internal/db`: `dbTracerProvider` gains the `exceptionStatusCode` and
+    `pendingStatusCode` hooks (internal entry, not public API); a
+    `db.response.status_code` already on a failed `-sql` span is copied into a
+    missing `error.type` (`String(value)`, as Python; flag
+    `copyPresetStatusCode`, not set by `-redis` or `-aws`).
+  - Core gRPC: the status processor that normalizes SERVER spans also writes
+    `error.type` = the canonical status code name on CLIENT spans for every
+    non-OK code and on SERVER spans that stay ERROR (the six server codes);
+    a SERVER span still ERROR without an integer code (a server-stream or
+    bidi handler error without one) gives `UNKNOWN`, what grpc-js sends and
+    what Go writes; a streaming client error without a code, or a code above
+    16, gives `_OTHER`. The
+    name table is static (`@grpc/grpc-js` is never required). Previously
+    Node.js gRPC spans had no `error.type`.
+  - Known gaps, documented: callback-form calls (unary and client-streaming)
+    whose handler or client callback fails without a code leave that span
+    Unset (instrumentation-grpc 0.300 sets no status); the client still
+    receives `UNKNOWN` from the server, and grpc-js client errors always carry
+    a code, so the client gap is reached only by a local or interceptor
+    error. Server-stream and bidi handler errors without a code are SERVER
+    ERROR + `UNKNOWN`.
+  - Tests: `otel-helper/test/db.test.cjs`, `instrumentation.test.cjs` (fake
+    spans and a real in-process grpc-js server), `otel-helper-sql/test/sql.test.cjs`
+    (code tables, the two seam tests, the real instrumentations on stub
+    drivers), `wire.test.cjs` (real pg and mysql2 against an in-process
+    PostgreSQL wire stub and mysql2's own `createServer()`, every CI run),
+    `otel-helper-redis/test/redis.test.cjs` (A26 unchanged) and `db.test.cjs` (real PostgreSQL and MySQL; run on the test
+    cluster). The two seams are on the Node.js SDK-bump checklist of the
+    `release` skill.
+
 - **Node.js: a process that ends on its own now flushes its telemetry (Phase
   B, B12 fix round, 2026-11-03; not released).** The first successful
   `setup()` of the main thread registers one `process.once('beforeExit')`
@@ -4343,6 +4390,17 @@ Unsupported instrumentation versions, task A10 (P18):
   of `publish-nodejs-ghp` skips the packages it already published.
 
 ### Internal
+
+- **Demo verifier on the Go D16 run (2026-11-18).** `testing/k8s/demo/expected.json`:
+  Go `d.http` and `e.edge.db` are expected to pass, and Go `d.db` stays
+  `xfail:A36` without the A44 reason. Measured on k8s01, run `20261116t1812`,
+  images `ea25d10`: the api 500 SERVER span carries `error.type=500`, the
+  `backend -> demo_go` edge has `connection_type=database`, and the failed
+  `sql.conn.exec` span carries `db.response.status_code=23505`. The four Go
+  Tempo fixtures in `testing/k8s/demo/fixtures/` were re-recorded read-only
+  from that run (traces after 05:30 UTC, strings cut at 240, not edited). They
+  replace the DE3 local smoke `smoke1116`, so `test_verify_demo.py` now uses
+  that run for Go.
 
 - **Demo apps on the A45 API (DE12a, 2026-11-17).**
   - **Go, Python, Node.js:** the demo apps use `otelhelper.WithSpan` /

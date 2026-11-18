@@ -12,10 +12,14 @@
  * before the latest bind records nothing: instrumentation-pg re-creates its
  * instruments on every `setMeterProvider` and moves the pool `max` between
  * them, which through the helper's forwarding MeterProvider read 0 after a
- * re-setup). This module adds the mysql2 span name (`statementSpanName`).
+ * re-setup). This module adds the mysql2 span name (`statementSpanName`)
+ * and the response status codes of failed queries (`status-codes.ts`, design
+ * D16, task A44: pg through the recorded exception, mysql2 through the held
+ * error).
  */
 import type { TracerProvider } from '@opentelemetry/api';
 import { ATTR_DB_SYSTEM_NAME, dbTracerProvider as coreDbTracerProvider } from '@staffops/otel-helper/internal/db';
+import { mysql2PendingStatusCode, pgStatusCode } from './status-codes';
 
 export { dbMeterProvider, type DbMeterOptions } from '@staffops/otel-helper/internal/db';
 
@@ -55,6 +59,12 @@ export interface DbTracerOptions {
   readonly legacyKeys: boolean;
   /** Rename spans with {@link statementSpanName} (mysql2). */
   readonly normalizeSpanName: boolean;
+  /**
+   * Where a failed query's response status code is read (D16, A44): `pg` from
+   * the recorded exception, `mysql2` from the held error. Unset: none
+   * (`error.type=_OTHER`).
+   */
+  readonly statusCodes?: 'pg' | 'mysql2' | undefined;
 }
 
 /** A TracerProvider whose tracers apply {@link DbTracerOptions} and drop ERROR descriptions (core `internal/db`). */
@@ -69,5 +79,9 @@ export function dbTracerProvider(provider: TracerProvider, opts: DbTracerOptions
           return statementSpanName(attrs?.['db.query.text'], typeof system === 'string' ? system : requested);
         }
       : undefined,
+    exceptionStatusCode: opts.statusCodes === 'pg' ? pgStatusCode : undefined,
+    pendingStatusCode: opts.statusCodes === 'mysql2' ? mysql2PendingStatusCode : undefined,
+    // A db.response.status_code already on the span becomes its error.type (D16, as Python).
+    copyPresetStatusCode: true,
   });
 }
