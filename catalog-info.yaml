@@ -1,0 +1,92 @@
+# Backstage catalog: Domain (GitHub org) -> System (this repo) -> Component(s),
+# one Component per published library family.
+apiVersion: backstage.io/v1alpha1
+kind: System
+metadata:
+  name: otel-libs
+  title: otel-libs
+  description: "OpenTelemetry helper libraries for Go, Python, .NET and Node.js: one functionally equivalent setup per language (OTLP to the Collector, env-var contract, parity-tested)"
+  annotations:
+    github.com/project-slug: StaffOps/otel-libs
+  links:
+    - url: https://github.com/StaffOps/otel-libs
+      title: Repository
+      icon: github
+spec:
+  owner: group:staffops
+  domain: staffops
+---
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: otel-helper-go
+  title: otel-helper (Go)
+  description: "Go OpenTelemetry helper, module github.com/staffops/otel-libs/go, with opt-in ext modules (otelsql, otelredis, otelaws)"
+  annotations:
+    github.com/project-slug: StaffOps/otel-libs
+  tags: [go, opentelemetry]
+spec:
+  type: library
+  lifecycle: production
+  owner: group:staffops
+  system: otel-libs
+---
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: staffops-otel-helper-python
+  title: staffops-otel-helper (Python)
+  description: "Python OpenTelemetry helper, package staffops-otel-helper (import staffops_otel_helper), extras aws, redis, sql"
+  annotations:
+    github.com/project-slug: StaffOps/otel-libs
+  tags: [python, opentelemetry]
+spec:
+  type: library
+  lifecycle: production
+  owner: group:staffops
+  system: otel-libs
+---
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: staffops-otel-helper-dotnet
+  title: StaffOps.OtelHelper (.NET)
+  description: ".NET OpenTelemetry helper, NuGet StaffOps.OtelHelper with StaffOps.OtelHelper.AWS, .Redis, .Sql and .Profiling (0.3 line)"
+  annotations:
+    github.com/project-slug: StaffOps/otel-libs
+  tags: [csharp, dotnet, opentelemetry]
+spec:
+  type: library
+  lifecycle: production
+  owner: group:staffops
+  system: otel-libs
+---
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: otel-helper-dotnet-legacy
+  title: OtelHelper (.NET, 0.2.x legacy)
+  description: "Legacy .NET package names OtelHelper, OtelHelper.AWS, .Redis, .Sql, .Profiling: the 0.2.x line, kept published, not republished under the new names"
+  annotations:
+    github.com/project-slug: StaffOps/otel-libs
+  tags: [csharp, dotnet, opentelemetry, legacy]
+spec:
+  type: library
+  lifecycle: deprecated
+  owner: group:staffops
+  system: otel-libs
+---
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: otel-helper-node
+  title: "@staffops/otel-helper (Node.js)"
+  description: "Node.js OpenTelemetry helper, npm @staffops/otel-helper with -sql, -redis, -aws, -pino and -winston"
+  annotations:
+    github.com/project-slug: StaffOps/otel-libs
+  tags: [nodejs, typescript, opentelemetry]
+spec:
+  type: library
+  lifecycle: production
+  owner: group:staffops
+  system: otel-libs
