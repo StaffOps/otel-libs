@@ -162,6 +162,12 @@ UNEXPECTED or BLOCKED (exemplar storage absent, or the window starts less than
 120 s, a bad `expected.json`). `--dry-run` exits `1` only when the pre-flight
 is BLOCKED. Service-graph edges carry no run label: check e scopes them by
 service name only.
+The tally line counts the pre-flight BLOCKED lines next to the cells
+(`verify demo: …; pre-flight BLOCKED 1; FAIL`). A backend request that fails in
+transport (the API server unreachable, a reset connection, a TLS handshake or
+i/o timeout, kubectl's 60 s timeout) is tried up to three times, 1 s and 3 s
+apart; an HTTP error answer (`Error from server …`) is never retried. In a hard
+API-server outage a run therefore takes up to about three times longer to fail.
 
 Options before the mode: `--context` (`KUBE_CONTEXT`, `k8s01`), `--namespace`
 (`NAMESPACE`, `dev-otel-libs`), `--since` (smoke look-back window, `6h`),

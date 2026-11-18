@@ -839,6 +839,18 @@ proxy times out at the smallest slice.
 client-side; run the checker as a Job (soak K-D3 reversal).
 **Alternatives**: Grafana API (token); assertions inside the apps.
 
+> *Amended 2026-11-18 (D16 cluster runs, code-review approved):* a backend
+> request that fails in transport (API server unreachable, connection reset,
+> TLS handshake or i/o timeout, kubectl's 60 s timeout) is retried up to
+> three times, 1 s and 3 s apart; an HTTP error answer (`Error from server`)
+> or a non-JSON answer is never retried. In a hard API-server outage a run
+> therefore takes up to about three times longer to fail. The tally line
+> counts pre-flight BLOCKED lines (`…; pre-flight BLOCKED N`); the exit code
+> rule is unchanged. Open (owner decision pending): check g scans from the
+> earliest pod start (M7), which on pods about 14 h old means about 10 000
+> trace fetches and about 19 minutes; proposed: bound the g span set to the
+> window and keep the startup roots as their own query.
+
 ### DE-D12 — Resource budget and concurrency
 **Choice**: requests and memory limits of the Budget table; `demo.sh apply`
 runs the soak K-D2 pre-flight — Σ run requests ≤ allocatable − requested −

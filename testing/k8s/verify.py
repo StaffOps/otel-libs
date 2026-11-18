@@ -63,8 +63,26 @@ EDGES = {
 MAX_TRACE_LOOKUPS = 10
 
 
+# kubectl stderr fragments of a failed connection to the API server: the request never
+# got an answer, so it is retried (an HTTP error answer from a backend never is).
+TRANSPORT_ERRORS = ("unable to connect to the server", "connection reset",
+                    "tls handshake timeout", "i/o timeout")
+# Pauses (seconds) before the 2nd and 3rd attempt of a request that failed in transport.
+TRANSPORT_BACKOFF = (1, 3)
+_sleep = time.sleep
+
+
 class QueryError(Exception):
     """A backend query failed (kubectl error, non-JSON answer, API error status)."""
+
+
+def _is_transport_error(stderr: str) -> bool:
+    low = stderr.lower()
+    # "Error from server (...)" is an HTTP answer (4xx/5xx), even when its body quotes a
+    # backend's own transport error: never retried.
+    if "error from server" in low:
+        return False
+    return any(marker in low for marker in TRANSPORT_ERRORS)
 
 
 @dataclass(frozen=True)
@@ -79,12 +97,21 @@ class Backends:
         url = f"/api/v1/namespaces/{self.namespace}/services/{service}/proxy{path}"
         if params:
             url += "?" + urllib.parse.urlencode(params)
-        proc = subprocess.run(
-            ["kubectl", "--context", self.context, "get", "--raw", url],
-            capture_output=True, text=True, timeout=60, check=False,
-        )
-        if proc.returncode != 0:
-            raise QueryError(f"{service}{path}: {proc.stderr.strip() or 'kubectl failed'}")
+        for attempt in range(len(TRANSPORT_BACKOFF) + 1):
+            try:
+                proc = subprocess.run(
+                    ["kubectl", "--context", self.context, "get", "--raw", url],
+                    capture_output=True, text=True, timeout=60, check=False,
+                )
+                returncode, stderr = proc.returncode, proc.stderr
+            except subprocess.TimeoutExpired:  # no answer within 60 s: transport too
+                returncode, stderr = -1, "kubectl timed out after 60s (i/o timeout)"
+            if returncode == 0 or not _is_transport_error(stderr):
+                break
+            if attempt < len(TRANSPORT_BACKOFF):
+                _sleep(TRANSPORT_BACKOFF[attempt])
+        if returncode != 0:
+            raise QueryError(f"{service}{path}: {stderr.strip() or 'kubectl failed'}")
         try:
             return json.loads(proc.stdout)
         except json.JSONDecodeError as exc:
@@ -723,6 +750,7 @@ class DemoReport:
         self.out = out or sys.stdout
         self.cells: dict[tuple[str, str], str] = {}
         self.preflight_blocked = False
+        self.blocked_lines = 0
 
     def _print(self, text: str) -> None:
         print(text, file=self.out, flush=True)
@@ -752,6 +780,7 @@ class DemoReport:
 
     def blocked(self, text: str) -> None:
         self.preflight_blocked = True
+        self.blocked_lines += 1
         self._print(f"BLOCKED     {text}")
 
     def failed(self) -> bool:
@@ -768,7 +797,9 @@ class DemoReport:
         for v in self.cells.values():
             counts[v] = counts.get(v, 0) + 1
         summary = ", ".join(f"{k} {counts[k]}" for k in sorted(counts))
-        self._print(f"verify demo: {summary or 'no cells'}; "
+        # Pre-flight BLOCKED lines are not cells but fail the run: the tally names them.
+        pre = f"; pre-flight BLOCKED {self.blocked_lines}" if self.blocked_lines else ""
+        self._print(f"verify demo: {summary or 'no cells'}{pre}; "
                     f"{'FAIL' if self.failed() else 'OK'}")
 
 

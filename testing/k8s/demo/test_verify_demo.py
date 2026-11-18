@@ -3,13 +3,15 @@
 Standard library unittest; no cluster access. Tempo traces are recorded from the
 DE3 local smokes (fixtures/tempo-<lang>-<scenario>.json: the Collector file
 exporter's OTLP JSON re-encoded as Tempo's /api/traces answer, base64 ids) and, for
-Python and Go, read from Tempo on k8s01 for run 20261116t1812 (long strings cut at
-240); Loki and Prometheus answers are built inline in their API shapes. Edited
-2026-11-17 (A45, DE-D8 note): the type-only ``exception`` event of each owning
-demo span (``demo.order.process`` / ``demo.order.accept``, scope
-``otel-libs-demo``) was removed, as the demo apps no longer write it; every other
-span, DB spans included, is as recorded. Go re-recorded 2026-11-18 from the
-cluster (images ``ea25d10``, Go D16 and A45, traces after 05:30 UTC), not edited.
+Go, Python and Node.js, read from Tempo on k8s01 for run 20261116t1812 (long
+strings cut at 240); Loki and Prometheus answers are built inline in their API
+shapes. Edited 2026-11-17 (A45, DE-D8 note): the type-only ``exception`` event of
+each owning demo span (``demo.order.process`` / ``demo.order.accept``, scope
+``otel-libs-demo``) was removed from the .NET fixtures, as the demo apps no longer
+write it; every other span, DB spans included, is as recorded. Go re-recorded
+2026-11-18 from the cluster (images ``ea25d10``, Go D16 and A45, traces after
+05:30 UTC), Python and Node.js the same day (images ``2eb28e6``, D16 and A45,
+traces after 07:25 UTC); none of the three edited.
 """
 
 from __future__ import annotations
@@ -30,8 +32,8 @@ import verify  # noqa: E402
 
 FIXTURES = HERE / "fixtures"
 # Run ids of the recorded smokes (the run tokens in the fixtures carry them).
-RUNS = {"go": "20261116t1812", "node": "smoke1", "dotnet": "de3dsmoke", "python": "20261116t1812"}
-# Fake clock. The Go fixtures (recorded 2026-11-18) start after it, at about
+RUNS = {"go": "20261116t1812", "node": "20261116t1812", "dotnet": "de3dsmoke", "python": "20261116t1812"}
+# Fake clock. The Go, Python and Node.js fixtures (recorded 2026-11-18) start after it, from about
 # 1_794_981_477 s: the checks do not filter span start times by the window today,
 # so the fixtures are used as-is. A check that starts filtering them needs NOW moved.
 NOW = 1_794_900_000
@@ -263,8 +265,16 @@ class ExpectationTest(unittest.TestCase):
         for cell in verify.EXEMPLAR_CELLS:
             want = "n/a:upstream-no-rpc-metrics" if cell == "b.rpc_server" else "n/a:upstream-no-sdk-exemplars"
             self.assertEqual(e["node"][cell]["expect"], want)  # DE6: Node.js emits no RPC metrics
+        # D16 (images 2eb28e6, run 20261116t1812, 2026-11-18): Python and Node.js failed DB
+        # spans carry db.response.status_code, so A44 no longer explains their d.db XFAIL.
         for lang in ("python", "node"):
-            self.assertIn("A44", e[lang]["d.db"]["also"])
+            self.assertEqual(e[lang]["d.db"]["expect"], "xfail:A36")
+            self.assertEqual(e[lang]["d.db"]["also"], [])
+            self.assertNotIn("db.response.status_code None", e[lang]["d.db"]["reason"])
+            self.assertIn("no correlated ERROR record", e[lang]["d.db"]["reason"])
+        self.assertIn("exception events []", e["python"]["d.db"]["reason"])
+        self.assertIn("exception events [['exception.message']]", e["node"]["d.db"]["reason"])
+        self.assertNotIn("A44", json.dumps(json.loads(verify.EXPECTED_JSON.read_text())["expected"]))
         tasks = {v["expect"] for cells in e.values() for v in cells.values() if v["expect"].startswith("xfail:")}
         self.assertEqual(tasks, {"xfail:A36", "xfail:A37"})
         self.assertEqual(e["dotnet"]["d.http"]["also"], ["A42"])
@@ -323,11 +333,16 @@ class ExpectationTest(unittest.TestCase):
         self.assertIn("verify demo: PASS 2, XFAIL 1, XPASS 1; FAIL", text)
         # Go D16 sets db.response.status_code: the A44 problem no longer explains a Go d.db XFAIL.
         rep3 = report()
-        self.assertEqual(rep3.cell("go", "d.db", verify.Obs("fail", "x", problems=[
-            "db_error: 'q' db.response.status_code None"])), "FAIL")
-        rep2 = report()
+        for lang in ("go", "python", "node"):  # D16 in all three since 2eb28e6
+            self.assertEqual(rep3.cell(lang, "d.db", verify.Obs("fail", "x", problems=[
+                "db_error: 'q' db.response.status_code None"])), "FAIL")
+        rep2 = report(out2 := io.StringIO())
         rep2.blocked("flags")
         self.assertTrue(rep2.failed())
+        rep2.cell("go", "a", verify.Obs("pass", "ok"))
+        rep2.matrix(["go"])
+        # A pre-flight BLOCKED is not a cell, but the tally names it (it is why the run fails).
+        self.assertIn("verify demo: PASS 1; pre-flight BLOCKED 1; FAIL", out2.getvalue())
 
 
 class TraceCacheTest(unittest.TestCase):
@@ -673,8 +688,10 @@ class CheckDTest(unittest.TestCase):
         self.assertNotIn("client description", c["d.grpc"].detail)  # 'order rejected' is allowed
         self.assertEqual(c["d.http"].state, "fail")  # FastAPI exception event (A37)
         self.assertIn("exception.stacktrace", c["d.http"].detail)
-        self.assertEqual(c["d.db"].state, "fail")  # SQLAlchemy: no exception event, no 23505 (A36)
-        self.assertIn("db.response.status_code None", c["d.db"].detail)
+        self.assertEqual(c["d.db"].state, "fail")  # SQLAlchemy: no exception event (A36)
+        self.assertIn("exception events []", c["d.db"].detail)
+        self.assertNotIn("db.response.status_code", c["d.db"].detail)  # D16: 23505 on the span
+        self.assertEqual(len(c["d.db"].problems), 1, c["d.db"].problems)
         e = verify.load_expected()["python"]
         self.assertEqual([verify.judge(e[k]["expect"], c[k].state) for k in c],
                          ["PASS", "XFAIL", "XFAIL", "XFAIL"])
@@ -686,8 +703,10 @@ class CheckDTest(unittest.TestCase):
         self.assertIn("grpc.error_message", c["d.grpc"].detail)
         self.assertEqual(c["d.http"].state, "fail")
         self.assertIn("request handler", c["d.http"].detail)  # express framework INTERNAL span
-        self.assertEqual(c["d.db"].state, "fail")
-        self.assertIn("db.response.status_code None", c["d.db"].detail)
+        self.assertEqual(c["d.db"].state, "fail")  # pg event keeps exception.message (A36)
+        self.assertIn("exception events [['exception.message']]", c["d.db"].detail)
+        self.assertNotIn("db.response.status_code", c["d.db"].detail)  # D16: 23505 on the span
+        self.assertEqual(len(c["d.db"].problems), 1, c["d.db"].problems)
 
     def test_dotnet(self) -> None:
         c = self.cells("dotnet")
@@ -1255,6 +1274,63 @@ class ClientTest(unittest.TestCase):
         with mock.patch.object(verify.subprocess, "run", return_value=self.proc(bad)):
             with self.assertRaisesRegex(verify.QueryError, "parse"):
                 b.prom_query_range("(", 1, 2, 30)
+
+    def test_transport_errors_are_retried(self) -> None:
+        b = self.backends()
+        ok = json.dumps({"status": "success", "data": {"result": []}})
+        reset = self.proc("", 1, "Unable to connect to the server: read tcp 10.0.0.1:1->10.0.0.2:6443: "
+                                 "read: connection reset by peer")
+        tls = self.proc("", 1, "Unable to connect to the server: net/http: TLS handshake timeout")
+        sleeps: list = []
+        with mock.patch.object(verify.subprocess, "run", side_effect=[reset, tls, self.proc(ok)]) as run, \
+                mock.patch.object(verify, "_sleep", sleeps.append):
+            self.assertEqual(b.prom_query("up", 1), [])
+            self.assertEqual(run.call_count, 3)
+        self.assertEqual(sleeps, list(verify.TRANSPORT_BACKOFF))
+        # Bounded: three transport failures in a row are a QueryError, not a fourth try.
+        dial = self.proc("", 1, "Unable to connect to the server: dial tcp 10.0.0.2:6443: i/o timeout")
+        sleeps.clear()
+        with mock.patch.object(verify.subprocess, "run", side_effect=[dial, dial, dial, self.proc(ok)]) as run, \
+                mock.patch.object(verify, "_sleep", sleeps.append):
+            with self.assertRaisesRegex(verify.QueryError, "i/o timeout"):
+                b.tempo_trace("ab")
+            self.assertEqual(run.call_count, 3)
+        self.assertEqual(len(sleeps), 2)
+        # A kubectl that hangs past its own timeout is a transport failure too.
+        hang = verify.subprocess.TimeoutExpired(["kubectl"], 60)
+        with mock.patch.object(verify.subprocess, "run", side_effect=[hang, self.proc(ok)]) as run, \
+                mock.patch.object(verify, "_sleep", lambda _s: None):
+            self.assertEqual(b.prom_query("up", 1), [])
+            self.assertEqual(run.call_count, 2)
+
+    def test_answers_are_not_retried(self) -> None:
+        b = self.backends()
+        answers = (
+            "Error from server (NotFound): the server could not find the requested resource",
+            "Error from server (ServiceUnavailable): the server is currently unable to handle the request",
+            "Error from server (InternalError): an error on the server (\"query timed out\") has prevented "
+            "the request from succeeding",
+            "Error from server (Forbidden): services \"tempo:3200\" is forbidden",
+            # A 5xx whose body quotes the backend's own dial error is still an answer.
+            "Error from server (InternalError): an error on the server (\"dial tcp 10.1.2.3:9095: "
+            "i/o timeout\") has prevented the request from succeeding",
+        )
+        for stderr in answers:
+            with mock.patch.object(verify.subprocess, "run", return_value=self.proc("", 1, stderr)) as run, \
+                    mock.patch.object(verify, "_sleep", self.fail):
+                with self.assertRaises(verify.QueryError):
+                    b.prom_query("up", 1)
+                self.assertEqual(run.call_count, 1, stderr)
+        with mock.patch.object(verify.subprocess, "run", return_value=self.proc(
+                "", 1, "Error from server (NotFound): trace not found")) as run, \
+                mock.patch.object(verify, "_sleep", self.fail):
+            self.assertIsNone(b.tempo_trace("ab"))  # a 404 answer: no retry, the trace is absent
+            self.assertEqual(run.call_count, 1)
+        with mock.patch.object(verify.subprocess, "run", return_value=self.proc("<html>")) as run, \
+                mock.patch.object(verify, "_sleep", self.fail):
+            with self.assertRaisesRegex(verify.QueryError, "not JSON"):
+                b.prom_query("up", 1)
+            self.assertEqual(run.call_count, 1)
 
     def test_kubectl_json(self) -> None:
         with mock.patch.object(verify.subprocess, "run", return_value=self.proc('{"items": []}')) as run:

@@ -94,13 +94,8 @@
         "expect": "xfail:A36",
         "ref": "design r3.5: no exception event with exception.type on the DB span",
         "reason": [
-          "db.response.status_code None",
           "exception events []",
           "no correlated ERROR record"
-        ],
-        "reason_notes": "db.response.status_code None: owned by A44 (also_xfail); A36 covers the exception detail and the correlated record",
-        "also_xfail": [
-          "A44"
         ]
       },
       "e.trace": "pass",
@@ -156,15 +151,10 @@
       },
       "d.db": {
         "expect": "xfail:A36",
-        "ref": "nodejs/HOW-TO.md:617-620 (no db.response.status_code); A36 lists Node.js -sql",
+        "ref": "A36 lists Node.js -sql (exception detail and correlated record); D16 db.response.status_code / error.type: nodejs/HOW-TO.md:661-682",
         "reason": [
-          "db.response.status_code None",
           "exception events [['exception.message']]",
           "no correlated ERROR record"
-        ],
-        "reason_notes": "db.response.status_code None: owned by A44 (also_xfail); A36 covers the exception detail and the correlated record",
-        "also_xfail": [
-          "A44"
         ]
       },
       "e.trace": "pass",
