@@ -63,7 +63,6 @@ nav:
 plugins:
   - search:
       lang: en
-  - techdocs-core
 
 markdown_extensions:
   - admonition
