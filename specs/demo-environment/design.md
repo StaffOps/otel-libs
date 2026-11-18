@@ -850,6 +850,13 @@ client-side; run the checker as a Job (soak K-D3 reversal).
 > earliest pod start (M7), which on pods about 14 h old means about 10 000
 > trace fetches and about 19 minutes; proposed: bound the g span set to the
 > window and keep the startup roots as their own query.
+>
+> *Decided 2026-11-18 (owner, option A):* check g scans the span set of the
+> run window only (the traffic `verify` itself sends, which covers every
+> route), plus a separate query for the first minutes after each pod start
+> (startup roots: configuration and connection logs and spans). Trade-off
+> accepted: a leak that appears only in traffic outside both windows is not
+> seen by `verify`.
 
 ### DE-D12 — Resource budget and concurrency
 **Choice**: requests and memory limits of the Budget table; `demo.sh apply`
