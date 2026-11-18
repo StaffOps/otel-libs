@@ -49,7 +49,8 @@ interface Active {
   /**
    * Whether the global TracerProvider is the helper's forwarding provider
    * (false: a foreign one was registered first, or the API refused it); while
-   * true it forwards to `tracerProvider`.
+   * true it forwards to `tracerProvider`, unless traces are disabled
+   * (task A35: no delegate, a no-op tracer).
    */
   readonly ownsTracerProvider: boolean;
   readonly ownsMeterProvider: boolean;
@@ -935,7 +936,12 @@ function install(rt: Runtime, plan: Plan, options: SetupOptions, base: Resource,
     ownsMeterProvider = claimGlobal(rt, 'metrics', () => metrics.setGlobalMeterProvider(fw.meterProvider), attempt);
     ownsLoggerProvider = claimGlobal(rt, 'logs', () => logs.setGlobalLoggerProvider(fw.loggerProvider), attempt);
     // A forwarder forwards only while it is the global: a foreign provider's signal is inactive.
-    forwardTo(fw.tracerProvider, ownsTracerProvider ? built.tracerProvider : undefined, attempt);
+    // Traces disabled (OTEL_HELPER_DISABLED_SIGNALS / disabledSignals) keep the
+    // forwarder without a delegate: its no-op tracer gives a root no context and
+    // passes an inbound one on unchanged; Go installs a no-op provider, Python
+    // leaves the API default (task A35; contract D1 row "Propagation with traces off").
+    // OTEL_TRACES_EXPORTER=none keeps the SDK provider, which samples roots.
+    forwardTo(fw.tracerProvider, ownsTracerProvider && !plan.tracesDisabled ? built.tracerProvider : undefined, attempt);
     forwardTo(fw.meterProvider, ownsMeterProvider ? built.meterProvider : undefined, attempt);
     forwardTo(fw.loggerProvider, ownsLoggerProvider ? built.loggerProvider : undefined, attempt);
   }

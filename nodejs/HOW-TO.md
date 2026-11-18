@@ -921,7 +921,7 @@ throws a `TypeError` naming the option, before anything is installed.
 | `exportIntervalMs` | integer ms in [1, 2^31-1] | `OTEL_METRIC_EXPORT_INTERVAL` |
 | `prometheusMetricsPort` | integer in [0, 65535] (`0` = no listener) | `OTEL_HELPER_METRICS_PORT` |
 | `disabledMetrics` | `string[]` of globs | `OTEL_HELPER_DISABLED_METRICS` |
-| `disabledSignals` | `('traces' \| 'metrics' \| 'logs')[]` | `OTEL_HELPER_DISABLED_SIGNALS` (deprecated; prefer `OTEL_<SIGNAL>_EXPORTER=none`) |
+| `disabledSignals` | `('traces' \| 'metrics' \| 'logs')[]` | `OTEL_HELPER_DISABLED_SIGNALS` (deprecated; prefer `OTEL_<SIGNAL>_EXPORTER=none`). `'traces'` installs a no-op tracer, unless a foreign TracerProvider is kept (`inactiveSignals` lists `traces`): roots carry no trace context, an inbound one passes on unchanged, and the app's own `spanProcessors` receive no spans; `OTEL_TRACES_EXPORTER=none` keeps an SDK provider that samples and propagates roots |
 | `sampleRatio` | number in [0, 1] | `OTEL_TRACES_SAMPLER=parentbased_traceidratio` + `_ARG` |
 | `healthPaths` | `string[]` | — |
 | `debug` | boolean | `OTEL_HELPER_DEBUG_LEVEL` |

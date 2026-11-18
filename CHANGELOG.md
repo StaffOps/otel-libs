@@ -4281,6 +4281,25 @@ Unsupported instrumentation versions, task A10 (P18):
 
 ### Fixed
 
+- **Node.js: disabled traces are a no-op tracer (task A35, contract design D1
+  row "Propagation with traces off", 2026-11-18).** With
+  `OTEL_HELPER_DISABLED_SIGNALS=traces` (or `setup({ disabledSignals:
+  ['traces'] })`) a root span still got a valid, sampled context and its
+  `traceparent` was injected downstream. The helper's global TracerProvider
+  now has no SDK delegate while traces are disabled (Go installs a no-op
+  provider, Python leaves the API default): a root carries no trace context (only `baggage`
+  is injected), an inbound context is passed on unchanged (same
+  `traceparent` and `tracestate`), no span reaches a span processor, and the
+  helper's span-id lookup for log records (`spanIds`, used for the stdout
+  `trace_id`/`span_id`) finds ids only under an inbound context, where they
+  point at the caller's span. `OTEL_TRACES_EXPORTER=none` is unchanged:
+  the SDK provider stays without an exporter, roots are sampled by the
+  resolved sampler and their context is injected. A foreign TracerProvider is
+  kept (and `traces` listed in `inactiveSignals`) as before; under
+  `replaceGlobals` it is replaced by the no-op forwarder. A later `setup()`
+  with traces enabled gives the forwarder its SDK provider back. Parity case
+  `propagation.traces_disabled_root_no_traceparent`: Node.js `xfail:A35` →
+  `pass`.
 - **Node.js: an opt-in factory with OTLP over gRPC no longer turns off the
   core http, express and gRPC spans (task A39, found by the demo, 2026-11-16).**
   With `redisInstrumentation()`, `sqlInstrumentation()` (or any

@@ -569,3 +569,199 @@ test('D-JS10 re-setup releases only the helper\'s own propagator', async () => {
     api.propagation.disable();
   }
 });
+
+// ── disabled traces: a no-op tracer (task A35; contract D1 row "Propagation with traces off") ──
+
+/** A span processor recording the names of the spans it sees. */
+function probeProcessor() {
+  const started = [];
+  const probe = { started, shutdowns: 0, onStart: (span) => started.push(span.name), onEnd() {}, forceFlush: () => Promise.resolve() };
+  probe.shutdown = () => { probe.shutdowns++; return Promise.resolve(); };
+  return probe;
+}
+
+/** Starts a span under `parent` (default: the active context) with baggage; returns the injected carrier and the span. */
+function injectUnder(parent = api.context.active()) {
+  const carrier = {};
+  const ctx = api.propagation.setBaggage(parent, api.propagation.createBaggage({ k: { value: 'v' } }));
+  let recording;
+  let ids;
+  api.context.with(ctx, () => {
+    api.trace.getTracer('t').startActiveSpan('s', (span) => {
+      recording = span.isRecording();
+      ids = require('../dist/internal/logging.js').spanIds(api.context.active());
+      api.propagation.inject(api.context.active(), carrier);
+      span.end();
+    });
+  });
+  return { carrier, recording, ids };
+}
+
+for (const [label, env, code] of [
+  ['OTEL_HELPER_DISABLED_SIGNALS=traces', { OTEL_HELPER_DISABLED_SIGNALS: 'traces' }, {}],
+  ['code disabledSignals: [traces]', {}, { disabledSignals: ['traces'] }],
+]) {
+  test(`A35 ${label}: a root carries no context, baggage still propagates, no span reaches a processor`, async () => {
+    Object.assign(process.env, env);
+    const probe = probeProcessor();
+    const resolved = helper.setup({ ...code, spanProcessors: [probe] });
+    assert.deepEqual(resolved.tracesExporters, []);
+    assert.deepEqual(resolved.inactiveSignals, []);
+    const fw = api.trace.getTracerProvider().getDelegate();
+    assert.equal(fw.constructor.name, 'ForwardingTracerProvider');
+    assert.equal(fw.getDelegate(), undefined);
+    const root = injectUnder();
+    assert.deepEqual(Object.keys(root.carrier).sort(), ['baggage']);
+    assert.equal(root.recording, false);
+    // Log correlation (core logger, -pino, -winston): no ids without a valid span context.
+    assert.equal(root.ids, undefined);
+    assert.deepEqual(probe.started, []);
+    // The app's processor is still owned by the (unused) SDK provider and shut down with it.
+    await helper.shutdown();
+    assert.equal(probe.shutdowns, 1);
+  });
+}
+
+test('A35 tracesDisabled: only the disabled set, not OTEL_SDK_DISABLED, a code [] or an unknown standard entry', () => {
+  const { resolveSignals } = require('../dist/internal/signals.js');
+  const NO_OTLP = Object.freeze({ traces: undefined, metrics: undefined, logs: undefined });
+  const quiet = () => undefined;
+  process.env.OTEL_HELPER_DISABLED_SIGNALS = 'traces';
+  assert.equal(resolveSignals({}, NO_OTLP, quiet).tracesDisabled, true);
+  // Code disabledSignals wins over the env, also [].
+  assert.equal(resolveSignals({ disabledSignals: [] }, NO_OTLP, quiet).tracesDisabled, false);
+  // An unknown entry of the standard variable counts as unset: the deprecated one applies.
+  process.env.OTEL_TRACES_EXPORTER = 'bogus';
+  assert.equal(resolveSignals({}, NO_OTLP, quiet).tracesDisabled, true);
+  process.env.OTEL_TRACES_EXPORTER = 'none';
+  assert.equal(resolveSignals({}, NO_OTLP, quiet).tracesDisabled, false);
+  delete process.env.OTEL_TRACES_EXPORTER;
+  // OTEL_SDK_DISABLED=true builds no provider at all: not "traces disabled".
+  process.env.OTEL_SDK_DISABLED = 'true';
+  assert.equal(resolveSignals({}, NO_OTLP, quiet).tracesDisabled, false);
+  // Carried on the Plan.
+  delete process.env.OTEL_SDK_DISABLED;
+  const { resolvePlan } = require('../dist/internal/resolve.js');
+  assert.equal(resolvePlan({}, 'svc', true).tracesDisabled, true);
+  assert.equal(resolvePlan({ disabledSignals: [] }, 'svc', true).tracesDisabled, false);
+});
+
+test('A35 disabled traces pass an inbound trace context on unchanged (traceparent and tracestate)', () => {
+  process.env.OTEL_HELPER_DISABLED_SIGNALS = 'traces';
+  helper.setup();
+  for (const sampled of [true, false]) {
+    const inbound = remote(sampled, api.createTraceState('vendor=a,other=b'));
+    const out = injectUnder(inbound);
+    assert.equal(out.carrier.traceparent, `00-${TRACE_ID}-${SPAN_ID}-0${sampled ? 1 : 0}`);
+    assert.equal(out.carrier.tracestate, 'vendor=a,other=b');
+    assert.ok(out.carrier.baggage);
+    assert.equal(out.recording, false);
+    assert.deepEqual(out.ids, { traceId: TRACE_ID, spanId: SPAN_ID });
+  }
+  // A root option never inherits the inbound context.
+  const carrier = {};
+  api.context.with(remote(true), () => {
+    const span = api.trace.getTracer('t').startSpan('r', { root: true });
+    api.propagation.inject(api.trace.setSpan(api.ROOT_CONTEXT, span), carrier);
+  });
+  assert.deepEqual(carrier, {});
+});
+
+test('A35 OTEL_TRACES_EXPORTER=none is not disabled: an SDK provider samples roots and injects their context', () => {
+  process.env.OTEL_TRACES_EXPORTER = 'none';
+  // The standard variable wins over the deprecated one (D1 row "Deprecated OTEL_HELPER_DISABLED_SIGNALS").
+  process.env.OTEL_HELPER_DISABLED_SIGNALS = 'traces';
+  const probe = probeProcessor();
+  const resolved = helper.setup({ spanProcessors: [probe] });
+  assert.deepEqual(resolved.tracesExporters, []);
+  assert.notEqual(api.trace.getTracerProvider().getDelegate().getDelegate(), undefined);
+  const root = injectUnder();
+  assert.deepEqual(Object.keys(root.carrier).sort(), ['baggage', 'traceparent']);
+  assert.match(root.carrier.traceparent, /^00-[0-9a-f]{32}-[0-9a-f]{16}-01$/);
+  assert.equal(root.recording, true);
+  assert.notEqual(root.ids, undefined);
+  assert.deepEqual(probe.started, ['s']);
+});
+
+test('A35 a re-setup with traces enabled gives the forwarder its SDK provider back, and a disabled one removes it', async () => {
+  process.env.OTEL_HELPER_DISABLED_SIGNALS = 'traces';
+  helper.setup();
+  const tracer = api.trace.getTracer('t');
+  assert.equal(tracer.startSpan('a').isRecording(), false);
+  await helper.shutdown();
+  delete process.env.OTEL_HELPER_DISABLED_SIGNALS;
+  helper.setup();
+  assert.equal(tracer.startSpan('b').isRecording(), true);
+  await helper.shutdown();
+  helper.setup({ disabledSignals: ['traces'] });
+  assert.equal(tracer.startSpan('c').isRecording(), false);
+  assert.deepEqual(Object.keys(injectUnder().carrier).sort(), ['baggage']);
+});
+
+test('A35 OTEL_SDK_DISABLED=true with traces disabled: no provider, roots carry no context', () => {
+  process.env.OTEL_SDK_DISABLED = 'true';
+  process.env.OTEL_HELPER_DISABLED_SIGNALS = 'traces';
+  helper.setup();
+  assert.equal(testing.getProviders(), undefined);
+  assert.deepEqual(Object.keys(injectUnder().carrier).sort(), ['baggage']);
+});
+
+test('A35 disabled traces with a foreign TracerProvider: kept and listed without replaceGlobals; replaced by the no-op forwarder with it', async () => {
+  process.env.OTEL_HELPER_DISABLED_SIGNALS = 'traces';
+  const { TracerProvider } = require('@opentelemetry/sdk-trace');
+  const foreign = new TracerProvider();
+  api.trace.setGlobalTracerProvider(foreign);
+  const httpInstrumentation = () => testing.getState().runtime.instrumentations.instrumentations[0];
+  try {
+    const kept = helper.setup();
+    assert.deepEqual(kept.inactiveSignals, ['traces']);
+    assert.equal(api.trace.getTracerProvider().getDelegate(), foreign);
+    // The instrumentations join the app's own provider, as with traces enabled.
+    assert.equal(httpInstrumentation().tracer.constructor.name, 'Tracer');
+    assert.deepEqual(Object.keys(injectUnder().carrier).sort(), ['baggage', 'traceparent']);
+    await helper.shutdown();
+    const replaced = helper.setup({ replaceGlobals: true });
+    assert.deepEqual(replaced.inactiveSignals, []);
+    const fw = api.trace.getTracerProvider().getDelegate();
+    assert.equal(fw.constructor.name, 'ForwardingTracerProvider');
+    assert.equal(fw.getDelegate(), undefined);
+    assert.equal(httpInstrumentation().tracer.constructor.name, 'ForwardingTracer');
+    assert.deepEqual(Object.keys(injectUnder().carrier).sort(), ['baggage']);
+  } finally {
+    testing.reset();
+    api.trace.disable();
+  }
+});
+
+test('A35 disabled traces: an HTTP server root sends no traceparent downstream; an inbound one is passed on unchanged', async () => {
+  const res = runCjs(`
+    process.env.OTEL_HELPER_DISABLED_SIGNALS = 'traces';
+    process.env.OTEL_METRICS_EXPORTER = 'prometheus';
+    process.env.OTEL_HELPER_METRICS_PORT = '0';
+    const helper = require('@staffops/otel-helper');
+    helper.setup({ serviceName: 'svc', environment: 'DEV', installDiagLogger: false });
+    const http = require('node:http');
+    const seen = [];
+    const downstream = http.createServer((req, res) => { seen.push({ traceparent: req.headers.traceparent, tracestate: req.headers.tracestate }); res.end('ok'); });
+    downstream.listen(0, '127.0.0.1', () => {
+      const dport = downstream.address().port;
+      const front = http.createServer((req, res) => {
+        http.get({ host: '127.0.0.1', port: dport, path: '/' }, (r) => { r.resume(); r.on('end', () => res.end('ok')); });
+      });
+      front.listen(0, '127.0.0.1', async () => {
+        const fport = front.address().port;
+        const call = (headers) => new Promise((resolve) => http.get({ host: '127.0.0.1', port: fport, path: '/', headers }, (r) => { r.resume(); r.on('end', resolve); }));
+        await call({});
+        await call({ traceparent: '00-${TRACE_ID}-${SPAN_ID}-01', tracestate: 'vendor=a' });
+        front.close(); downstream.close();
+        // The HTTP metrics are recorded with traces disabled: 2 front + 2 downstream server requests.
+        await new Promise((r) => setTimeout(r, 50));
+        const scrape = { statusCode: 0, headers: {}, setHeader(k, v) { this.headers[k] = v; }, writeHead(c, h) { this.statusCode = c; Object.assign(this.headers, h || {}); return this; }, end(body) { this.body = String(body); this.done(); } };
+        const text = await new Promise((resolve) => { scrape.done = () => resolve(scrape.body); helper.metricsHandler()({ method: 'GET', url: '/metrics', headers: {} }, scrape); });
+        const count = text.split('\\n').filter((l) => /^http_server_request_duration_seconds_count[{ ]/.test(l)).reduce((n, l) => n + Number(l.trim().split(/\\s+/).pop()), 0);
+        console.log(JSON.stringify({ seen, count }));
+      });
+    });
+  `);
+  assert.deepEqual(lastJson(res), { seen: [{}, { traceparent: `00-${TRACE_ID}-${SPAN_ID}-01`, tracestate: 'vendor=a' }], count: 4 });
+});

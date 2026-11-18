@@ -10355,7 +10355,7 @@
         "go": "pass",
         "python": "pass",
         "dotnet": "pass",
-        "nodejs": "xfail:A35"
+        "nodejs": "pass"
       }
     },
     {

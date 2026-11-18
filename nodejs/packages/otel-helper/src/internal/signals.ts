@@ -67,6 +67,14 @@ export interface SignalSelection {
   readonly metricExportIntervalMs: number;
   /** Where the interval came from: `exportIntervalMs`, the env variable, or `default`. */
   readonly intervalSource: string;
+  /**
+   * Traces turned off by `OTEL_HELPER_DISABLED_SIGNALS` / `disabledSignals`
+   * (task A35): a no-op tracer, unlike `OTEL_TRACES_EXPORTER=none`, which keeps
+   * an SDK provider without an exporter (contract D1 row "Propagation with
+   * traces off"). `false` under `OTEL_SDK_DISABLED=true`, which builds no
+   * provider at all.
+   */
+  readonly tracesDisabled: boolean;
 }
 
 /**
@@ -278,5 +286,6 @@ export function resolveSignals(code: SignalCodeOptions, otlp: OtlpPlan, warn: Wa
     logsExporters: effective('logs', logs) as readonly SpanLogExporterName[],
     metricExportIntervalMs: interval.ms,
     intervalSource: interval.source,
+    tracesDisabled: !sdkDisabled && disabled.has('traces'),
   });
 }

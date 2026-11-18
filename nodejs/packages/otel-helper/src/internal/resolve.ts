@@ -269,6 +269,11 @@ export interface Plan {
   readonly sdk: SdkSettings;
   /** Where {@link Resolved.metricExportIntervalMs} came from (option, env variable or `default`). */
   readonly intervalSource: string;
+  /**
+   * Traces disabled by `OTEL_HELPER_DISABLED_SIGNALS` / `disabledSignals`
+   * (task A35): the global tracer is a no-op tracer. Not `OTEL_TRACES_EXPORTER=none`.
+   */
+  readonly tracesDisabled: boolean;
 }
 
 const OPTION_KEYS: ReadonlySet<string> = new Set([
@@ -649,7 +654,7 @@ export function resolvePlan(options: SetupOptions, defaultServiceName: string, q
     // Set by setup() once it knows which globals it owns.
     inactiveSignals: Object.freeze([]),
   });
-  return { resolved, resourceAttributes: Object.freeze(layer), otlpHeaders, sdk, intervalSource: signals.intervalSource };
+  return { resolved, resourceAttributes: Object.freeze(layer), otlpHeaders, sdk, intervalSource: signals.intervalSource, tracesDisabled: signals.tracesDisabled };
 }
 
 const SILENT_REPORTER: Reporter = Object.freeze({ warn: () => undefined, info: () => undefined });
