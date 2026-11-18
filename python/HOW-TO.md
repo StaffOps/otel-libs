@@ -512,7 +512,8 @@ translation); check your backend before writing queries.
   (the exporter adds it to counters).
 - The SDK's default histogram buckets (`0, 5, 10, … 10000`) suit
   milliseconds; give second-based histograms `explicit_bucket_boundaries_advisory`.
-- Measurements made inside a sampled span get a trace exemplar automatically.
+- Measurements made inside a sampled span get a trace exemplar automatically,
+  with the default `trace_based` filter (`OTEL_METRICS_EXEMPLAR_FILTER`).
 - Keep attribute values bounded (enums, status classes); every distinct set is a
   new series.
 - `OTEL_HELPER_DISABLED_METRICS=orders.debug.*` drops instruments from every

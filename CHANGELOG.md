@@ -3341,6 +3341,23 @@ Behavior changes, with migration notes:
 
 ### Python — detailed changes
 
+- **`OTEL_METRICS_EXEMPLAR_FILTER` honored (task A33, design D1 row "Metrics
+  exporters / interval / exemplars"; 2026-11-18).** The helper used to pass
+  `TraceBasedExemplarFilter()` whatever the variable said. It now parses the
+  variable in option resolution, at every setup, also with metrics off —
+  `always_on`, `always_off`, `trace_based`, contract trim, ASCII
+  case-insensitive, unset or empty = `trace_based` — and passes the matching
+  filter to the `MeterProvider`. Any other value writes one WARNING per setup
+  on `staffops_otel_helper.config` naming the variable and the value (cut to
+  64 characters) and uses `trace_based`; the SDK never parses the variable
+  itself, so the `ValueError` the Python SDK (1.42–1.45) raises on an unknown
+  value cannot reach startup. Parity case
+  `metrics.exemplar_filter_env_always_off` flips from `xfail:A33` to pass;
+  Go and .NET already pass, Node.js stays `skip:no-upstream-node-exemplar-filter`.
+  New case `metrics.exemplar_filter_env_invalid_warns` (394 cases): Python and
+  .NET pass; Go is `xfail:A48` — its SDK keeps `trace_based` for an unknown
+  value without a warning (task A48).
+
 - **Protocol span error attributes (requirement R12, design D16, tasks A44,
   A46 Python part; 2026-11-18).** Only when the span ends with status ERROR
   and has no `error.type`; values already on the span are never overwritten

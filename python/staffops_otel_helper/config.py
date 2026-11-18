@@ -80,6 +80,9 @@ ENV_METRICS_PORT = "OTEL_HELPER_METRICS_PORT"
 # listener (design D1 row "Prometheus exporter variables", A29).
 ENV_PROMETHEUS_PORT = "OTEL_EXPORTER_PROMETHEUS_PORT"
 ENV_PROMETHEUS_HOST = "OTEL_EXPORTER_PROMETHEUS_HOST"
+# Exemplar filter, parsed by the helper (task A33, design D1 row "Metrics exporters / interval / exemplars").
+ENV_EXEMPLAR_FILTER = "OTEL_METRICS_EXEMPLAR_FILTER"
+EXEMPLAR_FILTERS = ("always_off", "always_on", "trace_based")
 ENV_INSECURE = "OTEL_EXPORTER_OTLP_INSECURE"
 ENV_METRICS_EXPORTER = "OTEL_METRICS_EXPORTER"
 ENV_METRIC_EXPORT_INTERVAL = "OTEL_METRIC_EXPORT_INTERVAL"
@@ -632,6 +635,9 @@ class ResolvedOptions:
     # HTTP opt-in metrics (active requests, body sizes) recorded: code, else
     # OTEL_HELPER_HTTP_OPT_IN_METRICS, else False (A30).
     http_opt_in_metrics: bool = False
+    # OTEL_METRICS_EXEMPLAR_FILTER: always_on / always_off / trace_based (default); env
+    # only, no code option (task A33).
+    exemplar_filter: str = "trace_based"
 
 
 # Fields whose public value is only ever the code value; resolution stores the
@@ -748,7 +754,9 @@ class TelemetryOptions:
                 values[name] = list(values[name])
         sample_set = self._effective.get("sample_ratio_set", self.sample_ratio is not None)
         host = str(self._effective.get("prometheus_metrics_host", ""))
-        return ResolvedOptions(sample_ratio_set=bool(sample_set), prometheus_metrics_host=host, **values)
+        exemplar_filter = str(self._effective.get("exemplar_filter", "trace_based"))
+        return ResolvedOptions(sample_ratio_set=bool(sample_set), prometheus_metrics_host=host,
+                               exemplar_filter=exemplar_filter, **values)
 
     def has_instrumentation(self, name: str) -> bool:
         if self._value("debug_level"):
@@ -1027,6 +1035,19 @@ class TelemetryOptions:
                                 redact_echoed_value(env_host), MSG_INVALID_PROMETHEUS_HOST)
             else:
                 eff["prometheus_metrics_host"] = host
+        # Task A33: parsed at every setup, also when metrics are off (as .NET and the
+        # Prometheus variables, A29); the helper always passes the filter, so the SDK
+        # (which raises ValueError on an unknown value, 1.42-1.45) never parses it.
+        eff["exemplar_filter"] = "trace_based"
+        env_filter = _env(ENV_EXEMPLAR_FILTER)
+        if env_filter is not None:
+            name = ascii_lower(env_filter)
+            if name in EXEMPLAR_FILTERS:
+                eff["exemplar_filter"] = name
+            else:
+                self._warn_once(ENV_EXEMPLAR_FILTER, "[OtelHelper] %s=%r is not a known exemplar filter "
+                                "(valid: %s); using trace_based.", ENV_EXEMPLAR_FILTER, env_filter,
+                                ", ".join(EXEMPLAR_FILTERS))
         self._resolved = True
 
     def _resolve_sample_ratio(self) -> None:

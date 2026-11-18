@@ -100,6 +100,7 @@ The custom-signals example runs against the same Collector; see
 | Module | Covers |
 |---|---|
 | `test_config.py` | resolution contract (design D1): service name and environment precedence, env values that warn and fall back, `OTEL_*_EXPORTER`, per-signal "OTLP configured", protocol precedence, code validation, URL redaction |
+| `test_exemplar_filter.py` | A33: `OTEL_METRICS_EXEMPLAR_FILTER` known values (contract trim, ASCII case), an unknown value warns once and uses `trace_based` (NBSP, 64-character cut), the warning also with `OTEL_SDK_DISABLED`, the resolved filter reaches the helper `MeterProvider` and decides which exemplars are recorded |
 | `test_shims.py` | what the helper passes to the SDK exporters: absolute vs code endpoints, schemeless, portless gRPC, TLS conflicts, timeout ms → s, gzip default, headers, semconv default, `OTEL_PROPAGATORS`, `service.instance.id`, diagnostics channel |
 | `test_endpoint_a17.py` | A17 endpoint rulings: RFC 3986 split, port range and leading zeros, host characters and zone ids, IDN punycode, `<unparseable URL>` rendering, `@` in the path, empty query/fragment, INSECURE without an endpoint, empty code `otlp_protocol` / `compression` |
 | `test_resource_a16.py` | A16 resource rulings: identity precedence, `OTEL_RESOURCE_ATTRIBUTES` parsing and warnings, `telemetry.sdk.*`, schema URL, `service.instance.id` |

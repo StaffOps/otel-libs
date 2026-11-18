@@ -133,6 +133,7 @@ metrics use the Prometheus fallback and logs stay local.
 | `OTEL_CONFIG_FILE` / `OTEL_EXPERIMENTAL_CONFIG_FILE` | _(unset)_ | Declarative configuration is **not supported**: ignored with one warning per process naming the variable (never the path) |
 | `OTEL_TRACES_EXPORTER` / `OTEL_LOGS_EXPORTER` | `otlp` | `otlp`, `console`, `none` or a list (`otlp,console`). `logging` is a deprecated alias of `console` (variables only: in `metric_exporters` it raises) |
 | `OTEL_METRICS_EXPORTER` | _(inferred)_ | `otlp`, `prometheus`, `console`, a list, `none`. Unset: `otlp` when a metrics endpoint is configured, else `prometheus` |
+| `OTEL_METRICS_EXEMPLAR_FILTER` | `trace_based` | `always_on`, `always_off`, `trace_based` (contract trim, ASCII case-insensitive), parsed by the helper at every setup (also with metrics off), which always passes the filter to the `MeterProvider`; any other value warns once per setup, naming the variable and the value (cut to 64 characters), and uses `trace_based` (task A33) |
 | `OTEL_METRIC_EXPORT_INTERVAL` | `30000` | Milliseconds (the SDK default is 60000): ASCII digits with an optional `+` (any number of digits; leading zeros ignored), > 0, else warned and 30 000; above 2 147 483 647 clamped with a warning |
 | `OTEL_TRACES_SAMPLER` / `OTEL_TRACES_SAMPLER_ARG` | `parentbased_always_on` | Spec names, case-insensitive. Unknown name → warning + default; invalid `_ARG` → warning + 1.0 |
 | `OTEL_PROPAGATORS` | `tracecontext,baggage` | `tracecontext`, `baggage`, `none`. Other values are warned and skipped (needs the import order above) |
@@ -178,7 +179,7 @@ until 1.0.
 | Signal | Captured |
 |---|---|
 | Traces | FastAPI server, HTTPX and requests clients, gRPC client and server (sync and aio). Health probes produce no server span |
-| Metrics | HTTP server/client duration (stable semconv, seconds), system/process metrics, your instruments; trace-based exemplars; every 30 s |
+| Metrics | HTTP server/client duration (stable semconv, seconds), system/process metrics, your instruments; exemplars with the default `trace_based` filter (`OTEL_METRICS_EXEMPLAR_FILTER`); every 30 s |
 | Logs | Standard `logging` records with trace/span ids, exported when a logs exporter is active; single-line JSON on stdout otherwise |
 
 Without any OTLP endpoint: metrics on `http://<pod>:9464/metrics`, traces

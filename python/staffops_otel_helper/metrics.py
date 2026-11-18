@@ -10,7 +10,12 @@ from urllib.parse import urlsplit
 
 from opentelemetry import metrics
 from opentelemetry.exporter.prometheus import PrometheusMetricReader
-from opentelemetry.sdk.metrics import MeterProvider, TraceBasedExemplarFilter
+from opentelemetry.sdk.metrics import (
+    AlwaysOffExemplarFilter,
+    AlwaysOnExemplarFilter,
+    MeterProvider,
+    TraceBasedExemplarFilter,
+)
 from opentelemetry.sdk.metrics.export import Gauge, MetricsData, PeriodicExportingMetricReader
 from opentelemetry.sdk.metrics.view import View, DropAggregation
 from opentelemetry.sdk.resources import Resource
@@ -19,9 +24,21 @@ from staffops_otel_helper._diag import warn_once_per_process
 from staffops_otel_helper._exporters import build_otlp_exporter
 from prometheus_client import CollectorRegistry
 
-from staffops_otel_helper.config import ENV_PROMETHEUS_HOST, ENV_PROMETHEUS_PORT, TelemetryOptions, _truncate
+from staffops_otel_helper.config import (
+    ENV_PROMETHEUS_HOST,
+    ENV_PROMETHEUS_PORT,
+    TelemetryOptions,
+    _truncate,
+)
 
 _logger = logging.getLogger(__name__)
+
+# OTEL_METRICS_EXEMPLAR_FILTER, resolved by TelemetryOptions (task A33) -> SDK filter.
+_EXEMPLAR_FILTERS = {
+    "always_on": AlwaysOnExemplarFilter,
+    "always_off": AlwaysOffExemplarFilter,
+    "trace_based": TraceBasedExemplarFilter,
+}
 
 # Dedicated registry for the helper's /metrics (P14): only OTel-produced series.
 # prometheus_client's global REGISTRY also carries process_*/python_gc_*/
@@ -495,7 +512,7 @@ def build_metrics(resource: Resource, options: TelemetryOptions):
         kwargs = dict(
             resource=resource,
             metric_readers=readers,
-            exemplar_filter=TraceBasedExemplarFilter(),
+            exemplar_filter=_EXEMPLAR_FILTERS[options.resolved.exemplar_filter](),
             shutdown_on_exit=False,  # the helper's atexit hook runs shutdown_telemetry()
         )
         if views:
