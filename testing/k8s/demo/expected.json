@@ -38,36 +38,19 @@
       "c": "pass",
       "d.demo": "pass",
       "d.grpc": "pass",
-      "d.http": {
-        "expect": "xfail:A40",
-        "ref": "otelhttp v0.72.0 internal/semconv/server.go:74-75 sets no error.type on server spans",
-        "reason": [
-          "api SERVER error.type None (want 500)"
-        ]
-      },
+      "d.http": "pass",
       "d.db": {
         "expect": "xfail:A36",
         "ref": "XSAM otelsql v0.44.0 utils.go:57 span.RecordError (exception.message)",
         "reason": [
-          "db.response.status_code None",
           "exception events [['exception.message', 'exception.type']]",
           "run token on client span",
           "no correlated ERROR record"
-        ],
-        "reason_notes": "db.response.status_code None: owned by A44 (also_xfail); A36 covers the exception detail and the correlated record",
-        "also_xfail": [
-          "A44"
         ]
       },
       "e.trace": "pass",
       "e.edges": "pass",
-      "e.edge.db": {
-        "expect": "xfail:A38",
-        "ref": "go/ext/otelsql/sql.go:42-44 passes no db.namespace: virtual_node, server postgresql",
-        "reason": [
-          "no connection_type=database edge"
-        ]
-      },
+      "e.edge.db": "pass",
       "g.secret": "pass",
       "g.sentinel.db": {
         "expect": "xfail:A36",

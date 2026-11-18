@@ -3,12 +3,13 @@
 Standard library unittest; no cluster access. Tempo traces are recorded from the
 DE3 local smokes (fixtures/tempo-<lang>-<scenario>.json: the Collector file
 exporter's OTLP JSON re-encoded as Tempo's /api/traces answer, base64 ids) and, for
-Python, read from Tempo on k8s01 for run 20261116t1812 (long strings cut at 240);
-Loki and Prometheus answers are built inline in their API shapes. Edited
+Python and Go, read from Tempo on k8s01 for run 20261116t1812 (long strings cut at
+240); Loki and Prometheus answers are built inline in their API shapes. Edited
 2026-11-17 (A45, DE-D8 note): the type-only ``exception`` event of each owning
 demo span (``demo.order.process`` / ``demo.order.accept``, scope
 ``otel-libs-demo``) was removed, as the demo apps no longer write it; every other
-span, DB spans included, is as recorded.
+span, DB spans included, is as recorded. Go re-recorded 2026-11-18 from the
+cluster (images ``ea25d10``, Go D16 and A45, traces after 05:30 UTC), not edited.
 """
 
 from __future__ import annotations
@@ -29,7 +30,10 @@ import verify  # noqa: E402
 
 FIXTURES = HERE / "fixtures"
 # Run ids of the recorded smokes (the run tokens in the fixtures carry them).
-RUNS = {"go": "smoke1116", "node": "smoke1", "dotnet": "de3dsmoke", "python": "20261116t1812"}
+RUNS = {"go": "20261116t1812", "node": "smoke1", "dotnet": "de3dsmoke", "python": "20261116t1812"}
+# Fake clock. The Go fixtures (recorded 2026-11-18) start after it, at about
+# 1_794_981_477 s: the checks do not filter span start times by the window today,
+# so the fixtures are used as-is. A check that starts filtering them needs NOW moved.
 NOW = 1_794_900_000
 W = 900
 WEND = NOW - 120
@@ -246,8 +250,11 @@ class ExpectationTest(unittest.TestCase):
     def test_shipped_expected_json(self) -> None:
         e = verify.load_expected()
         self.assertEqual(set(e), set(verify.LANGS))
-        self.assertEqual(e["go"]["d.http"]["expect"], "xfail:A40")
-        self.assertEqual(e["go"]["e.edge.db"]["expect"], "xfail:A38")
+        # Go D16 (images ea25d10, run 20261116t1812): 500 server span error.type, DB edge, 23505.
+        self.assertEqual(e["go"]["d.http"]["expect"], "pass")
+        self.assertEqual(e["go"]["e.edge.db"]["expect"], "pass")
+        self.assertEqual(e["go"]["d.db"]["expect"], "xfail:A36")
+        self.assertEqual(e["go"]["d.db"]["also"], [])
         self.assertEqual(e["go"]["g.sentinel.db"]["expect"], "xfail:A36")
         self.assertEqual(e["python"]["g.sentinel.db"]["expect"], "pass")
         self.assertEqual(e["node"]["g.sentinel.db"]["expect"], "pass")
@@ -256,10 +263,10 @@ class ExpectationTest(unittest.TestCase):
         for cell in verify.EXEMPLAR_CELLS:
             want = "n/a:upstream-no-rpc-metrics" if cell == "b.rpc_server" else "n/a:upstream-no-sdk-exemplars"
             self.assertEqual(e["node"][cell]["expect"], want)  # DE6: Node.js emits no RPC metrics
-        for lang in ("go", "python", "node"):
+        for lang in ("python", "node"):
             self.assertIn("A44", e[lang]["d.db"]["also"])
         tasks = {v["expect"] for cells in e.values() for v in cells.values() if v["expect"].startswith("xfail:")}
-        self.assertEqual(tasks, {"xfail:A36", "xfail:A37", "xfail:A38", "xfail:A40"})
+        self.assertEqual(tasks, {"xfail:A36", "xfail:A37"})
         self.assertEqual(e["dotnet"]["d.http"]["also"], ["A42"])
         out = io.StringIO()
         report(out).cell("dotnet", "d.http", verify.Obs("fail", "x"))
@@ -302,15 +309,22 @@ class ExpectationTest(unittest.TestCase):
         rep = report(out)
         rep.cell("go", "a", verify.Obs("pass", "ok"))
         self.assertFalse(rep.failed())
-        rep.cell("go", "d.db", verify.Obs("fail", "x", problems=["db_error: 'q' db.response.status_code None"]))
+        rep.cell("go", "d.db", verify.Obs("fail", "x", problems=[
+            "db_error: 'q' exception events [['exception.message', 'exception.type']]"]))
         self.assertFalse(rep.failed())  # XFAIL does not fail the run
         rep.cell("go", "d.http", verify.Obs("pass", "fixed"))
+        self.assertFalse(rep.failed())  # Go D16: d.http is an expected pass
+        rep.cell("go", "g.sentinel.db", verify.Obs("pass", "fixed"))
         self.assertTrue(rep.failed())  # XPASS does
         rep.matrix(["go"])
         text = out.getvalue()
-        self.assertIn("XFAIL       go d.db: x [expected xfail:A36+A44] (ref: XSAM", text)
-        self.assertIn("XPASS       go d.http", text)
-        self.assertIn("verify demo: PASS 1, XFAIL 1, XPASS 1; FAIL", text)
+        self.assertIn("XFAIL       go d.db: x [expected xfail:A36] (ref: XSAM", text)
+        self.assertIn("XPASS       go g.sentinel.db", text)
+        self.assertIn("verify demo: PASS 2, XFAIL 1, XPASS 1; FAIL", text)
+        # Go D16 sets db.response.status_code: the A44 problem no longer explains a Go d.db XFAIL.
+        rep3 = report()
+        self.assertEqual(rep3.cell("go", "d.db", verify.Obs("fail", "x", problems=[
+            "db_error: 'q' db.response.status_code None"])), "FAIL")
         rep2 = report()
         rep2.blocked("flags")
         self.assertTrue(rep2.failed())
@@ -640,14 +654,16 @@ class CheckDTest(unittest.TestCase):
         c = self.cells("go", out=out)
         self.assertEqual(c["d.demo"].state, "pass", c["d.demo"].detail)
         self.assertEqual(c["d.grpc"].state, "pass", c["d.grpc"].detail)
-        self.assertEqual(c["d.http"].state, "fail")  # A40: no error.type on the 500 server span
-        self.assertIn("error.type None (want 500)", c["d.http"].detail)
+        self.assertEqual(c["d.http"].state, "pass", c["d.http"].detail)  # D16: api SERVER error.type 500
         self.assertEqual(c["d.db"].state, "fail")  # A36: XSAM records exception.message
         self.assertIn("run token", c["d.db"].detail)
+        self.assertIn("exception events [['exception.message', 'exception.type']]", c["d.db"].detail)
+        self.assertNotIn("db.response.status_code", c["d.db"].detail)  # D16: 23505 on the span
+        self.assertEqual(len(c["d.db"].problems), 2, c["d.db"].problems)
         self.assertIn("2 worker -> api HTTP CLIENT span(s) with a connection-error", out.getvalue())
         e = verify.load_expected()["go"]
         self.assertEqual([verify.judge(e[k]["expect"], c[k].state) for k in c],
-                         ["PASS", "PASS", "XFAIL", "XFAIL"])
+                         ["PASS", "PASS", "PASS", "XFAIL"])
 
     def test_python(self) -> None:
         c = self.cells("python")
@@ -829,6 +845,11 @@ class CheckDTest(unittest.TestCase):
         unh = spans_of("go", "unhandled")
         next(s for s in unh if s.kind == "server").status = "unset"
         self.assertIn("api SERVER status unset", verify._d_http("go", "unhandled", unh)[0])
+        unh = spans_of("go", "unhandled")  # fresh copy: the recorded span has error.type 500 (D16)
+        server = next(s for s in unh if s.kind == "server" and s.service.endswith("api"))
+        self.assertEqual(verify._d_http("go", "unhandled", unh), [])
+        server.attrs.pop("error.type")
+        self.assertIn("unhandled: api SERVER error.type None (want 500)", verify._d_http("go", "unhandled", unh))
 
     def test_db_rules(self) -> None:
         b = FakeBackends()
@@ -1107,7 +1128,7 @@ class PreflightAndDriverTest(unittest.TestCase):
         self.assertTrue(run.exemplar_storage)
         self.assertEqual(run.instances, {("go", "api"): {("dev-otel-libs/demo-go-api", "i1")}})
         self.assertEqual(run.pods["go"][0][0], "demo-go-api-5f-abc")
-        self.assertEqual(calls, [("k8s01", ["pods", "-n", "dev-otel-libs", "-l", "otel-libs/run=smoke1116"])])
+        self.assertEqual(calls, [("k8s01", ["pods", "-n", "dev-otel-libs", "-l", f"otel-libs/run={RUNS['go']}"])])
         text = out.getvalue()
         self.assertIn("inside the window", text)
         self.assertIn("(full: old exemplars are evicted)", text)
