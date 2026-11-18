@@ -323,6 +323,43 @@ message and stack on the span (ADR-014 violation); Go `StartRootSpan` and
   reaches the helper) THEN the span SHALL stay Unset; the application marks
   it explicitly with the record function when it wants an error.
 
+### R12 — Protocol spans carry the semconv error attributes
+(added 2026-11-17, design D16, tasks A38, A40, A44, A46; Go, Python and
+Node.js; .NET already emits the values where measured)
+
+> *Corrected 2026-11-17 (spec review round 1): the first draft did not
+> scope the SQL rule (Redis and AWS spans fell under it), left the
+> `db.namespace` condition vague, and said "5xx" where D16 also covers codes
+> 600–999.*
+
+Evidence: on the demo (run `20261116t1812`) the same failures gave a
+different `error.type` per language on SQL and gRPC CLIENT spans (Go and
+Python none, Node.js `_OTHER`, .NET the code), Go HTTP server spans had no
+`error.type` on 5xx, and Go SQL spans had no `db.namespace`.
+
+- WHEN a SQL client span created by Go `ext/otelsql`, Python `[sql]`
+  (SQLAlchemy) or Node.js `-sql` (pg, mysql2) ends with status ERROR and the
+  driver error carries an accepted PostgreSQL SQLSTATE or MySQL server error
+  number (D16 Values) THEN the span SHALL carry `db.response.status_code` and
+  `error.type` = that code; WHEN it carries none THEN `error.type` SHALL be
+  `_OTHER`. Redis spans keep the A26 rule; AWS spans are out of scope.
+- WHEN a gRPC CLIENT span of the helper's gRPC instrumentation ends with
+  status ERROR THEN it SHALL carry `error.type` = the canonical status code
+  name, or `_OTHER` without a code (D16 per-language notes); a gRPC SERVER
+  span SHALL carry it WHEN its status is ERROR under the semconv server
+  rule.
+- WHEN a Go `NewHTTPHandler` request ends with a 5xx status or a code
+  600–999 THEN the span (when recording) and `http.server.request.duration`
+  (always, sampled or not) SHALL carry `error.type` = the status code,
+  unless the application set another value on the span or in the Labeler.
+- Go `ext/otelsql` spans and metrics SHALL carry `db.namespace` = the
+  database name resolved by the D16 order (`WithDBNamespace` > DSN >
+  `PGDATABASE` for the drivers mapped to `postgresql` > none, with one
+  diagnostics line naming the driver only); SQLite gets none and no line.
+- The helper SHALL NOT overwrite a value the instrumentation or the
+  application already set, and SHALL NOT put message text in these
+  attributes.
+
 ## Go-only (G)
 
 - **G1** Evidence: failed Setup → `global TP sdk=true span.IsRecording=true`,

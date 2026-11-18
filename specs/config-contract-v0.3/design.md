@@ -163,12 +163,12 @@ didn't pin down, where Go and Python diverged. One rule each, both languages:
 | Suffix semantics (B7/A21 fix round, 2026-11-02) | The unit word, `_total` and `_ratio` are appended **only when the name does not already end with them**; a trailing `_total` of a counter moves after the unit; a unit word or `total`/`ratio` inside the name is kept (`probe.bytes-sent` in `By` → `probe_bytes_sent_bytes_total`, `req.total.count` → `req_total_count_total`, a Gauge `ratio.load` in `1` → `ratio_load_ratio`). Node and Python. Go's exporter (`otlptranslator` v1.0.0, `metric_namer.go:273-276`, `removeItem`) works on name tokens and removes those words wherever they appear (`probe_bytes_sent_total`, `req_count_total`, `load_ratio`); no supported exporter option gives suffix semantics, so the Go cases are `skip:no-upstream-go-otlptranslator-tokens`. Cases `metrics.scrape_unit_word_inside_name`, `metrics.scrape_total_inside_name`, `metrics.scrape_ratio_inside_name` | — |
 | Exposition details (B7/A21 fix round, 2026-11-02) | Not pinned: Go's `promhttp` negotiates the protobuf format and gzip from `Accept` / `Accept-Encoding`, Python and Node always answer text 0.0.4 uncompressed; Python writes float bounds and values as `le="5.0"` / `1.0`, Go and Node `le="5"` / `1`. *Amended 2026-11-02 (final round): a non-colliding array attribute is rendered by the upstream Python exporter as `[1, 2]` (`json.dumps` defaults), by Go and Node as `[1,2]`; not changed by the helper.* Equivalent for Prometheus; recorded, no case | — |
 | Percent-encoded health paths (Node B6 fix round, 2026-11-02; task A22) | Health matching (D5) uses the **percent-decoded** path in every language, server spans and HTTP client exclusions alike: query and fragment cut on the raw target, then the path decoded, cut again at a decoded `?`/`#`, ASCII-lowercased and trailing slashes dropped. `/%68ealth` and `/HEALTH%2f` are `/health`. A malformed escape keeps the raw path. Go: the sampler and `NewHTTPTransport` see the decoded `req.URL.Path` (no change). Node: `normalizeHealthPath` decodes (instrumentation-http's `url.path` is raw). Python: the server sampler already sees the decoded path (the case passes with no change); the client `excluded_urls` regex is matched against the URL as sent, so an encoded client path is not excluded — recorded Python residual, no case. Case `http.health_percent_encoded_path` | Node traced `/%68ealth` and `/health%2F`; Go dropped them |
-| gRPC server span status (Node B6 fix round, 2026-11-02; task A22) | A gRPC **SERVER** span ends with status ERROR only for UNKNOWN, DEADLINE_EXCEEDED, UNIMPLEMENTED, INTERNAL, UNAVAILABLE and DATA_LOSS (RPC semconv); any other non-OK code leaves it UNSET; `rpc.grpc.status_code` is kept. Client spans keep their instrumentation's rule (ERROR on every non-OK code). Go: `otelgrpc` `serverStatus` (`interceptor.go:86-98`, v0.72.0). Python: `_utilities.py`. Node: instrumentation-grpc 0.300 marks every non-OK code ERROR, so the helper's `GrpcServerStatusProcessor` resets the others to UNSET in `onEnding` (before every processor's `onEnd`, the app's own `spanProcessors` included); only spans of the helper's TracerProvider. Case `grpc.server_not_found_status_unset` (new snapshot field `server_span_status`) | Node marked NOT_FOUND, INVALID_ARGUMENT, … as ERROR |
+| gRPC server span status (Node B6 fix round, 2026-11-02; task A22) | A gRPC **SERVER** span ends with status ERROR only for UNKNOWN, DEADLINE_EXCEEDED, UNIMPLEMENTED, INTERNAL, UNAVAILABLE and DATA_LOSS (RPC semconv); any other non-OK code leaves it UNSET; `rpc.grpc.status_code` is kept. Client spans keep their instrumentation's rule (ERROR on every non-OK code). Go: `otelgrpc` `serverStatus` (`interceptor.go:86-98`, v0.72.0). Python: `_utilities.py`. Node: instrumentation-grpc 0.300 marks every non-OK code ERROR, so the helper's `GrpcServerStatusProcessor` resets the others to UNSET in `onEnding` (before every processor's `onEnd`, the app's own `spanProcessors` included); only spans of the helper's TracerProvider. Case `grpc.server_not_found_status_unset` (new snapshot field `server_span_status`) *Amended 2026-11-17 (design D16, R12, task A46):* ERROR gRPC spans, CLIENT and SERVER, also carry `error.type` = the canonical status code name. | Node marked NOT_FOUND, INVALID_ARGUMENT, … as ERROR |
 | Stdout fallback time zone (Node B8, 2026-11-02; **ruled 2026-11-02, task A23**) | The stdout fallback writes the record time in **UTC**, RFC 3339 with milliseconds and **`Z`**, whatever the process zone (`TZ`), in every language. Go already did (`go/logging.go`, `stdoutTime`, `.UTC()`); Node does (`toISOString`). **Python changed (A23):** `_rfc3339_ms` (`python/staffops_otel_helper/_console.py`) formats an aware UTC datetime; before, it wrote local time with its offset (`TZ=America/Sao_Paulo`: `1969-12-31T21:00:00.000-03:00` for epoch 0, checked in `python:3.12-slim`) and `Z` only when the zone was UTC. Case `logging.stdout_time_utc_under_tz` (`TZ=America/Sao_Paulo`) | One timestamp form per pipeline: log processors parse a single layout, and comparing records across languages needs one zone. The A5 ruling ("`Z` for UTC") left the non-UTC case open; containers run in UTC, so it only showed on hosts or pods with `TZ` set |
 | Stdout fallback fields (Node B8, 2026-11-02; **ruled 2026-11-02, task A23**) | (a) **Reserved keys — unified:** a top-level attribute named `time`, `level`, `msg` or `logger` is **dropped** from the stdout line in every language, so the record's own field is the only one. Python already skipped them (`_console.py`, `key not in entry`; `msg` cannot be an `extra` at all, the stdlib refuses to overwrite a LogRecord attribute); Node skips them (`logging.ts` `RESERVED`); **Go changed (A23):** its slog JSON fallback wrote a duplicate key (`{"time":…,"level":"WARN","msg":"m","msg":"dup",…}` from `slog.NewJSONHandler`, `golang:1.26`, 2026-11-02) and now drops the attribute (`go/logging.go` `reservedStdoutKeys`, `stdoutRecord`, `filterReserved`; record attributes and `With` attributes; an attribute inside a `WithGroup` nests in the group object and is kept; members of an inline `slog.Group("", …)` are filtered, a `LogValuer` resolved first). *Amended 2026-11-02 (A23 fix round, owner):* in Go a top-level **`logger` attribute becomes the line's `logger` field**, written once **before the record's own attributes** (after any `With` attributes, which slog writes first), the **last non-error** one winning (a record attribute over a `With` one; an error under `logger` is the exception or dropped, never the field); without one Go writes no `logger` field. An **error under a reserved key** is renamed to `exception` like any other error (the first error of the record, or a `With` error under a reserved key when the scope has no exception yet); it is dropped only when an `exception` key already exists — same rule in Node (`logging.ts`); in Python a reserved name cannot hold an error as an `extra` (the stdlib refuses `msg`; `time`/`level`/`logger` extras are skipped). (b) **`logger` — accepted difference:** written when the language has a logger name — Python (`record.name`) and Node (`createLogger({name})`); Go's `NewLogger` / `NewSlogHandler` have no name, so Go writes it only when the record or its `With` attributes carry a top-level `logger` attribute (amended 2026-11-02, see (a); README "Known emitted-telemetry gaps"). (c) **`exception` — accepted, native form per language:** Go the `Error()` text of the first error attribute (`errorText`), Python the traceback of `exc_info`, Node the `Error` `stack` (else `Name: message`) of the first `Error` attribute; an attribute already named `exception` is kept and nothing is renamed (Go and Node). *Corrected 2026-11-02 (A23 fix round):* in Python an `exception` **extra** is kept only when the record has no `exc_info`; with `exc_info` set, the traceback overwrites it (`_console.py` `JSONFormatter.format`). (d) **Non-JSON values — text in all three:** Python `json.dumps(default=str)`; Go's slog JSON handler writes the encoder error as a string (`"fn":"!ERROR:json: unsupported type: func()"`, `"cycle":"!ERROR:json: unsupported value: encountered a cycle via *main.node"`, `"nan":"!ERROR:json: unsupported value: NaN"`, `"cplx":"!ERROR:json: unsupported type: complex128"`; `golang:1.26` probe, 2026-11-02 — confirmed, no Go change); Node renders bigint and symbols with `String()`, functions as `[Function: name]`, a `Map` as an object (string keys), a `Set` as an array, a value whose read or `toJSON` throws as `[unreadable <type>]` (`[unreadable accessor]` for a throwing getter or Proxy trap). **Cycles (corrected 2026-11-02, A23 fix round):** Python and Node write `"[Circular]"` at the repeated container (Python: before the fix round `json.dumps` raised and the stdlib dropped the record with a traceback on stderr); Go's slog writes `"!ERROR:json: unsupported value: encountered a cycle via …"`. Python's fast path is `json.dumps(…, allow_nan=False, separators=(",", ":"))`; only when it raises does a sanitizer run (cycles, non-finite floats, dict keys json cannot encode as `str(key)`, a `RecursionError` falls back to `str(value)`). All three use compact separators (`,` and `:`; Python changed in the fix round). *Corrected 2026-11-02 (A23 review):* the functions are Go `stdoutRecord` / `filterReserved` (`go/logging.go`; `dropReserved` / `withoutReserved` no longer exist), Python `_dumps` / `_json_safe` / `_text` (`_console.py`; `_finite` no longer exists) and Node `convert` (`logging.ts`). Python passes `default=_text` to every `json.dumps` and catches any exception around the fallback, so no extra can lose the record (a raising `__str__`, a dict subclass whose `items()` raises → that value as text or `[unprintable <type>]`); a NaN or ±Infinity dict key becomes `str(key)`. Node: a value whose prototype lookup throws (a Proxy trap, a revoked Proxy) is `[unreadable object]`; a `toJSON` returning `this` lists the object's own keys; a top-level `undefined` is `null` on stdout. **Non-finite floats (ruled 2026-11-02, owner):** every language writes **valid JSON**, the value as text: Python's `json.dumps` wrote bare `NaN` / `Infinity` / `-Infinity` (invalid JSON; probe `python:3.12-slim`, 2026-11-02: `"nan": NaN, "inf": Infinity, "nested": {"a": [NaN]}`) and now writes `"nan"`, `"inf"`, `"-inf"` (`_console.py` `_json_safe`, nested dicts/lists/tuples too); Node wrote `null` (`JSON.stringify`) and now writes `"NaN"`, `"Infinity"`, `"-Infinity"`; Go writes `"!ERROR:json: unsupported value: NaN"` (accepted as Go's native form, no change). The text differs per language; only "never a crash, never an invalid line" is the contract. No parity case: the `logging` kind emits a message without attributes, so a value-level case would need a record input in three drivers. *Corrected 2026-11-11:* the `logging` kind has `attributes` (C13) and `in_span` (C14a round 3) inputs. *Amended 2026-11-11 (all four languages; from .NET C14a round 3 and [ADR-014](../decisions/ADR-014-exception-detail-in-correlated-logs.md)):* a stdout line for a record emitted in a **valid span context** carries `trace_id` (32 lower-case hex) and `span_id` (16 lower-case hex) right after `logger` (right after `msg` where the language writes no logger name), with exactly these names (the Loki / OpenTelemetry convention); an attribute of either name is then dropped (no duplicate key); without a span context neither field is written. A database exception record (ADR-014) uses the ids of its span, not of the span current when it is written, and the exception event's time as `time`. .NET implements it (C14a); Go, Python and Node.js in task A36 (case `logging.stdout_span_context`, `xfail:A36`; `logging` kind input `in_span`). | Duplicate keys are read differently by different log pipelines (first or last wins), so they are removed; the other three are presentation details where each language's native rendering is what its developers expect, recorded so nobody "fixes" them one language at a time |
 | OTel log scope name (Node B8, 2026-11-02; **accepted difference, ruled 2026-11-02, task A23**) | On the OTel Logs API path, the instrumentation scope of a record is **the logger name** in Python (contrib `LoggingHandler.emit`: `get_logger(record.name, …)`, `opentelemetry-instrumentation-logging` 0.66b2 `handler.py:220`) and Node (`createLogger({name})`), and the fixed **`otel-helper`** in Go (`go/logging.go`, `otelslog.NewHandler("otel-helper", …)`; slog has no logger name). Severity text is `DEBUG`/`INFO`/`WARN`/`ERROR` in all three (Python maps `WARNING` → `WARN`, `CRITICAL` → `FATAL`, `handler.py:184-188`; Go `slog.Level.String()`; Node fixed table). Kept as is | Backends group or filter by scope; Go records cannot be told apart by logger without an API change. No fixture case asserts the scope (the `export` kind emits through the global LoggerProvider) |
 | Explicit instance id in a worker (Node B9b fix round, 2026-11-02; **ruled 2026-11-02, task A24**) | When `service.instance.id` comes from code or `OTEL_RESOURCE_ATTRIBUTES` in a worker the helper can detect (Python: forked after the helper was imported; Node: a `cluster` worker), the value is kept (D4) and the helper warns once, worded as a **conditional**, the same wording except the worker kind (`forked`/`cluster`) in every language: `service.instance.id is set explicitly in a <forked\|cluster> worker: unless each worker sets a different value, every worker reports the same id; leave it unset so each process gets its own`. Python: `_build_resource` (`python/staffops_otel_helper/setup.py`); Node: `resolvePlan` (`nodejs/packages/otel-helper/src/internal/resolve.ts`). Go: no prefork model, no warning. Case `fork.env_instance_id_warns_and_kept` matches the shared wording with either worker kind (`in a (cluster\|forked) worker: unless each worker sets a different value`); `fork.instance_ids_distinct_post_fork` asserts its absence (`not_contains`) | The old Python text ("every worker reports the same id") was wrong for an app that gives each worker its own id from code or a per-worker env; the helper cannot see the other workers' values, so it states the condition instead of a fact. One wording, apart from the worker kind, keeps the fixture regex and log searches language-neutral |
-| DB error status (Node B10a fix round, 2026-11-03; **ruled 2026-11-03, task A25**) | A database client span that fails keeps status **ERROR with no description** in every language: the description is the database's error text, which can quote a statement value (`Duplicate entry '<value>' for key …`, `invalid input syntax for type integer: "<value>"`). Go: XSAM otelsql sets `codes.Error, ""` (`utils.go:57-58`). Python: `ext/sql.py` passes contrib sqlalchemy a TracerProvider wrapper whose spans' `set_status` keeps the code and drops the description (contrib sets `Status(ERROR, str(exc))` in `engine.py` `_handle_error`; the `connect` span gets `"<type>: <exc>"` from `trace.use_span`) — scoped to the instrumentor's own tracer, no SDK hook. Node: `-sql` `dbTracerProvider` wraps each span's `setStatus` (pg and mysql2 set `message: err.message`) *Amended 2026-11-03 (second fix round, P1):* Python routes **both** paths through one helper, `ext.sql.wrapped_instrument_kwargs()` — `instrument_sql()` and the deprecated `SQL` flag of `setup_telemetry()` (`instrumentation.configure_instrumentations`; before, that default path called a bare `SQLAlchemyInstrumentor().instrument()` and kept the text, and a later `instrument_sql()` was a silent no-op). When SQLAlchemy was instrumented by other code without the wrapper, `instrument_sql()` keeps it and warns once instead of re-instrumenting: contrib `_uninstrument` removes the event listeners of every engine created so far (`EngineTracer.remove_all_event_listeners()`, 0.63b0 `__init__.py:296-304`, 0.66b1 `__init__.py:291-299`). Tests: `tests/test_a25_sql.py` setup-only, setup then `instrument_sql()`, instrumented elsewhere, failed `connect` (no description, exception event kept). Node also sets `error.type=_OTHER` when it drops a description and the span has none (N1); Go and Python set no `error.type` on DB spans (no change). *Amended 2026-11-03 (Node B10b ruling Q1, task A26):* the rule covers **every DB client, Redis included**. Redis errors can quote a command argument (`ERR unknown command 'X', with args beginning with: '<arg>'`; reproduced on redis:7.4.12-alpine). Go `ext/otelredis`: the `sanitizingProvider` tracer wraps each span so `SetStatus(codes.Error, d)` keeps the code and drops `d` (redisotel v9.23 `tracing.go:187-190` `recordError` sets `err.Error()`; spans from `tracing.go:95, 134, 176`). Python `ext.redis`: the `ext.sql` TracerProvider wrapper, moved to `_db_status`, on `instrument_redis()` and on the `REDIS` flag of `setup_telemetry()`; a Redis instrumented elsewhere without it is kept and warned once. Node `-redis`: `internal/db` `dbTracerProvider` with `error.type=_OTHER` (Go and Python set no `error.type`). Tests: Go `ext/otelredis/redis_test.go` `TestErrorStatusDropsDescription` (miniredis, and a real Redis with `OTELREDIS_TEST_ADDR`); Python `tests/test_a26_redis.py`; Node `-redis` `test/fixtures/scenario.cjs`. *Amended 2026-11-03 (A26 fix round, obs M4):* for **Redis** spans the dropped text's leading code, `^[A-Z][A-Z0-9_]{0,31}(?= )` (`WRONGTYPE`, `ERR`, `NOAUTH`, `WRONGPASS`, ...), becomes `db.response.status_code` and `error.type`; without one `error.type=_OTHER` (a dial error, `connect ECONNREFUSED`). Go: `statusSanitizingSpan.SetStatus`; Python: `_db_status` Redis wrapper, from the exception message (redis-py strips `ERR`, `NOAUTH`, `WRONGPASS` and other mapped codes from it, so those give `_OTHER` in Python); Node: `internal/db` `responseStatusCode`, set by `-redis` only (`-sql` unchanged). Caveat: a Lua `redis.error_reply()` can return any custom code of that shape (e.g. `MYCODE`), which then becomes `error.type`. Tests: Go `TestErrorStatusDropsDescription`, `TestDialErrorStatus`; Python `tests/test_a26_redis.py`; Node `test/fixtures/scenario.cjs`, `test/redis.test.cjs`. *Amended 2026-11-03 (A26 final round, rulings R1/R2; supersedes the Lua caveat above):* only a **known reply code** becomes `db.response.status_code`/`error.type`; anything else is `_OTHER`, so a Lua `error_reply(ARGV[1] .. ' bad')` — whose first word becomes the reply code (`script_lua.c` `luaPushErrorBuff`) — never puts data or a high-cardinality value in an attribute. The allowlist, the same in Go `replyCodes`, Node `REPLY_CODES` and Python `REPLY_CODES`, is every `-CODE` literal in Redis 7.4.12 `src/*.c` plus `MOVED`/`ASK` (`cluster.c:1205`) and redis-py's `BaseParser.EXCEPTION_CLASSES` keys (5.0.0 and 8.1.0): `ASK`, `BUSY`, `BUSYGROUP`, `BUSYKEY`, `CLUSTERDOWN`, `CROSSSLOT`, `DENIED`, `ERR`, `EXECABORT`, `INPROG`, `INVALIDOBJ`, `IOERR`, `LOADING`, `MASTERDOWN`, `MISCONF`, `MOVED`, `NOAUTH`, `NOGOODSLAVE`, `NOGROUP`, `NOMASTERLINK`, `NOPERM`, `NOPROTO`, `NOQUORUM`, `NOREPLICAS`, `NOSCRIPT`, `NOTBUSY`, `OOM`, `READONLY`, `TRYAGAIN`, `UNBLOCKED`, `UNKILLABLE`, `WRONGPASS`, `WRONGTYPE`. Verified against the source 2026-11-03 (e.g. `server.c:1875` NOSCRIPT, `cluster.c:1186` CROSSSLOT, `t_stream.c:2270` NOGROUP, `sentinel.c:4091` NOQUORUM); `NOTREADY` from the ruling's list is not a Redis reply code and is left out; `DENIED`, `INPROG`, `INVALIDOBJ`, `IOERR`, `NOGROUP`, `NOMASTERLINK`, `NOQUORUM`, `UNBLOCKED` were added from the source. **Python** resolves the code from the exception's `status_code` (redis-py 8.x, set for every code it maps — `ERR` included — and stripped from the message), else the message's leading token when allowlisted (`WRONGTYPE` stays in the text), else the class mapped back from `EXCEPTION_CLASSES` (unambiguous `ResponseError` subclasses: `NoPermissionError` → `NOPERM`), else — redis-py 5.x/7.x only — a plain `ResponseError` is `ERR` (redis-py strips it without a trace; so an ERR-stripped `EXEC without MULTI` or `DUMP payload …` is `ERR`, not `EXEC`/`DUMP`). A Lua first word is `_OTHER` on redis-py 8.x and `ERR` before (indistinguishable there; never the word). Tests: Go `TestReplyCodeAllowlist` and the `EvalRO` case, Python `test_reply_code_resolution` and the `SECRET_TOKEN42` case on both legs, Node `test/redis.test.cjs` and `scenario.cjs`. | Bound values never reach attributes (R10); the status was the remaining channel. A span processor cannot change the status (it is read-only after end in Python and JS), so each language wraps the tracer the DB instrumentation uses |
+| DB error status (Node B10a fix round, 2026-11-03; **ruled 2026-11-03, task A25**) | A database client span that fails keeps status **ERROR with no description** in every language: the description is the database's error text, which can quote a statement value (`Duplicate entry '<value>' for key …`, `invalid input syntax for type integer: "<value>"`). Go: XSAM otelsql sets `codes.Error, ""` (`utils.go:57-58`). Python: `ext/sql.py` passes contrib sqlalchemy a TracerProvider wrapper whose spans' `set_status` keeps the code and drops the description (contrib sets `Status(ERROR, str(exc))` in `engine.py` `_handle_error`; the `connect` span gets `"<type>: <exc>"` from `trace.use_span`) — scoped to the instrumentor's own tracer, no SDK hook. Node: `-sql` `dbTracerProvider` wraps each span's `setStatus` (pg and mysql2 set `message: err.message`) *Amended 2026-11-03 (second fix round, P1):* Python routes **both** paths through one helper, `ext.sql.wrapped_instrument_kwargs()` — `instrument_sql()` and the deprecated `SQL` flag of `setup_telemetry()` (`instrumentation.configure_instrumentations`; before, that default path called a bare `SQLAlchemyInstrumentor().instrument()` and kept the text, and a later `instrument_sql()` was a silent no-op). When SQLAlchemy was instrumented by other code without the wrapper, `instrument_sql()` keeps it and warns once instead of re-instrumenting: contrib `_uninstrument` removes the event listeners of every engine created so far (`EngineTracer.remove_all_event_listeners()`, 0.63b0 `__init__.py:296-304`, 0.66b1 `__init__.py:291-299`). Tests: `tests/test_a25_sql.py` setup-only, setup then `instrument_sql()`, instrumented elsewhere, failed `connect` (no description, exception event kept). Node also sets `error.type=_OTHER` when it drops a description and the span has none (N1); Go and Python set no `error.type` on DB spans (no change). *Amended 2026-11-03 (Node B10b ruling Q1, task A26):* the rule covers **every DB client, Redis included**. Redis errors can quote a command argument (`ERR unknown command 'X', with args beginning with: '<arg>'`; reproduced on redis:7.4.12-alpine). Go `ext/otelredis`: the `sanitizingProvider` tracer wraps each span so `SetStatus(codes.Error, d)` keeps the code and drops `d` (redisotel v9.23 `tracing.go:187-190` `recordError` sets `err.Error()`; spans from `tracing.go:95, 134, 176`). Python `ext.redis`: the `ext.sql` TracerProvider wrapper, moved to `_db_status`, on `instrument_redis()` and on the `REDIS` flag of `setup_telemetry()`; a Redis instrumented elsewhere without it is kept and warned once. Node `-redis`: `internal/db` `dbTracerProvider` with `error.type=_OTHER` (Go and Python set no `error.type`). Tests: Go `ext/otelredis/redis_test.go` `TestErrorStatusDropsDescription` (miniredis, and a real Redis with `OTELREDIS_TEST_ADDR`); Python `tests/test_a26_redis.py`; Node `-redis` `test/fixtures/scenario.cjs`. *Amended 2026-11-03 (A26 fix round, obs M4):* for **Redis** spans the dropped text's leading code, `^[A-Z][A-Z0-9_]{0,31}(?= )` (`WRONGTYPE`, `ERR`, `NOAUTH`, `WRONGPASS`, ...), becomes `db.response.status_code` and `error.type`; without one `error.type=_OTHER` (a dial error, `connect ECONNREFUSED`). Go: `statusSanitizingSpan.SetStatus`; Python: `_db_status` Redis wrapper, from the exception message (redis-py strips `ERR`, `NOAUTH`, `WRONGPASS` and other mapped codes from it, so those give `_OTHER` in Python); Node: `internal/db` `responseStatusCode`, set by `-redis` only (`-sql` unchanged). Caveat: a Lua `redis.error_reply()` can return any custom code of that shape (e.g. `MYCODE`), which then becomes `error.type`. Tests: Go `TestErrorStatusDropsDescription`, `TestDialErrorStatus`; Python `tests/test_a26_redis.py`; Node `test/fixtures/scenario.cjs`, `test/redis.test.cjs`. *Amended 2026-11-03 (A26 final round, rulings R1/R2; supersedes the Lua caveat above):* only a **known reply code** becomes `db.response.status_code`/`error.type`; anything else is `_OTHER`, so a Lua `error_reply(ARGV[1] .. ' bad')` — whose first word becomes the reply code (`script_lua.c` `luaPushErrorBuff`) — never puts data or a high-cardinality value in an attribute. The allowlist, the same in Go `replyCodes`, Node `REPLY_CODES` and Python `REPLY_CODES`, is every `-CODE` literal in Redis 7.4.12 `src/*.c` plus `MOVED`/`ASK` (`cluster.c:1205`) and redis-py's `BaseParser.EXCEPTION_CLASSES` keys (5.0.0 and 8.1.0): `ASK`, `BUSY`, `BUSYGROUP`, `BUSYKEY`, `CLUSTERDOWN`, `CROSSSLOT`, `DENIED`, `ERR`, `EXECABORT`, `INPROG`, `INVALIDOBJ`, `IOERR`, `LOADING`, `MASTERDOWN`, `MISCONF`, `MOVED`, `NOAUTH`, `NOGOODSLAVE`, `NOGROUP`, `NOMASTERLINK`, `NOPERM`, `NOPROTO`, `NOQUORUM`, `NOREPLICAS`, `NOSCRIPT`, `NOTBUSY`, `OOM`, `READONLY`, `TRYAGAIN`, `UNBLOCKED`, `UNKILLABLE`, `WRONGPASS`, `WRONGTYPE`. Verified against the source 2026-11-03 (e.g. `server.c:1875` NOSCRIPT, `cluster.c:1186` CROSSSLOT, `t_stream.c:2270` NOGROUP, `sentinel.c:4091` NOQUORUM); `NOTREADY` from the ruling's list is not a Redis reply code and is left out; `DENIED`, `INPROG`, `INVALIDOBJ`, `IOERR`, `NOGROUP`, `NOMASTERLINK`, `NOQUORUM`, `UNBLOCKED` were added from the source. **Python** resolves the code from the exception's `status_code` (redis-py 8.x, set for every code it maps — `ERR` included — and stripped from the message), else the message's leading token when allowlisted (`WRONGTYPE` stays in the text), else the class mapped back from `EXCEPTION_CLASSES` (unambiguous `ResponseError` subclasses: `NoPermissionError` → `NOPERM`), else — redis-py 5.x/7.x only — a plain `ResponseError` is `ERR` (redis-py strips it without a trace; so an ERR-stripped `EXEC without MULTI` or `DUMP payload …` is `ERR`, not `EXEC`/`DUMP`). A Lua first word is `_OTHER` on redis-py 8.x and `ERR` before (indistinguishable there; never the word). Tests: Go `TestReplyCodeAllowlist` and the `EvalRO` case, Python `test_reply_code_resolution` and the `SECRET_TOKEN42` case on both legs, Node `test/redis.test.cjs` and `scenario.cjs`. *Amended 2026-11-17 (design D16, R12, tasks A44/A46):* SQL client spans in Go (`ext/otelsql`), Python (`[sql]`) and Node.js (`-sql`) now carry `error.type` = the PostgreSQL SQLSTATE or the MySQL server error number (also as `db.response.status_code`), else `_OTHER`; the "Go and Python set no `error.type` on DB spans" and "`-sql` unchanged" statements above are superseded. Redis keeps the A26 allowlist rule. The R10 citation in this row means ADR-014 / A25 (R10 is the HTTP semconv generation requirement). | Bound values never reach attributes (R10); the status was the remaining channel. A span processor cannot change the status (it is read-only after end in Python and JS), so each language wraps the tracer the DB instrumentation uses |
 | Database semconv opt-in (Node B10a fix round, 2026-11-03; **ruled 2026-11-03, task A25**) | The legacy `db.system` is emitted **unless `OTEL_SEMCONV_STABILITY_OPT_IN` holds `database` without `database/dup`**; tokens are trimmed with the contract set and ASCII-folded. Unset, empty, `http` or any database-less value: both keys. Go `ext/otelsql` `legacyKeysEnabled` (now `strings.Trim(trimChars)` + `asciiLower`, not `TrimSpace`/`ToLower`); Python normalizes the variable before contrib reads it (`_semconv.normalize_semconv_opt_in`: ASCII-fold, `database/dup` appended to an empty or database-less value, so contrib's own parser sees the rule); Node `-sql` `legacyKeysEnabled`, read once per process *Amended 2026-11-03 (second fix round):* an **empty or whitespace-only value is unset** (Python maps it to `http,database/dup`, as Node and the contract treat empty as unset; L-e). Python folds **every** token, so `HTTP` / `HTTP/DUP` now select stable / dup HTTP as well (M-a). In dup mode the full new attribute set and the full legacy set are emitted (L-f). Python writes the normalized value back to `os.environ` (contrib reads it there), so child processes started afterwards inherit the rewritten value (L-b). *Amended 2026-11-03 (A26 fix round, obs M1):* Go `ext/otelredis` applies the rule to its spans too (`legacyKeysEnabled`, copied from `ext/otelsql`: separate modules), read at each `Instrument` call: `database` without `/dup` drops redisotel's `db.system` from spans. Its **pool metrics keep `db.system`** in every mode — redisotel adds it to the metric attributes (`config.go:94`) and Go has no MeterProvider wrapper (recorded). Test: `TestSemconvStableModeDropsLegacySystem`. *Amended 2026-11-11 (.NET task C14a fix round 1):* .NET applies the rule to **spans** in its sanitizing processor (`DbSpanRules`, same trim set and ASCII folding, read once when the tracer provider is built): SqlClient and Npgsql (stable keys only upstream) get `db.system` (`mssql`, `postgresql`), MySqlConnector (legacy keys by default) gets `db.system.name=mysql` and `db.query.text` from its sanitized `db.statement`; in the stable mode the legacy `db.system` and MySqlConnector `db.statement` are removed. **Metrics are not patched**: a .NET view can drop attributes but not add them, so the driver metrics keep the keys each driver writes (SqlClient and Npgsql `db.system.name` only, MySqlConnector pool metrics none) — as Go's Redis pool metrics, a recorded difference. .NET also replaces literals in Npgsql and MySqlConnector query text (stricter than Go and Python, which record the client's statement text) and removes `db.query.parameter.*`. *Added 2026-11-11 (.NET C14a round 3):* the .NET view that drops the pool name from the `Npgsql` and `MySqlConnector` metrics departs from the semantic conventions (`db.client.connection.pool.name` is required on `db.client.connection.*`) and merges the gauges of several pools of one process into one series (an unnamed pool's name is its connection string, secret keys included); MySqlConnector legacy `db.name`, `net.peer.name`, `net.peer.port` also give `db.namespace`, `server.address`, `server.port` with the same rule, and `db.user` is removed. | Before A25 Python contrib switched to the legacy keys only for `http` or an empty value, and Go trimmed Unicode whitespace (U+00A0) |
 | DB error text in exception events (Node B10a fix round, 2026-11-03; **accepted residual, task A25**) | The `exception` event is semconv-defined and kept, so a database's error text can still quote a value in `exception.message`: Go — XSAM `span.RecordError(err)` (the driver's text); Node pg — sanitized upstream (`PostgreSQL error of type '<name>' occurred (code: <SQLSTATE>)`); Node mysql2 — no exception event; Python — none on statement spans (contrib records no exception), the `connect` span's event from `trace.use_span` carries `str(exc)` *Amended 2026-11-03:* Python's statement spans carry no exception event on either path (`instrument_sql()` or the `SQL` flag), and a failed `connect` keeps its event (`tests/test_a25_sql.py`). *Amended 2026-11-03 (Node B10b ruling Q2, task A26):* Redis has the same residual in all three languages — the exception event keeps the server text, which for an unknown command quotes its arguments (Go `span.RecordError`, Python `trace.use_span`, Node contrib `recordException`); pinned by the A26 tests. *Amended 2026-11-03 (A26 fix round, dev H1):* **Python Redis pipelines** — redis-py's `Pipeline.annotate_exception` (sync and asyncio) rewrites the message on the client to `Command # N (<command and its arguments>) of pipeline caused error: <reply>` (asyncio: the reply as a tuple repr), so keys and values reached `exception.message` and `exception.stacktrace`. `_db_status` wraps `record_exception` on Redis spans: the command name and one `?` per argument (`Command # 2 (LPUSH ? ?) of pipeline caused error: WRONGTYPE ...`), the stacktrace rebuilt from the frames and the sanitized message (chained exceptions left out). Go and Node record the reply only. The reply text itself stays the residual (an unknown command, a Lua `error_reply`). *Superseded 2026-11-11 by [ADR-014](../decisions/ADR-014-exception-detail-in-correlated-logs.md) (owner decision during .NET C14a):* the residual is no longer accepted. On a failed DB client span the `exception` event keeps only `exception.type`; the message and the stack trace go to one log record at ERROR in the span's context (same `trace_id` / `span_id`; body = the message; attributes `exception.type`, `exception.message`, `exception.stacktrace`), through the normal log pipeline. .NET implements it in C14a (SqlClient, Npgsql, MySqlConnector); Go, Python and Node.js in task A36; HTTP, gRPC and messaging events are reviewed in A37 (deferred). | Recorded in README "Known emitted-telemetry gaps"; dropping semconv exception events would cost debuggability in every language |
 | Redis span names (Node B10b ruling Q3, 2026-11-03; **parity gap**; *reworded 2026-11-03, A26 fix round obs M2/dev L2*) | Node and Python name a Redis command span by the command, uppercased (`SET`) — a **parity choice with Python, not semconv**: semconv captures `db.operation.name` as provided and names the span `{db.operation.name} {target}`. So the names differ from semconv in case (ioredis provides `set`), for MULTI/pipeline (ioredis `MULTI set` / `PIPELINE set`, node-redis `MULTI` / `PIPELINE`; Python one pipeline span `SET GET`) and by the omitted `{target}` (no language records the key). `db.operation.name` itself stays as provided. Node renames the contribs (`redis-SET`, `set`) and names connection spans `connect`; the Node contribs make one span per pipeline/MULTI command. **Go keeps redisotel's lower-case names** (`set`, `redis.pipeline set get`, `redis.dial`). **Backlog (not in A26):** rename Go `ext/otelredis` spans to the uppercased command (a tracer `Start` name rule in `sanitizingTracer`). *Ruled 2026-11-05 (task A30; backlog promoted):* **Go renames** in `sanitizingTracer.Start` (`ext/otelredis` `spanName`): a command span is go-redis's `cmd.FullName()` uppercased (`set` → `SET`, `cluster info` → `CLUSTER INFO`; redisotel v9.23 `tracing.go:134`), a pipeline span its command names uppercased (`redis.pipeline set get` → `SET GET`, `tracing.go:168-176`; go-redis lists each name once, at most 10, rediscmd `CmdsString`, where Python lists every command, `util.py:215`), the dial span `connect` (`tracing.go:95`; Node's connection-span name, Python has none). `db.operation.name` keeps the value as go-redis provides it (taken before the rename: `set`). Every language now names a Redis command span by the uppercased command. **Migration:** Go queries and dashboards on `set` / `redis.pipeline …` / `redis.dial` span names must use the new names. *Recorded 2026-11-08 (consumer run L1):* a subcommand differs: Go `CLUSTER INFO` (go-redis `FullName()`), Python `CLUSTER`. | parity with Python; a Go rename changes existing dashboards/queries, so it gets its own change |
@@ -1293,6 +1293,323 @@ All of these are additive in the next minor.
 
 
 ---
+
+## D16 — Protocol span error attributes (R12; tasks A38, A40, A44, A46; A43 upstream)
+
+Added 2026-11-17. Go, Python and Node.js; .NET keeps its own behavior
+(parked backlog). Found by the demo (run `20261116t1812`) and the gateway
+span metrics, which break the error rate down by `error.type`.
+
+> *Corrected 2026-11-17 (spec review round 1, `spec-refuter`): the first
+> draft had no decision format, no D1 amendments, missed `driver.ErrSkip`,
+> left R12 unscoped (Redis and AWS spans fell under it), failed the trace
+> gate, and had parity holes (gRPC server `UNKNOWN`, client errors without
+> a code, MySQL client error numbers, `EPIPE` as a SQLSTATE, SQLite
+> `db.namespace`), a Go "only if absent" it cannot implement, and silent
+> fallbacks. This version replaces it.*
+>
+> *Corrected again 2026-11-17 (review round 2): the Go HTTP metric no longer
+> depends on the span being sampled; the Go SQL getters return nothing for
+> `driver.ErrSkip`; Python SQLite span names drop the file path; SQLite gets
+> no Go diagnostics line; the upstream-release claim says who checked what.*
+>
+> *Corrected again 2026-11-17 (review round 3): a Labeler `error.type` set by
+> the application wins over the helper's status code on the Go HTTP metric.*
+>
+> *Corrected again 2026-11-18 (review round 4): the Python SQLite drop and
+> rename (rounds 2–3) cannot work, because contrib sets the namespace keys
+> before the system attribute; Python SQLite is a documented residual
+> instead.*
+
+**Owner decisions 2026-11-17** (asked with the design research of the three
+languages):
+1. A failed span with no protocol code gets `error.type=_OTHER`, never a
+   class name, so the value is comparable across languages (the Redis and
+   Node.js rule since A26).
+2. A43 (Go DB-duration exemplar on the parent span) goes upstream, no
+   helper workaround. Filed: XSAM/otelsql issue 669, PR 670 (2026-11-17).
+3. Node.js mysql2: the helper overrides the instrumentation instance's
+   private `_patchCallbackQuery`, with a seam test that fails on a bump.
+4. In scope: gRPC SERVER spans too, MySQL besides PostgreSQL, and
+   `github.com/felixge/httpsnoop` as a direct Go dependency (already an
+   indirect one at v1.1.0 through otelhttp; MIT; not a telemetry SDK, so
+   principle 1 does not apply).
+
+### Scope
+
+- **SQL client spans** of the helper's SQL integrations: Go `ext/otelsql`
+  (XSAM), Python `[sql]` (contrib SQLAlchemy), Node.js `-sql` (pg, mysql2).
+  Redis spans keep the A26 allowlist rule; AWS spans are out of scope.
+- **gRPC spans** of the helper's gRPC instrumentation (Go otelgrpc stats
+  handlers, Python contrib grpc, Node.js instrumentation-grpc): unary and
+  server streaming are tested; client streaming and bidi are expected to
+  follow the same code path and get one failing bidi call per language in
+  the tests.
+- **Go HTTP server spans** of `NewHTTPHandler` (A40). Python and Node.js
+  server spans already carry `error.type` on 5xx (instrumentation).
+- **Go `db.namespace`** (A38). Python and Node.js already write it.
+
+### Values
+
+| Span | Attribute | Value | .NET (measured run `20261116t1812`) |
+|---|---|---|---|
+| Failed SQL span, PostgreSQL | `db.response.status_code`, `error.type` | the SQLSTATE, both the same (`23505`); accepted only as `^[0-9A-Z]{5}$` with at least one digit (every PostgreSQL 17 code has one; this rejects socket codes such as `EPIPE`) | `23505` (Npgsql, demo app) |
+| Failed SQL span, MySQL / MariaDB | `db.response.status_code`, `error.type` | the server error number as a decimal string (`1062`); accepted only as an integer 1–65535 outside the client range 2000–2999 (`CR_*`: connection refused 2003, server lost 2013 are client errors) | unmeasured |
+| Failed SQL span, no accepted code (connection refused, a driver or client error, another database) | `error.type` | `_OTHER`; `db.response.status_code` absent | — |
+| gRPC CLIENT span with status ERROR | `error.type` | the canonical name of the status code (16 error names: `CANCELLED` … `UNAUTHENTICATED`); `_OTHER` when the span failed with no code (see the per-language notes) or a code above 16 | `FAILED_PRECONDITION`, `ALREADY_EXISTS` (measured) |
+| gRPC SERVER span with status ERROR | `error.type` | the same name, written only when the span is ERROR under the semconv server rule (`UNKNOWN`, `DEADLINE_EXCEEDED`, `UNIMPLEMENTED`, `INTERNAL`, `UNAVAILABLE`, `DATA_LOSS`) | unmeasured |
+| Go HTTP SERVER span ending in 5xx, or a code 600–999 (net/http panics outside 100–999) | `error.type` on the span and on `http.server.request.duration` | the status code as a string (`500`) | exception type name on an unhandled one (A42, measured); without an exception: unmeasured |
+| Go SQL spans and metrics | `db.namespace` (and legacy `db.name` when the legacy keys are on, R10) | the database name (R12) | — |
+
+Rules for every row:
+- **Only if absent.** The helper never overwrites an `error.type` or
+  `db.response.status_code` that the instrumentation or the application set
+  (for example `RecordFailure` on a SERVER span, D15). Python and Node.js
+  read the span's attributes; Go reads them through a type assertion to
+  `sdktrace.ReadOnlySpan` and writes nothing when the span is not an SDK
+  span. The Go HTTP metric gets the span's `error.type` when the span is
+  recording and has one (the application's `RecordFailure` value); else an
+  `error.type` the application already put in the Labeler (the helper adds
+  nothing then: `Labeler.Add` only appends and the last value of a key wins);
+  else the status code string (5xx, 600–999). Metrics never depend on
+  sampling (an unsampled request and a
+  health path whose span the D5 sampler drops still get `error.type`).
+- **Errors only.** PostgreSQL warnings (class 01) and notices are not
+  recorded.
+- **Bounded values.** Only the shapes above reach an attribute; message text
+  never does (ADR-014, the D1 "DB error status" row). Cardinality: 267
+  SQLSTATEs (PostgreSQL 17 `errcodes.txt`) plus application-defined codes
+  (`RAISE ... USING ERRCODE`), which the pattern allows (the A26 allowlist
+  approach is not applied: the SQLSTATE space is standardized), a bounded
+  MySQL integer range, 16 gRPC names, the 5xx codes.
+- **`db.namespace` is the database only.** Semconv v1.43 PostgreSQL allows
+  the database alone when the schema is unavailable
+  (`postgresql.md:54`); a schema given at connect time (`search_path` /
+  `options` in the DSN) is not used, a documented deviation from `:61`
+  (documented per `:63`). SQL Server: the database only, also for a named
+  instance (deviation from `sql-server.md:57`, documented). SQLite: Go writes
+  none (a file path is not a namespace and may leak); Node.js `-sql` has no
+  SQLite. **Python residual, documented (README gap row, task A44):** contrib
+  sets `db.namespace`/`db.name` to the file path and appends it to the span
+  name (`engine.py` 0.66b1 `_get_attributes_from_url`, `_operation_name`),
+  and it sets them before the system attribute, one key at a time
+  (`engine.py:344-356`), so the wrapper cannot tell a SQLite span when they
+  arrive and the SDK cannot delete an attribute; holding the keys back until
+  the system is known was judged not worth the complexity for SQLite
+  (review round 4). The helper leaves them as contrib writes them.
+
+### Mechanism per language
+
+**Go**
+- *SQL code (`go/ext/otelsql`):* `otelsql.WithSpanErrorAttributesGetter`
+  (XSAM v0.44.0; runs while the span records, before `SetStatus`/`End`).
+  The code is read with `errors.As` against `interface{ SQLState() string }`
+  (pgx `*pgconn.PgError`, lib/pq `*pq.Error`) and, for MySQL, the
+  go-sql-driver `*mysql.MySQLError` `Number` field read by reflection (no
+  driver import in the module). The same code goes to the duration metric
+  through `WithInstrumentErrorAttributesGetter` as
+  `db.response.status_code`; the metric's `error.type` stays XSAM's Go type
+  name (XSAM appends its own after the getter output, `utils.go:72`):
+  documented gap, a separate upstream item, not part of A43.
+- *`driver.ErrSkip`:* `Open` passes `otelsql.WithSpanOptions` with
+  `DisableErrSkip: true` and `otelsql.WithDisableSkipErrMeasurement(true)`,
+  so an `ErrSkip` (go-sql-driver returns it for every statement with
+  arguments when `interpolateParams=false`, the default) leaves the span
+  Unset with no attribute and the metric with no `error.type`. Both getters
+  return nothing for `errors.Is(err, driver.ErrSkip)`: XSAM calls them
+  regardless of these options (`option.go:147`, `utils.go:42, 103-106`).
+- *`db.namespace` (A38):* `Open(driverName, dsn, opts ...Option)` gains a
+  variadic option list (source compatible) and `WithDBNamespace(name)`.
+  Resolution: the option; else the name parsed from the DSN; else, for every
+  driver name mapped to `postgresql` (`pgx`, `pgx/v5`, `postgres`,
+  `postgresql`), the `PGDATABASE` environment variable; else no attribute
+  and one diagnostics line on the module's own stderr
+  `*slog.Logger` (the AGENTS.md pattern), naming the driver only, never the
+  DSN: `otelhelper: db.namespace unknown for driver <name>; pass
+  otelsql.WithDBNamespace`. SQLite (`sqlite`, `sqlite3`) gets no
+  `db.namespace` and no diagnostics line. Parsing uses the standard library only:
+  PostgreSQL URL (`postgres://`, `postgresql://`; `?dbname=` wins) and
+  keyword form (`dbname=`, quoted values with escapes); go-sql-driver
+  `[user[:pass]@][net[(addr)]]/dbname[?params]` cut at the last `/` before
+  the query; SQL Server `database=` / `initial catalog=` / `?database=`. A
+  DSN registered with `stdlib.RegisterConnConfig` is a key, not a DSN: pass
+  `WithDBNamespace`. Legacy `db.name` is written too when
+  `legacyKeysEnabled()`.
+- *gRPC (A46):* `GRPCClientHandler` and `GRPCServerHandler` return a
+  `stats.Handler` wrapper that, on `*stats.End` with an error and before
+  delegating (otelgrpc ends the span in its own `HandleRPC`), writes the
+  canonical name on the recording span when absent: client for every
+  non-OK code, server for the six server codes. grpc-go maps a code-less
+  error to `UNKNOWN` (`status.FromError`), so Go gives `_OTHER` only for a
+  code above 16. An own name table (`codes.Code.String()` is
+  `FailedPrecondition`).
+- *HTTP server (A40):* `NewHTTPHandler` wraps the application handler
+  inside otelhttp with a writer wrapper built by `httpsnoop.Wrap`
+  (`Flusher`, `Hijacker`, `ReaderFrom` preserved) that mirrors otelhttp's
+  `RespWriterWrapper` exactly (status from `WriteHeader`, implicit 200 on
+  `Write` and `Flush`, 1xx other than 101 ignored, `ReadFrom` not seen), so
+  `error.type` and `http.response.status_code` never disagree. After the
+  handler returns, a 5xx or 600–999 code is written to the span when absent
+  and the metric value follows the Rules above
+  (`otelhttp.LabelerFromContext`).
+  A panicking handler gets nothing (unchanged).
+
+**Python**
+- *SQL code:* the `_db_status` SQL wrapper (A25) captures the exception —
+  in the wrapped `set_status(ERROR)` from `sys.exc_info()[1]` when its
+  `str()` equals the status description (contrib calls `set_status` from
+  SQLAlchemy's `handle_error`, inside the `except`), and in a wrapped
+  `record_exception` for the `connect` span — and at `end()`, when the span
+  is ERROR and has no `error.type`, writes the code read by
+  `sql_error_code(exc, system)`: PostgreSQL `pgcode`, `sqlstate`,
+  `diag.sqlstate` on the exception, then on `__cause__` (asyncpg through
+  SQLAlchemy); MySQL `args[0]` (pymysql, mysqlclient). The system comes from
+  the span's `db.system.name` / `db.system`. SQLite spans keep
+  contrib's `db.namespace` / `db.name` and span name (residual, see Rules).
+- *gRPC:* the gRPC instrumentors get a TracerProvider wrapper (the A25
+  pattern) whose spans, at `end()`, write the name of the
+  `rpc.grpc.status_code` contrib writes when the span is ERROR and has no
+  `error.type`. Client: a non-zero code gives the name; code 0 or absent on
+  an ERROR span (a failure that is not an `RpcError`; contrib starts every
+  span with code 0) gives `_OTHER`. Server: contrib sets ERROR only for the
+  server codes.
+
+**Node.js**
+- *SQL code:* the core `db.ts` `wrapSpan` gains two options:
+  `exceptionStatusCode(exception)` (wraps `recordException`; pg passes its
+  sanitized message `... (code: <code>)` there, always before `setStatus`)
+  and `pendingStatusCode()` (read once in `setStatus(ERROR)`). An accepted
+  code becomes `db.response.status_code` and `error.type`, else `_OTHER`
+  (unchanged). `-sql` passes `pgStatusCode` for pg and, for mysql2,
+  overrides `_patchCallbackQuery` on the instance it builds so the error
+  object is held in a slot read by `setStatus` (`errno` accepted as above,
+  with a string `sqlState`). If the method is missing, nothing changes
+  (`_OTHER`) and one WARN line goes through `report()` once per process
+  (principle 8). The mysql2 streaming-query error path is not reachable and
+  stays `_OTHER` (documented).
+- *gRPC:* the existing `GrpcServerStatusProcessor.onEnding` (span still
+  writable) also writes `error.type` from `rpc.grpc.status_code` for CLIENT
+  ERROR spans and for SERVER spans still ERROR after its normalization.
+  instrumentation-grpc sets no status on a unary callback error without a
+  code (`clientUtils.cjs:27-31`), so those spans stay Unset (no
+  `error.type`); a streaming error with an undefined code is ERROR and gets
+  `_OTHER`. The name table is static: never `require('@grpc/grpc-js')`
+  (A39).
+
+### Justification
+- Same failure, same `error.type` in every language: the gateway span
+  metrics' error-rate breakdown is comparable (the R11/ADR-016 reason, on
+  protocol spans).
+- The values are the semconv v1.43 ones (`db.response.status_code` =
+  SQLSTATE / MySQL error number; DB `error.type` SHOULD match it; RPC and
+  HTTP `error.type` = the status code), and match what .NET emits where
+  measured.
+- The helper fills gaps through public hooks or narrow seams; no fork, and
+  every write yields to upstream.
+
+### Trade-offs
+- Decision 1 deviates from two semconv SHOULDs in favor of a
+  cross-language comparable value: DB note [3] (without a code, the
+  canonical exception name) and RPC footnote [2] (a failure before any
+  status: the exception type). `_OTHER` is the semconv well-known
+  fallback.
+- Node.js mysql2 couples to a private method (decision 3); the pg path
+  couples to the text of the sanitized message. Both degrade to `_OTHER`,
+  never crash, and fail a seam test on a bump (task A44 adds both to the
+  Node.js SDK-bump checklist in the `release` skill).
+- Python reads the active exception (`sys.exc_info`) inside contrib's
+  callback, private SQLAlchemy behavior guarded by the description
+  equality.
+- Go's DB metric `error.type` stays the Go type name until upstream changes
+  its order.
+
+### When it would be wrong
+- Upstream instrumentations start writing these attributes with other
+  values (stable RPC semconv in instrumentation-grpc, otelhttp server
+  `error.type`): "only if absent" keeps theirs, and the helper's mapping
+  becomes dead code.
+- The owner wants class names for code-less failures (decision 1
+  reversed).
+- The XSAM PR is not merged by the 0.3.0 rollout.
+
+### Reversal action
+When an upstream instrumentation writes these attributes itself, the
+helper's write is a no-op; remove that language's wrapper in the next minor
+and keep the tests as upstream regression checks. If decision 1 is
+reversed, change the no-code branch in all three languages together. If a
+bump removes the mysql2 `_patchCallbackQuery` seam, the seam test fails and
+MySQL on Node.js falls back to `_OTHER` until a new hook is found. If the
+XSAM PR (A43) is not merged by the 0.3.0 rollout, the owner decides between
+a helper span-context wrapper and documenting A43 as a gap; record the date
+in the A43 row.
+
+### Alternatives
+- **Class names for code-less failures** (semconv's SHOULD): rejected
+  (decision 1): values differ per language.
+- **Wait for upstream in every language**: rejected. Go: checked 2026-11-17
+  with `go list -m -versions` and the unreleased changelogs (design
+  research): otelhttp/otelgrpc v0.72.0 and XSAM v0.44.0 are the newest and
+  nothing pending fixes these gaps. Python and Node.js: the pinned versions
+  were read (contrib 0.63b0–0.66b2; instrumentation-pg 0.77, -mysql2 0.70,
+  -grpc 0.300) and none sets these values; newer releases were not checked
+  and are checked again at implementation. A43 alone goes upstream
+  (decision 2).
+- **Node.js mysql2 `_OTHER` only** (no private seam): rejected (decision 3).
+- **A Go tracer+meter wrapper for A43**: rejected (decision 2): approximate
+  under concurrency and needs a bounded map.
+
+### Not done here
+- A43 upstream (XSAM PR 670); the demo's `b.db_client` relaxation stays.
+- **gRPC SERVER `UNKNOWN` gap:** in Python and Node.js, a handler that
+  raises or calls back with a code-less error leaves the SERVER span Unset
+  (`rpc.grpc.status_code` 0 or absent) while the peer receives `UNKNOWN`;
+  Go marks it ERROR + `UNKNOWN`. Documented gap (README gap row) until a
+  task maps it.
+- **Node.js unary CLIENT callback error without a code:** the span stays
+  Unset with no `error.type` (instrumentation-grpc 0.300.0
+  `clientUtils.cjs:27-31`). Same README gap row (owned by A46).
+- A37 (gRPC and HTTP description text), A36 (DB exception event detail):
+  separate tasks; the Python capture added here is reusable by A36.
+
+### Tests
+- Go: DSN parse table (URL, keyword, quoted, mysql with `/` in the
+  password, sqlserver, sqlite, garbage), `WithDBNamespace` precedence,
+  `PGDATABASE` for `pgx/v5` too, the unknown-namespace stderr line (name
+  only) and none for `sqlite3`, legacy `db.name`; error getter table (pgx error, wrapped pgx error, a
+  MySQL-shaped struct with 1062 and with 2003, a plain error → `_OTHER`); a
+  fake driver returning `driver.ErrSkip` → Unset span, no `error.type` or
+  `db.response.status_code` on span and metric; a real sqlite failure through `Open`; gRPC wrapper with a
+  bufconn server (client FAILED_PRECONDITION / ALREADY_EXISTS, server
+  INTERNAL vs NOT_FOUND, OK, an existing value kept, one failing bidi call);
+  HTTP 500 / 503 / 600 / 200 / 404 / implicit 200 on `Write` and on `Flush`,
+  span and metric, `Flusher` and `Hijacker` preserved, `RecordFailure` in the
+  handler + 500 keeps the application's value on span and metric; an
+  inbound `traceparent ...-00` request and a health path returning 503 have
+  metric `error.type=503`; a handler that adds `error.type=app_value` to the
+  Labeler and returns 500 gives the metric `app_value` and exactly one
+  `error.type`.
+- Python: `sql_error_code` table (psycopg2, psycopg 3 with `diag`, asyncpg
+  through `__cause__`, pymysql 1062 and 2003, bad shapes); sqlite subprocess
+  end to end (`_OTHER`, no status code, description dropped, an upstream value kept, `connect`); in-process grpcio
+  server (sync unary, `.future()`, unary-stream, aio, one bidi; client
+  codes, code 0 ERROR → `_OTHER`, server codes).
+- Node.js: `db.ts` unit (captured code, pending slot read once, existing
+  values kept, `_OTHER`, Redis unchanged); `-sql` code tables (`23505`,
+  `EPIPE` → `_OTHER`, mysql 1062 and a system error) and the seam test
+  (`_patchCallbackQuery` exists, the pg sanitized-message pattern matches,
+  the WARN line when the seam is missing); real PostgreSQL and MySQL
+  (compose): `22P02`, `42P01`, `23505`, `1062`, `1064`, the streaming
+  `_OTHER`; gRPC processor on fake spans and a real grpc-js server (unary,
+  server stream, one bidi; streaming error without a code → `_OTHER`).
+- Parity fixture (`parity/cases.json`, snapshot field `span_error_type`):
+  `http.server_5xx_error_type`, `grpc.client_failed_precondition_error_type`,
+  `grpc.server_internal_error_type`, `grpc.server_not_found_no_error_type`;
+  .NET `xfail:parked` where unmeasured; Go, Python and Node.js
+  `xfail:A40` / `xfail:A46` until each lands.
+- Demo: `testing/k8s/demo/expected.json` drops `xfail:A38`, `xfail:A40` and
+  `also_xfail:A44` for Go, Python and Node.js once the next run measures the
+  values; a new check that the PlaceOrder CLIENT span carries `error.type`
+  in all four languages (owned by A46).
 
 ## D11 — Collector / platform prerequisites (reference checklist)
 
