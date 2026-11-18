@@ -184,6 +184,29 @@ until 1.0.
 Without any OTLP endpoint: metrics on `http://<pod>:9464/metrics`, traces
 in-process only (propagation still works), logs as JSON on stdout.
 
+### Error attributes on protocol spans (contract D16)
+
+Written when the span ends with status ERROR and has no `error.type` yet;
+a value the instrumentation or your code set is never overwritten, and
+message text never reaches these attributes.
+
+| Span | Attributes | Value |
+|---|---|---|
+| Failed SQLAlchemy span (`[sql]` extra), PostgreSQL | `db.response.status_code`, `error.type` | the SQLSTATE (`23505`) from `pgcode` / `sqlstate` / `diag.sqlstate`, on the exception or its `__cause__`; only `^[0-9A-Z]{5}$` with a digit |
+| Failed SQLAlchemy span, MySQL / MariaDB | `db.response.status_code`, `error.type` | the server error number (`1062`) from `args[0]`; 1–65535 outside the client range 2000–2999 |
+| Failed SQLAlchemy span, no accepted code (connection refused, a client error, an `OSError` errno, SQLite, another database) | `error.type` | `_OTHER`; an upstream `db.response.status_code` without `error.type` gives `error.type` = that value |
+| gRPC CLIENT span, status ERROR | `error.type` | the code name (`FAILED_PRECONDITION`); `_OTHER` for a code above 16 or a sync-channel failure that is not an `RpcError` |
+| gRPC SERVER span, status ERROR (contrib: `UNKNOWN`, `DEADLINE_EXCEEDED`, `UNIMPLEMENTED`, `INTERNAL`, `UNAVAILABLE`, `DATA_LOSS` only) | `error.type` | the code name |
+
+Limits: a gRPC server handler that **raises** leaves the SERVER span Unset
+(no `error.type`) while the peer receives `UNKNOWN`; SQLite spans keep
+contrib's file path in `db.namespace` / `db.name` and the span name; Redis
+keeps its A26 rule and AWS spans are not covered; on a `grpc.aio` channel a
+unary-response call (unary-unary, stream-unary) whose failure is not an
+`AioRpcError` (a cancel included) exports no CLIENT span (upstream), while
+aio streaming-response calls get `_OTHER` as sync calls do; with another contrib layout of the sync gRPC client: warned
+once, no `error.type` on sync client spans. Details: HOW-TO §4 and §9.
+
 ## Public API
 
 | Name | Purpose |

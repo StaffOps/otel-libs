@@ -1357,6 +1357,37 @@ span metrics, which break the error rate down by `error.type`.
 >    line); pgx `database=` / `?database=` are read (`dbname` wins); a DSN
 >    with `service=` skips the `PGDATABASE` fallback; the diagnostics line is
 >    written once per driver name per process.*
+>
+> *Corrected 2026-11-18 (Python implementation review: `observability`,
+> `dev`, `code-review`). These points supersede the Python text below where
+> they differ:*
+> 1. *contrib grpc 0.63b0–0.66b2 `GrpcInstrumentorClient.wrapper_fn` reads
+>    `tracer_provider` from the `grpc.*_channel()` call, not from
+>    `instrument()`, so the TracerProvider wrapper never reached sync client
+>    spans. The helper sets an instance `wrapper_fn` before `instrument()`,
+>    built from contrib's `client_interceptor` / `intercept_channel` and its
+>    `_filter` / `_request_hook` / `_response_hook` fields, and removes it on
+>    every exit path. Another layout: one warning, sync client spans carry no
+>    `error.type`. A seam test pins contrib's `wrapper_fn` source. Reversal:
+>    drop the override when contrib reads `instrument()`'s provider. This is
+>    a second private Python coupling (Trade-offs), on the Python SDK-bump
+>    checklist of the `release` skill.*
+> 2. *`__cause__` is read for MySQL too (one level), as for PostgreSQL: the
+>    SQLAlchemy `connect` error wraps the DBAPI error. A candidate that is an
+>    `OSError` is never read (aiomysql raises `OperationalError(2013)` from
+>    the socket error, whose errno would otherwise pass the MySQL range);
+>    Go's type check on `MySQLError` is the equivalent.*
+> 3. *Getter order: `pgcode`, then `sqlstate`, then `diag.sqlstate`; a value
+>    of the wrong shape falls through to the next. Python dispatches by
+>    `db.system`, Go does not; results differ only for malformed codes or a
+>    system mismatch.*
+> 4. *A `db.response.status_code` already on the span is kept and copied into
+>    an absent `error.type` (semconv: `error.type` SHOULD match it).*
+> 5. *grpc.aio: a client failure that is not an `AioRpcError` (a cancel) of a
+>    unary-response call (unary-unary, stream-unary) exports no CLIENT span
+>    at all (contrib `_aio_client.py` `_wrap_unary_response`); aio
+>    streaming-response calls end the span on any exception and get the
+>    "code 0 → `_OTHER`" rule, as sync calls do.*
 
 **Owner decisions 2026-11-17** (asked with the design research of the three
 languages):

@@ -3341,6 +3341,49 @@ Behavior changes, with migration notes:
 
 ### Python — detailed changes
 
+- **Protocol span error attributes (requirement R12, design D16, tasks A44,
+  A46 Python part; 2026-11-18).** Only when the span ends with status ERROR
+  and has no `error.type`; values already on the span are never overwritten
+  and message text never reaches an attribute.
+  - SQLAlchemy (`[sql]`, `instrument_sql()` and the default `SQL` path): a
+    failed statement or `connect` span carries `db.response.status_code` =
+    `error.type` = the PostgreSQL SQLSTATE (`pgcode`, then `sqlstate`, then
+    `diag.sqlstate`, on the exception then its `__cause__`; accepted as
+    `^[0-9A-Z]{5}$` with a digit, so `EPIPE` is rejected) or the MySQL /
+    MariaDB server error number (`args[0]`, an `int` 1–65535 outside the
+    client range 2000–2999), chosen by the span's `db.system.name` /
+    `db.system`; else `error.type=_OTHER`. The exception is taken from
+    `sys.exc_info()` in the wrapped `set_status(ERROR)` when its `str()`
+    equals contrib's description, or from `record_exception` on `connect`
+    (`_db_status.sql_error_code`). SQLite spans get `_OTHER` and keep
+    contrib's file path in `db.namespace` / `db.name` and the span name
+    (documented residual).
+  - gRPC (the four contrib instrumentors, sync and aio): a TracerProvider
+    wrapper (`_grpc_status`) writes `error.type` = the canonical name of
+    contrib's `rpc.grpc.status_code` (a table built from `grpc.StatusCode`)
+    on CLIENT spans for every non-OK code and on SERVER spans for the six
+    server codes contrib marks ERROR; code 0 or none on an ERROR span (a
+    failure that is not an `RpcError`) and a code above 16 give `_OTHER`.
+    contrib 0.63b0–0.66b2 ignores `instrument(tracer_provider=...)` for sync
+    channels (it reads the channel call's kwargs), so the helper binds an
+    instance `wrapper_fn` on `GrpcInstrumentorClient` built from contrib's
+    public `client_interceptor` / `intercept_channel`; another contrib layout
+    warns once and leaves sync client spans without `error.type`.
+  - Known gap, documented: a server handler that raises leaves the SERVER
+    span Unset (code 0) while the peer receives `UNKNOWN`.
+  - Tests: `tests/test_d16_error_type.py`.
+  - Review round 1 (2026-11-18): an `OSError` candidate (the exception or its
+    `__cause__`) is skipped, so aiomysql's `OperationalError(2013)` raised from
+    `ConnectionResetError(104)` gives `_OTHER`, never `104`; a
+    `db.response.status_code` already on the span without an `error.type` gives
+    `error.type` = that value (semconv SHOULD); the sync-client `wrapper_fn` is
+    unbound when `instrument()` is refused or raises and always in
+    `uninstrument()`; a seam test pins contrib's `wrapper_fn` source;
+    `with_call` and stream-unary are tested. Documented: a `grpc.aio` unary-response
+    call (unary-unary, stream-unary) whose failure is not an `AioRpcError` (a
+    cancel included) exports no CLIENT span (upstream contrib); aio
+    streaming-response calls get `_OTHER` as sync calls do.
+
 - **A30 owner rulings of 2026-11-06 (design D1 "HTTP opt-in metrics", "AWS
   RPC keys", "AWS service attribute values").** `TelemetryOptions.http_opt_in_metrics`
   / `OTEL_HELPER_HTTP_OPT_IN_METRICS` (`resolved.http_opt_in_metrics`): off,

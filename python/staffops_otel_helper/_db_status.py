@@ -37,6 +37,17 @@ Redis spans (``redis=True``, A26 fix rounds of 2026-11-03) also get:
   ``db.operation.name``"): the command as contrib names the span (redis-py's
   first argument, ``SET``; ``FT.SEARCH`` / ``FT.CREATE``), written when the
   span ends; none on a pipeline span or a span without a command, as Go.
+
+SQL spans (``redis=False``, contract D16, R12, task A44) also get, when they
+end with status ERROR and carry no ``error.type`` yet, ``db.response.status_code``
+and ``error.type`` set to the driver's error code (:func:`sql_error_code`), or
+``error.type=_OTHER`` without an accepted code. The exception is captured in
+the wrapped ``set_status(ERROR)`` from ``sys.exc_info()`` when its ``str()``
+equals the status description (contrib sqlalchemy calls it from SQLAlchemy's
+``handle_error``, inside the ``except``), and in a wrapped ``record_exception``
+(the ``connect`` span). Values already on the span are never overwritten.
+SQLite spans keep contrib's ``db.namespace`` / ``db.name`` (the file path)
+and span name (documented residual).
 """
 
 from __future__ import annotations
@@ -44,6 +55,7 @@ from __future__ import annotations
 import ast
 import logging
 import re
+import sys
 import traceback
 from contextlib import contextmanager
 from typing import Any, Iterator
@@ -193,6 +205,102 @@ def redis_reply_code(exception: BaseException | None, text: str) -> str | None:
     return "ERR" if type(exception) is ResponseError else None
 
 
+_SQLSTATE = re.compile(r"[0-9A-Z]{5}")
+_POSTGRES_SYSTEMS = frozenset({"postgresql"})
+_MYSQL_SYSTEMS = frozenset({"mysql", "mariadb"})
+
+
+def _sqlstate(value: Any) -> str | None:
+    """``value`` when it is a SQLSTATE: five of ``0-9A-Z`` with at least one digit (rejects ``EPIPE``)."""
+    if isinstance(value, str) and _SQLSTATE.fullmatch(value) and any(c.isdigit() for c in value):
+        return value
+    return None
+
+
+def _mysql_number(value: Any) -> str | None:
+    """``value`` as a decimal string when it is a MySQL server error number.
+
+    Accepted: an ``int`` 1–65535 outside the 2000–2999 client range.
+    """
+    if isinstance(value, int) and not isinstance(value, bool) and 1 <= value <= 65535 and not 2000 <= value <= 2999:
+        return str(value)
+    return None
+
+
+def _safe_getattr(obj: Any, name: str) -> Any:
+    try:
+        return getattr(obj, name, None)
+    except Exception:  # noqa: BLE001 - a property that raises: no value
+        return None
+
+
+def _postgres_code(exc: BaseException) -> str | None:
+    # psycopg2 ``pgcode``, psycopg 3 and asyncpg ``sqlstate``, psycopg 2/3 ``diag.sqlstate``.
+    for value in (_safe_getattr(exc, "pgcode"), _safe_getattr(exc, "sqlstate"),
+                  _safe_getattr(_safe_getattr(exc, "diag"), "sqlstate")):
+        code = _sqlstate(value)
+        if code is not None:
+            return code
+    return None
+
+
+def _mysql_code(exc: BaseException) -> str | None:
+    # pymysql and mysqlclient: ``args[0]`` is the error number.
+    args = _safe_getattr(exc, "args")
+    return _mysql_number(args[0]) if isinstance(args, tuple) and args else None
+
+
+def sql_error_code(exc: BaseException | None, system: Any) -> str | None:
+    """The accepted error code of a failed SQL call, or None (``error.type=_OTHER``) (D16, A44).
+
+    ``system`` is the span's ``db.system.name`` / ``db.system``. PostgreSQL:
+    ``pgcode``, then ``sqlstate``, then ``diag.sqlstate``, accepted only as a
+    SQLSTATE (``^[0-9A-Z]{5}$`` with at least one digit). MySQL / MariaDB:
+    ``args[0]`` when it is an int 1–65535 outside the client range 2000–2999.
+    The exception is read first, then its ``__cause__`` (asyncpg through
+    SQLAlchemy's adapted error); an ``OSError`` candidate is skipped (its
+    ``args[0]`` is an errno). Any other system: None. Never raises.
+    """
+    if exc is None:
+        return None
+    if system in _POSTGRES_SYSTEMS:
+        read = _postgres_code
+    elif system in _MYSQL_SYSTEMS:
+        read = _mysql_code
+    else:
+        return None
+    for candidate in (exc, _safe_getattr(exc, "__cause__")):
+        # An OSError (ConnectionResetError 104 under aiomysql's 2013) carries an errno, never a code.
+        if isinstance(candidate, BaseException) and not isinstance(candidate, OSError):
+            try:
+                code = read(candidate)
+            except Exception:  # noqa: BLE001 - a shape this helper does not know: no code
+                code = None
+            if code is not None:
+                return code
+    return None
+
+
+def _set_sql_error_type(span: Span, exception: BaseException | None) -> None:
+    """At the end of a SQL span: ``db.response.status_code`` and ``error.type`` when ERROR and absent (A44)."""
+    if not span.is_recording():
+        return
+    status = getattr(span, "status", None)
+    if status is None or status.status_code is not StatusCode.ERROR:
+        return
+    attributes = getattr(span, "attributes", None) or {}
+    if "error.type" in attributes:
+        return
+    preset = attributes.get("db.response.status_code")
+    if preset is not None:  # set upstream: error.type SHOULD match it (semconv)
+        span.set_attribute("error.type", str(preset))
+        return
+    code = sql_error_code(exception, attributes.get("db.system.name", attributes.get("db.system")))
+    if code is not None:
+        span.set_attribute("db.response.status_code", code)
+    span.set_attribute("error.type", code or "_OTHER")
+
+
 def _qualified(exc_type: type) -> str:
     module = exc_type.__module__
     return exc_type.__qualname__ if module in ("builtins", "__main__") else f"{module}.{exc_type.__qualname__}"
@@ -229,11 +337,22 @@ def _drop_error_description(span: Span, redis: bool = False) -> Span:
     argument (``unknown command 'X', with args beginning with: '<arg>'``). Go
     and Node leave the description empty too. An exception event, when one is
     recorded, is kept (semconv ``exception.message``; the A25 residual), and
-    for Redis sanitized as described in the module docstring.
+    for Redis sanitized as described in the module docstring. SQL spans
+    (``redis=False``) also capture the exception and write ``error.type`` at
+    ``end()`` (A44, module docstring).
     """
     original_status = span.set_status
     original_record = getattr(span, "record_exception", None)
+    original_end = getattr(span, "end", None)
     typed = [False]  # error.type already set by record_exception (Redis)
+    captured: list = [None]  # the failed call's exception (SQL, A44), released at end()
+
+    def capture_active(status: Status | StatusCode, description: str | None) -> None:
+        # contrib sqlalchemy: Status(ERROR, str(exc)) from handle_error, inside SQLAlchemy's except.
+        text = status.description if isinstance(status, Status) else description
+        active = sys.exc_info()[1]
+        if active is not None and text is not None and str(active) == text:
+            captured[0] = active
 
     def set_error_type(exception: BaseException | None, text: str) -> None:
         code = redis_reply_code(exception, text)
@@ -254,7 +373,26 @@ def _drop_error_description(span: Span, redis: bool = False) -> Span:
                 set_error_type(None, _server_text(text.split(": ", 1)[1] if ": " in text else text))
             except Exception:  # noqa: BLE001 - never raise into the instrumented call
                 _log.debug("redis error.type not set", exc_info=False)
+        elif not redis and captured[0] is None:
+            try:
+                capture_active(status, description)
+            except Exception:  # noqa: BLE001 - str() of a foreign exception may raise
+                _log.debug("sql exception not captured", exc_info=False)
         original_status(Status(StatusCode.ERROR))
+
+    def record_sql_exception(exception: BaseException, *args: Any, **kwargs: Any) -> None:
+        if captured[0] is None and isinstance(exception, BaseException):
+            captured[0] = exception
+        original_record(exception, *args, **kwargs)
+
+    def end_sql(*args: Any, **kwargs: Any) -> None:
+        try:
+            _set_sql_error_type(span, captured[0])
+        except Exception:  # noqa: BLE001 - never raise into the instrumented call
+            _log.debug("sql error.type not set", exc_info=False)
+        finally:
+            captured[0] = None
+        original_end(*args, **kwargs)
 
     def record_exception(exception: BaseException, attributes: Any = None, timestamp: int | None = None,
                          escaped: bool = False) -> None:
@@ -278,6 +416,11 @@ def _drop_error_description(span: Span, redis: bool = False) -> Span:
         span.set_status = set_status  # type: ignore[method-assign]
         if redis and original_record is not None:
             span.record_exception = record_exception  # type: ignore[method-assign]
+        if not redis:
+            if original_record is not None:
+                span.record_exception = record_sql_exception  # type: ignore[method-assign]
+            if original_end is not None:
+                span.end = end_sql  # type: ignore[method-assign]
     except AttributeError:  # a span type with __slots__: left as it is
         pass
     return span

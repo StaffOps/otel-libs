@@ -180,6 +180,47 @@ add_MyServiceServicer_to_server(MyServicer(), server)
 - `OTEL_PYTHON_GRPC_EXCLUDED_SERVICES` works as upstream documents; the helper
   folds it into its health filter.
 - The Python gRPC instrumentation emits **no RPC metrics** (spans only).
+- **`error.type` on failed calls** (contract D16, task A46; contrib writes
+  none): when a gRPC span ends with status ERROR and has no `error.type`, the
+  helper writes the canonical name of the `rpc.grpc.status_code` contrib wrote
+  (`FAILED_PRECONDITION`, `ALREADY_EXISTS`, `INTERNAL`, ...; the 16
+  `grpc.StatusCode` error names), as Go (.NET measured for CLIENT spans;
+  Node.js: a later task of this batch):
+  - CLIENT spans: every non-OK code (sync unary, `.future()`, `with_call`,
+    unary-stream, client-stream (stream-unary) and bidi, `grpc.aio` alike;
+    each measured by `tests/test_d16_error_type.py`). A code above 16 gives
+    `error.type=_OTHER`. On a **sync** channel, a failure that is not an
+    `RpcError` (the span is ERROR with contrib's initial code 0) gives
+    `_OTHER` too. On a **`grpc.aio`** channel such a failure (an exception
+    other than `AioRpcError`, a cancelled call included) of a
+    **unary-response** call (unary-unary, stream-unary) exports **no CLIENT
+    span at all**: contrib's aio interceptor starts the span with
+    `end_on_exit=False` and never ends it on that path (upstream behavior,
+    read from contrib `_aio_client.py`, not covered by a test).
+    aio **streaming-response** calls (unary-stream, stream-stream) end the
+    span on any exception, so they get `_OTHER` as sync calls do.
+  - SERVER spans: contrib marks a server span ERROR only for `UNKNOWN`,
+    `DEADLINE_EXCEEDED`, `UNIMPLEMENTED`, `INTERNAL`, `UNAVAILABLE` and
+    `DATA_LOSS` (semconv server rule), so only those get `error.type`; a
+    handler that aborts with `NOT_FOUND` leaves the SERVER span Unset with
+    no `error.type` while the CLIENT span carries `NOT_FOUND`.
+  - A value already on the span (your handler's
+    `trace.get_current_span().set_attribute("error.type", ...)`) is kept.
+  - **Known gap:** a server handler that **raises** (instead of calling
+    `context.abort` / `set_code`) leaves the SERVER span Unset
+    (`rpc.grpc.status_code=0`, no `error.type`) while the peer receives
+    `UNKNOWN` (its CLIENT span carries `error.type=UNKNOWN`); Go marks the
+    server span ERROR + `UNKNOWN`. The exception event is still recorded.
+  - Only the helper's own instrumentation is covered: if other code
+    instrumented gRPC before `setup_telemetry()`, its spans keep contrib's
+    attributes (no `error.type`).
+  - contrib 0.63b0–0.66b2 ignores the `tracer_provider` given to
+    `instrument()` for **sync** channels (it reads it from the
+    `grpc.insecure_channel()` call), so the helper binds its own
+    `wrapper_fn` on the sync client instrumentor, built from contrib's public
+    `client_interceptor`. If a contrib release changes that layout, one
+    warning says sync client spans carry no `error.type`; nothing else
+    changes.
 - Upstream limitation: the aio server interceptor supports server-streaming
   handlers written as async generators (`yield`) only; a traced handler using
   `await context.write(...)` fails. Exclude such services with
@@ -650,6 +691,36 @@ setup_telemetry()
   `setup_telemetry()` is traced by `instrument_sql(engine)` (2026-11-03). Known
   gap: Python copies the dialect name unmapped (SQL Server → `mssql`, Go
   emits `microsoft.sql_server`); filter on both in cross-language queries.
+- **SQL error codes (contract D16, task A44):** when a SQLAlchemy span (a
+  statement or the `connect` span) ends with status ERROR and has no
+  `error.type` yet, the helper writes `db.response.status_code` and
+  `error.type` = the driver's error code, as Go (Node.js: a later task of
+  this batch; .NET measured for PostgreSQL only):
+
+  | `db.system.name` / `db.system` | Code read | Accepted |
+  |---|---|---|
+  | `postgresql` | `pgcode` (psycopg2), then `sqlstate` (psycopg 3, asyncpg), then `diag.sqlstate`; on the exception, then on its `__cause__` (asyncpg through SQLAlchemy) | a SQLSTATE: `^[0-9A-Z]{5}$` with at least one digit (`23505`, `42P01`, an application `P0001`; a socket code such as `EPIPE` is rejected) |
+  | `mysql`, `mariadb` | `args[0]` (pymysql, mysqlclient), exception then `__cause__` | an `int` 1–65535 outside the client range 2000–2999 (`1062`; `2003` connection refused and `2013` server lost are client errors) |
+  | anything else (`sqlite`, `mssql`, ...) | — | — |
+
+  Without an accepted code the span gets `error.type=_OTHER` and no
+  `db.response.status_code`: connection refused, and server-side connect
+  errors when the driver carries no code (psycopg2 / psycopg 3; asyncpg
+  `28P01` and pymysql `1045` carry their code), a client error, an `OSError`
+  (its `args[0]` is an errno: aiomysql's `2013` raised from
+  `ConnectionResetError(104)` gives `_OTHER`, never `104`), SQLite, another
+  database. The message text never reaches these attributes, and a value
+  already on the span (set by contrib, a listener or your code) is never
+  overwritten; a `db.response.status_code` already there without an
+  `error.type` gives `error.type` = that value (semconv: they SHOULD match). The exception is the one contrib's `handle_error`
+  listener sees (taken from `sys.exc_info()` while SQLAlchemy handles it,
+  only when its text equals contrib's status description), or the one the
+  `connect` span records. Not covered: SQLAlchemy instrumented by other code
+  first (warned, see above). **SQLite residual:** contrib writes the database
+  **file path** into `db.namespace` / `db.name` and appends it to the span
+  name (`INSERT /var/data/app.db`); the helper leaves both as contrib writes
+  them (it cannot tell a SQLite span when the keys arrive). Go writes no
+  `db.namespace` for SQLite.
 
 ### Deprecated: `OTEL_HELPER_EXTRA_INSTRUMENTATION`
 

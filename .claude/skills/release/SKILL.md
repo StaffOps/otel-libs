@@ -374,6 +374,27 @@ token with `read:packages`); an install smoke in a throwaway `sdk` container
 StaffOps.OtelHelper --version <v>`, `dotnet build`). A published version
 cannot be replaced: fix forward with the next rc.
 
+## Python SDK-bump checklist
+Before raising the `opentelemetry-*` bounds in `python/pyproject.toml` (SDK and
+contrib move as a matched pair, design D9.a), re-check the private seams the
+helper relies on (design D16 notes):
+- **contrib grpc sync client:** `GrpcInstrumentorClient.wrapper_fn(self,
+  original_func, instance, args, kwargs)` still reads `tracer_provider` from
+  the channel kwargs, `_instrument` still wraps `self.wrapper_fn`, and
+  `_filter` / `_request_hook` / `_response_hook` are still instance fields.
+  The seam test in `tests/test_d16_error_type.py` fails when the source
+  changes; if contrib now honors `instrument(tracer_provider=)`, drop the
+  override.
+- **contrib sqlalchemy `handle_error`:** still calls `set_status(ERROR,
+  str(original_exception))` from inside SQLAlchemy's `except` (the
+  `sys.exc_info` capture guarded by the description equality) and then
+  `end()`.
+- **contrib grpc attributes:** errors still carry the integer
+  `rpc.grpc.status_code` (a stable-RPC mode would rename it; every error would
+  become `_OTHER`).
+- Run both legs (`ci/lower.txt` on the lowest Python, `ci/latest.txt` on the
+  newest) in plain containers.
+
 ## .NET SDK-bump checklist
 Before raising any `OpenTelemetry*` `PackageReference` in `dotnet/` (core and
 contrib move together on one generation, requirement DN1; first walked in

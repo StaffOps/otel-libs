@@ -16,7 +16,7 @@ import os
 import re
 from contextlib import contextmanager
 
-from staffops_otel_helper import _db_status
+from staffops_otel_helper import _db_status, _grpc_status
 from staffops_otel_helper._diag import warn_once_per_process
 from staffops_otel_helper._support import warn_if_unsupported
 from staffops_otel_helper.config import ENV_EXTRA_INSTRUMENTATION, TelemetryOptions
@@ -140,6 +140,8 @@ def configure_instrumentations(options: TelemetryOptions, instrumented: list | N
             kwargs: dict = {}
             if class_name in _GRPC:
                 env = {_ENV_GRPC_EXCLUDED_SERVICES: None}
+                # error.type on failed gRPC spans (D16, A46): the canonical code name, else _OTHER.
+                kwargs = _grpc_status.grpc_instrument_kwargs()
             elif class_name == "HTTPXClientInstrumentor":  # reads env only, no excluded_urls kwarg
                 env = {_ENV_HTTPX_EXCLUDED_URLS: _client_excluded_urls(_ENV_HTTPX_EXCLUDED_URLS, health)}
             elif class_name == "RequestsInstrumentor":
@@ -168,7 +170,14 @@ def configure_instrumentations(options: TelemetryOptions, instrumented: list | N
                     continue
                 if class_name in _DB_EXT:
                     _db_status.clear_wrapped(instrumentor)
-                instrumentor.instrument(**kwargs)
+                if class_name == "GrpcInstrumentorClient":  # contrib ignores tracer_provider for sync channels
+                    _grpc_status.unbind_sync_client(instrumentor)
+                    _grpc_status.bind_sync_client(instrumentor, kwargs["tracer_provider"])
+                try:
+                    instrumentor.instrument(**kwargs)
+                except BaseException:
+                    _grpc_status.unbind_sync_client(instrumentor)  # A46: nothing of ours left behind
+                    raise
         except ImportError:
             continue
         # instrument() is a no-op when the library is missing (skipped silently) or
@@ -182,6 +191,7 @@ def configure_instrumentations(options: TelemetryOptions, instrumented: list | N
             if flag is not None:
                 implicit.append(flag)
         else:
+            _grpc_status.unbind_sync_client(instrumentor)  # refused (A46): contrib's own wrapper_fn again
             warn_if_unsupported(instrumentor)
     _warn_implicit_extras(implicit)
     return instrumented
@@ -235,5 +245,7 @@ def uninstrument(instrumented: list) -> list[str]:
             _db_status.clear_wrapped(instrumentor)  # A26: a later instrumentation is not ours
         except Exception as e:  # noqa: BLE001 - reported by the caller
             errors.append(f"{type(instrumentor).__name__}: {e}")
+        finally:
+            _grpc_status.unbind_sync_client(instrumentor)  # A46: contrib's own wrapper_fn again
     instrumented.clear()
     return errors
