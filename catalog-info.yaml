@@ -90,3 +90,243 @@ spec:
   lifecycle: production
   owner: group:staffops
   system: otel-libs
+---
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: otel-helper-go-otelsql
+  title: "otel-helper-go: ext/otelsql (Go)"
+  description: "Go opt-in module github.com/staffops/otel-libs/go/ext/otelsql: database/sql instrumentation"
+  annotations:
+    github.com/project-slug: StaffOps/otel-libs
+  tags: [go, opentelemetry]
+spec:
+  type: library
+  lifecycle: production
+  owner: group:staffops
+  system: otel-libs
+  subcomponentOf: component:otel-helper-go
+---
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: otel-helper-go-otelredis
+  title: "otel-helper-go: ext/otelredis (Go)"
+  description: "Go opt-in module github.com/staffops/otel-libs/go/ext/otelredis: go-redis instrumentation"
+  annotations:
+    github.com/project-slug: StaffOps/otel-libs
+  tags: [go, opentelemetry]
+spec:
+  type: library
+  lifecycle: production
+  owner: group:staffops
+  system: otel-libs
+  subcomponentOf: component:otel-helper-go
+---
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: otel-helper-go-otelaws
+  title: "otel-helper-go: ext/otelaws (Go)"
+  description: "Go opt-in module github.com/staffops/otel-libs/go/ext/otelaws: AWS SDK v2 instrumentation"
+  annotations:
+    github.com/project-slug: StaffOps/otel-libs
+  tags: [go, opentelemetry]
+spec:
+  type: library
+  lifecycle: production
+  owner: group:staffops
+  system: otel-libs
+  subcomponentOf: component:otel-helper-go
+---
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: staffops-otel-helper-python-aws
+  title: "staffops-otel-helper[aws] (Python)"
+  description: "Python extra aws: botocore instrumentation"
+  annotations:
+    github.com/project-slug: StaffOps/otel-libs
+  tags: [python, opentelemetry]
+spec:
+  type: library
+  lifecycle: production
+  owner: group:staffops
+  system: otel-libs
+  subcomponentOf: component:staffops-otel-helper-python
+---
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: staffops-otel-helper-python-redis
+  title: "staffops-otel-helper[redis] (Python)"
+  description: "Python extra redis: redis-py instrumentation"
+  annotations:
+    github.com/project-slug: StaffOps/otel-libs
+  tags: [python, opentelemetry]
+spec:
+  type: library
+  lifecycle: production
+  owner: group:staffops
+  system: otel-libs
+  subcomponentOf: component:staffops-otel-helper-python
+---
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: staffops-otel-helper-python-sql
+  title: "staffops-otel-helper[sql] (Python)"
+  description: "Python extra sql: SQLAlchemy instrumentation"
+  annotations:
+    github.com/project-slug: StaffOps/otel-libs
+  tags: [python, opentelemetry]
+spec:
+  type: library
+  lifecycle: production
+  owner: group:staffops
+  system: otel-libs
+  subcomponentOf: component:staffops-otel-helper-python
+---
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: staffops-otel-helper-dotnet-aws
+  title: "StaffOps.OtelHelper.AWS (.NET)"
+  description: "NuGet StaffOps.OtelHelper.AWS: AWS SDK instrumentation"
+  annotations:
+    github.com/project-slug: StaffOps/otel-libs
+  tags: [csharp, opentelemetry]
+spec:
+  type: library
+  lifecycle: production
+  owner: group:staffops
+  system: otel-libs
+  subcomponentOf: component:staffops-otel-helper-dotnet
+---
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: staffops-otel-helper-dotnet-redis
+  title: "StaffOps.OtelHelper.Redis (.NET)"
+  description: "NuGet StaffOps.OtelHelper.Redis: StackExchange.Redis instrumentation"
+  annotations:
+    github.com/project-slug: StaffOps/otel-libs
+  tags: [csharp, opentelemetry]
+spec:
+  type: library
+  lifecycle: production
+  owner: group:staffops
+  system: otel-libs
+  subcomponentOf: component:staffops-otel-helper-dotnet
+---
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: staffops-otel-helper-dotnet-sql
+  title: "StaffOps.OtelHelper.Sql (.NET)"
+  description: "NuGet StaffOps.OtelHelper.Sql: SqlClient instrumentation"
+  annotations:
+    github.com/project-slug: StaffOps/otel-libs
+  tags: [csharp, opentelemetry]
+spec:
+  type: library
+  lifecycle: production
+  owner: group:staffops
+  system: otel-libs
+  subcomponentOf: component:staffops-otel-helper-dotnet
+---
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: staffops-otel-helper-dotnet-profiling
+  title: "StaffOps.OtelHelper.Profiling (.NET)"
+  description: "NuGet StaffOps.OtelHelper.Profiling: Pyroscope continuous profiling (opt-in)"
+  annotations:
+    github.com/project-slug: StaffOps/otel-libs
+  tags: [csharp, opentelemetry]
+spec:
+  type: library
+  lifecycle: production
+  owner: group:staffops
+  system: otel-libs
+  subcomponentOf: component:staffops-otel-helper-dotnet
+---
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: otel-helper-node-sql
+  title: "@staffops/otel-helper-sql (Node.js)"
+  description: "npm @staffops/otel-helper-sql: pg and mysql2 instrumentation"
+  annotations:
+    github.com/project-slug: StaffOps/otel-libs
+  tags: [nodejs, opentelemetry]
+spec:
+  type: library
+  lifecycle: production
+  owner: group:staffops
+  system: otel-libs
+  subcomponentOf: component:otel-helper-node
+---
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: otel-helper-node-redis
+  title: "@staffops/otel-helper-redis (Node.js)"
+  description: "npm @staffops/otel-helper-redis: redis and ioredis instrumentation"
+  annotations:
+    github.com/project-slug: StaffOps/otel-libs
+  tags: [nodejs, opentelemetry]
+spec:
+  type: library
+  lifecycle: production
+  owner: group:staffops
+  system: otel-libs
+  subcomponentOf: component:otel-helper-node
+---
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: otel-helper-node-aws
+  title: "@staffops/otel-helper-aws (Node.js)"
+  description: "npm @staffops/otel-helper-aws: AWS SDK v3 instrumentation"
+  annotations:
+    github.com/project-slug: StaffOps/otel-libs
+  tags: [nodejs, opentelemetry]
+spec:
+  type: library
+  lifecycle: production
+  owner: group:staffops
+  system: otel-libs
+  subcomponentOf: component:otel-helper-node
+---
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: otel-helper-node-pino
+  title: "@staffops/otel-helper-pino (Node.js)"
+  description: "npm @staffops/otel-helper-pino: pino destination that sends records through the helper logs pipeline"
+  annotations:
+    github.com/project-slug: StaffOps/otel-libs
+  tags: [nodejs, opentelemetry]
+spec:
+  type: library
+  lifecycle: production
+  owner: group:staffops
+  system: otel-libs
+  subcomponentOf: component:otel-helper-node
+---
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: otel-helper-node-winston
+  title: "@staffops/otel-helper-winston (Node.js)"
+  description: "npm @staffops/otel-helper-winston: winston transport that sends records through the helper logs pipeline"
+  annotations:
+    github.com/project-slug: StaffOps/otel-libs
+  tags: [nodejs, opentelemetry]
+spec:
+  type: library
+  lifecycle: production
+  owner: group:staffops
+  system: otel-libs
+  subcomponentOf: component:otel-helper-node
