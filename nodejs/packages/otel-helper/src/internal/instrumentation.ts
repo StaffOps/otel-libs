@@ -51,6 +51,7 @@ import { isHelperServer } from './metrics-endpoint';
 import { getState } from './state';
 import type { OtlpPlan } from './otlp';
 import { grpcNamingTracerProvider, normalizeHealthPath } from './tracing';
+import { exceptionDetailTracerProvider } from './exception-detail';
 
 /** `instrumentationName` of instrumentation-http. */
 const HTTP_INSTRUMENTATION = '@opentelemetry/instrumentation-http';
@@ -477,8 +478,10 @@ function reportUnpatchedHttp(holder: HelperInstrumentations, nodeHttp: typeof ht
  */
 export function bindProviders(holder: HelperInstrumentations, tracerProvider: TracerProvider, meterProvider: MeterProvider): void {
   for (const instrumentation of holder.instrumentations) {
+    // HTTP, gRPC and express spans keep exception.type only; server spans write a correlated record (A37).
+    const detail = exceptionDetailTracerProvider(tracerProvider, instrumentation.instrumentationName);
     // instrumentation-grpc starts its spans under the semconv name (A30).
-    instrumentation.setTracerProvider(instrumentation.instrumentationName === GRPC_INSTRUMENTATION ? grpcNamingTracerProvider(tracerProvider) : tracerProvider);
+    instrumentation.setTracerProvider(instrumentation.instrumentationName === GRPC_INSTRUMENTATION ? grpcNamingTracerProvider(detail) : detail);
     instrumentation.setMeterProvider(meterProvider);
   }
 }

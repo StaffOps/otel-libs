@@ -120,6 +120,99 @@ only, so the helper sets it for the duration of setup and restores it: clients
 instrumented later with `HTTPXClientInstrumentor.instrument_client()` do not get
 the health exclusion. Every other call carries `traceparent` automatically.
 
+### HTTP and gRPC exception detail (task A37)
+
+The spans of the instrumentations the helper turns on never carry an error's
+text (ADR-014 decision 4; owner decisions of 2026-11-19):
+
+- **Every FastAPI / ASGI, requests, httpx and gRPC span** keeps status ERROR
+  **without a description**, and its `exception` event (where contrib records
+  one) keeps only `exception.type`, once per exception object (the gRPC aio
+  server used to record an `AbortError` twice, with message and stack).
+- **Server spans** (FastAPI / ASGI SERVER, gRPC SERVER, sync and aio) write
+  **one** ERROR record per **failed** span on the
+  `staffops_otel_helper.failure` logger (the `traced` channel: OTLP with a
+  logs exporter, else stdout JSON with `trace_id` / `span_id`), in the span's
+  context, also when the span is not sampled. Failed means: HTTP — a 5xx
+  response or an exception that escaped the handler (Starlette answers it
+  with 500); gRPC — the status code the handler or contrib set is
+  `UNKNOWN`, `DEADLINE_EXCEEDED`, `UNIMPLEMENTED`, `INTERNAL`, `UNAVAILABLE`
+  or `DATA_LOSS`, or the handler raised without setting one (the client sees
+  `UNKNOWN`). An exception you record and answer with 2xx / 4xx
+  (`HTTPException(404)`), a `context.abort(NOT_FOUND, …)` and a cancellation
+  (`asyncio.CancelledError`, a gRPC `CANCELLED` `RpcError`) write none.
+  Body and `exception.message`: the exception's `str()` — for a gRPC abort,
+  which only says `Locally aborted.`, the `<code>:<details>` text contrib put
+  in the (dropped) description; `exception.type`, `exception.stacktrace` (the
+  traceback, helper frames dropped); `error.type`, the same sampled or not:
+  HTTP the 5xx status when one is known (the helper reads the response
+  status for unsampled spans too), else the span's `error.type`, else the
+  exception's qualified type — an exception escaping after a 200 started
+  streaming gives its type and keeps `http.response.status_code=200`, and
+  only a failure before any response gets `http.response.status_code=500`;
+  gRPC the code name (`INTERNAL`; `UNKNOWN` without a code); and the span's
+  `http.request.method`, `http.route`, `http.response.status_code` (or the
+  old `http.method` / `http.status_code`) and `rpc.*` keys, with their
+  integer types; never the URL or query.
+- Your own `set_status(ERROR, "...")` on one of these server spans loses its
+  description too (Go keeps it on an RPC span that ends OK), and the
+  `attributes` you pass to `record_exception` on these spans are dropped: the
+  event keeps `exception.type` only. Put your own keys on the span or in your
+  own log record instead.
+- An exception you record and then answer with a 5xx yourself (no escape)
+  writes one record too, sampled or not.
+- **Client spans** (requests, httpx, gRPC client, the ASGI `send` / `receive`
+  spans) keep the type-only event and write **no** record: the server's
+  record explains the failure.
+- A handler wrapped in your own `traced` span gives two records, one per span
+  (design D15).
+
+```json
+{"time":"…","level":"ERROR","msg":"order 42 rejected","logger":"staffops_otel_helper.failure","trace_id":"4bf9…","span_id":"00f0…","exception.type":"ValueError","exception.message":"order 42 rejected","exception.stacktrace":"Traceback (most recent call last):\n …","error.type":"500","http.request.method":"POST","http.route":"/orders/{order_id}","http.response.status_code":500}
+```
+
+Before 0.3 (contrib alone) the FastAPI middleware put the message and stack in
+the event and set the description `<Type>: <message>`, but on the 500 path
+contrib's own status handling replaced that description with a bare ERROR when
+the 500 response was sent, so only the event held the text.
+
+**`uvicorn.error` writes a second, uncorrelated record.** uvicorn logs every
+exception that leaves the ASGI app (`Exception in ASGI application`, with the
+traceback) on its `uvicorn.error` logger, after the request's span context is
+gone, so that record has no `trace_id`. The helper's record already carries the
+traceback in the right context; drop uvicorn's copy in the application (uvicorn
+0.30+ message text; not measured by the helper's tests):
+
+```python
+import logging
+
+class DropAsgiTraceback(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        return not record.getMessage().startswith("Exception in ASGI application")
+
+logging.getLogger("uvicorn.error").addFilter(DropAsgiTraceback())
+```
+
+**grpcio logs a second, uncorrelated record too.** A sync gRPC handler that
+raises makes grpcio log `Exception calling application: <message>` with the
+traceback on its `grpc._server` logger, after the RPC's span ended (grpcio
+1.6x message text; the aio server was not checked; not measured by the helper's
+tests). Drop it the same way:
+
+```python
+class DropGrpcTraceback(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        return not record.getMessage().startswith("Exception calling application")
+
+logging.getLogger("grpc._server").addFilter(DropGrpcTraceback())
+```
+
+Raising the `uvicorn.error` level instead also hides uvicorn's startup errors,
+and an `@app.exception_handler(Exception)` does not stop the record: Starlette's
+`ServerErrorMiddleware` re-raises after calling it, so uvicorn still logs.
+Logs now carry request-derived error text: treat the log pipeline as
+sensitive.
+
 ---
 
 ## 3. Workers and background tasks

@@ -217,6 +217,16 @@ span's event keeps only `exception.type`, and one ERROR record on the
 message, `exception.type`, `exception.message` and `exception.stacktrace`
 (task A36, [ADR-014](../specs/decisions/ADR-014-exception-detail-in-correlated-logs.md); HOW-TO §9).
 
+HTTP and gRPC spans follow the same rule (task A37): every FastAPI / ASGI,
+requests, httpx and gRPC span keeps status ERROR without a description and a
+type-only `exception` event (once per exception object); server spans
+(FastAPI / ASGI, gRPC server) write one correlated ERROR record per failed
+span (a 5xx or an escaping exception; a gRPC server-error code or an
+exception without a code) with the message, type, stack, a sampling-independent
+`error.type` and the `http.*` / `rpc.*` attributes, sampled or not; client
+spans write none. `uvicorn.error`'s own uncorrelated
+traceback record stays (HOW-TO §2, "HTTP and gRPC exception detail").
+
 ## Public API
 
 | Name | Purpose |

@@ -7,6 +7,7 @@ import (
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 	"go.opentelemetry.io/otel/trace/embedded"
 )
@@ -134,6 +135,19 @@ func redactAttrs(attrs []attribute.KeyValue) []attribute.KeyValue {
 }
 
 type redactingSpan struct{ trace.Span }
+
+// SetStatus keeps the code and drops the description (task A37, coordinator
+// ruling R3, 2026-11-19). otelhttp v0.72.0 writes err.Error() there for a
+// failed round trip (transport.go:302,378,395), and a *url.Error quotes the
+// whole request URL, query included: the credential, signature and session
+// token of a presigned URL, which A28 redacts only in url.full. Defense in
+// depth (review N5): a custom RoundTripper's error and a body read/write
+// error can quote the URL too, and the helper controls none of that text.
+// The request context keeps the SDK span, so ReadOnlySpan assertions are not
+// affected.
+func (s redactingSpan) SetStatus(c codes.Code, _ string) {
+	s.Span.SetStatus(c, "")
+}
 
 func (s redactingSpan) SetAttributes(kv ...attribute.KeyValue) {
 	s.Span.SetAttributes(redactAttrs(kv)...)

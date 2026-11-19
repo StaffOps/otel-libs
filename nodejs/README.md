@@ -340,6 +340,17 @@ failures in every language. Details and recipes:
 `"<name>: <message>"`. Now the span carries only ERROR and `error.type`; the
 message and stack are in the correlated log record.
 
+**HTTP, express and gRPC spans (task A37, ADR-014).** The spans of the four
+core instrumentations keep status ERROR without a description, a type-only
+`exception` event (once per error object) and never `grpc.error_message`.
+Server spans (http SERVER, express, grpc SERVER) write one correlated ERROR
+record per **failed** span (ERROR without a 4xx error status; a gRPC
+server-error code or no code) — message, type, stack (none for gRPC, which
+hands the span no error object), a sampling-independent `error.type` and the
+`http.*` / `rpc.*` attributes — sampled or not, none for a cancellation; client spans (http CLIENT, undici,
+grpc CLIENT) write none. A handler inside `withSpan` gives two records, one
+per span ([HOW-TO §2](HOW-TO.md#errors-on-http-express-and-grpc-spans-task-a37)).
+
 ## API stability (0.x)
 
 Before 1.0 a minor release (`0.3` → `0.4`) may break the API; a patch

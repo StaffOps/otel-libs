@@ -2,6 +2,7 @@ package otelhelper
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -9,6 +10,7 @@ import (
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
+	otelcodes "go.opentelemetry.io/otel/codes"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 )
@@ -124,5 +126,81 @@ func TestRedactingTracerUsesTheParentProvider(t *testing.T) {
 	}
 	if g := global.GetSpans(); len(g) != 1 || g[0].Name != "root" {
 		t.Errorf("global provider got %v, want the root span only", g)
+	}
+}
+
+// TestNewHTTPTransportFailedDialKeepsNoPresignedQuery (A37, ruling R3): a
+// failed round trip's *url.Error quotes the whole URL; otelhttp wrote it as
+// the status description. The span keeps ERROR with no description, and no
+// attribute or event carries the credential, signature or session token.
+func TestNewHTTPTransportFailedDialKeepsNoPresignedQuery(t *testing.T) {
+	exp := tracetest.NewInMemoryExporter()
+	tp := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(sdktrace.NewSimpleSpanProcessor(exp)))
+	defer tp.Shutdown(context.Background())
+	prev := otel.GetTracerProvider()
+	otel.SetTracerProvider(tp)
+	defer otel.SetTracerProvider(prev)
+	closed := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	base := closed.URL
+	closed.Close() // nothing listens there now: the dial fails
+	const secret = "AKIAEXAMPLEFAKEKEY02"
+	target := base + "/bucket/key?X-Amz-Credential=" + secret + "%2Fx&X-Amz-Security-Token=FakeToken2&X-Amz-Signature=" + strings.Repeat("b", 64)
+	client := &http.Client{Transport: NewHTTPTransport(nil)}
+	if _, err := client.Get(target); err == nil || !strings.Contains(err.Error(), secret) {
+		t.Fatalf("want a dial error quoting the URL (the leak this guards), got %v", err)
+	}
+	spans := exp.GetSpans()
+	if len(spans) != 1 {
+		t.Fatalf("got %d spans, want 1", len(spans))
+	}
+	s := spans[0]
+	if s.Status.Code != otelcodes.Error || s.Status.Description != "" {
+		t.Errorf("status = %v %q, want Error without a description", s.Status.Code, s.Status.Description)
+	}
+	everything := s.Status.Description
+	for _, kv := range s.Attributes {
+		everything += " " + string(kv.Key) + "=" + kv.Value.Emit()
+	}
+	for _, e := range s.Events {
+		for _, kv := range e.Attributes {
+			everything += " " + string(kv.Key) + "=" + kv.Value.Emit()
+		}
+	}
+	for _, leaked := range []string{secret, "FakeToken2", strings.Repeat("b", 64)} {
+		if strings.Contains(everything, leaked) {
+			t.Errorf("span leaks %q: %s", leaked, everything)
+		}
+	}
+}
+
+// quotingRoundTripper fails every request with an error that quotes the
+// request URL, as a custom RoundTripper or a body read/write error can.
+type quotingRoundTripper struct{}
+
+func (quotingRoundTripper) RoundTrip(r *http.Request) (*http.Response, error) {
+	return nil, errors.New("upstream refused " + r.URL.String())
+}
+
+// TestNewHTTPTransportCustomRoundTripperErrorKeepsNoDescription (A37 review
+// N5, defense in depth): an error text the helper does not control is
+// never the span's status description.
+func TestNewHTTPTransportCustomRoundTripperErrorKeepsNoDescription(t *testing.T) {
+	exp := tracetest.NewInMemoryExporter()
+	tp := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(sdktrace.NewSimpleSpanProcessor(exp)))
+	defer tp.Shutdown(context.Background())
+	prev := otel.GetTracerProvider()
+	otel.SetTracerProvider(tp)
+	defer otel.SetTracerProvider(prev)
+	const secret = "AKIAEXAMPLEFAKEKEY03"
+	client := &http.Client{Transport: NewHTTPTransport(quotingRoundTripper{})}
+	if _, err := client.Get("https://bucket.example/key?X-Amz-Credential=" + secret + "&X-Amz-Signature=sig03"); err == nil || !strings.Contains(err.Error(), secret) {
+		t.Fatalf("want an error quoting the URL, got %v", err)
+	}
+	spans := exp.GetSpans()
+	if len(spans) != 1 {
+		t.Fatalf("got %d spans, want 1", len(spans))
+	}
+	if s := spans[0]; s.Status.Code != otelcodes.Error || s.Status.Description != "" {
+		t.Errorf("status = %v %q, want Error without a description", s.Status.Code, s.Status.Description)
 	}
 }

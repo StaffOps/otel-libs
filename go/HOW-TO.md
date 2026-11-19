@@ -137,6 +137,13 @@ child. Requests to a health path (same list and matching as the server side,
 
 To wrap a custom transport: `otelhelper.NewHTTPTransport(&http.Transport{MaxIdleConns: 100})`.
 
+A failed round trip (a refused dial, a timeout) marks the client span ERROR
+**without a description** (task A37, ruling R3): otelhttp wrote the
+`*url.Error` text there, and it quotes the whole URL, the query of a
+presigned URL included. It is defense in depth: a custom `RoundTripper`'s
+error and a body read or write error can quote the URL as well, and the helper
+controls none of that text. Log `err` yourself when you need the detail.
+
 ---
 
 ## 2. gRPC
@@ -178,6 +185,25 @@ the semantic conventions count as server errors (`UNKNOWN`,
 and a normal outcome on the SERVER span. A handler returning a plain
 `errors.New` error is `UNKNOWN` on both sides. A value already on the span
 (`RecordFailure` in the handler) is kept.
+
+The status **description** of a failed RPC span is empty on both sides (task
+A37): otelgrpc would copy the gRPC status message there (the handler's text,
+or the peer's on the client), which can quote request values. The code,
+`error.type` and `rpc.response.status_code` are unchanged, and the caller
+still gets the full status. Go writes no log record for it (there is no
+exception object); to keep the detail, log it in the handler or call
+`RecordFailure(ctx, err)` there (one correlated record, §3b):
+
+```go
+func (s *server) GetOrder(ctx context.Context, req *pb.GetOrderRequest) (*pb.Order, error) {
+    order, err := s.store.Get(ctx, req.Id)
+    if err != nil {
+        otelhelper.RecordFailure(ctx, err) // message and stack in a log record, not on the span
+        return nil, status.Error(codes.Internal, "order lookup failed")
+    }
+    return order, nil
+}
+```
 
 ---
 

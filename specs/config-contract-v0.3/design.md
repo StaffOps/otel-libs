@@ -1292,6 +1292,146 @@ All of these are additive in the next minor.
   qualified name, and contrib instrumentations do not use one.
 
 
+### Amended 2026-11-19 — HTTP, gRPC and framework spans (task A37, ADR-014 decision 4)
+
+Owner decisions of 2026-11-19 (A37 row of `tasks.md`). The D15 record rule
+and the A36 event rule extend to the spans of the helper's HTTP and gRPC
+instrumentations. Two roles:
+
+| Role | Spans | Event | Description | Record |
+|---|---|---|---|---|
+| **Server / framework** | Python FastAPI / ASGI SERVER spans, gRPC SERVER spans (sync and aio); Node.js instrumentation-http SERVER spans, instrumentation-express spans, instrumentation-grpc SERVER spans | kept, `exception.type` only; at most one per exception object per span | dropped (ERROR kept) | one ERROR record per span on the D15 channel, in the span's context, sampled or not; none for a cancellation |
+| **Client** | Python requests, httpx, gRPC client (sync and aio), the other ASGI spans (INTERNAL, `send` / `receive`); Node.js instrumentation-http CLIENT, instrumentation-undici, instrumentation-grpc CLIENT | kept, `exception.type` only (none where the instrumentation records none) | dropped | none |
+| **Go otelgrpc** (client and server) | — (otelgrpc records no event) | — | dropped | none |
+
+**Record content.** Body and `exception.message`: the first recorded
+exception's message (Python `str(exc)`, Node.js `err.message`); `exception.type`:
+the D15 `error_type` / `errorTypeOf`; `exception.stacktrace`: Python the
+exception's traceback without the helper's frames, Node.js `err.stack`.
+Without an exception object, the dropped description is the body and
+`exception.message` (Node.js gRPC server: `grpc.error_message`, type
+`grpc.error_name`, no stack, as instrumentation-grpc hands the span no error
+object); neither: no record. Python gRPC aborts (`grpc.aio.AbortError`, the
+bare `Exception()` of the sync `context.abort`) carry no details in their own
+message (`Locally aborted.`): their body is the dropped description
+(`<code>:<details>`) when contrib set one (the six server codes). Attributes:
+`error.type` (the span's value when it has one at the end, else the
+exception's type) and, where present on the span or in its start attributes,
+`http.request.method`, `http.route`, `http.response.status_code`,
+`http.method`, `http.status_code`, `rpc.system`, `rpc.system.name`,
+`rpc.service`, `rpc.method`, `rpc.grpc.status_code`,
+`rpc.response.status_code` — never URL or query keys. A cancellation (the
+D15 rule: Python `is_cancellation`, Node.js `isCancellation`, and a gRPC
+`CANCELLED` status on a Node.js server span) writes no record and keeps its
+type-only event.
+
+**Mechanics.**
+- *Python:* the helper's TracerProvider (an SDK subclass) wraps the tracers
+  of the scopes `opentelemetry.instrumentation.fastapi`, `.asgi`, `.requests`,
+  `.httpx` and `opentelemetry.instrumentation.grpc*`; their spans' instance
+  methods are patched (the A25/A36 pattern). Recording spans write the record
+  at `end()` (after `error.type`, A46). Unsampled spans: contrib checks
+  `is_recording()` before it records anything, so the helper's unsampled
+  server span answers `is_recording()` — still `False` — by arming the record
+  when it is asked from `trace.use_span`'s exception handler (the frame is
+  checked against `use_span`'s code object; ASGI and gRPC both pass the
+  escaping exception through `use_span`), and from contrib calls that do not
+  check (`record_exception` of the gRPC interceptors), then writes it at once
+  or at `end()`. A foreign global TracerProvider gets none of this (as A28).
+- *Node.js:* `bindProviders` hands each core instrumentation a forwarding
+  TracerProvider whose spans (recording or not; Node.js instrumentations call
+  the span API without checking) are patched: `recordException`, `setStatus`,
+  `setAttribute(s)` (drop `grpc.error_message`, keep the record attributes)
+  and `end()` (write the record).
+- *Go:* `grpcErrorTypeHandler.HandleRPC` passes otelgrpc a copy of
+  `*stats.End` whose error has the same code and an empty message
+  (`status.Error(code, "")`); status code, `error.type`,
+  `rpc.response.status_code` and the RPC metrics are unchanged. Not a span
+  wrapper: a non-SDK span in the RPC context fails the `sdktrace.ReadOnlySpan`
+  assertions of `spanErrorType` (`errortype.go:28-42`) and of application code.
+- *.NET:* parked (`specs/dotnet-otel-helper/tasks.md` C20, C21).
+
+**Documented only (decision 6):** Python `uvicorn.error` writes its own
+ERROR record with the traceback and no trace context for every unhandled
+exception, and .NET Kestrel writes a duplicate correlated one; the HOW-TOs
+give the application-side fix (Python: a `logging.Filter` on `uvicorn.error`
+dropping its `Exception in ASGI application` records — an
+`@app.exception_handler(Exception)` does not help, as Starlette's
+`ServerErrorMiddleware` re-raises after calling it, and raising the logger's
+level also hides uvicorn's startup errors; .NET: `UseExceptionHandler` or a
+logging middleware, or a filter on the `Microsoft.AspNetCore.Server.Kestrel`
+category).
+
+*Amended 2026-11-19 (A37 review round: observability and code-review;
+coordinator rulings R1–R3):*
+
+- **R1 — a record only for a failed server span.** HTTP (Python FastAPI /
+  ASGI, Node.js http SERVER and express): the span was set ERROR (a 5xx
+  response), or, in Python, an exception escaped the span (seen in
+  `trace.use_span`'s handler; Starlette then answers 500); an exception the
+  application recorded and answered with 2xx / 4xx writes none; Node.js
+  express also skips an error carrying an integer `status` / `statusCode`
+  in 400–499. gRPC (Python and Node.js): the status code set after start by
+  the application or the instrumentation (`rpc.grpc.status_code`; the start
+  value is contrib's placeholder `0` and is never used) is one of `UNKNOWN`,
+  `DEADLINE_EXCEEDED`, `UNIMPLEMENTED`, `INTERNAL`, `UNAVAILABLE`,
+  `DATA_LOSS` (2, 4, 12, 13, 14, 15); with no code, a handler failure that
+  escaped (Python) or that instrumentation-grpc reported (Node.js) writes one,
+  as the client sees `UNKNOWN`. So `NOT_FOUND`, `INVALID_ARGUMENT`, a
+  cancellation and a handled exception write none. contrib gRPC's servicer
+  context sets the code and the status on unsampled spans too (it does not
+  check `is_recording()`); ASGI does not, so an unsampled ASGI span decides
+  from the escaping exception alone.
+- **R2 — the record's `error.type` does not depend on sampling.** HTTP: the
+  response status when a 5xx is known on the span, else `500` (an escaping
+  exception is answered with 500); gRPC: the D16 code name of that code
+  (`grpc_error_type` / `grpcErrorType`), `UNKNOWN` without a code. An
+  unsampled Python ASGI record also gets `http.response.status_code` = `500`.
+  Record attributes keep their integer / boolean types.
+- **R3 — Go otelhttp client spans drop the description too.** otelhttp v0.72.0
+  writes `err.Error()` of a failed round trip as the description
+  (`transport.go:302,378,395`); a `*url.Error` quotes the whole URL, so a
+  presigned URL's credential, signature and session token reached the span
+  (A28 redacts only `url.full`). `NewHTTPTransport`'s span wrapper
+  (`go/urlredact.go` `redactingSpan.SetStatus`) keeps the code and drops the
+  text; the request context keeps the SDK span. A security fix, and defense
+  in depth: a custom `RoundTripper`'s error and a body read/write error can
+  quote the URL too.
+- *Amended 2026-11-19 (re-review round: observability N1, N2, N5, N6;
+  code-review L3):* **HTTP failed-span rule (Python):** the response status
+  decides when one is known — the helper wraps contrib asgi's module-level
+  `set_status_code`, which `otel_send` calls for sampled and unsampled spans
+  alike (contrib 0.63b0 and 0.66b2), so an unsampled span that records an
+  exception and answers 5xx itself writes its record as a sampled one does;
+  without a known status only an escaping exception counts (an app's own
+  `set_status(ERROR)` alone does not), so sampled and unsampled agree.
+  **R2 wording:** the record's HTTP `error.type` is the 5xx status when
+  known, else the span's `error.type` (Node.js http SERVER: the error's
+  `name`), else the exception's type (D15 `error_type` / `errorTypeOf`); an
+  exception escaping after a response below 500 started keeps that status
+  and gets its type; `http.response.status_code=500` is added (Python) only
+  when no response started. Python `record_exception` attributes passed by
+  the application are dropped on covered spans (type-only event). grpcio's
+  `grpc._server` "Exception calling application" log is documented only, as
+  `uvicorn.error`.
+- **An application's own description.** Python and Node.js drop every ERROR
+  description on the covered spans, the application's own `set_status` /
+  `setStatus` on a server span included. Go keeps an application's
+  `SetStatus` description on the RPC span when the RPC ends OK or with a code
+  otelgrpc leaves Unset; on a failure otelgrpc's own `SetStatus` replaces it,
+  now with an empty description.
+- **Loud internal failures.** A swallowed internal error in the record or the
+  event path is one warning per process on the diagnostics channel, naming
+  only the exception type. Python also self-tests the `use_span` hook when
+  the provider is built and warns once (naming the effect: unsampled HTTP
+  and gRPC server spans write no record) when it does not arm.
+
+**Reversal action:** restore the previous behavior per role by removing the
+span patch (Python: the scope list in `_exception_detail.py`; Node.js: the
+`bindProviders` wrap; Go: the `*stats.End` copy). If the upstream
+exception-as-log mode (`OTEL_SEMCONV_EXCEPTION_SIGNAL_OPT_IN=logs`) ships in
+these instrumentations, the helper delegates to it instead (as D15).
+
 ---
 
 ## D16 — Protocol span error attributes (R12; tasks A38, A40, A44, A46; A43 upstream)

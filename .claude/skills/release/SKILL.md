@@ -409,6 +409,17 @@ helper relies on (design D16 notes):
 - **contrib grpc attributes:** errors still carry the integer
   `rpc.grpc.status_code` (a stable-RPC mode would rename it; every error would
   become `_OTHER`).
+- **A37 `use_span` hook (every opentelemetry-api minor bump):** the helper
+  sees an exception escaping an HTTP or gRPC server span through
+  `trace.use_span`'s exception handler (`_exception_detail._USE_SPAN_CODE` =
+  `trace.use_span.__wrapped__.__code__`; the generator still calls
+  `span.is_recording()` inside its `except`). `test_use_span_code_is_found`
+  and the provider's self-test (a once-per-process warning) fail when it
+  changes; unsampled server spans then write no record. Also re-check that
+  contrib gRPC's servicer context still sets `rpc.grpc.status_code` and the
+  status without checking `is_recording()`, and that FastAPI's
+  `ExceptionHandlerMiddleware` and ASGI's `_set_status` still behave as the
+  A37 tests pin.
 - Run both legs (`ci/lower.txt` on the lowest Python, `ci/latest.txt` on the
   newest) in plain containers.
 

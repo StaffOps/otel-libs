@@ -19,6 +19,7 @@ import (
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
+	otelcodes "go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/propagation"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
@@ -562,6 +563,14 @@ func errorGRPCServer(t *testing.T) *grpc.ClientConn {
 			return status.Error(codes.Internal, "bug")
 		case "Bidi":
 			return status.Error(codes.Unavailable, "down")
+		case "AppStatus":
+			// The application's own status on the RPC span (A37: kept when the RPC ends OK).
+			trace.SpanFromContext(s.Context()).SetStatus(otelcodes.Error, "app text")
+			return s.SendMsg(&emptypb.Empty{})
+		case "AppStatusThenInternal":
+			// A37 review M2: otelgrpc's own SetStatus on the failure replaces the app's description.
+			trace.SpanFromContext(s.Context()).SetStatus(otelcodes.Error, "app text")
+			return status.Error(codes.Internal, "bug")
 		case "HealthInside":
 			// A filtered client health call that fails inside the handler,
 			// then success: the server span must stay clean.

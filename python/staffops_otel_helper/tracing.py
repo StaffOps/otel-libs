@@ -32,6 +32,7 @@ from staffops_otel_helper.config import (
     _env,
     ascii_lower,
 )
+from staffops_otel_helper._exception_detail import HelperTracerProvider
 from staffops_otel_helper._url_redaction import UrlQueryRedactionProcessor
 from staffops_otel_helper.processors import DebugProcessor, GrpcSpanNameProcessor
 
@@ -186,7 +187,8 @@ def build_tracer_provider(resource: Resource, options: TelemetryOptions) -> Trac
             max_attribute_length=limits.get("generic"),
             max_span_attribute_length=limits.get("span"),  # None: the SDK reads a non-zero env value
         )
-    provider = TracerProvider(resource=resource, sampler=sampler, shutdown_on_exit=False, **kwargs)
+    # HelperTracerProvider: HTTP and gRPC spans keep exception.type only, detail in a correlated record (A37).
+    provider = HelperTracerProvider(resource=resource, sampler=sampler, shutdown_on_exit=False, **kwargs)
     # Before any exporting processor: URL query values redacted at span start (A28),
     # contrib gRPC spans renamed to the semconv name (A30).
     provider.add_span_processor(UrlQueryRedactionProcessor())

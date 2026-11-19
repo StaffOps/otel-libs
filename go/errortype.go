@@ -216,7 +216,10 @@ func labelerHas(l *otelhttp.Labeler, key attribute.Key) bool {
 
 // grpcErrorTypeHandler wraps an otelgrpc stats.Handler and, on *stats.End
 // with an error and before delegating (otelgrpc ends the span in its own
-// HandleRPC), writes the canonical status code name on the RPC's span.
+// HandleRPC), writes the canonical status code name on the RPC's span. It
+// also hands otelgrpc a copy of that *stats.End whose error keeps its code
+// with an empty message (withoutStatusMessage), so the span's status has no
+// description (task A37, ADR-014 decision 4).
 type grpcErrorTypeHandler struct {
 	stats.Handler
 	server bool
@@ -247,8 +250,29 @@ func (h grpcErrorTypeHandler) HandleRPC(ctx context.Context, rs stats.RPCStats) 
 				setErrorTypeIfAbsent(span, value)
 			}
 		}
+		rs = withoutStatusMessage(end)
 	}
 	h.Handler.HandleRPC(ctx, rs)
+}
+
+// withoutStatusMessage is end, or a copy of it whose Error has the same gRPC
+// code and no message (task A37, design D15 amendment 2026-11-19). otelgrpc
+// v0.72.0 writes the status message as the span status description
+// (stats_handler.go:304-306 client, serverStatus for the six server codes):
+// a handler's or the peer's text, which can quote request values. It reads
+// only the code from End.Error otherwise (status, error.type,
+// rpc.response.status_code, metrics), so those stay the same. The other
+// handlers grpc-go calls get the original End: only otelgrpc sees the copy,
+// and no span wrapper enters the RPC context, where the sdktrace.ReadOnlySpan
+// assertions of spanErrorType (and of applications) would fail. Go has no
+// exception object, so no record is written (owner decision 7).
+func withoutStatusMessage(end *stats.End) *stats.End {
+	if status.Convert(end.Error).Message() == "" {
+		return end
+	}
+	out := *end
+	out.Error = status.Error(status.Code(end.Error), "")
+	return &out
 }
 
 // grpcErrorType is the error.type of a failed RPC (design D16): a client

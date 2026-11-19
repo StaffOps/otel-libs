@@ -111,6 +111,18 @@ log, linked to the trace by trace/log correlation (same `trace_id` and
   records (one channel, one query and one alert rule for failures). Revisit
   when the database exception conventions are stable.
 
+- *Added 2026-11-19 (contract task A37, decision 4 applied to HTTP and gRPC;
+  owner decisions of the same date):* the helper's HTTP, gRPC and framework
+  spans are in scope in Go, Python and Node.js, the span status description
+  included. Server and framework spans keep a type-only `exception` event
+  and write one correlated ERROR record per span, sampled or not; client
+  spans keep a type-only event and write no record (the failure is the
+  server's to explain, and one record per client call would double the
+  records of every failed request); Go drops the otelgrpc description and
+  writes no record. Python `uvicorn.error` and .NET Kestrel keep their own
+  framework records (documented only). .NET is parked (dotnet tasks C20,
+  C21). Mechanics: contract design D15, amendment of 2026-11-19.
+
 ### Neutral
 - Applications that need the old behavior can record their own events; the
   helper documents how.

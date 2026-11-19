@@ -812,7 +812,22 @@ When an exception occurs in an HTTP request (inbound ASP.NET Core, which also ca
 
 0.3 (this branch): database client spans (SqlClient, Npgsql, MySqlConnector, Redis) and AWS SDK spans (task C14c) keep only `exception.type`; the message and stack trace go to a correlated log record — see [Exceptions: traces vs logs](#exceptions-traces-vs-logs) (§14, ADR-014; AWS examples in [AWS](#aws-spans-failed-calls-and-url-redaction)).
 
-**HTTP and gRPC spans are not covered by that rule yet** (ADR-014 decision 4: their review is contract task A37, all languages): their `exception` event still holds the message and the stack trace, so treat traces as possibly holding data. For your own code, follow the rule by hand — the type on the span, the detail in a log record correlated by `trace_id` / `span_id` (§5 "Mark Span with Error"). To drop the event text from the framework spans, set `RecordException = false` in a `Configure<AspNetCoreTraceInstrumentationOptions>` / `Configure<HttpClientTraceInstrumentationOptions>` registered after `AddOtelHelper()` (not measured by the helper's tests).
+**HTTP and gRPC spans are not covered by that rule in .NET yet** (ADR-014 decision 4, contract task A37: implemented in Go, Python and Node.js on 2026-11-19; the .NET part is parked as tasks C20 and C21 in `specs/dotnet-otel-helper/tasks.md`): their `exception` event still holds the message and the stack trace, so treat traces as possibly holding data. For your own code, follow the rule by hand — the type on the span, the detail in a log record correlated by `trace_id` / `span_id` (§5 "Mark Span with Error"). To drop the event text from the framework spans, set `RecordException = false` in a `Configure<AspNetCoreTraceInstrumentationOptions>` / `Configure<HttpClientTraceInstrumentationOptions>` registered after `AddOtelHelper()` (not measured by the helper's tests).
+
+**Kestrel's duplicate record.** For an exception that leaves the request
+pipeline, Kestrel writes its own correlated ERROR record (category
+`Microsoft.AspNetCore.Server.Kestrel`, "An unhandled exception was thrown by
+the application.", with the exception) next to any record the application
+writes, so one failure gives two records (demo run `20261116t1812`). Fix it in
+the application (owner decision of 2026-11-19: documented only; not measured
+by the helper's tests): handle exceptions before Kestrel sees them — an
+`app.UseExceptionHandler(...)` that returns the 500, or a middleware that logs
+the exception once through your `ILogger` and writes the 500 — or filter that
+category, which also hides Kestrel's other errors:
+
+```csharp
+builder.Logging.AddFilter("Microsoft.AspNetCore.Server.Kestrel", LogLevel.Critical);
+```
 
 ### Framework Logs Filtered
 

@@ -152,17 +152,17 @@
       "d.demo": "pass",
       "d.grpc": "pass",
       "d.http": {
-        "expect": "xfail:A37",
+        "expect": "xfail:A42",
         "also_xfail": [
-          "A42"
+          "C20"
         ],
-        "ref": "README.md:367, dotnet/HOW-TO.md:811-815 (ASP.NET Core RecordException, A37); error.type = the exception type name, not 500 (A42)",
+        "ref": "error.type = the exception type name, not 500 (A42); dotnet/HOW-TO.md:811-815 (ASP.NET Core RecordException: A37 .NET part, parked as specs/dotnet-otel-helper/tasks.md C20, 2026-11-19)",
         "reason": [
           "api SERVER error.type 'StaffOps.OtelLibs.Demo.DemoUnhandledError' (want 500)",
           "server span 'POST /orders' carries",
           "run token on server span"
         ],
-        "reason_notes": "the error.type reason is A42; the exception event reasons are A37"
+        "reason_notes": "the error.type reason is A42; the exception event reasons are C20 (the .NET part of A37)"
       },
       "d.db": "pass",
       "e.trace": "pass",
@@ -171,8 +171,8 @@
       "g.secret": "pass",
       "g.sentinel.db": "pass",
       "g.sentinel.app": {
-        "expect": "xfail:A37",
-        "ref": "README.md:367 (ASP.NET Core RecordException event)",
+        "expect": "xfail:C20",
+        "ref": "ASP.NET Core RecordException event (A37 .NET part, parked as specs/dotnet-otel-helper/tasks.md C20, 2026-11-19)",
         "reason": [
           "run token in server span"
         ]

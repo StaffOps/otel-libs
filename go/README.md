@@ -348,6 +348,22 @@ health call has no span, and no other span is written to on its behalf — not
 the caller's, and not the enclosing server span when the call is made inside
 a gRPC handler with the handler's context.
 
+Failed RPC spans carry **no status description** (task A37, ADR-014
+decision 4): otelgrpc v0.72 wrote the gRPC status message there — the peer's
+text on CLIENT spans, the handler's `status.Error` text (or a plain error's
+`Error()`) on SERVER spans for the six codes above — and that text can quote
+request values. The handlers hand otelgrpc a copy of the end-of-RPC stats
+whose error keeps its code with an empty message, so the status code,
+`error.type`, `rpc.response.status_code` and the metrics stay; the caller
+still receives the full status; your own `SetStatus` description on the RPC
+span stays when the RPC ends OK or with a code otelgrpc leaves Unset (on a
+failure otelgrpc's own status replaces it). `NewHTTPTransport` client spans
+drop the description too: otelhttp wrote a failed round trip's
+`*url.Error` text there, which quotes the whole URL, presigned query
+included — defense in depth, as a custom `RoundTripper`'s error or a body
+read/write error can quote it too. No log record is written (Go errors carry no exception
+object): log the detail yourself, or use `RecordFailure` in the handler.
+
 ### Logging: `NewSlogHandler()`, `NewLogger(env, debug)`, `DefaultLogLevel(env, debug)`
 
 `NewSlogHandler()` returns one `slog.Handler` that decides **per record**:

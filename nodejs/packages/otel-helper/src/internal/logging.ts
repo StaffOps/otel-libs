@@ -281,7 +281,7 @@ export function spanIds(ctx: Context): StdoutSpanIds | undefined {
  *
  * @internal
  */
-export function emitFailureRecord(name: string, body: string, attributes: Readonly<Record<string, string>>, ctx: Context): void {
+export function emitFailureRecord(name: string, body: string, attributes: Readonly<Record<string, string | number | boolean>>, ctx: Context): void {
   try {
     write(name, undefined, 'error', undefined, { stdout: body, otel: body }, attributes, undefined, undefined, ctx, 'exception');
   } catch (err) {

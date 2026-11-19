@@ -200,6 +200,48 @@ dropped) and for servers (`url.query`: also `;` and `=` encoded); a `fetch`
 client keeps the query as written apart from the redacted values. Go and
 Python rewrite only the listed values. The request itself is never changed.
 
+### Errors on HTTP, express and gRPC spans (task A37)
+
+The helper keeps an error's text off the spans of instrumentation-http,
+-undici, -express and -grpc (ADR-014 decision 4; owner decisions of
+2026-11-19), sampled or not:
+
+| Spans | `exception` event | Status description | `grpc.error_message` | Log record |
+|---|---|---|---|---|
+| http SERVER, every express span (`request handler - /orders`), grpc SERVER | `exception.type` only, once per error object | dropped (ERROR kept) | dropped | one per **failed** span |
+| http CLIENT, undici (`fetch`), grpc CLIENT | `exception.type` only (none where upstream records none) | dropped | dropped | none |
+
+The record goes to the helper's log channel (logger `otel-helper`: OTLP with a
+logs exporter, else a stdout JSON line with `trace_id` / `span_id`), in the
+span's context, at the span's end. Body and `exception.message`: the first
+recorded error's `message`; `exception.type`: the `withSpan` type rule;
+`exception.stacktrace`: `err.stack`. instrumentation-grpc hands the span no
+error object: a gRPC server record uses the dropped description or the
+`grpc.error_message` text as body, `grpc.error_name` as type, and has no
+stack. Failed means: http SERVER and express — the span was set ERROR, and
+for express the error carries no integer `status` / `statusCode` in 400–499
+(an `http-errors` 404 writes none); grpc SERVER — the code is `UNKNOWN`,
+`DEADLINE_EXCEEDED`, `UNIMPLEMENTED`, `INTERNAL`, `UNAVAILABLE` or
+`DATA_LOSS`, or the handler failed without a code. `NOT_FOUND`, other
+client-side codes, an exception you record on a span that ends without
+ERROR, and a cancellation (`AbortError`, a gRPC `CANCELLED` status) write
+none. Every record carries `error.type`, the same sampled or not — HTTP the
+5xx status when known, else the span's `error.type` (an http SERVER failure:
+the error's `name`), else the error's type (an express error); gRPC the code
+name (`UNKNOWN` without a code) — and the span's `http.request.method`, `http.route`,
+`http.response.status_code` and `rpc.*` keys (numbers stay numbers), never
+the URL. An express error gives one record, on its `request handler` span:
+the http SERVER span only sees the 500 it answered. A handler inside your own
+`withSpan` gives two records, one per span. Your own `setStatus` description
+on these spans is dropped too.
+
+```json
+{"time":"…","level":"ERROR","msg":"order 42 rejected","logger":"otel-helper","trace_id":"4bf9…","span_id":"00f0…","exception.type":"TypeError","exception.message":"order 42 rejected","exception.stacktrace":"TypeError: order 42 rejected\n    at …","error.type":"TypeError","http.route":"/orders/:id"}
+```
+
+Logs now carry request-derived error text: treat the log pipeline as
+sensitive.
+
 ---
 
 ## 3. gRPC

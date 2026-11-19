@@ -2706,6 +2706,43 @@ renamed span or a dropped metric.
 
 ### Go — detailed changes
 
+- **gRPC spans carry no status description (task A37, ADR-014 decision 4;
+  contract design D15, amendment 2026-11-19).** otelgrpc v0.72.0 wrote the
+  gRPC status message as the span status description — on CLIENT spans for
+  every non-OK status (the peer's text), on SERVER spans for `UNKNOWN`,
+  `DEADLINE_EXCEEDED`, `UNIMPLEMENTED`, `INTERNAL`, `UNAVAILABLE` and
+  `DATA_LOSS` (the handler's `status.Error` text or a plain error's
+  `Error()`), which can quote request values. `GRPCServerHandler` /
+  `GRPCClientHandler` (and the `GRPCServerOption` / `GRPCDialOption`
+  wrappers) now hand otelgrpc a copy of `*stats.End` whose error has the
+  same code and no message: status code, `error.type` (A46),
+  `rpc.response.status_code` and the RPC metrics are unchanged, the caller
+  still gets the full status, and an application's own `SetStatus` on the
+  RPC span keeps its description (no span wrapper is put in the context).
+  No log record (Go errors carry no exception object; owner decision 7);
+  otelhttp is unchanged (its server sets no description, its client
+  transport's description is a transport error). Tests:
+  `exception_detail_test.go`.
+
+- **A37 review round (2026-11-19).** `NewHTTPTransport` client spans now
+  drop the status description too (coordinator ruling R3, a security fix):
+  otelhttp v0.72.0 wrote a failed round trip's `err.Error()` there
+  (`transport.go:302,378,395`), and a `*url.Error` quotes the whole URL —
+  a presigned URL's credential, signature and session token reached the
+  span, as A28 redacts only `url.full`. The code is kept; the request context
+  keeps the SDK span. Correction to the entry above: otelhttp is no longer
+  unchanged, and an application's own `SetStatus` description on a gRPC RPC
+  span survives only when the RPC ends OK or with a code otelgrpc leaves
+  Unset — on a failure otelgrpc's own `SetStatus` replaces it, now with an
+  empty description. Tests: `urlredact_test.go` (failing dial with a
+  presigned URL), `exception_detail_test.go` (application status then
+  INTERNAL, a bidi stream).
+
+- **A37 re-review (2026-11-19, review N5).** The `NewHTTPTransport`
+  description drop is also defense in depth: a custom `RoundTripper`'s error
+  and a body read/write error can quote the URL too. Test:
+  `urlredact_test.go` (a RoundTripper whose error quotes a presigned URL).
+
 - **SQL exception detail goes to a correlated log (task A36, ADR-014;
   design D1 row "DB error text in exception events", amendment 2026-11-18).**
   A failed `ext/otelsql` operation's `exception` event (XSAM
@@ -3425,6 +3462,63 @@ Behavior changes, with migration notes:
   (Apache-2.0). `aws-sdk-go-v2` v1.47.1 → v1.47.5.
 
 ### Python — detailed changes
+
+- **HTTP, gRPC and framework exception detail goes to a correlated log
+  (task A37, ADR-014 decision 4; contract design D15, amendment
+  2026-11-19).** The helper's TracerProvider is now
+  `_exception_detail.HelperTracerProvider` (an SDK `TracerProvider`
+  subclass) whose tracers for the FastAPI / ASGI, requests, httpx and gRPC
+  instrumentations patch their spans. Every such span keeps status ERROR
+  without a description and an `exception` event with `exception.type` only,
+  at most one per exception object (the gRPC aio server recorded each
+  `AbortError` twice, with message and stack). **Server spans** (FastAPI /
+  ASGI SERVER, gRPC SERVER, sync and aio) write one ERROR record per span on
+  the `staffops_otel_helper.failure` logger, in the span's context, sampled
+  or not, none for a cancellation: body and `exception.message` = the first
+  recorded exception's `str()` (a gRPC abort, which says only `Locally
+  aborted.`, gives the dropped `<code>:<details>` description instead),
+  `exception.type`, `exception.stacktrace` (the traceback without the
+  helper's frames), `error.type` (the span's, e.g. `500`, else the
+  exception's type) and the span's `http.*` / `rpc.*` attributes. A recording
+  span writes it at `end()`; an unsampled one when `trace.use_span` sees the
+  exception escaping it (contrib records nothing on unsampled spans).
+  **Client spans** (requests, httpx, gRPC client, the other ASGI spans):
+  type-only event, no description, no record. A foreign global
+  TracerProvider gets none of this. Logs can now carry request-derived error
+  text: treat the log pipeline as sensitive. `uvicorn.error` still writes its
+  own uncorrelated ERROR record with the traceback (documented, HOW-TO).
+  Tests: `tests/test_a37_exception_detail.py` (also pins contrib's own 500
+  path: the FastAPI description is overwritten there, the root README row
+  is corrected).
+
+- **A37 review round (2026-11-19).** A server record is written only for a
+  **failed** server span (ruling R1): HTTP — the span was set ERROR (5xx) or
+  an exception escaped it; an exception the application recorded and
+  answered with 2xx / 4xx writes none. gRPC — the code set after start is
+  `UNKNOWN`, `DEADLINE_EXCEEDED`, `UNIMPLEMENTED`, `INTERNAL`, `UNAVAILABLE`
+  or `DATA_LOSS`, or the handler's exception escaped without a code; aio and
+  sync `NOT_FOUND` aborts write none. The record's `error.type` no longer
+  depends on sampling (ruling R2): HTTP the response status, `500` when an
+  exception escaped (also as `http.response.status_code` on an unsampled
+  record); gRPC the D16 code name, `UNKNOWN` without a code — the entry above
+  said "the span's, else the exception's type". Late `http.*` / `rpc.*`
+  attributes are now tracked (never the start placeholder
+  `rpc.grpc.status_code=0`), and record attributes keep their integer types.
+  The `use_span` hook is self-tested when the provider is built: one
+  warning per process names the effect when it does not arm; a swallowed
+  internal error is one warning per process naming only its type. Tests:
+  `tests/test_a37_exception_detail.py`.
+
+- **A37 re-review (2026-11-19).** An unsampled FastAPI / ASGI span whose
+  application records an exception and answers 5xx itself now writes its
+  record, as a sampled one does (review N1): the helper wraps contrib asgi's
+  `set_status_code`, which `otel_send` calls for both. Without a known
+  status only an escaping exception makes an HTTP span failed (review L3).
+  The record's HTTP `error.type` is the 5xx status when known, else the
+  span's `error.type`, else the exception's type (review N6) — the entry
+  above said `500` when an exception escaped; an exception escaping after a
+  200 started keeps `http.response.status_code=200` (review N2).
+  `_ExceptionDetailTracer.__getattr__` no longer recurses before init.
 
 - **SQL exception detail goes to a correlated log (task A36, ADR-014;
   design D1 row "DB error text in exception events", amendment 2026-11-18).**
@@ -4245,6 +4339,47 @@ Unsupported instrumentation versions, task A10 (P18):
 
 ### Changed
 
+- **Node.js: HTTP, gRPC and framework exception detail goes to a correlated
+  log (task A37, ADR-014 decision 4; contract design D15, amendment
+  2026-11-19).** `bindProviders` hands instrumentation-http, -undici,
+  -express and -grpc a forwarding TracerProvider (core
+  `internal/exception-detail`) whose spans — recording or not — keep status
+  ERROR without a description, an `exception` event with `exception.type`
+  only (at most one per error object), and never get `grpc.error_message`.
+  **Server spans** (http SERVER, every express span, grpc SERVER) write one
+  ERROR record per span on the helper's log channel (logger `otel-helper`:
+  OTLP, else a stdout JSON line with `trace_id` / `span_id`) at `end()`,
+  sampled or not: the first recorded error's `message`, `withSpan` type rule
+  and `stack`; without an error object (instrumentation-grpc) the dropped
+  description or `grpc.error_message` as body, `grpc.error_name` as type, no
+  stack; plus `error.type` and the span's `http.*` / `rpc.*` attributes;
+  none for a cancellation (`AbortError`, gRPC `CANCELLED`). **Client spans**
+  (http CLIENT, undici, grpc CLIENT): type-only event, no description, no
+  record. A Node.js gRPC server error with `NOT_FOUND` (Unset span) writes a
+  record too: its text was on the span before. Logs can now carry
+  request-derived error text: treat the log pipeline as sensitive. Tests:
+  core `test/exception-detail.test.cjs`.
+
+- **Node.js: A37 review round (2026-11-19).** A server record is written
+  only for a **failed** server span (ruling R1): http SERVER and express —
+  the span was set ERROR, and express skips an error carrying an integer
+  `status` / `statusCode` in 400–499 (`http-errors` style 404s); grpc
+  SERVER — the code is one of the six server-error codes, or the handler
+  failed without a code. Correction to the entry above: a gRPC `NOT_FOUND`
+  answer **no longer** writes a record. `error.type` on the record no longer
+  depends on sampling (ruling R2): HTTP the response status, `500` when none
+  is known; gRPC the D16 code name, `UNKNOWN` without a code; numeric
+  attributes keep their type (`emitFailureRecord` accepts numbers and
+  booleans). A swallowed internal error is reported once per process on the
+  diagnostics channel, by type only; `seen` / `failure` are cleared at
+  `end()`; a cancellation also suppresses a description-only record. Tests:
+  core `test/exception-detail.test.cjs`.
+
+- **Node.js: A37 re-review (2026-11-19, review N6).** The record's HTTP
+  `error.type` is the 5xx status when known, else the span's `error.type`
+  (an http SERVER listener failure: the error's `name`), else the error's
+  type — the entry above said `500` when none is known.
+
 - **Node.js: SQL exception detail goes to a correlated log (task A36,
   ADR-014; design D1 row "DB error text in exception events", amendment
   2026-11-18).** `@staffops/otel-helper-sql`: pg's `exception` event (a
@@ -4635,6 +4770,15 @@ Unsupported instrumentation versions, task A10 (P18):
   of `publish-nodejs-ghp` skips the packages it already published.
 
 ### Internal
+
+- **A37: .NET demo cells retagged (2026-11-19, owner decision 8).** The
+  .NET part of A37 is parked as `specs/dotnet-otel-helper/tasks.md` C20
+  (ASP.NET Core and HttpClient `RecordException=false`) and C21 (gRPC server
+  unhandled path). `testing/k8s/demo/expected.json`: `dotnet/d.http` is
+  `xfail:A42` with `also_xfail: ["C20"]`, `dotnet/g.sentinel.app` is
+  `xfail:C20`; reasons unchanged, so both stay strict XFAIL. The Go, Python
+  and Node.js `xfail:A37` cells are not flipped: a k8s01 run decides them.
+  `test_verify_demo.py` asserts the new tags.
 
 - **A36 closed: demo DB cells measured on k8s01 (2026-11-19).** A k8s01 demo
   run with images built from 84372c0 gave XPASS on the four strict

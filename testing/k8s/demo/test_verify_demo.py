@@ -270,11 +270,16 @@ class ExpectationTest(unittest.TestCase):
         self.assertNotIn("A44", json.dumps(json.loads(verify.EXPECTED_JSON.read_text())["expected"]))
         self.assertNotIn("A36", json.dumps(json.loads(verify.EXPECTED_JSON.read_text())["expected"]))
         tasks = {v["expect"] for cells in e.values() for v in cells.values() if v["expect"].startswith("xfail:")}
-        self.assertEqual(tasks, {"xfail:A37"})
-        self.assertEqual(e["dotnet"]["d.http"]["also"], ["A42"])
+        # A37 (2026-11-19, owner decision 8): the .NET part is parked as dotnet tasks C20, so the
+        # .NET cells name A42 / C20; the Go, Python and Node.js cells stay xfail:A37 until a k8s01 run.
+        self.assertEqual(tasks, {"xfail:A37", "xfail:A42", "xfail:C20"})
+        self.assertNotIn("A37", {t for c in e["dotnet"].values() for t in [c["expect"], *c["also"]]})
+        self.assertEqual(e["dotnet"]["d.http"]["expect"], "xfail:A42")
+        self.assertEqual(e["dotnet"]["d.http"]["also"], ["C20"])
+        self.assertEqual(e["dotnet"]["g.sentinel.app"]["expect"], "xfail:C20")
         out = io.StringIO()
         report(out).cell("dotnet", "d.http", verify.Obs("fail", "x"))
-        self.assertIn("[expected xfail:A37+A42]", out.getvalue())
+        self.assertIn("[expected xfail:A42+C20]", out.getvalue())
 
     def test_bad_files(self) -> None:
         good = json.loads(verify.EXPECTED_JSON.read_text())
