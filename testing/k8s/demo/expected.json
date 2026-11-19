@@ -39,26 +39,12 @@
       "d.demo": "pass",
       "d.grpc": "pass",
       "d.http": "pass",
-      "d.db": {
-        "expect": "xfail:A36",
-        "ref": "XSAM otelsql v0.44.0 utils.go:57 span.RecordError (exception.message)",
-        "reason": [
-          "exception events [['exception.message', 'exception.type']]",
-          "run token on client span",
-          "no correlated ERROR record"
-        ]
-      },
+      "d.db": "pass",
       "e.trace": "pass",
       "e.edges": "pass",
       "e.edge.db": "pass",
       "g.secret": "pass",
-      "g.sentinel.db": {
-        "expect": "xfail:A36",
-        "ref": "XSAM otelsql v0.44.0 utils.go:57 copies dup-<run> into the exception event",
-        "reason": [
-          "run token in client span"
-        ]
-      },
+      "g.sentinel.db": "pass",
       "g.sentinel.app": "pass"
     },
     "python": {
@@ -90,14 +76,7 @@
           "run token on server span"
         ]
       },
-      "d.db": {
-        "expect": "xfail:A36",
-        "ref": "design r3.5: no exception event with exception.type on the DB span",
-        "reason": [
-          "exception events []",
-          "no correlated ERROR record"
-        ]
-      },
+      "d.db": "pass",
       "e.trace": "pass",
       "e.edges": "pass",
       "e.edge.db": "pass",
@@ -149,14 +128,7 @@
           "run token on internal span"
         ]
       },
-      "d.db": {
-        "expect": "xfail:A36",
-        "ref": "A36 lists Node.js -sql (exception detail and correlated record); D16 db.response.status_code / error.type: nodejs/HOW-TO.md:661-682",
-        "reason": [
-          "exception events [['exception.message']]",
-          "no correlated ERROR record"
-        ]
-      },
+      "d.db": "pass",
       "e.trace": "pass",
       "e.edges": "pass",
       "e.edge.db": "pass",

@@ -1174,12 +1174,12 @@ New task ids (`A38`, `A39`) are created by DE8 in
 | d.demo (all three error scenarios) | pass | pass | pass | pass |
 | d.grpc business_error / db_error | pass (client description = the constant gRPC message, allowed; otelgrpc v0.72.0 `stats_handler.go:304-306,386-389`, audit) | `xfail:A37` — reason: the aio **server** span records `AbortError` on `context.abort` (`_aio_server.py:107-114`, DE-D8); the aio client records no exception (`_aio_client.py:95-115`) | `xfail:A37` (`grpc.error_message`, `README.md:367`) | `unmeasured` |
 | d.http unhandled (+ 4xx rules) | pass (no event, no description, `README.md:367`) | `xfail:A37` (FastAPI middleware event + description, `README.md:367`) | `xfail:A37` (http/express `recordException` + description, `README.md:367`) | `xfail:A37` (ASP.NET Core `RecordException`, `README.md:367`, `dotnet/HOW-TO.md:811-815`) |
-| d.db db_error | `xfail:A36` (XSAM `span.RecordError`, `utils.go:57`) | `xfail:A36` | `xfail:A36` | pass (`dotnet/README.md:640`) |
+| d.db db_error | pass since 2026-11-19 (was `xfail:A36`: XSAM `span.RecordError`, `utils.go:57`) | pass since 2026-11-19 (was `xfail:A36`) | pass since 2026-11-19 (was `xfail:A36`) | pass (`dotnet/README.md:640`) |
 | e trace structure | pass | pass | pass | `unmeasured` (Redis spans from the profiler, `dotnet/README.md:598-603`) |
 | e PostgreSQL edge (`database` required) | `xfail:A38` (`virtual_node`, server `postgresql`) | pass, server `demo_python` (`unmeasured`) | pass, server `demo_node` | pass, server `demo_dotnet` (`unmeasured`) |
 | e HTTP/gRPC edges, messaging edge | pass | pass | pass | pass |
 | g.secret | pass | pass | pass | pass |
-| g.sentinel.db (`dup-<run>` on DB spans) | `xfail:A36` (XSAM `span.RecordError`, `utils.go:57`) | `xfail:A36` | `xfail:A36` (A36 lists Node.js `-sql`, `tasks.md:58`) | pass |
+| g.sentinel.db (`dup-<run>` on DB spans) | pass since 2026-11-19 (was `xfail:A36`: XSAM `span.RecordError`, `utils.go:57`) | pass (DE6) | pass (DE6) | pass |
 | g.sentinel.app (`rej-` / `unh-<run>` on HTTP/gRPC spans) | pass (no event, no description on the server; client description is the constant gRPC message) | `xfail:A37` (FastAPI event + description; aio server records `AbortError`, which carries no run token — the `unh-<run>` path is the HTTP one) | `xfail:A37` (http/express `recordException` + description, `README.md:367`) | `xfail:A37` (ASP.NET Core `RecordException` event, `README.md:367`) |
 
 `A39` is reserved for the first gap DE6 finds that no task owns.
@@ -1193,6 +1193,14 @@ the correlated ERROR record carries the detail. `verify.py` `_d_db` and
 record) stay. The `xfail:A36` cells in `expected.json` stay until a k8s01
 run with the A36 images measures them; with the fixture's synthetic Loki
 records the Python d.db cell already passes.)*
+*(Measured 2026-11-19, contract task A36 closed: a k8s01 run with images
+built from 84372c0 (Go images tagged `84372c0-ctxfix`) gave XPASS on
+`go/d.db`, `go/g.sentinel.db`, `python/d.db` and `node/d.db` (summary
+`NA 6, PASS 46, XFAIL 8, XPASS 4`); the four cells are `pass` in
+`expected.json` and no `xfail:A36` cell remains. The recorded fixtures
+(2026-11-18) predate A36, so `demo/test_verify_demo.py` now asserts that
+their Go and Node.js DB spans judge FAIL: a regression to the old exception
+detail fails the run.)*
 *(r3, 2026-11-16: Go d.grpc corrected — r2 cited otelgrpc's server-side
 description rule for a client-span cell (audit #7, N5); PostgreSQL edge
 row per the coordinator ruling (N3, audit #12); Python d.grpc evidence

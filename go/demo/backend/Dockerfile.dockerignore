@@ -3,6 +3,7 @@
 !go/go.mod
 !go/go.sum
 !go/*.go
+!go/internal/
 !go/ext/otelsql/
 !go/ext/otelredis/
 !go/demo/

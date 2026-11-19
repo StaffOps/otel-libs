@@ -4636,6 +4636,24 @@ Unsupported instrumentation versions, task A10 (P18):
 
 ### Internal
 
+- **A36 closed: demo DB cells measured on k8s01 (2026-11-19).** A k8s01 demo
+  run with images built from 84372c0 gave XPASS on the four strict
+  `xfail:A36` cells (`go/d.db`, `go/g.sentinel.db`, `python/d.db`,
+  `node/d.db`; summary `NA 6, PASS 46, XFAIL 8, XPASS 4`), so
+  `testing/k8s/demo/expected.json` marks them `pass` and no `xfail:A36`
+  cell remains. `testing/k8s/demo/test_verify_demo.py` moves its xfail
+  examples to the `xfail:A37` cells and asserts that the pre-A36 Go and
+  Node.js fixtures now judge FAIL (a regression fails the run). Task A36 in
+  `specs/config-contract-v0.3/tasks.md` is done; SQL only (Redis: A52, AWS:
+  A53).
+
+- **Go demo images: build context includes `go/internal/` (2026-11-19).**
+  The allowlists `go/demo/{api,backend,worker}/Dockerfile.dockerignore`
+  gained `!go/internal/`; without it the demo images failed to build after
+  A36 added `go/internal/exclog`. The other Go builds (`go/example/*`,
+  `testing/k8s/images/go.Dockerfile`) use deny-list `.dockerignore` files
+  and already included it.
+
 - **Demo verifier: DB exception events (2026-11-19, A36 review ruling).**
   `testing/k8s/verify.py` `_d_db` accepts at most one `exception` event with
   `exception.type` only, or none (Python statement spans record none); the
