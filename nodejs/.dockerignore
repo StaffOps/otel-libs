@@ -1,0 +1,15 @@
+# Docker context nodejs/ (the example images: docker build -f nodejs/example/node-*/Dockerfile nodejs).
+# Host installs and build output may hold another platform's files: never sent.
+**/node_modules/
+**/dist/
+**/coverage/
+spike/
+test/
+packages/*/test/
+**/*.md
+**/.DS_Store
+# Secrets — defensive (never in the repo).
+**/.env*
+# npm pack output anywhere except tarballs/, which Dockerfile.demo copies.
+**/*.tgz
+!tarballs/*.tgz

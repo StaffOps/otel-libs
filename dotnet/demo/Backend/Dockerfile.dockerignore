@@ -1,0 +1,13 @@
+# Context of dotnet/demo/Backend/Dockerfile (repository root): only what the build needs.
+*
+!dotnet/Directory.Build.props
+!dotnet/Directory.Build.targets
+!dotnet/StaffOps.OtelHelper/
+!dotnet/StaffOps.OtelHelper.Sql/
+!dotnet/demo/Directory.Build.props
+!dotnet/demo/Common/
+!dotnet/demo/Backend/
+!demo/proto/
+!demo/sql/
+**/bin/
+**/obj/

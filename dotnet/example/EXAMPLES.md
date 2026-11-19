@@ -6,110 +6,110 @@ This document describes each check/simulation implemented in the samples, its ob
 
 ## SampleApi — Endpoints
 
-### 1. `GET /order/{id}` — Trace distribuída completa
+### 1. `GET /order/{id}` — Full distributed trace
 
-**Objetivo:** Demonstrar propagação de contexto entre 3 serviços via gRPC.
+**Objective:** Show context propagation across 3 services over gRPC.
 
-**Fluxo:**
-1. API cria span `api.get-order` com tag `order.id`
-2. Chama Backend via gRPC `ProcessOrder`
-3. Backend cria spans `backend.db-query-order` (10-80ms) + `backend.external-enrich-order` (httpbin ~1s)
-4. Resposta retorna com dados do pedido
+**Flow:**
+1. API creates span `api.get-order` with tag `order.id`
+2. Calls Backend over gRPC `ProcessOrder`
+3. Backend creates spans `backend.db-query-order` (10-80ms) + `backend.external-enrich-order` (httpbin ~1s)
+4. Response returns the order data
 
-**Consultar no Grafana:**
+**Query in Grafana:**
 ```
-# Tempo — trace completa
+# Tempo — full trace
 {resource.service.name="sample-api" && name="api.get-order"}
 
-# Ver os 3 serviços no mesmo trace
+# See the 3 services in the same trace
 {resource.service.name=~"sample-api|sample-backend|sample-process" && name="api.get-order"}
 ```
 
 ---
 
-### 2. `POST /order` — Criação com body JSON
+### 2. `POST /order` — Creation with a JSON body
 
-**Objetivo:** Demonstrar instrumentação de endpoint POST com body parsing.
+**Objective:** Show instrumentation of a POST endpoint with body parsing.
 
-**Fluxo:**
-1. Lê body `{"product": "...", "quantity": N}`
-2. Gera ID aleatório
-3. Chama Backend via gRPC `ProcessOrder`
-4. Retorna 201 com dados
+**Flow:**
+1. Reads body `{"product": "...", "quantity": N}`
+2. Generates a random ID
+3. Calls Backend over gRPC `ProcessOrder`
+4. Returns 201 with the data
 
-**Consultar no Grafana:**
+**Query in Grafana:**
 ```
 {resource.service.name="sample-api" && name="api.create-order"}
 ```
 
 ---
 
-### 3. `GET /order/{id}/cancel` — Cancelamento
+### 3. `GET /order/{id}/cancel` — Cancellation
 
-**Objetivo:** Demonstrar operação de escrita (UPDATE) no Backend.
+**Objective:** Show a write operation (UPDATE) in the Backend.
 
-**Fluxo:**
-1. API cria span `api.cancel-order`
-2. Chama Backend via gRPC `CancelOrder`
-3. Backend cria span `backend.db-cancel-order` (5-30ms)
+**Flow:**
+1. API creates span `api.cancel-order`
+2. Calls Backend over gRPC `CancelOrder`
+3. Backend creates span `backend.db-cancel-order` (5-30ms)
 
-**Consultar no Grafana:**
+**Query in Grafana:**
 ```
 {resource.service.name="sample-api" && name="api.cancel-order"}
 ```
 
 ---
 
-### 4. `GET /slow` — Operação lenta
+### 4. `GET /slow` — Slow operation
 
-**Objetivo:** Demonstrar detecção de alta latência pelo tail sampling (traces >1s sempre mantidos).
+**Objective:** Show high-latency detection by tail sampling (traces >1s always kept).
 
-**Fluxo:**
-1. API cria span `api.slow-operation`
-2. Chama Backend via gRPC `SlowOperation`
+**Flow:**
+1. API creates span `api.slow-operation`
+2. Calls Backend over gRPC `SlowOperation`
 3. Backend: `backend.db-heavy-query` (3-5s) + `backend.external-slow-enrichment` (1-2s)
 4. Total: 4-7s
 
-**Consultar no Grafana:**
+**Query in Grafana:**
 ```
-# Traces lentas
+# Slow traces
 {resource.service.name="sample-api" && duration > 3s}
 
-# Especificamente o slow
+# The slow operation specifically
 {resource.service.name="sample-api" && name="api.slow-operation"}
 ```
 
 ---
 
-### 5. `GET /batch` — Fan-out sequencial
+### 5. `GET /batch` — Sequential fan-out
 
-**Objetivo:** Demonstrar trace com muitos spans (fan-out pattern).
+**Objective:** Show a trace with many spans (fan-out pattern).
 
-**Fluxo:**
-1. API cria span `api.batch-orders`
-2. Gera 5 IDs aleatórios
-3. Para cada ID, cria span `api.batch-item` e chama Backend `ProcessOrder` sequencialmente
-4. Total: ~37 spans no trace (5 × backend spans)
+**Flow:**
+1. API creates span `api.batch-orders`
+2. Generates 5 random IDs
+3. For each ID, creates span `api.batch-item` and calls Backend `ProcessOrder` sequentially
+4. Total: ~37 spans in the trace (5 × backend spans)
 
-**Consultar no Grafana:**
+**Query in Grafana:**
 ```
 {resource.service.name="sample-api" && name="api.batch-orders"}
 ```
 
 ---
 
-### 6. `GET /error` — Exception simulada
+### 6. `GET /error` — Simulated exception
 
-**Objetivo:** Demonstrar que traces com erro são sempre mantidos pelo sampling (100% em qualquer ambiente).
+**Objective:** Show that error traces are always kept by sampling (100% in every environment).
 
-**Fluxo:**
-1. API cria span `api.error-simulated` com `StatusCode.Error`
-2. Lança `InvalidOperationException`
-3. Retorna 500
+**Flow:**
+1. API creates span `api.error-simulated` with `StatusCode.Error`
+2. Throws `InvalidOperationException`
+3. Returns 500
 
-**Consultar no Grafana:**
+**Query in Grafana:**
 ```
-# Traces com erro
+# Error traces
 {resource.service.name="sample-api" && status=error}
 ```
 
@@ -117,14 +117,14 @@ This document describes each check/simulation implemented in the samples, its ob
 
 ### 7. `GET /health/ready` — Readiness probe
 
-**Objetivo:** Demonstrar health check que valida dependência (Backend).
+**Objective:** Show a health check that validates a dependency (Backend).
 
-**Fluxo:**
-1. API cria span `api.readiness-check`
-2. Chama Backend via gRPC `ProcessOrder` com ID 0
-3. Se sucesso → 200, se falha → 503
+**Flow:**
+1. API creates span `api.readiness-check`
+2. Calls Backend over gRPC `ProcessOrder` with ID 0
+3. Success → 200, failure → 503
 
-**Consultar no Grafana:**
+**Query in Grafana:**
 ```
 {resource.service.name="sample-api" && name="api.readiness-check"}
 ```
@@ -133,26 +133,26 @@ This document describes each check/simulation implemented in the samples, its ob
 
 ### 8. `GET /order/{id}/trace` — Baggage propagation
 
-**Objetivo:** Demonstrar propagação de metadados (baggage) entre serviços sem adicionar ao span diretamente. Também demonstra scoped logging.
+**Objective:** Show metadata (baggage) propagation across services without adding it to the span directly. Also shows scoped logging.
 
-**Como funciona:**
-1. API seta 3 baggage items: `tenant.id`, `order.id`, `feature.flag`
-2. Usa `logger.BeginScope(...)` para adicionar contexto ao log
-3. Chama Backend via gRPC `ReadBaggage`
-4. Backend lê `Baggage.Current` e retorna os items recebidos
-5. Baggage é propagado automaticamente via headers gRPC (sem código extra)
+**How it works:**
+1. API sets 3 baggage items: `tenant.id`, `order.id`, `feature.flag`
+2. Uses `logger.BeginScope(...)` to add context to the log
+3. Calls Backend over gRPC `ReadBaggage`
+4. Backend reads `Baggage.Current` and returns the items it received
+5. Baggage is propagated automatically through gRPC headers (no extra code)
 
-**O que valida:**
-- Baggage propaga entre serviços automaticamente
-- Backend recebe os 3 items sem configuração adicional
-- Scoped logging adiciona `TenantId` e `OrderId` aos logs
+**What it validates:**
+- Baggage propagates across services automatically
+- Backend receives the 3 items without extra configuration
+- Scoped logging adds `TenantId` and `OrderId` to the logs
 
-**Consultar no Grafana:**
+**Query in Grafana:**
 ```
 # Tempo
 {resource.service.name="sample-api" && name="api.trace-with-baggage"}
 
-# Loki — ver baggage nos logs do Backend
+# Loki — see the baggage in the Backend logs
 {service_name="sample-backend"} |= "ReadBaggage"
 ```
 
@@ -160,25 +160,25 @@ This document describes each check/simulation implemented in the samples, its ob
 
 ### 9. `GET /order/{id}/events` — Span Events
 
-**Objetivo:** Demonstrar eventos dentro de um span (pontos no tempo, sem criar sub-spans).
+**Objective:** Show events inside a span (points in time, without creating sub-spans).
 
-**Como funciona:**
-1. API cria span `api.order-with-events`
-2. Adiciona 4 events ao span:
-   - `order.received` (com tags: order.id, order.source)
-   - `order.validated` (após delay de validação)
-   - `order.enriched` (após chamada ao Backend)
-   - `order.completed` (com tag: status)
-3. Events aparecem como timeline dentro do span no Grafana
+**How it works:**
+1. API creates span `api.order-with-events`
+2. Adds 4 events to the span:
+   - `order.received` (with tags: order.id, order.source)
+   - `order.validated` (after a validation delay)
+   - `order.enriched` (after the Backend call)
+   - `order.completed` (with tag: status)
+3. Events appear as a timeline inside the span in Grafana
 
-**O que valida:**
-- Events são visíveis no detalhe do span no Tempo
-- Cada event tem timestamp próprio (mostra duração entre etapas)
-- Tags nos events adicionam contexto sem poluir o span
+**What it validates:**
+- Events are visible in the span detail in Tempo
+- Each event has its own timestamp (shows the time between steps)
+- Tags on events add context without cluttering the span
 
-**Consultar no Grafana:**
+**Query in Grafana:**
 ```
-# Tempo — abrir o span e ver a aba "Events"
+# Tempo — open the span and see the "Events" tab
 {resource.service.name="sample-api" && name="api.order-with-events"}
 ```
 
@@ -186,50 +186,50 @@ This document describes each check/simulation implemented in the samples, its ob
 
 ### 10. `GET /parallel/{count}` — Parallel fan-out
 
-**Objetivo:** Demonstrar spans concorrentes (paralelos) dentro de um trace.
+**Objective:** Show concurrent (parallel) spans inside a trace.
 
-**Como funciona:**
-1. API cria span `api.parallel-fan-out` com tag `fan_out.count`
-2. Dispara N chamadas ao Backend em paralelo via `Task.WhenAll`
-3. Cada chamada cria span `api.parallel-item` (children concorrentes)
-4. No Grafana, os spans aparecem lado a lado (não sequenciais)
+**How it works:**
+1. API creates span `api.parallel-fan-out` with tag `fan_out.count`
+2. Fires N calls to the Backend in parallel via `Task.WhenAll`
+3. Each call creates span `api.parallel-item` (concurrent children)
+4. In Grafana, the spans appear side by side (not sequential)
 
-**O que valida:**
-- Spans paralelos são visualizados corretamente no Tempo
-- Duração total ≈ duração do item mais lento (não soma)
-- Cada item tem seu próprio span com tags
+**What it validates:**
+- Parallel spans are displayed correctly in Tempo
+- Total duration ≈ duration of the slowest item (not the sum)
+- Each item has its own span with tags
 
-**Consultar no Grafana:**
+**Query in Grafana:**
 ```
 {resource.service.name="sample-api" && name="api.parallel-fan-out"}
 ```
 
 ---
 
-### 11. `GET /retry/{id}` — Retry com spans por tentativa
+### 11. `GET /retry/{id}` — Retry with one span per attempt
 
-**Objetivo:** Demonstrar padrão de retry onde cada tentativa é um span separado, com ERROR nas falhas e SUCCESS na última.
+**Objective:** Show a retry pattern where each attempt is a separate span, with ERROR on the failures and SUCCESS on the last one.
 
-**Como funciona:**
-1. API cria span pai `api.retry-operation`
-2. Loop de até 3 tentativas, cada uma com span `api.retry-attempt`
-3. Chama Backend `UnstableOperation` (configurado para falhar 2x)
-4. Tentativas 1 e 2: span com `StatusCode.Error` + log warning
-5. Tentativa 3: sucesso
-6. Backoff exponencial entre tentativas (100ms, 200ms)
+**How it works:**
+1. API creates parent span `api.retry-operation`
+2. Loop of up to 3 attempts, each with span `api.retry-attempt`
+3. Calls Backend `UnstableOperation` (configured to fail 2x)
+4. Attempts 1 and 2: span with `StatusCode.Error` + warning log
+5. Attempt 3: success
+6. Exponential backoff between attempts (100ms, 200ms)
 
-**O que valida:**
-- Cada tentativa é visível como span separado no trace
-- Spans de falha têm status ERROR (ícone vermelho no Grafana)
-- O span pai mostra a operação completa
-- Log com exception stack trace correlacionado ao trace
+**What it validates:**
+- Each attempt is visible as a separate span in the trace
+- Failed spans have status ERROR (red icon in Grafana)
+- The parent span shows the whole operation
+- Log with the exception stack trace correlated with the trace
 
-**Consultar no Grafana:**
+**Query in Grafana:**
 ```
-# Trace com retries
+# Trace with retries
 {resource.service.name="sample-api" && name="api.retry-operation"}
 
-# Só as falhas
+# Failures only
 {resource.service.name="sample-api" && name="api.retry-attempt" && status=error}
 ```
 
@@ -237,23 +237,23 @@ This document describes each check/simulation implemented in the samples, its ob
 
 ### 12. `GET /cache/{id}` — Cache hit/miss
 
-**Objetivo:** Demonstrar padrão de cache com métricas de hit rate e spans diferenciados.
+**Objective:** Show a cache pattern with hit-rate metrics and distinct spans.
 
-**Como funciona:**
-1. API cria span `api.cache-lookup` com tag `order.id`
-2. Verifica cache in-memory (ConcurrentDictionary)
-3. **HIT**: tag `cache.hit=true`, incrementa `cache.hits_total`, retorna imediato
-4. **MISS**: tag `cache.hit=false`, incrementa `cache.misses_total`, chama Backend, armazena resultado
+**How it works:**
+1. API creates span `api.cache-lookup` with tag `order.id`
+2. Checks an in-memory cache (ConcurrentDictionary)
+3. **HIT**: tag `cache.hit=true`, increments `cache.hits_total`, returns immediately
+4. **MISS**: tag `cache.hit=false`, increments `cache.misses_total`, calls Backend, stores the result
 
-**O que valida:**
-- Primeira chamada: MISS (span longo, chama Backend)
-- Segunda chamada mesmo ID: HIT (span curto, sem Backend)
-- Métricas `cache.hits_total` e `cache.misses_total` exportadas
-- Tag `cache.hit` no span permite filtrar no Tempo
+**What it validates:**
+- First call: MISS (long span, calls Backend)
+- Second call with the same ID: HIT (short span, no Backend)
+- Metrics `cache.hits_total` and `cache.misses_total` exported
+- Tag `cache.hit` on the span allows filtering in Tempo
 
-**Consultar no Grafana:**
+**Query in Grafana:**
 ```
-# Tempo — filtrar por hit/miss
+# Tempo — filter by hit/miss
 {resource.service.name="sample-api" && name="api.cache-lookup" && span.cache.hit=true}
 
 # PromQL — cache hit rate
@@ -266,36 +266,43 @@ rate(cache_hits_total[5m]) / (rate(cache_hits_total[5m]) + rate(cache_misses_tot
 
 ### `UnstableOperation`
 
-**Objetivo:** Servir como target para o endpoint `/retry` da API. Simula serviço instável.
+**Objective:** Serve as the target of the API's `/retry` endpoint. Simulates an unstable service.
 
-**Como funciona:**
-- Mantém contador global de chamadas
-- Falha nas primeiras N chamadas (retorna `StatusCode.Unavailable`)
-- Sucesso a cada N+1 chamadas
-- Span `backend.unstable-operation` com tag `attempt`
+**How it works:**
+- Keeps a global call counter
+- Fails the first N calls (returns `StatusCode.Unavailable`)
+- Succeeds every N+1 calls
+- Span `backend.unstable-operation` with tag `attempt`
 
 ---
 
 ### `ReadBaggage`
 
-**Objetivo:** Demonstrar que baggage propagado via gRPC é acessível no serviço downstream.
+**Objective:** Show that baggage propagated over gRPC is accessible in the downstream service.
 
-**Como funciona:**
-- Lê `Baggage.Current` (populado automaticamente pelo OTel SDK via headers gRPC)
-- Retorna todos os items como mapa key→value
-- Adiciona cada item como tag no span
+**How it works:**
+- Reads `Baggage.Current` (populated automatically by the OTel SDK from gRPC headers)
+- Returns all items as a key→value map
+- Adds each item as a tag on the span
 
 ---
 
 ## SampleProcess — Workers
 
-### ApiHealthWorker (a cada 1 minuto)
+The `dotnet-process` (and `dotnet-api`, `dotnet-backend`) metric names keep
+the `_total` / `_seconds` suffixes (`queue.messages_processed_total`,
+`scheduled_job.duration_seconds`, …) that the shipped Grafana dashboards query;
+task C17 kept them for that compatibility. New code should follow
+`dotnet-custom-signals`: dot-separated names, the unit in `unit`, no `_total`
+(the Prometheus exporter adds it to counters).
 
-**Objetivo:** Gerar traces distribuídas continuamente, validando a comunicação entre os 3 serviços.
+### ApiHealthWorker (every 1 minute)
 
-**Como funciona:**
-- 6 chamadas sequenciais à API, cada uma com `StartRootActivity` (trace independente)
-- Span names descritivos por endpoint:
+**Objective:** Generate distributed traces continuously, validating communication across the 3 services.
+
+**How it works:**
+- 6 sequential calls to the API, each with `StartRootActivity` (independent trace)
+- Descriptive span names per endpoint:
   - `process-api-check` → `GET /`
   - `process-api-order` → `GET /order/1`
   - `process-api-cancel` → `GET /order/1/cancel`
@@ -303,14 +310,14 @@ rate(cache_hits_total[5m]) / (rate(cache_hits_total[5m]) + rate(cache_misses_tot
   - `process-api-batch` → `GET /batch`
   - `process-api-simulate-error` → `GET /error`
 
-**Métricas:**
-- `api_health.checks_total` (por endpoint)
-- `api_health.checks_failed_total` (por endpoint)
-- `api_health.check_duration_seconds` (por endpoint)
+**Metrics:**
+- `api_health.checks_total` (per endpoint)
+- `api_health.checks_failed_total` (per endpoint)
+- `api_health.check_duration_seconds` (per endpoint)
 
-**Consultar no Grafana:**
+**Query in Grafana:**
 ```
-# Tempo — todos os health checks
+# Tempo — all health checks
 {resource.service.name="sample-process" && name=~"process-api-.*"}
 
 # PromQL — success rate
@@ -319,17 +326,17 @@ rate(cache_hits_total[5m]) / (rate(cache_hits_total[5m]) + rate(cache_misses_tot
 
 ---
 
-### HeavyProcessWorker (a cada 2 minutos)
+### HeavyProcessWorker (every 2 minutes)
 
-**Objetivo:** Gerar carga de CPU e memória para observar no runtime metrics (.NET GC, thread pool).
+**Objective:** Generate CPU and memory load to observe in the runtime metrics (.NET GC, thread pool).
 
-**Como funciona:**
-- Batch de 8-20 itens em paralelo (`StartRootActivity`)
-- Cada item: SHA256 ×2000 (string 50KB) + 500 buffers (4-32KB)
-- 5% de chance de falha simulada por item
-- Span `process.heavy-batch` (root) → N× `process.heavy-process-item` (children paralelos)
+**How it works:**
+- Batch of 8-20 items in parallel (`StartRootActivity`)
+- Each item: SHA256 ×2000 (50KB string) + 500 buffers (4-32KB)
+- 5% chance of a simulated failure per item
+- Span `process.heavy-batch` (root) → N× `process.heavy-process-item` (parallel children)
 
-**Métricas:**
+**Metrics:**
 - `heavy_work.batches_total`
 - `heavy_work.items_total` (tag: status)
 - `heavy_work.errors_total`
@@ -337,7 +344,7 @@ rate(cache_hits_total[5m]) / (rate(cache_hits_total[5m]) + rate(cache_misses_tot
 - `heavy_work.item_duration_seconds`
 - `heavy_work.items_active` (gauge)
 
-**Consultar no Grafana:**
+**Query in Grafana:**
 ```
 # Tempo
 {resource.service.name="sample-process" && name="process.heavy-batch"}
@@ -348,24 +355,24 @@ rate(heavy_work_items_total[5m])
 # PromQL — error rate
 rate(heavy_work_errors_total[5m]) / rate(heavy_work_items_total[5m])
 
-# Runtime — GC pressure (correlacionar com batch execution)
+# Runtime — GC pressure (correlate with batch execution)
 dotnet_gc_collections_total
 ```
 
 ---
 
-### QueueConsumerWorker (a cada 30 segundos)
+### QueueConsumerWorker (every 30 seconds)
 
-**Objetivo:** Demonstrar o padrão de instrumentação para consumers de fila (SQS, Kafka, RabbitMQ).
+**Objective:** Show the instrumentation pattern for queue consumers (SQS, Kafka, RabbitMQ).
 
-**Como funciona:**
-- Simula poll de fila: gera 1-5 "mensagens" fictícias por ciclo
-- Cada mensagem é um trace independente (`StartRootActivity`)
-- Dentro do trace, 3 etapas: parse → validate → persist
-- 10% de chance de falha na validação (span com ERROR)
-- Observable gauge `queue.depth` mostra profundidade da fila
+**How it works:**
+- Simulates a queue poll: generates 1-5 fake "messages" per cycle
+- Each message is an independent trace (`StartRootActivity`)
+- Inside the trace, 3 steps: parse → validate → persist
+- 10% chance of a validation failure (span with ERROR)
+- Observable gauge `queue.depth` shows the queue depth
 
-**Span hierarchy por mensagem:**
+**Span hierarchy per message:**
 ```
 process.queue-consume (root)
   ├── process.queue-parse
@@ -373,26 +380,26 @@ process.queue-consume (root)
   └── process.queue-persist
 ```
 
-**Tags no span root:**
-- `messaging.message_id` — ID único da mensagem
+**Tags on the root span:**
+- `messaging.message_id` — unique message ID
 - `messaging.system` — "sqs"
 - `messaging.destination` — "orders-queue"
 
-**Métricas:**
+**Metrics:**
 - `queue.messages_processed_total` (tag: status)
 - `queue.messages_failed_total`
 - `queue.message_duration_seconds`
 - `queue.depth` (observable gauge)
 
-**Consultar no Grafana:**
+**Query in Grafana:**
 ```
-# Tempo — traces de mensagens
+# Tempo — message traces
 {resource.service.name="sample-process" && name="process.queue-consume"}
 
-# Tempo — só falhas de validação
+# Tempo — validation failures only
 {resource.service.name="sample-process" && name="process.queue-validate" && status=error}
 
-# PromQL — throughput de mensagens
+# PromQL — message throughput
 rate(queue_messages_processed_total[5m])
 
 # PromQL — queue depth
@@ -404,20 +411,20 @@ rate(queue_messages_failed_total[5m]) / rate(queue_messages_processed_total[5m])
 
 ---
 
-### ScheduledJobWorker (a cada 3 minutos)
+### ScheduledJobWorker (every 3 minutes)
 
-**Objetivo:** Demonstrar job agendado com timeout, detecção de falha, e circuit breaker.
+**Objective:** Show a scheduled job with a timeout, failure detection, and a circuit breaker.
 
-**Como funciona:**
-1. Job executa 3 etapas: fetch-data → transform → persist
-2. `fetch-data` tem delay aleatório (100ms-7s) — às vezes excede o timeout de 5s
-3. Se timeout: span com ERROR + tag `timeout=true`
-4. Após 3 falhas consecutivas: circuit breaker abre
-5. Circuit aberto: job é rejeitado (span com tag `circuit_breaker.action=rejected`)
-6. Após 30s: circuit vai para half-open, tenta novamente
-7. Se sucesso: circuit fecha, contador reseta
+**How it works:**
+1. The job runs 3 steps: fetch-data → transform → persist
+2. `fetch-data` has a random delay (100ms-7s) — it sometimes exceeds the 5s timeout
+3. On timeout: span with ERROR + tag `timeout=true`
+4. After 3 consecutive failures: the circuit breaker opens
+5. Circuit open: the job is rejected (span with tag `circuit_breaker.action=rejected`)
+6. After 30s: the circuit goes half-open and tries again
+7. On success: the circuit closes and the counter resets
 
-**Span hierarchy (sucesso):**
+**Span hierarchy (success):**
 ```
 process.scheduled-job (root)
   ├── process.job-fetch-data
@@ -428,26 +435,26 @@ process.scheduled-job (root)
 **Span hierarchy (timeout):**
 ```
 process.scheduled-job (root, ERROR, timeout=true)
-  └── process.job-fetch-data (cancelado pelo timeout)
+  └── process.job-fetch-data (cancelled by the timeout)
 ```
 
-**Estados do circuit breaker:**
-- `0` = closed (normal, jobs executam)
-- `1` = open (jobs rejeitados, aguardando recovery)
-- `2` = half-open (tentando recovery)
+**Circuit breaker states:**
+- `0` = closed (normal, jobs run)
+- `1` = open (jobs rejected, waiting for recovery)
+- `2` = half-open (trying to recover)
 
-**Métricas:**
+**Metrics:**
 - `scheduled_job.runs_total` (tag: result = success/timeout/error/circuit-open)
 - `scheduled_job.timeouts_total`
 - `scheduled_job.duration_seconds`
 - `circuit_breaker.state` (observable gauge: 0/1/2)
 
-**Consultar no Grafana:**
+**Query in Grafana:**
 ```
-# Tempo — todos os jobs
+# Tempo — all jobs
 {resource.service.name="sample-process" && name="process.scheduled-job"}
 
-# Tempo — só timeouts
+# Tempo — timeouts only
 {resource.service.name="sample-process" && name="process.scheduled-job" && span.timeout=true}
 
 # PromQL — timeout rate
@@ -462,43 +469,111 @@ histogram_quantile(0.95, rate(scheduled_job_duration_seconds_bucket[5m]))
 
 ---
 
-## Resumo de funcionalidades demonstradas
+## Summary of demonstrated features
 
-| Funcionalidade | Onde | Span/Métrica |
+| Feature | Where | Span/Metric |
 |---|---|---|
-| Trace distribuída (3 serviços) | API `/order/{id}` | `api.get-order` |
+| Distributed trace (3 services) | API `/order/{id}` | `api.get-order` |
 | Baggage propagation | API `/order/{id}/trace` | `api.trace-with-baggage` |
 | Span events | API `/order/{id}/events` | `api.order-with-events` |
 | Parallel fan-out | API `/parallel/{count}` | `api.parallel-fan-out` |
-| Retry com spans | API `/retry/{id}` | `api.retry-operation` |
+| Retry with spans | API `/retry/{id}` | `api.retry-operation` |
 | Cache hit/miss | API `/cache/{id}` | `api.cache-lookup` + `cache.hits_total` |
-| Error trace (sempre mantido) | API `/error` | `api.error-simulated` |
-| High latency (sempre mantido) | API `/slow` | `api.slow-operation` |
+| Error trace (always kept) | API `/error` | `api.error-simulated` |
+| High latency (always kept) | API `/slow` | `api.slow-operation` |
 | gRPC instrumentation | API → Backend | Auto-spans gRPC client/server |
-| StartRootActivity (workers) | Process todos | Traces independentes por iteração |
+| StartRootActivity (workers) | All Process workers | Independent traces per iteration |
 | Observable gauge | Process queue/circuit | `queue.depth`, `circuit_breaker.state` |
 | Consumer pattern | Process queue | `process.queue-consume` |
 | Timeout detection | Process job | `process.scheduled-job` + `timeout=true` |
 | Circuit breaker | Process job | `circuit_breaker.state` gauge |
 | CPU/memory stress | Process heavy | `process.heavy-batch` |
 | Scoped logging | API `/order/{id}/trace` | `logger.BeginScope(...)` |
-| RecordException | Todos (automático) | Exception stack trace no span |
-| Debug tracestate | Todos (quando debug=true) | `tracestate: debug=true` |
+| Exceptions on spans | All (automatic for instrumented spans) | HTTP spans (ASP.NET Core, HttpClient): `exception` event with type, message and stack trace. Database and AWS spans: `exception.type` only; the message and stack trace go to an ERROR log record with the same `trace_id`/`span_id` (ADR-014). Custom spans: put the type on the span and log the detail inside the activity |
+| Debug flag | Entry spans (when `OTEL_HELPER_DEBUG_LEVEL=true`) | Span attribute `debug=true` on entry spans (no parent or a remote parent); the helper no longer writes `debug=true` to the tracestate |
 
 ---
 
-## Dashboards Grafana
+## Grafana dashboards
 
-3 dashboards prontos em `example/dashboards/`. Para importar: **Dashboards → Import → Upload JSON**.
+3 ready-made dashboards in [`dashboards/`](https://github.com/StaffOps/otel-libs/tree/main/dashboards) at the repository root. To import: **Dashboards → Import → Upload JSON**.
 
-| Arquivo | Título | O que mostra |
+| File | Title | What it shows |
 |---|---|---|
-| `01-api-business-metrics.json` | Sample — API & Business Metrics | Request rate, error rate, P95 latency, cache hit/miss, revenue, DB/external duration, traces recentes |
+| `01-api-business-metrics.json` | Sample — API & Business Metrics | Request rate, error rate, P95 latency, cache hit/miss, revenue, DB/external duration, recent traces |
 | `02-workers-background.json` | Sample — Workers & Background Processing | Health check success rate, heavy work throughput, queue depth, circuit breaker state, scheduled job timeouts |
 | `03-traces-reliability.json` | Sample — Traces & Reliability Patterns | Retry attempts, parallel fan-out, baggage propagation, span events, timeout traces, queue consumer, all errors |
 
-**Datasources necessários:**
-- `victoriametrics` (type: prometheus) — métricas
+**Required datasources:**
+- `victoriametrics` (type: prometheus) — metrics
 - `tempo` (type: tempo) — traces
 
-**Variável de filtro** (dashboard 01): `$service` — seleciona entre `sample-api`, `sample-backend`, `sample-process`.
+**Filter variable** (dashboard 01): `$service` — selects between `sample-api`, `sample-backend`, `sample-process`.
+
+---
+
+## Custom signals (`dotnet-custom-signals`)
+
+Same names as the Go, Python and Node.js twins (`go-custom-signals`,
+`python-custom-signals`, `node-custom-signals`): span, metric and log names,
+attribute keys, units, instrument kinds and trace shape match. One deliberate
+difference: the failed span carries the exception **type** only (ADR-014); the
+message and the stack trace are on the `order failed` log record, which has the
+same `trace_id`/`span_id`.
+
+| Signal | Name | Kind | Attributes |
+|---|---|---|---|
+| span | `orders.process-batch` | root, Internal (`StartRootActivity`) | `batch.size`; status ERROR `1 of 3 orders failed` when an order fails |
+| span | `order.process` | child, one per order (`ActivitySource.StartActivity`) | `order.id`, `order.type`; event `order.validated` (`order.amount`); on failure `error.type` `PaymentDeclinedException`, event `exception` with `exception.type` only, status ERROR `payment declined` |
+| metric | `order.processed` (`{order}`) | Counter, `long` | `order.type`; `error.type` on failure only |
+| metric | `order.duration` (`s`) | Histogram, `double`, buckets 5 ms – 1 s (`InstrumentAdvice<double>.HistogramBucketBoundaries`) | `order.type`; `error.type` on failure only |
+| metric | `order.active` (`{order}`) | UpDownCounter, `long` | `order.type` |
+| metric | `order.queue.depth` (`{order}`) | Observable gauge, `int` | `queue.name` |
+| log | `order processed` (Information) | correlated with its `order.process` | `order.id`, `order.amount` |
+| log | `order failed` (Error) | correlated with the failed `order.process` | `order.id`, `exception.type`, `exception.message`, `exception.stacktrace` |
+| log | `batch finished` (Information) | correlated with `orders.process-batch` | `batch.size`, `orders.failed` |
+
+Tracer and meter scope: `orders` (listed in `AdditionalActivitySources` and
+`AdditionalMeters`: a source or meter named otherwise than `service.name` is
+exported only when listed). Log scope: `dotnet-custom-signals` (the
+`ILoggerFactory.CreateLogger` category).
+
+How the code produces them
+([`dotnet-custom-signals/Program.cs`](https://github.com/StaffOps/otel-libs/blob/main/dotnet/example/dotnet-custom-signals/Program.cs)):
+
+| Signal | What the code does |
+|---|---|
+| Root span | `Source.StartRootActivity("orders.process-batch")` (a new trace whatever is current); `SetStatus(Error, "1 of 3 orders failed")` |
+| Child spans | `Source.StartActivity("order.process")` per order; `AddEvent(new ActivityEvent("order.validated", tags: …))` |
+| Failure | `SetStatus(Error, "payment declined")`, `SetTag("error.type", ex.GetType().Name)` (the short name, as the twins write `PaymentDeclinedError`; the process examples use `FullName`, see [README §4](README.md#4-errors-on-spans-adr-014)), `AddEvent(new ActivityEvent("exception", tags: { exception.type }))`. Not `Activity.AddException(ex)`: that adds `exception.message` and `exception.stacktrace` to the span |
+| Counter | `Meter.CreateCounter<long>("order.processed", "{order}", …)` |
+| Histogram | `Meter.CreateHistogram<double>("order.duration", "s", …, advice: new InstrumentAdvice<double> { HistogramBucketBoundaries = [0.005, …, 1] })` — measured: the Collector shows `ExplicitBounds #0: 0.005000` … `#7: 1.000000` |
+| Up-down counter | `Meter.CreateUpDownCounter<long>("order.active", …)`, `+1` / `-1` around each order |
+| Observable gauge | `Meter.CreateObservableGauge("order.queue.depth", () => new Measurement<int>(depth, queue.name=orders), …)` |
+| Logs | `logger.Log(level, default, state, exception, (_, _) => "order processed")` with `state` a list of key/value pairs: the body is the fixed message, the pairs are the record's attributes on OTLP and fields on the stdout fallback (a logging scope would reach OTLP only). A message template (`"order processed {order.id}"`) would put the placeholder text into the body instead. The `Exception` argument becomes `exception.type` / `exception.message` / `exception.stacktrace` on OTLP and one `exception` field on the stdout fallback |
+
+Ctrl-C / SIGTERM cancel `IHostApplicationLifetime.ApplicationStopping`, which
+the loop checks before each order (`batch interrupted` Warning,
+`orders.pending`); the flush still runs.
+
+Recorded run (trace `ce6529746e6f6a4777d04632aa6ffb84`, 2026-11-12; IDs differ
+on every run), condensed from the Collector's debug output:
+
+```text
+orders.process-batch  Internal  Status Error "1 of 3 orders failed"   batch.size=3
+order.process         Internal  Status Unset   order.id=ord-1 order.type=standard  event order.validated
+order.process         Internal  Status Unset   order.id=ord-2 order.type=express   event order.validated
+order.process         Internal  Status Error   order.id=ord-3 error.type=PaymentDeclinedException
+                                               events order.validated, exception (exception.type only)
+LogRecord  Error  Body "order failed"  Span ID 8999edefbae5aa71 (the ord-3 span)
+           exception.type PaymentDeclinedException, exception.message "card declined by issuer",
+           exception.stacktrace "…at OrderJob.Charge(Order order) …", order.id ord-3
+metrics (scope orders): order.processed, order.duration, order.active, order.queue.depth
+```
+
+The records carry only these attributes: no `{OriginalFormat}` (the state has
+none), and no `SpanId`/`TraceId`/`ParentId` — the generic host's
+activity-tracking scope is not exported (design D-NET10 (g), C17 fix round 1;
+re-measured 2026-11-12, trace `c3aaa7bb80dcb94ce1eacb71ceb1ceaa`; the first
+C17 run above still showed them). Data points of the synchronous instruments
+carry exemplars with the span IDs.

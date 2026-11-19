@@ -1,0 +1,144 @@
+{
+  "_comment": [
+    "Expected cells of `verify.py demo` (specs/demo-environment DE-D11, DR9): one entry per language x cell.",
+    "Values: pass | xfail:<task> (an open task in an active tasks.md; tools/spec_lint.py xfail-task rule) | n/a:<reason>.",
+    "xfail and n/a are strict: a passing xfail cell is XPASS and data on an n/a cell is UNEXPECTED; both fail the run.",
+    "Predictions from the design 'Expected-results matrix' (r3.5, 2026-11-16); DE6 replaces each with the measured cell.",
+    "The .NET gRPC-client exemplar (parked item, b572e3a) is not read: check b reads server, DB and demo series only.",
+    "also_xfail lists further open tasks a cell needs before it can pass (checked by spec_lint like the primary task).",
+    "b.db_client accepts an exemplar on any span of its trace until A43 is decided (Go, .NET exemplars sit on the parent span).",
+    "reason: an xfail cell is XFAIL only when every observed problem contains one of these substrings; any other problem makes it FAIL (DE-D11 r3.7).",
+    "requires_series: an n/a cell that is NA only while the metric series exist (Node.js: metrics without SDK exemplars)."
+  ],
+  "cells": [
+    "a",
+    "b.http_server",
+    "b.rpc_server",
+    "b.db_client",
+    "b.demo_order",
+    "c",
+    "d.demo",
+    "d.grpc",
+    "d.http",
+    "d.db",
+    "e.trace",
+    "e.edges",
+    "e.edge.db",
+    "g.secret",
+    "g.sentinel.db",
+    "g.sentinel.app"
+  ],
+  "expected": {
+    "go": {
+      "a": "pass",
+      "b.http_server": "pass",
+      "b.rpc_server": "pass",
+      "b.db_client": "pass",
+      "b.demo_order": "pass",
+      "c": "pass",
+      "d.demo": "pass",
+      "d.grpc": "pass",
+      "d.http": "pass",
+      "d.db": "pass",
+      "e.trace": "pass",
+      "e.edges": "pass",
+      "e.edge.db": "pass",
+      "g.secret": "pass",
+      "g.sentinel.db": "pass",
+      "g.sentinel.app": "pass"
+    },
+    "python": {
+      "a": "pass",
+      "b.http_server": "pass",
+      "b.rpc_server": {
+        "expect": "n/a:upstream-no-rpc-metrics",
+        "ref": "README.md:312"
+      },
+      "b.db_client": {
+        "expect": "n/a:upstream-no-db-client-duration",
+        "ref": "design Metric map: contrib SQLAlchemy has no operation duration (unmeasured, DE6 confirms)"
+      },
+      "b.demo_order": "pass",
+      "c": "pass",
+      "d.demo": "pass",
+      "d.grpc": "pass",
+      "d.http": "pass",
+      "d.db": "pass",
+      "e.trace": "pass",
+      "e.edges": "pass",
+      "e.edge.db": "pass",
+      "g.secret": "pass",
+      "g.sentinel.db": "pass",
+      "g.sentinel.app": "pass"
+    },
+    "node": {
+      "a": "pass",
+      "b.http_server": {
+        "expect": "n/a:upstream-no-sdk-exemplars",
+        "ref": "README.md:329; @opentelemetry/sdk-metrics 3.0.0 has no exemplar code",
+        "requires_series": true
+      },
+      "b.rpc_server": {
+        "expect": "n/a:upstream-no-rpc-metrics",
+        "ref": "README.md:312 (Node.js gRPC: no RPC metrics); measured DE6 2026-11-17: series absent"
+      },
+      "b.db_client": {
+        "expect": "n/a:upstream-no-sdk-exemplars",
+        "ref": "README.md:329; @opentelemetry/sdk-metrics 3.0.0 has no exemplar code",
+        "requires_series": true
+      },
+      "b.demo_order": {
+        "expect": "n/a:upstream-no-sdk-exemplars",
+        "ref": "README.md:329; @opentelemetry/sdk-metrics 3.0.0 has no exemplar code",
+        "requires_series": true
+      },
+      "c": "pass",
+      "d.demo": "pass",
+      "d.grpc": "pass",
+      "d.http": "pass",
+      "d.db": "pass",
+      "e.trace": "pass",
+      "e.edges": "pass",
+      "e.edge.db": "pass",
+      "g.secret": "pass",
+      "g.sentinel.db": "pass",
+      "g.sentinel.app": "pass"
+    },
+    "dotnet": {
+      "a": "pass",
+      "b.http_server": "pass",
+      "b.rpc_server": "pass",
+      "b.db_client": "pass",
+      "b.demo_order": "pass",
+      "c": "pass",
+      "d.demo": "pass",
+      "d.grpc": "pass",
+      "d.http": {
+        "expect": "xfail:A42",
+        "also_xfail": [
+          "C20"
+        ],
+        "ref": "error.type = the exception type name, not 500 (A42); dotnet/HOW-TO.md:811-815 (ASP.NET Core RecordException: A37 .NET part, parked as specs/dotnet-otel-helper/tasks.md C20, 2026-11-19)",
+        "reason": [
+          "api SERVER error.type 'StaffOps.OtelLibs.Demo.DemoUnhandledError' (want 500)",
+          "server span 'POST /orders' carries",
+          "run token on server span"
+        ],
+        "reason_notes": "the error.type reason is A42; the exception event reasons are C20 (the .NET part of A37)"
+      },
+      "d.db": "pass",
+      "e.trace": "pass",
+      "e.edges": "pass",
+      "e.edge.db": "pass",
+      "g.secret": "pass",
+      "g.sentinel.db": "pass",
+      "g.sentinel.app": {
+        "expect": "xfail:C20",
+        "ref": "ASP.NET Core RecordException event (A37 .NET part, parked as specs/dotnet-otel-helper/tasks.md C20, 2026-11-19)",
+        "reason": [
+          "run token in server span"
+        ]
+      }
+    }
+  }
+}

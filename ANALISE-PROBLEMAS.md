@@ -1,5 +1,8 @@
 # Análise Crítica — Problemas Identificados e Correções
 
+> **Histórico (rodada 1, P1–P9, todos resolvidos).** A rodada 2 (2026-10-27)
+> está em [`specs/config-contract-v0.3/`](specs/config-contract-v0.3/requirements.md).
+
 > Análise do estado do repositório em `0.1.0-rc.1` (2026-07-04), comparando com o
 > padrão de mercado (spec OpenTelemetry, distros comerciais como Splunk/Grafana/
 > Lightstep, e convenções de empacotamento de cada ecossistema).

@@ -1,4 +1,4 @@
-using OtelHelper;
+using StaffOps.OtelHelper;
 using DotnetBackend.Services;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -23,6 +23,7 @@ builder.Services.AddOtelHelper(opts =>
         "sample-backend.db",
         "sample-backend.external"
     };
+    opts.AdditionalMeters.Add(OrderGrpcService.MeterName);
 });
 builder.Services.AddHttpClient("external");
 

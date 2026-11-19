@@ -1,5 +1,5 @@
-using OtelHelper;
-using OtelHelper.Grpc;
+using StaffOps.OtelHelper;
+using Examples.Grpc;
 using Grpc.Net.Client;
 using OpenTelemetry;
 using System.Diagnostics;
@@ -21,9 +21,12 @@ builder.Services.AddScoped(sp => new OrderService.OrderServiceClient(sp.GetRequi
 
 var app = builder.Build();
 
-var serviceName = Environment.GetEnvironmentVariable("SERVICE_NAME") ?? "sample-api";
-var activitySource = new ActivitySource(serviceName);
-var meter = new Meter(serviceName);
+// The helper's ActivitySource and Meter: keyed services named after the resolved
+// service.name (OTEL_SERVICE_NAME > OTEL_RESOURCE_ATTRIBUTES > SERVICE_NAME), so
+// they are always exported. An unkeyed ActivitySource resolves to ASP.NET Core's
+// own source in a web app: custom spans would be exported under its scope.
+var activitySource = app.Services.GetRequiredKeyedService<ActivitySource>(OtelHelperKeys.Instrumentation);
+var meter = app.Services.GetRequiredKeyedService<Meter>(OtelHelperKeys.Instrumentation);
 
 var orderCounter = meter.CreateCounter<long>("orders.received_total", "orders", "Total orders received");
 var cancelCounter = meter.CreateCounter<long>("orders.cancelled_total", "orders", "Total orders cancelled");
@@ -295,7 +298,9 @@ app.MapGet("/retry/{id}", async (int id, OrderService.OrderServiceClient grpcCli
         }
         catch (Grpc.Core.RpcException ex) when (ex.StatusCode == Grpc.Core.StatusCode.Unavailable)
         {
-            retrySpan?.SetStatus(ActivityStatusCode.Error, $"Attempt {attempt} failed: {ex.Status.Detail}");
+            // ADR-014: the status code on the span, the server's detail text in the correlated log below.
+            retrySpan?.SetStatus(ActivityStatusCode.Error);
+            retrySpan?.SetTag("error.type", ex.StatusCode.ToString());
             logger.LogWarning(ex, "Retry attempt {Attempt} failed for request {RequestId}", attempt, id);
 
             if (attempt == maxRetries)

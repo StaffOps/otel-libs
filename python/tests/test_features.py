@@ -5,13 +5,13 @@ import pytest
 
 from opentelemetry import trace
 from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.sdk.trace.sampling import ALWAYS_ON, TraceIdRatioBased
+from opentelemetry.sdk.trace.sampling import ParentBased
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
-from otel_helper.config import TelemetryOptions, DeploymentEnvironment
-from otel_helper.tracing import configure_tracing
-from otel_helper.processors import DebugProcessor
-from otel_helper.setup import reset_telemetry
+from staffops_otel_helper.config import TelemetryOptions, DeploymentEnvironment
+from staffops_otel_helper.tracing import configure_tracing
+from staffops_otel_helper.processors import DebugProcessor
+from staffops_otel_helper.setup import reset_telemetry
 
 
 @pytest.fixture(autouse=True)
@@ -29,53 +29,57 @@ class TestSampleRatio:
     def test_default_is_always_on(self):
         opts = TelemetryOptions(service_name="test", otel_endpoint="http://localhost:4317")
         opts.resolve_from_env()
-        assert opts.sample_ratio == 1.0
+        assert opts.resolved.sample_ratio == 1.0
 
     def test_env_var_sets_ratio(self):
         os.environ["OTEL_HELPER_SAMPLE_RATIO"] = "0.5"
         opts = TelemetryOptions(service_name="test", otel_endpoint="http://localhost:4317")
         opts.resolve_from_env()
-        assert opts.sample_ratio == 0.5
+        assert opts.resolved.sample_ratio == 0.5
 
     def test_env_var_clamped_to_0_1(self):
         os.environ["OTEL_HELPER_SAMPLE_RATIO"] = "2.5"
         opts = TelemetryOptions(service_name="test", otel_endpoint="http://localhost:4317")
         opts.resolve_from_env()
-        assert opts.sample_ratio == 1.0
+        assert opts.resolved.sample_ratio == 1.0
 
-    def test_env_var_negative_clamped(self):
+    def test_env_var_negative_rejected(self):
+        # Plain-decimal grammar (design D3): a sign is not accepted -> warn, 1.0.
         os.environ["OTEL_HELPER_SAMPLE_RATIO"] = "-0.5"
         opts = TelemetryOptions(service_name="test", otel_endpoint="http://localhost:4317")
         opts.resolve_from_env()
-        assert opts.sample_ratio == 0.0
+        assert opts.resolved.sample_ratio == 1.0
 
     def test_invalid_env_var_ignored(self):
         os.environ["OTEL_HELPER_SAMPLE_RATIO"] = "not_a_number"
         opts = TelemetryOptions(service_name="test", otel_endpoint="http://localhost:4317")
         opts.resolve_from_env()
-        assert opts.sample_ratio == 1.0
+        assert opts.resolved.sample_ratio == 1.0
 
     def test_explicit_value_overrides_env(self):
         os.environ["OTEL_HELPER_SAMPLE_RATIO"] = "0.1"
         opts = TelemetryOptions(service_name="test", otel_endpoint="http://localhost:4317", sample_ratio=0.75)
         opts.resolve_from_env()
-        assert opts.sample_ratio == 0.75
+        assert opts.resolved.sample_ratio == 0.75
 
     def test_ratio_below_1_uses_trace_id_sampler(self):
         from opentelemetry.sdk.resources import Resource
         opts = TelemetryOptions(service_name="test", otel_endpoint="http://localhost:4317", sample_ratio=0.5)
         resource = Resource.create({"service.name": "test"})
         provider = configure_tracing(resource, opts)
-        sampler = provider.sampler
-        assert isinstance(sampler, TraceIdRatioBased)
+        sampler = provider.sampler.inner
+        assert isinstance(sampler, ParentBased)
+        assert "root:TraceIdRatioBased{0.5}" in sampler.get_description()
 
-    def test_ratio_1_uses_always_on(self):
+    def test_code_ratio_1_is_parentbased_ratio(self):
+        # D1 A13 ruling: a code ratio is used as given, 1.0 included (never compared to the default).
         from opentelemetry.sdk.resources import Resource
         opts = TelemetryOptions(service_name="test", otel_endpoint="http://localhost:4317", sample_ratio=1.0)
         resource = Resource.create({"service.name": "test"})
         provider = configure_tracing(resource, opts)
-        sampler = provider.sampler
-        assert not isinstance(sampler, TraceIdRatioBased)
+        sampler = provider.sampler.inner
+        assert isinstance(sampler, ParentBased)
+        assert "root:TraceIdRatioBased{1.0}" in sampler.get_description()
 
 
 class TestDebugProcessor:
@@ -149,31 +153,31 @@ class TestGrpcAutoInstrumentation:
 
 class TestHelpers:
     def test_get_tracer(self):
-        from otel_helper import get_tracer, setup_telemetry
+        from staffops_otel_helper import get_tracer, setup_telemetry
         setup_telemetry(TelemetryOptions(service_name="test", otel_endpoint="http://localhost:4317"))
         tracer = get_tracer("my-svc")
         assert tracer is not None
 
     def test_get_meter(self):
-        from otel_helper import get_meter, setup_telemetry
+        from staffops_otel_helper import get_meter, setup_telemetry
         setup_telemetry(TelemetryOptions(service_name="test", otel_endpoint="http://localhost:4317"))
         meter = get_meter("my-svc")
         assert meter is not None
 
     def test_get_tracer_default_name(self):
-        from otel_helper import get_tracer
+        from staffops_otel_helper import get_tracer
         tracer = get_tracer()
         assert tracer is not None
 
     def test_get_meter_default_name(self):
-        from otel_helper import get_meter
+        from staffops_otel_helper import get_meter
         meter = get_meter()
         assert meter is not None
 
 
 class TestStartRootSpan:
     def test_creates_independent_trace(self):
-        from otel_helper.tracing import start_root_span
+        from staffops_otel_helper.tracing import start_root_span
         from opentelemetry.sdk.trace import TracerProvider
         from opentelemetry.sdk.trace.export import SimpleSpanProcessor
         from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
@@ -192,7 +196,7 @@ class TestStartRootSpan:
         assert root_child.parent is None
 
     def test_yields_span(self):
-        from otel_helper.tracing import start_root_span
+        from staffops_otel_helper.tracing import start_root_span
         from opentelemetry.sdk.trace import TracerProvider
 
         provider = TracerProvider()
@@ -205,12 +209,12 @@ class TestStartRootSpan:
 
 class TestDebugProcessorLifecycle:
     def test_shutdown(self):
-        from otel_helper.processors import DebugProcessor
+        from staffops_otel_helper.processors import DebugProcessor
         p = DebugProcessor()
         p.shutdown()
 
     def test_force_flush(self):
-        from otel_helper.processors import DebugProcessor
+        from staffops_otel_helper.processors import DebugProcessor
         p = DebugProcessor()
         assert p.force_flush() is True
 
@@ -245,8 +249,8 @@ class TestDisabledSignals:
         os.environ["OTEL_HELPER_DISABLED_SIGNALS"] = "metrics,logs"
         opts = TelemetryOptions(service_name="test", otel_endpoint="http://localhost:4317")
         opts.resolve_from_env()
-        assert "metrics" in opts.disabled_signals
-        assert "logs" in opts.disabled_signals
+        assert "metrics" in opts.resolved.disabled_signals
+        assert "logs" in opts.resolved.disabled_signals
         assert opts.is_signal_enabled("metrics") is False
         assert opts.is_signal_enabled("logs") is False
         assert opts.is_signal_enabled("traces") is True
@@ -255,20 +259,20 @@ class TestDisabledSignals:
         os.environ["OTEL_HELPER_DISABLED_METRICS"] = "http.server.*,rpc.client.*"
         opts = TelemetryOptions(service_name="test", otel_endpoint="http://localhost:4317")
         opts.resolve_from_env()
-        assert "http.server.*" in opts.disabled_metrics
-        assert "rpc.client.*" in opts.disabled_metrics
+        assert "http.server.*" in opts.resolved.disabled_metrics
+        assert "rpc.client.*" in opts.resolved.disabled_metrics
 
     def test_disabled_metrics_empty_when_env_not_set(self):
         opts = TelemetryOptions(service_name="test", otel_endpoint="http://localhost:4317")
         opts.resolve_from_env()
-        assert opts.disabled_metrics == []
+        assert opts.resolved.disabled_metrics == []
 
     def test_setup_with_disabled_signals_does_not_raise(self):
         opts = TelemetryOptions(
             service_name="test", otel_endpoint="http://localhost:4317",
             disabled_signals=["metrics"]
         )
-        from otel_helper.setup import setup_telemetry, reset_telemetry
+        from staffops_otel_helper.setup import setup_telemetry, reset_telemetry
         reset_telemetry()
         setup_telemetry(opts)
         reset_telemetry()
@@ -278,7 +282,7 @@ class TestDisabledSignals:
             service_name="test", otel_endpoint="http://localhost:4317",
             disabled_metrics=["http.*"]
         )
-        from otel_helper.setup import setup_telemetry, reset_telemetry
+        from staffops_otel_helper.setup import setup_telemetry, reset_telemetry
         reset_telemetry()
         setup_telemetry(opts)
         reset_telemetry()

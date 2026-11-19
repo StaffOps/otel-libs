@@ -1,0 +1,569 @@
+'use strict';
+// The internal entry @staffops/otel-helper/internal/db (task B10b, 2026-11-03;
+// moved from @staffops/otel-helper-sql, B10a): the database-span rules the
+// opt-in -sql and -redis packages share — the OTEL_SEMCONV_STABILITY_OPT_IN
+// database grammar (Go `ext/otelsql` legacyKeysEnabled, contract A25), the
+// legacy db.system copy, the tracer wrapper (ERROR description dropped with
+// error.type _OTHER, span-name rule) and the meter wrapper (legacy key,
+// generation guard). The packages' suites run them against real servers.
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const path = require('node:path');
+const { spawnSync } = require('node:child_process');
+const api = require('@opentelemetry/api');
+const { InMemorySpanExporter, SimpleSpanProcessor, TracerProvider } = require('@opentelemetry/sdk-trace');
+const { MeterProvider, MetricReader } = require('@opentelemetry/sdk-metrics');
+const db = require('@staffops/otel-helper/internal/db');
+
+test('internal/db exports exactly what the opt-in DB packages use', () => {
+  assert.deepEqual(Object.keys(db).filter((k) => k !== '__esModule').sort(), [
+    'ATTR_DB_SYSTEM',
+    'ATTR_DB_SYSTEM_NAME',
+    'ENV_SEMCONV_OPT_IN',
+    'LEGACY_DB_SYSTEM',
+    'dbMeterProvider',
+    'dbTracerProvider',
+    'legacyKeysEnabled',
+    'legacyKeysMode',
+    'withLegacyKey',
+  ]);
+  assert.deepEqual({ ...db.LEGACY_DB_SYSTEM }, { postgresql: 'postgresql', mysql: 'mysql', redis: 'redis', 'aws.dynamodb': 'dynamodb' });
+  assert.ok(Object.isFrozen(db.LEGACY_DB_SYSTEM));
+});
+
+test('legacy db.system unless the value holds database without database/dup (A25)', () => {
+  const table = [
+    [undefined, true],
+    ['', true],
+    ['http', true],
+    ['http,database/dup', true],
+    ['database', false],
+    ['DATABASE', false],
+    [' Database ', false],
+    ['http,DATABASE', false],
+    ['database,database/dup', true],
+    ['\tdatabase/DUP\n', true],
+    ['databasé', true], // not a token: ASCII folding only (contract D1)
+    ['database ', true], // NBSP is not in the trim set
+  ];
+  for (const [value, want] of table) assert.equal(db.legacyKeysEnabled(value), want, JSON.stringify(value));
+  const saved = process.env.OTEL_SEMCONV_STABILITY_OPT_IN;
+  process.env.OTEL_SEMCONV_STABILITY_OPT_IN = 'database';
+  try {
+    assert.equal(db.legacyKeysEnabled(), false, 'reads the variable by default');
+  } finally {
+    if (saved === undefined) delete process.env.OTEL_SEMCONV_STABILITY_OPT_IN;
+    else process.env.OTEL_SEMCONV_STABILITY_OPT_IN = saved;
+  }
+});
+
+test('legacyKeysMode reads the variable once per process (the first DB factory call)', () => {
+  const entry = require.resolve('@staffops/otel-helper/internal/db');
+  const res = spawnSync(
+    process.execPath,
+    ['-e', `const db = require(${JSON.stringify(entry)}); const first = db.legacyKeysMode(); delete process.env.OTEL_SEMCONV_STABILITY_OPT_IN; console.log(JSON.stringify([first, db.legacyKeysMode()]));`],
+    { encoding: 'utf8', env: { ...process.env, OTEL_SEMCONV_STABILITY_OPT_IN: 'database' }, cwd: path.resolve(__dirname, '..') },
+  );
+  assert.equal(res.status, 0, res.stderr);
+  assert.deepEqual(JSON.parse(res.stdout), [false, false]);
+});
+
+test('withLegacyKey copies db.system.name into db.system (mapped), never over an existing db.system', () => {
+  assert.equal(db.withLegacyKey(undefined), undefined);
+  const plain = { a: 1 };
+  assert.equal(db.withLegacyKey(plain), plain, 'no db.system.name: unchanged');
+  assert.deepEqual(db.withLegacyKey({ 'db.system.name': 'redis' }), { 'db.system.name': 'redis', 'db.system': 'redis' });
+  assert.deepEqual(db.withLegacyKey({ 'db.system.name': 'other_sql' }), { 'db.system.name': 'other_sql', 'db.system': 'other_sql' });
+  const own = { 'db.system.name': 'postgresql', 'db.system': 'custom' };
+  assert.equal(db.withLegacyKey(own), own);
+  assert.equal(db.withLegacyKey({ 'db.system.name': 5 })['db.system'], undefined, 'only string values');
+});
+
+function tracerOf(opts) {
+  const exporter = new InMemorySpanExporter();
+  const provider = new TracerProvider({ spanProcessors: [new SimpleSpanProcessor({ exporter })] });
+  return { exporter, provider, wrapped: db.dbTracerProvider(provider, opts) };
+}
+
+test('the DB tracer adds db.system at span start (startSpan and every startActiveSpan form)', () => {
+  const { exporter, wrapped } = tracerOf({ legacyKeys: true });
+  const tracer = wrapped.getTracer('t', '1');
+  const attrs = { 'db.system.name': 'redis' };
+  tracer.startSpan('a', { attributes: attrs }).end();
+  tracer.startSpan('b').end();
+  tracer.startSpan('c', { kind: api.SpanKind.CLIENT }).end();
+  tracer.startSpan('d', { attributes: { other: 'x' } }).end();
+  assert.equal(tracer.startActiveSpan('e', (span) => (span.end(), 'r1')), 'r1');
+  assert.equal(tracer.startActiveSpan('f', { attributes: attrs }, (span) => (span.end(), 'r2')), 'r2');
+  assert.equal(tracer.startActiveSpan('g', { attributes: attrs }, api.context.active(), (span) => (span.end(), 'r3')), 'r3');
+  const byName = Object.fromEntries(exporter.getFinishedSpans().map((s) => [s.name, s.attributes]));
+  for (const name of ['a', 'f', 'g']) assert.equal(byName[name]['db.system'], 'redis', name);
+  for (const name of ['b', 'c', 'd', 'e']) assert.equal(byName[name]['db.system'], undefined, name);
+  assert.deepEqual(attrs, { 'db.system.name': 'redis' }, 'the caller attributes are not mutated');
+  const stable = tracerOf({ legacyKeys: false });
+  stable.wrapped.getTracer('t').startSpan('s', { attributes: attrs }).end();
+  assert.equal(stable.exporter.getFinishedSpans()[0].attributes['db.system'], undefined);
+});
+
+test('A30: legacyStatement copies db.query.text into db.statement at start, only with legacyKeys and never over one', () => {
+  const attrs = { 'db.system.name': 'redis', 'db.query.text': 'SET ? ?' };
+  const dup = tracerOf({ legacyKeys: true, legacyStatement: true });
+  const t = dup.wrapped.getTracer('t');
+  t.startSpan('a', { attributes: attrs }).end();
+  t.startSpan('b', { attributes: { ...attrs, 'db.statement': 'own' } }).end();
+  t.startSpan('c', { attributes: { 'db.system.name': 'redis' } }).end();
+  const byName = Object.fromEntries(dup.exporter.getFinishedSpans().map((s) => [s.name, s.attributes]));
+  assert.equal(byName.a['db.statement'], 'SET ? ?');
+  assert.equal(byName.b['db.statement'], 'own');
+  assert.equal(byName.c['db.statement'], undefined);
+  assert.equal(attrs['db.statement'], undefined, 'the caller attributes are not mutated');
+  for (const opts of [{ legacyKeys: false, legacyStatement: true }, { legacyKeys: true }]) {
+    const other = tracerOf(opts);
+    other.wrapped.getTracer('t').startSpan('s', { attributes: attrs }).end();
+    assert.equal(other.exporter.getFinishedSpans()[0].attributes['db.statement'], undefined, JSON.stringify(opts));
+  }
+  assert.equal(db.withLegacyKey({ 'db.system.name': 'aws.dynamodb' })['db.system'], 'dynamodb');
+});
+
+test('A30: legacyStatement also copies db.query.text written after start (setAttribute, setAttributes), never over an existing db.statement', () => {
+  const dup = tracerOf({ legacyKeys: true, legacyStatement: true });
+  const t = dup.wrapped.getTracer('t');
+  const a = t.startSpan('a');
+  a.setAttribute('db.query.text', 'SELECT 1');
+  a.end();
+  const b = t.startSpan('b');
+  b.setAttributes({ 'db.query.text': 'SELECT 2', other: 'x' });
+  b.end();
+  const c = t.startSpan('c');
+  c.setAttribute('db.statement', 'own');
+  c.setAttribute('db.query.text', 'SELECT 3');
+  c.end();
+  const byName = Object.fromEntries(dup.exporter.getFinishedSpans().map((s) => [s.name, s.attributes]));
+  assert.equal(byName.a['db.statement'], 'SELECT 1');
+  assert.equal(byName.b['db.statement'], 'SELECT 2');
+  assert.equal(byName.b.other, 'x');
+  assert.equal(byName.c['db.statement'], 'own');
+  const stable = tracerOf({ legacyKeys: false, legacyStatement: true });
+  const d = stable.wrapped.getTracer('t').startSpan('d');
+  d.setAttribute('db.query.text', 'SELECT 4');
+  d.end();
+  assert.equal(stable.exporter.getFinishedSpans()[0].attributes['db.statement'], undefined);
+});
+
+test('the optional span-name rule gets the requested name and the start attributes', () => {
+  const seen = [];
+  const { exporter, wrapped } = tracerOf({
+    legacyKeys: false,
+    spanName: (requested, attributes) => (seen.push([requested, attributes?.k]), `renamed-${requested}`),
+  });
+  const tracer = wrapped.getTracer('t');
+  tracer.startSpan('one', { attributes: { k: 'v' } }).end();
+  tracer.startActiveSpan('two', (s) => s.end());
+  assert.deepEqual(exporter.getFinishedSpans().map((s) => s.name), ['renamed-one', 'renamed-two']);
+  assert.deepEqual(seen, [['one', 'v'], ['two', undefined]]);
+});
+
+test('A25: an ERROR status keeps its code and drops the description; error.type _OTHER unless set; other statuses unchanged', () => {
+  const { exporter, wrapped } = tracerOf({ legacyKeys: false });
+  const tracer = wrapped.getTracer('t');
+  const failed = tracer.startSpan('failed');
+  assert.equal(failed.setStatus({ code: api.SpanStatusCode.ERROR, message: "ERR unknown command 'X', with args beginning with: 'secret'" }), failed, 'chainable');
+  failed.recordException(new Error('kept'));
+  failed.end();
+  const ok = tracer.startSpan('ok');
+  ok.setStatus({ code: api.SpanStatusCode.OK, message: 'fine' });
+  ok.end();
+  tracer.startActiveSpan('active', (span) => {
+    span.setStatus({ code: api.SpanStatusCode.ERROR, message: 'secret' });
+    span.end();
+  });
+  const typed = tracer.startSpan('typed', { attributes: { 'error.type': 'WRONGTYPE' } });
+  typed.setStatus({ code: api.SpanStatusCode.ERROR, message: 'x' });
+  typed.end();
+  const byName = Object.fromEntries(exporter.getFinishedSpans().map((s) => [s.name, s]));
+  assert.deepEqual(byName.failed.status, { code: api.SpanStatusCode.ERROR });
+  assert.equal(byName.failed.attributes['error.type'], '_OTHER');
+  assert.equal(byName.failed.events[0].attributes['exception.message'], 'kept', 'exception events are kept (A25 residual)');
+  assert.deepEqual(byName.active.status, { code: api.SpanStatusCode.ERROR });
+  assert.equal(byName.ok.status.code, api.SpanStatusCode.OK);
+  assert.equal(byName.ok.attributes['error.type'], undefined);
+  assert.equal(byName.typed.attributes['error.type'], 'WRONGTYPE', 'an existing error.type is kept');
+  const frozen = Object.freeze({ setStatus() {} });
+  const tp = db.dbTracerProvider({ getTracer: () => ({ startSpan: () => frozen }) }, { legacyKeys: false });
+  assert.equal(tp.getTracer('x').startSpan('y'), frozen, 'a frozen span is left as it is');
+});
+
+test('A26: responseStatusCode sets db.response.status_code and error.type from the dropped description; none -> _OTHER', () => {
+  const { exporter, wrapped } = tracerOf({ legacyKeys: false, responseStatusCode: (d) => /^([A-Z]+) /.exec(d)?.[1] });
+  const tracer = wrapped.getTracer('t');
+  const coded = tracer.startSpan('coded');
+  coded.setStatus({ code: api.SpanStatusCode.ERROR, message: 'WRONGTYPE Operation against a key' });
+  coded.end();
+  const plain = tracer.startSpan('plain');
+  plain.setStatus({ code: api.SpanStatusCode.ERROR, message: 'connect ECONNREFUSED 127.0.0.1:1' });
+  plain.end();
+  const empty = tracer.startSpan('empty');
+  empty.setStatus({ code: api.SpanStatusCode.ERROR });
+  empty.end();
+  const byName = Object.fromEntries(exporter.getFinishedSpans().map((s) => [s.name, s]));
+  assert.deepEqual(byName.coded.status, { code: api.SpanStatusCode.ERROR });
+  assert.equal(byName.coded.attributes['db.response.status_code'], 'WRONGTYPE');
+  assert.equal(byName.coded.attributes['error.type'], 'WRONGTYPE');
+  assert.equal(byName.plain.attributes['error.type'], '_OTHER');
+  assert.equal(byName.plain.attributes['db.response.status_code'], undefined);
+  assert.equal(byName.empty.attributes['error.type'], '_OTHER');
+});
+
+test('D16 (A44): exceptionStatusCode reads the recorded exception; the first code wins; the event is kept; a throwing getter is no code', () => {
+  const seen = [];
+  const { exporter, wrapped } = tracerOf({
+    legacyKeys: false,
+    exceptionStatusCode: (e) => {
+      seen.push(e);
+      if (e === 'boom') throw new Error('getter');
+      return typeof e === 'string' ? /code: (\w+)\)$/.exec(e)?.[1] : undefined;
+    },
+  });
+  const tracer = wrapped.getTracer('t');
+  const coded = tracer.startSpan('coded');
+  coded.recordException('PostgreSQL error (code: 23505)');
+  coded.recordException('PostgreSQL error (code: 42P01)');
+  coded.setStatus({ code: api.SpanStatusCode.ERROR, message: 'duplicate key value violates unique constraint' });
+  coded.end();
+  const thrown = tracer.startSpan('thrown');
+  thrown.recordException('boom');
+  thrown.setStatus({ code: api.SpanStatusCode.ERROR });
+  thrown.end();
+  const objectException = tracer.startSpan('object');
+  objectException.recordException(new Error('server text (code: 23505)'));
+  objectException.setStatus({ code: api.SpanStatusCode.ERROR });
+  objectException.end();
+  const none = tracer.startSpan('none');
+  none.setStatus({ code: api.SpanStatusCode.ERROR, message: 'x' });
+  none.end();
+  const byName = Object.fromEntries(exporter.getFinishedSpans().map((s) => [s.name, s]));
+  assert.equal(byName.coded.attributes['db.response.status_code'], '23505', 'the first recorded code');
+  assert.equal(byName.coded.attributes['error.type'], '23505');
+  assert.deepEqual(byName.coded.status, { code: api.SpanStatusCode.ERROR }, 'description still dropped');
+  assert.deepEqual(byName.coded.events.map((e) => e.attributes['exception.message']), ['PostgreSQL error (code: 23505)', 'PostgreSQL error (code: 42P01)'], 'events kept');
+  assert.equal(byName.thrown.attributes['error.type'], '_OTHER');
+  assert.equal(byName.thrown.attributes['db.response.status_code'], undefined);
+  assert.equal(byName.thrown.events.length, 1, 'a throwing getter does not drop the event');
+  assert.equal(byName.object.attributes['error.type'], '_OTHER', 'the getter decides what it accepts');
+  assert.equal(byName.none.attributes['error.type'], '_OTHER');
+  assert.equal(seen.length, 3, 'not called again once a code is captured');
+});
+
+test('D16 (A44): pendingStatusCode is read once per setStatus(ERROR), never for another status; order exception > pending > description', () => {
+  let calls = 0;
+  let next;
+  const { exporter, wrapped } = tracerOf({
+    legacyKeys: false,
+    exceptionStatusCode: (e) => (e === 'coded' ? '22P02' : undefined),
+    pendingStatusCode: () => {
+      calls++;
+      if (next === 'throw') throw new Error('slot');
+      return next;
+    },
+    responseStatusCode: (d) => (d === 'WRONGTYPE x' ? 'WRONGTYPE' : undefined),
+    copyPresetStatusCode: true,
+  });
+  const tracer = wrapped.getTracer('t');
+  const run = (name, { exception, pending, message, start } = {}) => {
+    next = pending;
+    const span = tracer.startSpan(name, start === undefined ? undefined : { attributes: start });
+    if (exception !== undefined) span.recordException(exception);
+    span.setStatus({ code: api.SpanStatusCode.OK });
+    span.setStatus({ code: api.SpanStatusCode.ERROR, message });
+    span.end();
+  };
+  run('pending', { pending: '1062' });
+  run('exceptionFirst', { exception: 'coded', pending: '1064' });
+  run('pendingBeforeDescription', { pending: '1146', message: 'WRONGTYPE x' });
+  run('description', { message: 'WRONGTYPE x' });
+  run('throwing', { pending: 'throw' });
+  run('nonString', { pending: 1062 });
+  run('typed', { pending: '1062', start: { 'error.type': 'app' } });
+  run('preset', { pending: '1062', start: { 'db.response.status_code': '23505' } });
+  run('presetNumber', { start: { 'db.response.status_code': 1213 } });
+  run('presetBoolean', { start: { 'db.response.status_code': true } });
+  run('presetArray', { start: { 'db.response.status_code': ['a'] } });
+  assert.equal(calls, 11, 'once per ERROR status (not for OK), also when error.type is already set');
+  const attrs = Object.fromEntries(exporter.getFinishedSpans().map((s) => [s.name, s.attributes]));
+  const pair = (name) => [attrs[name]['db.response.status_code'], attrs[name]['error.type']];
+  assert.deepEqual(pair('pending'), ['1062', '1062']);
+  assert.deepEqual(pair('exceptionFirst'), ['22P02', '22P02']);
+  assert.deepEqual(pair('pendingBeforeDescription'), ['1146', '1146']);
+  assert.deepEqual(pair('description'), ['WRONGTYPE', 'WRONGTYPE']);
+  assert.deepEqual(pair('throwing'), [undefined, '_OTHER']);
+  assert.deepEqual(pair('nonString'), [undefined, '_OTHER'], 'only a string code');
+  assert.deepEqual(pair('typed'), [undefined, 'app'], 'an existing error.type: nothing written');
+  assert.deepEqual(pair('preset'), ['23505', '23505'], 'an existing status code is kept and copied into error.type');
+  assert.deepEqual(pair('presetNumber'), [1213, '1213']);
+  assert.deepEqual(pair('presetBoolean'), [true, 'true'], 'String(value), as Python');
+  assert.deepEqual(pair('presetArray'), [['a'], '_OTHER']);
+  const second = tracer.startSpan('twice');
+  next = '1062';
+  second.setStatus({ code: api.SpanStatusCode.ERROR });
+  next = '1213';
+  second.setStatus({ code: api.SpanStatusCode.ERROR });
+  second.end();
+  assert.deepEqual(exporter.getFinishedSpans().find((s) => s.name === 'twice').attributes['error.type'], '1062', 'the first ERROR status decides');
+});
+
+test('D16: copyPresetStatusCode unset (-redis, -aws): a preset db.response.status_code does not change the A26 rule', () => {
+  const { exporter, wrapped } = tracerOf({ legacyKeys: false, responseStatusCode: (d) => /^([A-Z]+) /.exec(d)?.[1] });
+  const tracer = wrapped.getTracer('t');
+  for (const [name, message] of [['coded', 'WRONGTYPE x'], ['plain', 'connect ECONNREFUSED']]) {
+    const span = tracer.startSpan(name, { attributes: { 'db.response.status_code': 'PRESET' } });
+    span.setStatus({ code: api.SpanStatusCode.ERROR, message });
+    span.end();
+  }
+  const attrs = Object.fromEntries(exporter.getFinishedSpans().map((s) => [s.name, s.attributes]));
+  assert.deepEqual([attrs.coded['db.response.status_code'], attrs.coded['error.type']], ['WRONGTYPE', 'WRONGTYPE']);
+  assert.deepEqual([attrs.plain['db.response.status_code'], attrs.plain['error.type']], ['PRESET', '_OTHER']);
+});
+
+test('D16: recordException is wrapped only with exceptionStatusCode; a span without recordException still gets the status wrapper', () => {
+  const plain = { setStatus() {}, recordException() {} };
+  const own = plain.recordException;
+  const tp = db.dbTracerProvider({ getTracer: () => ({ startSpan: () => plain }) }, { legacyKeys: false });
+  assert.equal(tp.getTracer('x').startSpan('y').recordException, own);
+  const seen = [];
+  const attributes = {};
+  const bare = {
+    attributes,
+    setStatus(status) {
+      seen.push(status);
+    },
+    setAttribute(k, v) {
+      attributes[k] = v;
+      return this;
+    },
+  };
+  const setStatus = bare.setStatus;
+  const coded = db.dbTracerProvider({ getTracer: () => ({ startSpan: () => bare }) }, { legacyKeys: false, exceptionStatusCode: () => 'X' });
+  const span = coded.getTracer('x').startSpan('y');
+  assert.notEqual(span.setStatus, setStatus, 'the status wrapper is installed first');
+  assert.equal(span.recordException, undefined);
+  span.setStatus({ code: api.SpanStatusCode.ERROR, message: 'server text bound-secret' });
+  assert.deepEqual(seen, [{ code: api.SpanStatusCode.ERROR }], 'the description is dropped (A25 never fails open)');
+  assert.equal(attributes['error.type'], '_OTHER');
+});
+
+test('B10c: sanitizeAttributes rewrites the start attributes and every setAttribute/setAttributes (after the legacy key)', () => {
+  const seen = [];
+  // Drops `secret`, aliases `a` to `b`, and is idempotent (as -aws's rule).
+  const sanitizeAttributes = (attributes) => {
+    seen.push(Object.keys(attributes).sort().join(','));
+    const out = { ...attributes };
+    delete out.secret;
+    if (out.a !== undefined && out.b === undefined) out.b = out.a;
+    return out;
+  };
+  const { exporter, wrapped } = tracerOf({ legacyKeys: true, sanitizeAttributes });
+  const tracer = wrapped.getTracer('t');
+  const start = { 'db.system.name': 'dynamodb', secret: 's', a: 1 };
+  const span = tracer.startSpan('start', { attributes: start });
+  assert.equal(span.setAttribute('secret', 'later'), span, 'chainable');
+  span.setAttribute('a', 2);
+  assert.equal(span.setAttributes({ secret: 'x', a: 3, kept: true }), span, 'chainable');
+  span.end();
+  tracer.startActiveSpan('active', { attributes: { secret: 's', a: 'v' } }, (s) => s.end());
+  tracer.startSpan('plain').end();
+  const byName = Object.fromEntries(exporter.getFinishedSpans().map((s) => [s.name, s.attributes]));
+  assert.deepEqual(byName.start, { 'db.system.name': 'dynamodb', 'db.system': 'dynamodb', a: 3, b: 3, kept: true }, 'the alias follows each later value');
+  assert.deepEqual(byName.active, { a: 'v', b: 'v' });
+  assert.deepEqual(byName.plain, {});
+  assert.deepEqual(start, { 'db.system.name': 'dynamodb', secret: 's', a: 1 }, 'the caller attributes are not mutated');
+  assert.ok(seen.includes('a,db.system,db.system.name,secret'), 'the legacy key is added before the sanitizer runs');
+  // A rule that maps a key to undefined records nothing for it.
+  const blank = tracerOf({ legacyKeys: false, sanitizeAttributes: (attributes) => ({ ...attributes, gone: undefined }) });
+  const b = blank.wrapped.getTracer('t').startSpan('blank');
+  b.setAttribute('gone', 'x');
+  b.setAttribute('kept', 1);
+  b.end();
+  assert.deepEqual(blank.exporter.getFinishedSpans()[0].attributes, { kept: 1 });
+});
+
+test('wrappers forward the members they do not change (forceFlush, getDelegate, unknown ones)', async () => {
+  let flushed = 0;
+  const inner = { getTracer: () => ({ startSpan: () => api.trace.wrapSpanContext(api.INVALID_SPAN_CONTEXT), extra: () => 'tracer-extra' }), forceFlush: () => ((flushed += 1), Promise.resolve()), getDelegate: () => 'delegate' };
+  const tp = db.dbTracerProvider(inner, { legacyKeys: false });
+  await tp.forceFlush();
+  assert.equal(flushed, 1);
+  assert.equal(tp.getDelegate(), 'delegate');
+  assert.equal(tp.getTracer('x').extra(), 'tracer-extra');
+  const mp = db.dbMeterProvider({ getMeter: () => ({ unknownMember: 42 }), forceFlush: () => 'mp-flush' }, { legacyKeys: true, current: () => true });
+  assert.equal(mp.forceFlush(), 'mp-flush');
+  assert.equal(mp.getMeter('m').unknownMember, 42);
+});
+
+class TestReader extends MetricReader {
+  onForceFlush() {
+    return Promise.resolve();
+  }
+  onShutdown() {
+    return Promise.resolve();
+  }
+}
+
+test('the DB meter adds db.system to synchronous measurements; observables pass through', async () => {
+  const reader = new TestReader();
+  const provider = new MeterProvider({ readers: [reader] });
+  const meter = db.dbMeterProvider(provider, { legacyKeys: true, current: () => true }).getMeter('m', '1');
+  const attrs = { 'db.system.name': 'mysql' };
+  meter.createCounter('c').add(1, attrs);
+  meter.createUpDownCounter('u').add(2, attrs);
+  meter.createHistogram('h').record(0.5, attrs);
+  meter.createGauge('g').record(3, attrs);
+  meter.createCounter('plain').add(1);
+  meter.createObservableGauge('og').addCallback((r) => r.observe(1, attrs));
+  const { resourceMetrics } = await reader.collect();
+  const points = Object.fromEntries(resourceMetrics.scopeMetrics[0].metrics.map((m) => [m.descriptor.name, m.dataPoints.map((p) => p.attributes)]));
+  for (const name of ['c', 'u', 'h', 'g']) assert.deepEqual(points[name], [{ 'db.system.name': 'mysql', 'db.system': 'mysql' }], name);
+  assert.deepEqual(points.plain, [{}]);
+  assert.deepEqual(points.og, [{ 'db.system.name': 'mysql' }], 'observable measurements are not rewritten');
+  const fake = db.dbMeterProvider({ getMeter: () => ({ createCounter: () => ({ other: 1 }) }) }, { legacyKeys: true, current: () => true });
+  assert.deepEqual(fake.getMeter('m').createCounter('x').other, 1, 'an instrument without add is returned as it is');
+  await provider.shutdown();
+});
+
+test('instruments of an older meter bind record nothing; without legacy keys attributes pass unchanged', async () => {
+  const reader = new TestReader();
+  const provider = new MeterProvider({ readers: [reader] });
+  let generation = 1;
+  const old = db.dbMeterProvider(provider, { legacyKeys: false, current: () => generation === 1 }).getMeter('m');
+  const counter = old.createUpDownCounter('max');
+  counter.add(3, { 'db.system.name': 'postgresql' });
+  generation = 2;
+  counter.add(-3, { 'db.system.name': 'postgresql' });
+  const { resourceMetrics } = await reader.collect();
+  const point = resourceMetrics.scopeMetrics[0].metrics[0].dataPoints[0];
+  assert.equal(point.value, 3, 'the stale subtraction was dropped');
+  assert.deepEqual(point.attributes, { 'db.system.name': 'postgresql' });
+  await provider.shutdown();
+});
+
+/** Runs fn with process.stdout.write captured; returns the helper's JSON lines (A36 records). */
+function captureRecords(fn) {
+  const chunks = [];
+  const original = process.stdout.write;
+  process.stdout.write = (chunk) => {
+    chunks.push(String(chunk));
+    return true;
+  };
+  try {
+    fn();
+  } finally {
+    process.stdout.write = original;
+  }
+  return chunks.flatMap((c) => c.split('\n')).filter((l) => l.startsWith('{"time":')).map((l) => JSON.parse(l));
+}
+
+test('A36: exceptionRecords — a recorded exception keeps a type-only event; setStatus(ERROR) writes one correlated record', () => {
+  const { exporter, wrapped } = tracerOf({ legacyKeys: false, exceptionRecords: true, exceptionType: (e) => (e === 'typed' ? 'pgname' : e === 'throw' ? (() => { throw new Error('hook'); })() : undefined) });
+  const tracer = wrapped.getTracer('t');
+  const err = Object.assign(new RangeError("duplicate 'bound-secret-a36'"), { code: '23505' });
+  let ids = {};
+  const lines = captureRecords(() => {
+    const object = tracer.startSpan('object');
+    ids.object = object.spanContext();
+    object.recordException(err);
+    object.setStatus({ code: api.SpanStatusCode.ERROR, message: "duplicate 'bound-secret-a36'" });
+    object.setStatus({ code: api.SpanStatusCode.ERROR, message: 'again' }); // one record per span
+    object.end();
+    const sanitized = tracer.startSpan('sanitized');
+    ids.sanitized = sanitized.spanContext();
+    sanitized.recordException('typed');
+    sanitized.setStatus({ code: api.SpanStatusCode.ERROR, message: 'invalid input syntax: "bound-secret-a36"' });
+    sanitized.end();
+    const hookThrows = tracer.startSpan('hook-throws');
+    hookThrows.recordException('throw');
+    hookThrows.setStatus({ code: api.SpanStatusCode.ERROR });
+    hookThrows.end();
+    const statusOnly = tracer.startSpan('status-only');
+    ids.statusOnly = statusOnly.spanContext();
+    statusOnly.setStatus({ code: api.SpanStatusCode.ERROR, message: 'server text' });
+    statusOnly.end();
+    const silent = tracer.startSpan('silent');
+    silent.setStatus({ code: api.SpanStatusCode.ERROR });
+    silent.setStatus({ code: api.SpanStatusCode.OK });
+    silent.end();
+  });
+  const byName = Object.fromEntries(exporter.getFinishedSpans().map((s) => [s.name, s]));
+  assert.deepEqual(byName.object.events.map((e) => [e.name, e.attributes]), [['exception', { 'exception.type': 'RangeError' }]], 'D15 type, not the code');
+  assert.deepEqual(byName.sanitized.events.map((e) => e.attributes), [{ 'exception.type': 'pgname' }]);
+  assert.deepEqual(byName['hook-throws'].events.map((e) => e.attributes), [{ 'exception.type': 'Error' }], 'a throwing hook: the D15 rule');
+  for (const s of exporter.getFinishedSpans()) {
+    assert.ok(s.status.message === undefined, s.name);
+    for (const v of [...Object.values(s.attributes), ...s.events.flatMap((e) => Object.values(e.attributes))]) {
+      assert.ok(!String(v).includes('bound-secret-a36') && !String(v).includes('at '), `${s.name}: ${v}`);
+    }
+  }
+  // object (from the exception object), sanitized and status-only (from the status message); hook-throws and silent: none.
+  assert.equal(lines.length, 3, JSON.stringify(lines));
+  const [o, z, st] = lines;
+  assert.deepEqual([o.level, o.logger, o.msg, o['exception.type'], o['exception.message'], o['exception.stacktrace']], ['ERROR', 'otel-helper', "duplicate 'bound-secret-a36'", 'RangeError', "duplicate 'bound-secret-a36'", err.stack]);
+  assert.deepEqual([o.trace_id, o.span_id], [ids.object.traceId, ids.object.spanId]);
+  assert.deepEqual([z.msg, z['exception.type'], z['exception.stacktrace'], z.span_id], ['invalid input syntax: "bound-secret-a36"', 'pgname', undefined, ids.sanitized.spanId]);
+  assert.deepEqual([st.msg, st['exception.type'], st.span_id], ['server text', 'Error', ids.statusOnly.spanId]);
+});
+
+test('A36: pendingError gives the record its detail; a throwing pendingError and an unsampled span; off by default', () => {
+  const held = new TypeError('Duplicate entry \'bound-secret-a36\'');
+  let pending = held;
+  const exporter = new InMemorySpanExporter();
+  const sampled = new TracerProvider({ spanProcessors: [new SimpleSpanProcessor({ exporter })] });
+  const never = new TracerProvider({ sampler: { shouldSample: () => ({ decision: 0 }), toString: () => 'never' } });
+  const opts = { legacyKeys: false, exceptionRecords: true, pendingError: () => {
+    if (pending === 'throw') throw new Error('slot');
+    return pending;
+  } };
+  const tracer = db.dbTracerProvider(sampled, opts).getTracer('t');
+  const lines = captureRecords(() => {
+    const a = tracer.startSpan('held');
+    a.setStatus({ code: api.SpanStatusCode.ERROR, message: 'ignored: the held error wins' });
+    a.end();
+    pending = 'throw';
+    const b = tracer.startSpan('slot-throws');
+    b.setStatus({ code: api.SpanStatusCode.ERROR, message: 'from the status' });
+    b.end();
+    pending = held;
+    const c = db.dbTracerProvider(never, opts).getTracer('t').startSpan('unsampled', { attributes: { 'db.system.name': 'mysql' } });
+    assert.equal(c.isRecording(), false);
+    c.setStatus({ code: api.SpanStatusCode.ERROR });
+    c.end();
+    const off = db.dbTracerProvider(sampled, { legacyKeys: false }).getTracer('t').startSpan('off');
+    off.recordException(new Error('kept detail'));
+    off.setStatus({ code: api.SpanStatusCode.ERROR, message: 'x' });
+    off.end();
+  });
+  assert.deepEqual(lines.map((l) => [l.msg, l['exception.type'], l['exception.stacktrace'] === held.stack]), [
+    ["Duplicate entry 'bound-secret-a36'", 'TypeError', true],
+    ['from the status', 'Error', false],
+    ["Duplicate entry 'bound-secret-a36'", 'TypeError', true],
+  ]);
+  assert.equal(lines[2].trace_id.length, 32, 'an unsampled span keeps its ids');
+  assert.deepEqual([lines[2]['db.system.name'], lines[2]['error.type'], lines[2]['db.response.status_code']], ['mysql', '_OTHER', undefined], 'from the start attributes and the computed type (the span keeps none)');
+  assert.deepEqual([lines[0]['db.system.name'], lines[0]['error.type']], [undefined, '_OTHER']);
+  const off = exporter.getFinishedSpans().find((s) => s.name === 'off');
+  assert.equal(off.events[0].attributes['exception.message'], 'kept detail', 'without exceptionRecords the event is unchanged (-redis, -aws)');
+});
+
+test('A36: a span without addEvent keeps its own recordException; a write failure never reaches the instrumented call', () => {
+  const recorded = [];
+  const bare = { attributes: {}, setStatus() {}, setAttribute() { return this; }, recordException: (e) => recorded.push(e), spanContext: () => api.INVALID_SPAN_CONTEXT };
+  const span = db.dbTracerProvider({ getTracer: () => ({ startSpan: () => bare }) }, { legacyKeys: false, exceptionRecords: true }).getTracer('x').startSpan('y');
+  span.recordException('e');
+  assert.deepEqual(recorded, ['e']);
+  const original = process.stdout.write;
+  process.stdout.write = () => {
+    throw new Error('EPIPE');
+  };
+  try {
+    span.setStatus({ code: api.SpanStatusCode.ERROR, message: 'server text' });
+  } finally {
+    process.stdout.write = original;
+  }
+});

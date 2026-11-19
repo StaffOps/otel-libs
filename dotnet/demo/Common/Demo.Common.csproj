@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Code shared by the three .NET demo apps: settings, scenarios, the ADR-014
+       failure pattern, logging, the queue carrier (specs/demo-environment). -->
+  <ItemGroup>
+    <ProjectReference Include="..\..\StaffOps.OtelHelper\StaffOps.OtelHelper.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- The version the helper's Redis tests verify (dotnet/README.md "Redis"; DE-D5). -->
+    <PackageReference Include="StackExchange.Redis" Version="2.6.122" />
+    <PackageReference Include="Google.Protobuf" Version="3.26.1" />
+    <PackageReference Include="Grpc.Core.Api" Version="2.62.0" />
+    <PackageReference Include="Grpc.Tools" Version="2.62.0" PrivateAssets="All" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The shared contract (DE-D3), generated once here (messages, client and server base) so the
+         api, the backend and the tests see one set of types. -->
+    <Protobuf Include="..\..\..\demo\proto\otellibs\demo\v1\demo.proto" ProtoRoot="..\..\..\demo\proto" GrpcServices="Both" />
+  </ItemGroup>
+</Project>

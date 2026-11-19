@@ -6,7 +6,7 @@ on:
     paths:
       - "docs/site/**"
       - "mkdocs.yml"
-      # docs/site/{dotnet,python,go}/**, CONSUMING.md, and CHANGELOG.md are
+      # docs/site/{dotnet,python,go,nodejs}/**, CONSUMING.md, and CHANGELOG.md are
       # symlinks to the paths below — editing the symlink target doesn't
       # touch the symlink file itself, so path filtering must watch the
       # real sources too or the deploy never fires on doc edits.
@@ -22,7 +22,13 @@ on:
       - "python/example/EXAMPLES.md"
       - "go/README.md"
       - "go/HOW-TO.md"
+      - "go/TESTS.md"
       - "go/example/README.md"
+      - "nodejs/README.md"
+      - "nodejs/HOW-TO.md"
+      - "nodejs/TESTS.md"
+      - "nodejs/example/README.md"
+      - "nodejs/example/EXAMPLES.md"
       - "CONSUMING.md"
       - "CHANGELOG.md"
   pull_request:
@@ -42,7 +48,13 @@ on:
       - "python/example/EXAMPLES.md"
       - "go/README.md"
       - "go/HOW-TO.md"
+      - "go/TESTS.md"
       - "go/example/README.md"
+      - "nodejs/README.md"
+      - "nodejs/HOW-TO.md"
+      - "nodejs/TESTS.md"
+      - "nodejs/example/README.md"
+      - "nodejs/example/EXAMPLES.md"
       - "CONSUMING.md"
       - "CHANGELOG.md"
   workflow_dispatch:

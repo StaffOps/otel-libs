@@ -1,0 +1,12 @@
+# Build context of python/demo/backend/Dockerfile (repository root): allow-list.
+*
+!python/pyproject.toml
+!python/staffops_otel_helper/
+!python/otel_helper/
+!python/demo/requirements.lock
+!python/demo/common/democommon.py
+!python/demo/backend/backend.py
+!demo/proto/
+!demo/sql/schema.sql
+**/__pycache__
+**/*.pyc

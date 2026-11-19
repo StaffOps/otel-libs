@@ -1,8 +1,6 @@
-using OtelHelper;
+using StaffOps.OtelHelper;
 
 var builder = Host.CreateApplicationBuilder(args);
-
-var serviceName = Environment.GetEnvironmentVariable("SERVICE_NAME") ?? "sample-process";
 
 builder.Services.AddOtelHelper(opts =>
 {
