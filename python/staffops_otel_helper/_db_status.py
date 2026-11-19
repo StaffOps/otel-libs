@@ -48,6 +48,16 @@ equals the status description (contrib sqlalchemy calls it from SQLAlchemy's
 (the ``connect`` span). Values already on the span are never overwritten.
 SQLite spans keep contrib's ``db.namespace`` / ``db.name`` (the file path)
 and span name (documented residual).
+
+SQL spans also follow ADR-014 (task A36): a recorded exception (the
+``connect`` span; contrib records none on statement spans) becomes an
+``exception`` event with ``exception.type`` only, and a span that ended with
+status ERROR writes one ERROR record in its context on the D15 channel
+(``staffops_otel_helper.failure``) with the message, ``exception.type`` and
+the stack trace (:func:`_emit_sql_record`). Unsampled spans too: contrib
+reports nothing on them, so the helper's own SQLAlchemy ``handle_error``
+listener (:func:`_sql_handle_error`) and ``start_as_current_span`` (the
+``connect`` span) arm the record. A cancellation writes none.
 """
 
 from __future__ import annotations
@@ -56,6 +66,7 @@ import ast
 import logging
 import re
 import sys
+import threading
 import traceback
 from contextlib import contextmanager
 from typing import Any, Iterator
@@ -64,6 +75,13 @@ from opentelemetry import trace
 from opentelemetry.trace import Span, Status, StatusCode
 
 from staffops_otel_helper._diag import warn_once_per_process
+from staffops_otel_helper._failure import (
+    _qualified,
+    db_exception_attributes,
+    emit_exception_record,
+    error_type,
+    is_cancellation,
+)
 
 # Set on a contrib instrumentor singleton when the helper instrumented it with the wrapper.
 _WRAPPED_MARK = "_staffops_error_status_dropped"
@@ -301,11 +319,6 @@ def _set_sql_error_type(span: Span, exception: BaseException | None) -> None:
     span.set_attribute("error.type", code or "_OTHER")
 
 
-def _qualified(exc_type: type) -> str:
-    module = exc_type.__module__
-    return exc_type.__qualname__ if module in ("builtins", "__main__") else f"{module}.{exc_type.__qualname__}"
-
-
 def _sanitized_stacktrace(exception: BaseException) -> str:
     """``traceback`` format of the chain with every exception's message sanitized."""
     te = traceback.TracebackException.from_exception(exception)
@@ -327,6 +340,92 @@ def _minimal_event(exception: BaseException) -> dict:
             "exception.stacktrace": ""}
 
 
+#: Set on a wrapped SQL span: the hook the helper's ``handle_error`` listener and
+#: ``start_as_current_span`` call for a failure contrib does not report (unsampled spans).
+_ARM = "_staffops_arm_failure"
+
+#: Span attributes copied into the record (A36 review: DB records can be told apart).
+_RECORD_KEYS = ("db.system.name", "db.response.status_code", "error.type")
+
+
+#: SQLAlchemy dialect names → semconv ``db.system.name`` values (semconv v1.43.0, the version Go pins;
+#: A36 review N4). Others are kept as they are. The record uses these; the span keeps contrib's value.
+_SEMCONV_SYSTEMS = {
+    "mssql": "microsoft.sql_server",
+    "oracle": "oracle.db",
+    "postgresql": "postgresql",
+    "mysql": "mysql",
+    "mariadb": "mariadb",
+    "sqlite": "sqlite",
+}
+
+
+def semconv_system(name: str) -> str:
+    """The semconv ``db.system.name`` value of a SQLAlchemy dialect name (unknown names unchanged)."""
+    return _SEMCONV_SYSTEMS.get(name, name)
+
+
+def _record_db_attributes(span: Span, exception: BaseException | None, system: Any) -> dict:
+    """``db.system.name``, ``db.response.status_code`` and ``error.type`` for the record.
+
+    A recording span gives its own values (``db.system.name``, else the legacy
+    ``db.system``; the codes set by :func:`_set_sql_error_type`). An unsampled
+    span has none: the dialect name the listener saw and the code read from
+    the exception (:func:`sql_error_code`, else ``_OTHER``).
+    """
+    attributes = getattr(span, "attributes", None) if span.is_recording() else None
+    if attributes:
+        out = {k: str(attributes[k]) for k in _RECORD_KEYS if attributes.get(k) is not None}
+        if "db.system.name" not in out and attributes.get("db.system") is not None:
+            out["db.system.name"] = str(attributes["db.system"])
+        if "db.system.name" in out:
+            out["db.system.name"] = semconv_system(out["db.system.name"])
+        elif isinstance(system, str) and system:
+            out["db.system.name"] = semconv_system(system)
+        return out
+    out = {}
+    if isinstance(system, str) and system:
+        out["db.system.name"] = semconv_system(system)
+    code = sql_error_code(exception, system)
+    if code is not None:
+        out["db.response.status_code"] = code
+    out["error.type"] = code or "_OTHER"
+    return out
+
+
+def _emit_sql_record(span: Span, exception: BaseException | None, description: str | None,
+                     system: Any = None) -> None:
+    """The correlated ERROR record of a failed SQL span (ADR-014, task A36), in the span's context.
+
+    With the captured exception: its ``str()`` as body, ``exception.type``
+    (the D15 ``error_type``, also the event's), ``exception.message`` and
+    ``exception.stacktrace`` (:func:`_failure.db_exception_attributes`: the
+    caller's stack above the traceback, helper and contrib frames dropped, cut
+    in the middle above 12 KiB). Without one: the dropped status description
+    as body and ``exception.message`` only. Neither: no record. Always the
+    ``_RECORD_KEYS`` (:func:`_record_db_attributes`).
+    """
+    if exception is not None:
+        message, attributes = db_exception_attributes(exception, error_type(exception))
+    elif description:
+        message, attributes = description, {"exception.message": description}
+    else:
+        return
+    attributes.update(_record_db_attributes(span, exception, system))
+    emit_exception_record(span, message, attributes)
+
+
+def _in_context_chain(exception: BaseException, head: BaseException | None) -> bool:
+    """``exception`` is ``head`` or in its ``__context__`` chain (bounded, cycle-safe)."""
+    seen = 0
+    while head is not None and seen < 64:
+        if head is exception:
+            return True
+        head = head.__context__
+        seen += 1
+    return False
+
+
 def _drop_error_description(span: Span, redis: bool = False) -> Span:
     """Make ``span.set_status`` keep the ERROR code and drop its description (A25 R1, A26).
 
@@ -335,17 +434,60 @@ def _drop_error_description(span: Span, redis: bool = False) -> Span:
     ``connect`` span and on every contrib redis span (``start_as_current_span``):
     database error text can quote a statement value, Redis errors a command
     argument (``unknown command 'X', with args beginning with: '<arg>'``). Go
-    and Node leave the description empty too. An exception event, when one is
-    recorded, is kept (semconv ``exception.message``; the A25 residual), and
-    for Redis sanitized as described in the module docstring. SQL spans
-    (``redis=False``) also capture the exception and write ``error.type`` at
-    ``end()`` (A44, module docstring).
+    and Node leave the description empty too. For Redis an exception event,
+    when one is recorded, is kept (semconv ``exception.message``; the A25
+    residual) and sanitized as described in the module docstring. SQL spans
+    (``redis=False``) also capture the exception, write ``error.type`` at
+    ``end()`` (A44), keep a type-only exception event and write the
+    correlated record (A36, module docstring).
     """
     original_status = span.set_status
     original_record = getattr(span, "record_exception", None)
     original_end = getattr(span, "end", None)
+    original_add_event = getattr(span, "add_event", None)
     typed = [False]  # error.type already set by record_exception (Redis)
     captured: list = [None]  # the failed call's exception (SQL, A44), released at end()
+    # SQL (A36): failed (set_status(ERROR) or an armed failure), the description, the dialect name,
+    # end() done, record written (one per span).
+    failed: list = [False, None]
+    system: list = [None]
+    ended = [False]
+    written = [False]
+    # The exception active when the span ended (A36 review N1): a late arm must belong to it.
+    end_exc: list = [None]
+
+    def write_record() -> None:
+        if written[0] or not failed[0] or (captured[0] is not None and is_cancellation(captured[0])):
+            return
+        written[0] = True
+        try:
+            _emit_sql_record(span, captured[0], failed[1], system[0])
+        except Exception:  # noqa: BLE001 - never raise into the instrumented call
+            _log.debug("sql exception record not written", exc_info=False)
+        finally:
+            captured[0] = None
+
+    def arm_failure(exception: BaseException, dialect: Any = None, system_only: bool = False) -> None:
+        """A failure contrib may not report (an unsampled span): the record is written anyway (A36).
+
+        After ``end()`` only the failure the span ended with is armed (the
+        exception active at end time, or one in its ``__context__`` chain):
+        a fetch that fails after a statement span ended successfully
+        (``stream_results``, ``yield_per``) reaches the same execution
+        context, and must not mark that span. ``system_only``: just the
+        dialect name (a failed connect, seen by the listener).
+        """
+        if system[0] is None and dialect is not None:
+            system[0] = dialect
+        if system_only or not isinstance(exception, BaseException) or is_cancellation(exception):
+            return
+        if ended[0] and not _in_context_chain(exception, end_exc[0]):
+            return
+        if captured[0] is None:
+            captured[0] = exception
+        failed[0] = True
+        if ended[0]:
+            write_record()  # the listener ran after contrib ended the span
 
     def capture_active(status: Status | StatusCode, description: str | None) -> None:
         # contrib sqlalchemy: Status(ERROR, str(exc)) from handle_error, inside SQLAlchemy's except.
@@ -373,25 +515,41 @@ def _drop_error_description(span: Span, redis: bool = False) -> Span:
                 set_error_type(None, _server_text(text.split(": ", 1)[1] if ": " in text else text))
             except Exception:  # noqa: BLE001 - never raise into the instrumented call
                 _log.debug("redis error.type not set", exc_info=False)
-        elif not redis and captured[0] is None:
-            try:
-                capture_active(status, description)
-            except Exception:  # noqa: BLE001 - str() of a foreign exception may raise
-                _log.debug("sql exception not captured", exc_info=False)
+        elif not redis and ended[0]:
+            pass  # a status set after end() (contrib on a later fetch failure): not this span's failure
+        elif not redis:
+            failed[0] = True
+            text = status.description if isinstance(status, Status) else description
+            if failed[1] is None and isinstance(text, str) and text:
+                failed[1] = text
+            if captured[0] is None:
+                try:
+                    capture_active(status, description)
+                except Exception:  # noqa: BLE001 - str() of a foreign exception may raise
+                    _log.debug("sql exception not captured", exc_info=False)
         original_status(Status(StatusCode.ERROR))
 
-    def record_sql_exception(exception: BaseException, *args: Any, **kwargs: Any) -> None:
+    def record_sql_exception(exception: BaseException, attributes: Any = None, timestamp: int | None = None,
+                             escaped: bool = False) -> None:
+        # ADR-014 (A36): the event keeps exception.type only; the detail goes to the record at end().
         if captured[0] is None and isinstance(exception, BaseException):
             captured[0] = exception
-        original_record(exception, *args, **kwargs)
+        try:
+            original_add_event("exception", {"exception.type": error_type(exception)}, timestamp=timestamp)
+        except Exception:  # noqa: BLE001 - never the raw text, never a raise
+            _log.debug("sql exception event not recorded", exc_info=False)
 
     def end_sql(*args: Any, **kwargs: Any) -> None:
         try:
             _set_sql_error_type(span, captured[0])
         except Exception:  # noqa: BLE001 - never raise into the instrumented call
             _log.debug("sql error.type not set", exc_info=False)
-        finally:
-            captured[0] = None
+        if ended[0]:  # a second end() (contrib on a later fetch failure): the SDK ignores it
+            original_end(*args, **kwargs)
+            return
+        ended[0] = True
+        end_exc[0] = sys.exc_info()[1]
+        write_record()
         original_end(*args, **kwargs)
 
     def record_exception(exception: BaseException, attributes: Any = None, timestamp: int | None = None,
@@ -417,10 +575,11 @@ def _drop_error_description(span: Span, redis: bool = False) -> Span:
         if redis and original_record is not None:
             span.record_exception = record_exception  # type: ignore[method-assign]
         if not redis:
-            if original_record is not None:
+            if original_record is not None and original_add_event is not None:
                 span.record_exception = record_sql_exception  # type: ignore[method-assign]
             if original_end is not None:
                 span.end = end_sql  # type: ignore[method-assign]
+                setattr(span, _ARM, arm_failure)
     except AttributeError:  # a span type with __slots__: left as it is
         pass
     return span
@@ -498,7 +657,16 @@ class _ErrorDescriptionDroppingTracer(trace.Tracer):
                                set_status_on_exception=set_status_on_exception)
         with trace.use_span(span, end_on_exit=end_on_exit, record_exception=record_exception,
                             set_status_on_exception=set_status_on_exception) as current:
-            yield current
+            try:
+                yield current
+            except BaseException as exc:
+                # use_span records nothing on an unsampled span (the connect span): arm the
+                # A36 record; the cancellation rule is applied by the arm hook.
+                if not self._redis and not current.is_recording():
+                    arm = getattr(current, _ARM, None)
+                    if callable(arm):
+                        arm(exc)
+                raise
 
 
 class _ErrorDescriptionDroppingTracerProvider(trace.TracerProvider):
@@ -512,6 +680,57 @@ class _ErrorDescriptionDroppingTracerProvider(trace.TracerProvider):
         return _ErrorDescriptionDroppingTracer(self._provider.get_tracer(*args, **kwargs), redis=self._redis)
 
 
+def _sql_handle_error(context: Any) -> None:
+    """The helper's SQLAlchemy ``handle_error`` listener (A36): arms the record of a wrapped span.
+
+    contrib sqlalchemy (0.63b0 to 0.66b2, ``engine.py`` ``_handle_error``)
+    reports a failed statement only when its span records; this listener reads
+    the same span (``context.execution_context._otel_span``, the attribute both
+    versions set in ``_before_cur_exec``) and arms it with the original
+    exception and the dialect name, sampled or not. A sampled span then still
+    writes one record (no duplicate). For a failed connect (no execution
+    context) it gives contrib's current ``connect`` span the dialect name only;
+    the ``connect`` wrapper arms the failure. Never raises.
+    """
+    try:
+        dialect = getattr(getattr(context, "dialect", None), "name", None)
+        execution_context = getattr(context, "execution_context", None)
+        if execution_context is None:
+            # A failed connect: no execution context; contrib's connect span is current.
+            arm = getattr(trace.get_current_span(), _ARM, None)
+            if callable(arm):
+                arm(context.original_exception, dialect, system_only=True)
+            return
+        arm = getattr(getattr(execution_context, "_otel_span", None), _ARM, None)
+        if callable(arm):
+            arm(context.original_exception, dialect)
+    except Exception:  # noqa: BLE001 - a listener must not change the failing call
+        _log.debug("sql handle_error listener failed", exc_info=False)
+
+
+_LISTENER_INSTALLED = [False]
+_LISTENER_LOCK = threading.Lock()
+
+
+def install_sql_error_listener() -> None:
+    """Listen to ``handle_error`` on every SQLAlchemy Engine, once per process (A36). No SQLAlchemy: nothing.
+
+    Thread-safe (a lock). The listener stays registered after
+    ``SQLAlchemyInstrumentor().uninstrument()``: it then finds no wrapped span
+    (contrib sets no ``_otel_span``) and does nothing.
+    """
+    with _LISTENER_LOCK:
+        if _LISTENER_INSTALLED[0]:
+            return
+        try:
+            from sqlalchemy import event
+            from sqlalchemy.engine import Engine
+        except Exception:  # noqa: BLE001 - the [sql] extra is not installed
+            return
+        event.listen(Engine, "handle_error", _sql_handle_error)
+        _LISTENER_INSTALLED[0] = True
+
+
 def wrapped_instrument_kwargs(redis: bool = False) -> dict:
     """``instrument()`` kwargs every helper path uses for contrib sqlalchemy and redis (A25 R1, A26).
 
@@ -519,7 +738,10 @@ def wrapped_instrument_kwargs(redis: bool = False) -> dict:
     ``SQL`` / ``REDIS`` flags of ``setup_telemetry()``
     (``instrumentation.configure_instrumentations``), so no path instruments a
     database client without the status wrapper. ``redis``: the Redis rules too.
+    SQL also installs the ``handle_error`` listener (A36, unsampled spans).
     """
+    if not redis:
+        install_sql_error_listener()
     return {"tracer_provider": _ErrorDescriptionDroppingTracerProvider(trace.get_tracer_provider(), redis=redis)}
 
 

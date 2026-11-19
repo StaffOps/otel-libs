@@ -210,6 +210,13 @@ unary-response call (unary-unary, stream-unary) whose failure is not an
 aio streaming-response calls get `_OTHER` as sync calls do; with another contrib layout of the sync gRPC client: warned
 once, no `error.type` on sync client spans. Details: HOW-TO §4 and §9.
 
+A failed SQLAlchemy span (`[sql]`) never carries the database's error text or
+a stack trace: statement spans have no `exception` event, the `connect`
+span's event keeps only `exception.type`, and one ERROR record on the
+`staffops_otel_helper.failure` logger, in the span's context, carries the
+message, `exception.type`, `exception.message` and `exception.stacktrace`
+(task A36, [ADR-014](../specs/decisions/ADR-014-exception-detail-in-correlated-logs.md); HOW-TO §9).
+
 ## Public API
 
 | Name | Purpose |

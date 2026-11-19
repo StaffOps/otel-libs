@@ -28,6 +28,12 @@ const REQUIRE = process.env.SQL_TEST_REQUIRE === '1';
 const PKG_DIR = path.resolve(__dirname, '..');
 const FIXTURES = path.join(__dirname, 'fixtures');
 
+// Failed queries write A36 records (logger otel-helper) on the stdout fallback;
+// keep them out of the runner's output (captureRecords below still sees them).
+const stdoutWrite = process.stdout.write.bind(process.stdout);
+process.stdout.write = (chunk, ...rest) =>
+  typeof chunk === 'string' && chunk.startsWith('{"time":') && chunk.includes('"logger":"otel-helper"') ? true : stdoutWrite(chunk, ...rest);
+
 test('database URLs are configured (SQL_TEST_REQUIRE=1 makes them mandatory)', (t) => {
   if (!REQUIRE && (PG_URL === undefined || MYSQL_URL === undefined)) {
     t.skip('SQL_TEST_POSTGRES / SQL_TEST_MYSQL unset: database tests skipped (run node-tests in testing/docker-compose.yml)');
@@ -266,10 +272,82 @@ test('R1 (A25): ERROR spans keep the code and drop the database error text (pg i
   assert.deepEqual(failed.map((s) => [s.attributes['db.response.status_code'], s.attributes['error.type']]), [['22P02', '22P02'], ['1062', '1062'], ['1064', '1064']]);
   for (const span of failed) assert.deepEqual(span.status, { code: 2 }, span.name);
   assertNoSecrets(exporter.getFinishedSpans(), PG_URL, ['bound-secret-x', 'bound-secret-y', 'bound-secret-z']);
-  // pg's exception event is upstream-sanitized (type and SQLSTATE only); mysql2 records none.
+  // pg's exception event keeps only exception.type (A36: upstream's sanitized text gives the name); mysql2 records none.
   const pgFailed = failed[0];
-  assert.match(pgFailed.events[0].attributes['exception.message'], /^PostgreSQL error of type '\w+' occurred \(code: 22P02\)$/);
+  assert.deepEqual(pgFailed.events.map((e) => [e.name, e.attributes]), [['exception', { 'exception.type': 'DatabaseError' }]]);
   assert.equal(failed[1].events.length, 0);
+});
+
+/** Runs fn (async) with process.stdout.write captured; resolves to the helper's A36 records (logger otel-helper). */
+async function captureRecords(fn) {
+  const chunks = [];
+  const original = process.stdout.write;
+  process.stdout.write = (chunk) => {
+    chunks.push(String(chunk));
+    return true;
+  };
+  try {
+    await fn();
+  } finally {
+    process.stdout.write = original;
+  }
+  return chunks.flatMap((c) => c.split('\n')).filter((l) => l.startsWith('{"time":')).map((l) => JSON.parse(l)).filter((l) => l.logger === 'otel-helper');
+}
+
+test('A36 (ADR-014): a failed query quoting a value keeps no message or stack on the span; one correlated ERROR record per failed span carries them (stdout fallback)', { skip: pgOpts.skip || mysqlOpts.skip }, async () => {
+  const lines = await captureRecords(async () => {
+    const client = new pg.Client({ connectionString: PG_URL });
+    await client.connect();
+    try {
+      // PostgreSQL: invalid input syntax for type integer: "bound-secret-a36"
+      await assert.rejects(client.query('SELECT $1::int', ['bound-secret-a36']), /bound-secret-a36/);
+    } finally {
+      await client.end();
+    }
+    const conn = mysql.createConnection(MYSQL_URL);
+    const query = (sql, values) => new Promise((resolve) => conn.query(sql, values, (err) => resolve(err)));
+    try {
+      await query('CREATE TABLE IF NOT EXISTS a36_uniq (v VARCHAR(64), UNIQUE KEY uv (v))');
+      await query('DELETE FROM a36_uniq');
+      await query('INSERT INTO a36_uniq (v) VALUES (?)', ['bound-secret-m36']);
+      // MySQL: Duplicate entry 'bound-secret-m36' for key 'a36_uniq.uv' (callback form, then the promise form)
+      assert.equal((await query('INSERT INTO a36_uniq (v) VALUES (?)', ['bound-secret-m36'])).errno, 1062);
+      await assert.rejects(conn.promise().execute('INSERT INTO a36_uniq (v) VALUES (?)', ['bound-secret-m36']), (e) => e.errno === 1062);
+    } finally {
+      await new Promise((resolve) => conn.end(resolve));
+    }
+  });
+  const failed = exporter.getFinishedSpans().filter((s) => s.status.code === 2 /* ERROR */);
+  assert.deepEqual(failed.map((s) => s.attributes['db.system.name']), ['postgresql', 'mysql', 'mysql']);
+  for (const span of failed) {
+    assert.deepEqual(span.status, { code: 2 }, span.name);
+    for (const e of span.events) assert.deepEqual(Object.keys(e.attributes), ['exception.type'], `${span.name} ${e.name}`);
+  }
+  assertNoSecrets(exporter.getFinishedSpans(), PG_URL, ['bound-secret-a36', 'bound-secret-m36']);
+  for (const v of allValues(failed)) assert.ok(!/invalid input syntax|Duplicate entry|\n {4}at /.test(v), v);
+
+  assert.equal(lines.length, 3, JSON.stringify(lines));
+  for (const [i, line] of lines.entries()) {
+    const ctx = failed[i].spanContext();
+    assert.deepEqual([line.level, line.trace_id, line.span_id], ['ERROR', ctx.traceId, ctx.spanId], `record ${i} in its span's context`);
+    assert.equal(line['exception.message'], line.msg);
+    // Key order: trace ids right after logger (A23 amendment).
+    assert.deepEqual(Object.keys(line).slice(0, 6), ['time', 'level', 'msg', 'logger', 'trace_id', 'span_id']);
+  }
+  const [pgLine, cbLine, promiseLine] = lines;
+  assert.equal(pgLine.msg, 'invalid input syntax for type integer: "bound-secret-a36"');
+  assert.equal(pgLine['exception.type'], 'DatabaseError', 'the event type (pg-protocol names it error)');
+  assert.equal(pgLine['exception.stacktrace'], undefined, 'instrumentation-pg hands the span no error object (documented gap)');
+  for (const line of [cbLine, promiseLine]) {
+    assert.match(line.msg, /^Duplicate entry 'bound-secret-m36' for key '(a36_uniq\.)?uv'$/);
+    assert.equal(line['exception.type'], 'Error');
+    assert.match(line['exception.stacktrace'], /^Error: Duplicate entry[\s\S]*\n {4}at /);
+    // mysql2 builds the error in its packet parser, on a socket event: no application frame (documented).
+    assert.ok(!line['exception.stacktrace'].includes('db.test.cjs'), 'no caller frame in a mysql2 stack');
+  }
+  // The record names its database and code (A36 review), so DB records can be told apart.
+  assert.deepEqual([pgLine['db.system.name'], pgLine['db.response.status_code'], pgLine['error.type']], ['postgresql', '22P02', '22P02']);
+  for (const line of [cbLine, promiseLine]) assert.deepEqual([line['db.system.name'], line['db.response.status_code'], line['error.type']], ['mysql', '1062', '1062']);
 });
 
 test('M1: the pool max survives a re-setup (shutdown then setup on the same forwarding providers)', pgOpts, async () => {

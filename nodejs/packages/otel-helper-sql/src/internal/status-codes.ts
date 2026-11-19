@@ -85,6 +85,33 @@ export function mysql2PendingStatusCode(): string | undefined {
   return current === undefined ? undefined : mysqlStatusCode(current.error);
 }
 
+/**
+ * The error object of the mysql2 failure being recorded (the A36 record's
+ * detail), or undefined. Read before {@link mysql2PendingStatusCode}, which
+ * clears the slot; this read does not.
+ */
+export function mysql2PendingError(): unknown {
+  return held?.error;
+}
+
+/** The name in instrumentation-pg's sanitized text (no quote in it). */
+const PG_SANITIZED_NAME = /^PostgreSQL error of type '([^']*)' occurred \(code: [^()]*\)$/;
+
+/**
+ * The `exception.type` of instrumentation-pg's recorded exception (A36): the
+ * name in its sanitized text `PostgreSQL error of type '<name>' occurred
+ * (code: <code>)`. pg-protocol names a server error `error` (the protocol
+ * message name, `DatabaseError.name`); that is reported as `DatabaseError`,
+ * the class, which says what it is. Any other name as it is (`Error` for a
+ * socket error); undefined for another shape (the D15 rule then applies).
+ */
+export function pgExceptionType(exception: unknown): string | undefined {
+  if (typeof exception !== 'string') return undefined;
+  const name = PG_SANITIZED_NAME.exec(exception)?.[1];
+  if (name === undefined || name === '') return undefined;
+  return name === 'error' ? 'DatabaseError' : name;
+}
+
 type EndSpan = (...args: unknown[]) => unknown;
 type PatchCallbackQuery = (this: unknown, endSpan: EndSpan) => unknown;
 

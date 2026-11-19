@@ -15,11 +15,14 @@
  * re-setup). This module adds the mysql2 span name (`statementSpanName`)
  * and the response status codes of failed queries (`status-codes.ts`, design
  * D16, task A44: pg through the recorded exception, mysql2 through the held
- * error).
+ * error), and the ADR-014 exception records (task A36: pg's event keeps the
+ * type from its sanitized text, the record's body is the status message —
+ * instrumentation-pg hands the span no error object, so no stack trace;
+ * mysql2's record is the held error's message, type and stack).
  */
 import type { TracerProvider } from '@opentelemetry/api';
 import { ATTR_DB_SYSTEM_NAME, dbTracerProvider as coreDbTracerProvider } from '@staffops/otel-helper/internal/db';
-import { mysql2PendingStatusCode, pgStatusCode } from './status-codes';
+import { mysql2PendingError, mysql2PendingStatusCode, pgExceptionType, pgStatusCode } from './status-codes';
 
 export { dbMeterProvider, type DbMeterOptions } from '@staffops/otel-helper/internal/db';
 
@@ -83,5 +86,9 @@ export function dbTracerProvider(provider: TracerProvider, opts: DbTracerOptions
     pendingStatusCode: opts.statusCodes === 'mysql2' ? mysql2PendingStatusCode : undefined,
     // A db.response.status_code already on the span becomes its error.type (D16, as Python).
     copyPresetStatusCode: true,
+    // ADR-014 (A36): type-only exception event, one correlated ERROR record per failed span.
+    exceptionRecords: true,
+    exceptionType: opts.statusCodes === 'pg' ? pgExceptionType : undefined,
+    pendingError: opts.statusCodes === 'mysql2' ? mysql2PendingError : undefined,
   });
 }

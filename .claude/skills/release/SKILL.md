@@ -501,6 +501,23 @@ task C3, 1.15.x → 1.20.x):
   push events and no workflow runs (rc.1 lost its CI this way). Push the
   Python tag alone, then the Go tags; push a `nodejs/v*` tag on its own too.
 - Give the owner the commands as `! cd <repo> && …` lines.
+- **Go ext/otelsql depends on the core (task A36, added 2026-11-19).**
+  `go/ext/otelsql` imports the core's `internal/exclog` and its `go.mod`
+  replaces the core with `../..` on the branch; a consumer ignores the
+  replace and fetches the required core tag. Order, every Go release:
+  1. tag and push `go/vX.Y.Z[-rc.N]` (the core) first;
+  2. in a commit, set `require github.com/staffops/otel-libs/go vX.Y.Z[-rc.N]`
+     in `go/ext/otelsql/go.mod` (keep the replace), `go mod tidy` there and in
+     `go/demo`;
+  3. tag `go/ext/otelsql/vX.Y.Z[-rc.N]` on that commit (the other ext tags
+     may go with it).
+  CI step "ext/otelsql against its required core version, without the
+  replace" checks it (blocking on `v*`, informational elsewhere); run its
+  commands locally before tagging if the joint `v*` tag is not pushed.
+  Before every core tag, check that the `go/internal/exclog` API stayed
+  additive-only since the previous tag (`git diff <prev-tag> -- go/internal/exclog/`:
+  no exported name or signature changed or removed; `contract_test.go`
+  unchanged except for additions) — ext modules of an older release call it.
 
 ## After tagging
 - `gh run list` → watch the tag run (`gh run watch <id> --exit-status`).

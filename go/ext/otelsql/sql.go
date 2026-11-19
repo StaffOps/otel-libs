@@ -18,6 +18,26 @@
 // Open), and a failed operation's span carries db.response.status_code and
 // error.type: the PostgreSQL SQLSTATE or the MySQL server error number, or
 // error.type=_OTHER without one (design D16).
+//
+// A failed operation's exception event keeps only exception.type; the
+// error's text and a stack trace go to one ERROR log record in the span's
+// context (same trace_id and span_id) through the helper's log channel: OTLP
+// while a logs exporter is installed, the stdout JSON fallback otherwise
+// (ADR-014, contract task A36). Logs can therefore carry the database's
+// error text, which may quote a value from the statement or the data. The
+// record also carries db.system.name and, when known, db.response.status_code
+// and error.type; a cancellation (context.Canceled) gets no record.
+//
+// Without otelhelper.Setup (or after Shutdown) these records still go to the
+// stdout JSON fallback at the default level (INFO, so ERROR passes): an
+// application that uses this package without the helper's Setup sees one
+// stdout line per failed operation.
+//
+// Dependencies: this module requires the helper's core module
+// (github.com/staffops/otel-libs/go) for that log channel, so importing it
+// also brings the core's dependency graph (the OTLP exporters, gRPC, the
+// Prometheus exporter) into the build. An application of this package
+// already uses the core in practice; the binary only links what is used.
 package otelsql
 
 import (
@@ -29,9 +49,14 @@ import (
 	"strings"
 
 	"github.com/XSAM/otelsql"
+	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	semconvlegacy "go.opentelemetry.io/otel/semconv/v1.26.0"
 	semconv "go.opentelemetry.io/otel/semconv/v1.43.0"
+
+	// The core links the exception-record hook of internal/exclog (ADR-014).
+	_ "github.com/staffops/otel-libs/go"
+	"github.com/staffops/otel-libs/go/internal/exclog"
 )
 
 // envSemconvOptIn is the standard semantic-convention migration switch.
@@ -76,6 +101,13 @@ func WithDBNamespace(name string) Option {
 // error.type stays the XSAM value, the Go error type name). driver.ErrSkip
 // is not a failure: the span stays Unset and the metric has no error.type.
 //
+// That span's exception event carries only exception.type (the D15 rule:
+// the first ErrorType() method in the chain, else semconv.ErrorType); the
+// error's text and a stack trace (taken where XSAM records the error, so it
+// starts in github.com/XSAM/otelsql) go to one ERROR log record per recorded
+// error, in the span's context, also when the span is not sampled. The
+// record follows the helper's log level and exporter rules (NewSlogHandler).
+//
 // closeDB unregisters the pool-metrics callback and closes the pool; call it
 // instead of db.Close, or every open/close cycle leaks a callback that keeps
 // reporting a closed pool. If the pool metrics can't be registered the
@@ -98,6 +130,13 @@ func Open(driverName, dataSourceName string, opts ...Option) (db *sql.DB, closeD
 	}
 	attrs := otelsql.WithAttributes(kv...)
 	db, err = otelsql.Open(driverName, dataSourceName, attrs,
+		// RecordError → a type-only exception event + one correlated ERROR
+		// record (ADR-014, A36). Wraps the global provider as XSAM would read
+		// it, so a pool opened before Setup still follows the helper's.
+		otelsql.WithTracerProvider(exclog.TracerProvider(otel.GetTracerProvider(),
+			// The record names its database and error code (A36 review), sampled or not.
+			exclog.WithRecordAttributes(semconv.DBSystemNameKey.String(systemName(driverName))),
+			exclog.WithErrorAttributes(spanErrorAttributes))),
 		otelsql.WithSpanOptions(otelsql.SpanOptions{DisableErrSkip: true}),
 		otelsql.WithDisableSkipErrMeasurement(true),
 		otelsql.WithSpanErrorAttributesGetter(spanErrorAttributes),
@@ -176,6 +215,11 @@ func legacyKeysEnabled() bool {
 		}
 	}
 	return dup || !stable
+}
+
+// systemName is the db.system.name value systemAttributes uses for driverName.
+func systemName(driverName string) string {
+	return systemAttributes(driverName, false)[0].Value.AsString()
 }
 
 // systemAttributes maps a database/sql driver name to db.system.name and, when

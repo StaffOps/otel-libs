@@ -86,6 +86,27 @@ jobs:
           for d in example/go-api example/go-backend example/go-process example/go-custom-signals ../testing/e2e/go-smoke; do
             (cd "$d" && go build -o /dev/null ./... && go vet ./...)
           done
+      - name: ext/otelsql against its required core version, without the replace (A36)
+        # ext/otelsql imports the core's internal/exclog; its go.mod replaces
+        # the core with ../.. on the branch. A consumer gets the required core
+        # tag instead, so it must contain internal/exclog (release skill: tag
+        # go/vX, bump this require to vX, then tag go/ext/otelsql/vX). Blocking
+        # on the joint v* release tag; informational elsewhere (the branch may
+        # require an older core tag until the release bump).
+        continue-on-error: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+        working-directory: go/ext/otelsql
+        run: |
+          tmp="$RUNNER_TEMP/otelsql-norep"
+          cp go.mod "$tmp.mod" && cp go.sum "$tmp.sum"
+          go mod edit -modfile="$tmp.mod" -dropreplace=github.com/staffops/otel-libs/go
+          core=$(go mod edit -modfile="$tmp.mod" -json | jq -r '.Require[] | select(.Path == "github.com/staffops/otel-libs/go") | .Version')
+          echo "ext/otelsql requires core $core"
+          dir=$(go mod download -json "github.com/staffops/otel-libs/go@$core" | jq -r .Dir)
+          if [ ! -f "$dir/internal/exclog/exclog.go" ]; then
+            echo "::error::core $core has no internal/exclog: tag the core first and bump the require (release skill)"
+            exit 1
+          fi
+          GOFLAGS=-mod=mod go build -modfile="$tmp.mod" ./...
       - name: govulncheck (reachable vulnerabilities fail the job)
         # Results don't depend on the toolchain minor; one leg is enough.
         if: matrix.go == '1.27.x'

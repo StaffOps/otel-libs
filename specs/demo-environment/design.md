@@ -1183,6 +1183,16 @@ New task ids (`A38`, `A39`) are created by DE8 in
 | g.sentinel.app (`rej-` / `unh-<run>` on HTTP/gRPC spans) | pass (no event, no description on the server; client description is the constant gRPC message) | `xfail:A37` (FastAPI event + description; aio server records `AbortError`, which carries no run token — the `unh-<run>` path is the HTTP one) | `xfail:A37` (http/express `recordException` + description, `README.md:367`) | `xfail:A37` (ASP.NET Core `RecordException` event, `README.md:367`) |
 
 `A39` is reserved for the first gap DE6 finds that no task owns.
+*(Ruling 2026-11-19, contract task A36 review, observability: the d.db check
+no longer requires an `exception` event. A failed DB span passes with **at
+most one** `exception` event whose only attribute is `exception.type`, or
+none: Python statement spans record none (contract A36 decision (3)), and
+the correlated ERROR record carries the detail. `verify.py` `_d_db` and
+`demo/test_verify_demo.py` changed accordingly; the other `_d_db` checks
+(empty status description, `db.response.status_code` 23505, the correlated
+record) stay. The `xfail:A36` cells in `expected.json` stay until a k8s01
+run with the A36 images measures them; with the fixture's synthetic Loki
+records the Python d.db cell already passes.)*
 *(r3, 2026-11-16: Go d.grpc corrected — r2 cited otelgrpc's server-side
 description rule for a client-span cell (audit #7, N5); PostgreSQL edge
 row per the coordinator ruling (N3, audit #12); Python d.grpc evidence

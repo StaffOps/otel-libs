@@ -102,6 +102,15 @@ log, linked to the trace by trace/log correlation (same `trace_id` and
   reviewed against this rule — tracked in contract task A36, whose scope was
   extended to AWS SDK clients on the same date.
 
+- *Deviation, added 2026-11-19 (contract task A36 review, coordinator
+  decision D-a; the owner may revisit):* semantic conventions v1.45, as cited
+  by the A36 review, suggest severity WARN for an exception recorded on a
+  database CLIENT span and the event name `db.client.operation.exception`.
+  The helper keeps severity ERROR and the `exception` naming in every
+  language, on purpose: parity with .NET C14a and with the D15 failure
+  records (one channel, one query and one alert rule for failures). Revisit
+  when the database exception conventions are stable.
+
 ### Neutral
 - Applications that need the old behavior can record their own events; the
   helper documents how.

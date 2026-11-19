@@ -396,6 +396,8 @@ func (fakeConn) ExecContext(_ context.Context, query string, _ []driver.NamedVal
 		return nil, &MySQLError{Number: 1062, Message: "Duplicate entry 'secret-value'"}
 	case "plain":
 		return nil, errors.New("connection reset")
+	case "canceled":
+		return nil, fmt.Errorf("exec: %w", context.Canceled)
 	}
 	return driver.RowsAffected(0), nil
 }

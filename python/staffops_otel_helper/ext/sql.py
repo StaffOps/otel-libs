@@ -89,7 +89,12 @@ def instrument_sql(engine=None) -> bool:
     contrib 0.63b0-0.66b1 support ``< 2.1.0`` only (P18).
 
     A failed statement's span keeps the ERROR status code without its
-    description, which is the database's error text (A25 R1).
+    description, which is the database's error text (A25 R1). That text and
+    the stack trace go to one ERROR record in the span's context on the
+    ``staffops_otel_helper.failure`` logger (ADR-014, A36: OTLP with a logs
+    exporter, else the stdout JSON fallback), and a recorded exception event
+    (the ``connect`` span) keeps only ``exception.type``. Logs can therefore
+    carry the database's error text, which may quote a statement value.
 
     Already instrumented by ``setup_telemetry()`` (the deprecated ``SQL`` flag,
     same wrapper): True; with ``engine``, that engine is traced too when it was

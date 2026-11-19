@@ -22,7 +22,6 @@ import traceback
 from opentelemetry import trace
 from opentelemetry.trace import Span, Status, StatusCode
 
-from staffops_otel_helper._db_status import _qualified
 
 #: The logger of the failure records (design D15 "Channel").
 FAILURE_LOGGER = "staffops_otel_helper.failure"
@@ -32,6 +31,12 @@ _OVERRIDE = "__otel_error_type__"
 _MAX_GROUP_NODES = 256
 
 _log = logging.getLogger("staffops_otel_helper.failure")  # literal: the A3 channel scan reads it
+
+
+def _qualified(exc_type: type) -> str:
+    """``module.qualname``, bare for ``builtins`` / ``__main__`` (also re-exported by ``_db_status``)."""
+    module = exc_type.__module__
+    return exc_type.__qualname__ if module in ("builtins", "__main__") else f"{module}.{exc_type.__qualname__}"
 _diag = logging.getLogger("staffops_otel_helper.tracing")
 
 
@@ -148,19 +153,139 @@ def _stacktrace(exc: BaseException) -> str:
         return ""
 
 
-def _emit(exc: BaseException, span: Span, type_value: str) -> None:
+def emit_exception_record(span: Span, message: str, attributes: dict) -> None:
+    """One ERROR record on the D15 channel, in ``span``'s context (recording or not).
+
+    The body is ``message``; ``attributes`` (``exception.type``,
+    ``exception.message``, ``exception.stacktrace``, any subset) go through
+    ``extra=``. Shared by the failure rule and the DB client spans of
+    ``ext.sql`` (ADR-014, task A36); ``ext.redis`` could use it too. Never
+    raises into the caller: an internal error is one diagnostics line.
+    """
+    try:
+        # The helper owns this logger: neither an app dictConfig(disable_existing_loggers=True) without a
+        # logs exporter nor a level set on the staffops_otel_helper diagnostics logger may drop records (D15).
+        if _log.disabled:
+            _log.disabled = False
+        if _log.level == logging.NOTSET:
+            _log.setLevel(logging.DEBUG)
+        with trace.use_span(span, end_on_exit=False, record_exception=False, set_status_on_exception=False):
+            _log.error(message, extra=attributes)
+    except Exception as internal:  # noqa: BLE001 - never raise into the failing code path
+        _diag.warning("[OtelHelper] Could not write an exception log record (%s).", type(internal).__name__)
+
+
+def exception_attributes(exc: BaseException, type_value: str) -> tuple[str, dict]:
+    """The body and the three attributes of the record for ``exc`` (ADR-014)."""
     message = _message(exc)
-    # The helper owns this logger: neither an app dictConfig(disable_existing_loggers=True) without a
-    # logs exporter nor a level set on the staffops_otel_helper diagnostics logger may drop records (D15).
-    _log.disabled = False
-    if _log.level == logging.NOTSET:
-        _log.setLevel(logging.DEBUG)
-    with trace.use_span(span, end_on_exit=False, record_exception=False, set_status_on_exception=False):
-        _log.error(message, extra={
-            "exception.type": type_value,
-            "exception.message": message,
-            "exception.stacktrace": _stacktrace(exc),
-        })
+    return message, {
+        "exception.type": type_value,
+        "exception.message": message,
+        "exception.stacktrace": _stacktrace(exc),
+    }
+
+
+#: Module prefixes whose frames leave the DB record's stack: the helper and the OpenTelemetry instrumentations.
+_SKIPPED_MODULES = (_HELPER_PACKAGE, "opentelemetry")
+#: Cap of the DB record's stack, cut in the middle as Go does (Loki structured metadata, containerd lines).
+_MAX_STACK_BYTES = 12 << 10
+
+
+def _skipped_frame(frame) -> bool:
+    module = frame.f_globals.get("__name__", "")
+    return any(module == m or module.startswith(m + ".") for m in _SKIPPED_MODULES)
+
+
+def _skipped_file(filename: str) -> bool:
+    """A traceback entry (a file name only) of the helper or an OpenTelemetry package."""
+    path = filename.replace("\\", "/")
+    return f"/{_HELPER_PACKAGE}/" in path or "/opentelemetry/" in path
+
+
+def _cut_middle(text: str, limit: int = _MAX_STACK_BYTES) -> str:
+    """``text`` cut in the middle above ``limit`` bytes (UTF-8), whole lines, one marker line."""
+    if len(text.encode("utf-8")) <= limit:
+        return text
+    lines = text.split("\n")
+    budget = limit - 64
+    head: list[str] = []
+    tail: list[str] = []
+    used = 0
+    lo, hi = 0, len(lines) - 1
+    while lo <= hi:
+        size = len(lines[hi].encode("utf-8")) + 1
+        if used + size > budget // 2:
+            break
+        tail.insert(0, lines[hi])
+        used += size
+        hi -= 1
+    while lo <= hi:
+        size = len(lines[lo].encode("utf-8")) + 1
+        if used + size > budget:
+            break
+        head.append(lines[lo])
+        used += size
+        lo += 1
+    elided = hi - lo + 1
+    return "\n".join([*head, f"  ...{elided} lines elided by otel-helper...", *tail])
+
+
+def db_stacktrace(exc: BaseException) -> str:
+    """The DB record's ``exception.stacktrace`` (task A36 review): the call stack above the traceback.
+
+    A DB error is raised and handled inside the driver and SQLAlchemy, so its
+    own traceback never reaches the application. The callers of the frame
+    handling the error (the traceback's first frame, when it is still running;
+    else every running frame) are put above the traceback's frames, both without the helper's and the OpenTelemetry
+    instrumentations' frames, so the application frame shows; the chained
+    exceptions follow as ``traceback`` formats them. Cut in the middle above
+    12 KiB. Never raises.
+    """
+    try:
+        tb_frames = set()
+        tb = exc.__traceback__
+        while tb is not None:
+            tb_frames.add(id(tb.tb_frame))
+            tb = tb.tb_next
+        # Callers of the frame handling the error (the traceback's first frame) when it is still
+        # running: the frames below it on the live stack (SQLAlchemy's _handle_dbapi_exception, the
+        # event dispatch, the helper) are not callers of the failed call (A36 review N2).
+        frame = sys._getframe(1)
+        head = exc.__traceback__.tb_frame if exc.__traceback__ is not None else None
+        if head is not None:
+            live = frame
+            while live is not None and live is not head:
+                live = live.f_back
+            if live is head:
+                frame = head.f_back
+        outer = []
+        while frame is not None:
+            if id(frame) not in tb_frames and not _skipped_frame(frame):
+                outer.append((frame, frame.f_lineno))
+            frame = frame.f_back
+        outer.reverse()
+        te = traceback.TracebackException(type(exc), exc, exc.__traceback__)
+        inner = [f for f in te.stack if not _skipped_file(f.filename)]
+        te.stack = traceback.StackSummary.from_list(
+            list(traceback.StackSummary.extract(outer, capture_locals=False)) + inner)
+        return _cut_middle("".join(te.format()).rstrip())
+    except Exception:  # noqa: BLE001 - the plain traceback, never a raise
+        return _cut_middle(_stacktrace(exc))
+
+
+def db_exception_attributes(exc: BaseException, type_value: str) -> tuple[str, dict]:
+    """The body and the three attributes of a DB record (``exception.stacktrace`` = :func:`db_stacktrace`)."""
+    message = _message(exc)
+    return message, {
+        "exception.type": type_value,
+        "exception.message": message,
+        "exception.stacktrace": db_stacktrace(exc),
+    }
+
+
+def _emit(exc: BaseException, span: Span, type_value: str) -> None:
+    message, attributes = exception_attributes(exc, type_value)
+    emit_exception_record(span, message, attributes)
 
 
 def mark_failure(span: Span, exc: BaseException) -> None:

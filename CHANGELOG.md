@@ -2706,6 +2706,41 @@ renamed span or a dropped metric.
 
 ### Go — detailed changes
 
+- **SQL exception detail goes to a correlated log (task A36, ADR-014;
+  design D1 row "DB error text in exception events", amendment 2026-11-18).**
+  A failed `ext/otelsql` operation's `exception` event (XSAM
+  `span.RecordError`) carried the driver's error text, which can quote a
+  statement value or row data (`Duplicate entry 'x'`). It now keeps only
+  `exception.type` (the `WithSpan` rule: an `ErrorType()` method in the
+  chain, else `semconv.ErrorType`, e.g. `*pgconn.PgError`), and each
+  recorded error writes one ERROR log record in the span's context (same
+  `trace_id` / `span_id`, sampled or not) through the helper's log channel —
+  OTLP with a logs exporter, else the stdout JSON fallback with `trace_id` /
+  `span_id` after `msg` — with body and `exception.message` = `err.Error()`,
+  `exception.type` and `exception.stacktrace` = `debug.Stack()` where XSAM
+  records the error, without the helper's frames (starts at
+  `github.com/XSAM/otelsql.recordSpanError`). Mechanism: `Open` passes XSAM
+  a TracerProvider wrapper from the new internal package
+  `go/internal/exclog` (shaped for reuse by `ext/otelredis`), whose hook the
+  core sets in `init`; `ext/otelsql` therefore now requires the core module
+  (`replace => ../..` on the branch; a release tags the core first). Logs
+  can now carry the database's error text: treat the log pipeline as
+  sensitive. Tests: `ext/otelsql/a36_test.go`, `exclog_test.go`,
+  `internal/exclog/exclog_test.go`. Redis (A26) and AWS are not changed.
+
+- **A36 review round (2026-11-19).** The `ext/otelsql` record now also
+  carries `db.system.name` and, when the error has a code,
+  `db.response.status_code` and `error.type` (computed, so an unsampled span's
+  record has them too); a cancellation (`context.Canceled`, a gRPC `Canceled`
+  status) keeps its type-only event and writes no record, as `WithSpan`; a
+  second `RecordError` with the same error on one span (pgx `Rows.Err` then
+  `Close`) is skipped. `internal/exclog` is a cross-module contract frozen
+  within a major version (`contract_test.go` asserts the signatures); CI
+  builds `ext/otelsql` without its `replace` against the required core tag
+  (blocking on `v*`), and the release skill tags `go/vX` before
+  `go/ext/otelsql/vX`. Severity stays ERROR (ADR-014 Deviation). Redis moves
+  to task A52.
+
 - **OTLP redirects refused (task A31, design D1 row "OTLP export redirects";
   2026-11-18).** The OTLP/HTTP exporters followed redirects (net/http): a
   307/308 replayed the POST, its body and the custom OTLP headers to the
@@ -3390,6 +3425,46 @@ Behavior changes, with migration notes:
   (Apache-2.0). `aws-sdk-go-v2` v1.47.1 → v1.47.5.
 
 ### Python — detailed changes
+
+- **SQL exception detail goes to a correlated log (task A36, ADR-014;
+  design D1 row "DB error text in exception events", amendment 2026-11-18).**
+  A failed SQLAlchemy span (`[sql]`, both `instrument_sql()` and the `SQL`
+  flag path) now writes one ERROR record on the `staffops_otel_helper.failure`
+  logger (the `traced` channel: stdout JSON without a logs exporter, OTLP
+  with one) in the span's context, sampled or not: body and
+  `exception.message` = `str()` of the captured exception, `exception.type` =
+  its qualified class name (or `__otel_error_type__`), `exception.stacktrace`
+  = `traceback.format_exception`; without a captured exception, the dropped
+  status description alone. The `connect` span's `exception` event, which
+  carried the error text and the traceback, keeps only `exception.type` (the
+  same qualified value; contrib events elsewhere use the bare class name);
+  statement spans still get no event. Shared emitter
+  `_failure.emit_exception_record` (usable by `ext.redis`). Logs can now
+  carry the database's error text (e.g. a path or a duplicate value): treat
+  the log pipeline as sensitive. Tests: `tests/test_a36_db_exception.py`.
+  Redis (A26) and botocore (A27) are not changed.
+
+- **A36 review round (2026-11-19).** Unsampled SQLAlchemy spans now write
+  their record too: contrib sets no status on them, so the helper registers
+  its own `handle_error` listener on `sqlalchemy.engine.Engine` (it reads
+  contrib's `execution_context._otel_span`, contrib 0.63b0–0.66b2) and
+  catches around the `connect` span; one record per span, sampled or not;
+  none for a cancellation. The record carries `db.system.name`,
+  `db.response.status_code` and `error.type`, and its
+  `exception.stacktrace` puts the running frames (your call) above the
+  traceback, without helper and OpenTelemetry frames, cut in the middle
+  above 12 KiB. Severity stays ERROR (ADR-014 Deviation). Redis moves to task
+  A52, botocore to A53.
+
+- **A36 re-review round (2026-11-19).** A fetch that fails after its
+  statement span ended successfully (`stream_results`, `yield_per`) no longer
+  writes a record against that Unset span: a late arm needs the exception
+  active at `end()` (or one in its `__context__` chain). The stack starts at
+  the callers of the handling frame (no `_handle_dbapi_exception` above
+  `_exec_single_context`). The record's `db.system.name` uses semconv values
+  (`mssql` → `microsoft.sql_server`, `oracle` → `oracle.db`), and an
+  unsampled `connect` record has it too. The `handle_error` listener is
+  installed under a lock and stays registered (a no-op) after uninstrument.
 
 - **OTLP redirects refused (task A31, design D1 row "OTLP export redirects";
   2026-11-18).** With `opentelemetry-exporter-otlp-proto-http` 1.42 the
@@ -4170,6 +4245,34 @@ Unsupported instrumentation versions, task A10 (P18):
 
 ### Changed
 
+- **Node.js: SQL exception detail goes to a correlated log (task A36,
+  ADR-014; design D1 row "DB error text in exception events", amendment
+  2026-11-18).** `@staffops/otel-helper-sql`: pg's `exception` event (a
+  sanitized `PostgreSQL error of type '<name>' occurred (code: <code>)`
+  message, no type) now carries only `exception.type` = that name (pg's
+  `DatabaseError.name`, `error` for a server error); mysql2 still records
+  none. At a failed span's first `setStatus(ERROR)` one ERROR record goes to
+  the helper's log channel (logger `otel-helper`: OTLP, else a stdout JSON
+  line with `trace_id` / `span_id`) in the span's context, sampled or not:
+  mysql2 callback/promise/`execute` — the held error's `message`, `withSpan`
+  type rule (`Error`) and `stack`; pg and the mysql2 streaming form — the
+  status message (`err.message`) without a stack trace (instrumentation-pg
+  0.77 hands the span no error object). Core `internal/db` gains the options
+  `exceptionRecords`, `exceptionType` and `pendingError` (off for `-redis`
+  and `-aws`, which are unchanged); core `internal/failure` exports
+  `exceptionRecord`. Logs can now carry the database's error text: treat the
+  log pipeline as sensitive. Tests: core `test/db.test.cjs` (A36 cases),
+  `-sql` `test/db.test.cjs` against PostgreSQL 17 and MySQL 8.4,
+  `test/sql.test.cjs` seams.
+
+- **Node.js: A36 review round (2026-11-19).** The `-sql` record carries
+  `db.system.name`, `db.response.status_code` and `error.type` (from the
+  span-start attributes and the computed code, so also for an unsampled
+  span); pg's `exception.type` `error` (pg-protocol's message name) is
+  reported as `DatabaseError`; mysql2 stacks hold no application frame
+  (documented). Severity stays ERROR (ADR-014 Deviation). Redis moves to task
+  A52, `-aws` to A53.
+
 - **Node.js: OTLP redirects reported (task A31, design D1 row "OTLP export
   redirects"; 2026-11-18).** The OTLP/HTTP transport never followed a `3xx`
   (plain `http`/`https`), but the failed export wrote no helper line. The
@@ -4532,6 +4635,12 @@ Unsupported instrumentation versions, task A10 (P18):
   of `publish-nodejs-ghp` skips the packages it already published.
 
 ### Internal
+
+- **Demo verifier: DB exception events (2026-11-19, A36 review ruling).**
+  `testing/k8s/verify.py` `_d_db` accepts at most one `exception` event with
+  `exception.type` only, or none (Python statement spans record none); the
+  other checks stay. `expected.json` keeps its `xfail:A36` cells until a
+  k8s01 run with the A36 images; ruling in `specs/demo-environment/design.md`.
 
 - **Node.js: A21 keep-alive test no longer timing-dependent (2026-11-18).**
   `nodejs/packages/otel-helper/test/metrics.test.cjs` ("a client holding a

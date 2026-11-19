@@ -24,6 +24,12 @@ const libraries = require('../dist/internal/libraries.js');
 const { childrenForTests } = require('../dist/internal/sql-instrumentation.js');
 
 const ENTRY = require.resolve('@staffops/otel-helper-sql');
+
+// The fake failed spans below write A36 records (logger otel-helper) on the
+// stdout fallback; keep them out of the test runner's output. Only those lines.
+const stdoutWrite = process.stdout.write.bind(process.stdout);
+process.stdout.write = (chunk, ...rest) =>
+  typeof chunk === 'string' && chunk.startsWith('{"time":') && chunk.includes('"logger":"otel-helper"') ? true : stdoutWrite(chunk, ...rest);
 const SQL_DIR = path.resolve(__dirname, '..');
 
 let saved;
@@ -343,7 +349,7 @@ test('the DB tracer adds db.system at span start (startSpan and every startActiv
   assert.equal(stable.exporter.getFinishedSpans()[0].attributes['db.system'], undefined);
 });
 
-test('R1: an ERROR status keeps its code and drops the description; other statuses unchanged; exception events kept', () => {
+test('R1: an ERROR status keeps its code and drops the description; other statuses unchanged; exception events keep only exception.type (A36)', () => {
   const { exporter, wrapped } = tracerOf({ legacyKeys: false, normalizeSpanName: false });
   const tracer = wrapped.getTracer('t');
   const failed = tracer.startSpan('failed');
@@ -361,7 +367,7 @@ test('R1: an ERROR status keeps its code and drops the description; other status
   assert.deepEqual(byName.failed.status, { code: api.SpanStatusCode.ERROR });
   assert.equal(byName.failed.attributes['error.type'], '_OTHER', 'N1: classifiable without the text');
   assert.equal(byName.ok.attributes['error.type'], undefined);
-  assert.equal(byName.failed.events[0].attributes['exception.message'], 'kept');
+  assert.deepEqual(byName.failed.events.map((e) => e.attributes), [{ 'exception.type': 'Error' }], 'ADR-014: the detail goes to the record');
   assert.deepEqual(byName.active.status, { code: api.SpanStatusCode.ERROR });
   assert.equal(byName.ok.status.code, api.SpanStatusCode.OK);
   const typed = tracer.startSpan('typed', { attributes: { 'error.type': '23505' } });
@@ -627,6 +633,12 @@ test('D16 seam: instrumentation-pg still records the sanitized message, and the 
   assert.ok(!message.includes('bound-secret'));
   assert.equal(status.pgStatusCode(utils.sanitizedErrorMessage(Object.assign(new Error('x'), { code: 'EPIPE' }))), undefined);
   assert.equal(status.pgStatusCode(utils.sanitizedErrorMessage(new Error('no code'))), undefined, 'UNKNOWN');
+  // A36: the exception.type of the event and the record is the name in that text.
+  assert.equal(status.pgExceptionType(message), 'DatabaseError', "pg's server error name `error` is reported as the class");
+  assert.equal(status.pgExceptionType(utils.sanitizedErrorMessage(Object.assign(new Error('x'), { code: 'ECONNREFUSED' }))), 'Error');
+  assert.equal(status.pgExceptionType(utils.sanitizedErrorMessage(Object.assign(new Error('x'), { name: '' }))), undefined, 'an empty name: the D15 rule');
+  assert.equal(status.pgExceptionType("PostgreSQL error of type 'a'b' occurred (code: 1)"), undefined, 'a quote in the name');
+  assert.equal(status.pgExceptionType(new Error('x')), undefined, 'only the sanitized string is read');
 });
 
 test('D16 seam: instrumentation-mysql2 still has _patchCallbackQuery(endSpan) and the helper overrides it on the instance it builds', () => {
@@ -653,7 +665,9 @@ test('D16: the held mysql2 error is read once inside endSpan, and only there; a 
     },
   };
   assert.equal(status.holdMysql2Errors(fake), true);
+  const errors = [];
   const endSpan = (err) => {
+    errors.push(status.mysql2PendingError(), status.mysql2PendingError()); // A36: read without clearing
     seen.push(status.mysql2PendingStatusCode());
     seen.push(status.mysql2PendingStatusCode());
     return err === undefined ? 'ok' : 'failed';
@@ -664,6 +678,8 @@ test('D16: the held mysql2 error is read once inside endSpan, and only there; a 
   wrapped(undefined, []);
   wrapped(null, []);
   assert.deepEqual(seen, ['1062', undefined, undefined, undefined, undefined, undefined], 'read once; no error: none');
+  assert.deepEqual(errors, [dup, dup, undefined, undefined, undefined, undefined]);
+  assert.equal(status.mysql2PendingError(), undefined, 'nothing held outside endSpan');
   assert.equal(status.mysql2PendingStatusCode(), undefined, 'nothing held outside endSpan');
   const throwing = { _patchCallbackQuery: (endSpan) => endSpan };
   status.holdMysql2Errors(throwing);

@@ -570,6 +570,45 @@ attributes getter. Exception: XSAM can call the getter twice for one
 overwrite the same keys, so a code-less second error leaves the first
 `db.response.status_code` next to `error.type=_OTHER`.
 
+**Exception detail goes to a correlated log** ([ADR-014](../specs/decisions/ADR-014-exception-detail-in-correlated-logs.md), task A36).
+A failed operation's `exception` event keeps only `exception.type` (the
+helper's `error.type` rule of `WithSpan`: the first `ErrorType()` method in
+the chain, else `semconv.ErrorType`, e.g. `*pgconn.PgError`); no
+`exception.message`, no `exception.stacktrace`. The error's text and a stack
+go to one ERROR log record per recorded error, emitted in the span's context
+(same `trace_id` / `span_id`, also when the span is not sampled), through the
+helper's log channel: OTLP while a logs exporter is installed, else the
+stdout JSON fallback (`logger` `otel-helper`, then `trace_id` and `span_id`);
+the level rules of `NewSlogHandler` apply (ERROR passes every environment
+level). Body and `exception.message` = `err.Error()`; `exception.type` = the
+event's type; `exception.stacktrace` = `debug.Stack()` taken where XSAM
+records the error, without the helper's frames, so it starts at
+`github.com/XSAM/otelsql.recordSpanError` and runs down through
+`database/sql` to your call (Go errors carry no stack of their own; cut in the
+middle above 12 KiB). The record also carries `db.system.name` and, when
+the error has one, `db.response.status_code` and `error.type` (the same
+values as the span, computed for an unsampled span too), so database records
+can be selected apart from application failure records. A `sql.rows` span
+whose `Next` and `Close` both fail with different errors gives two records;
+the same error recorded twice on one span (pgx returns it from `Rows.Err` and
+`Close`) gives one. A cancellation (`context.Canceled`, a gRPC `Canceled`
+status) keeps its type-only event and writes no record, as `WithSpan`. A
+failed query inside your own `WithSpan` gives two records: the database
+span's and the `WithSpan` span's, each in its own span context. The record
+can quote statement values or row data (`Duplicate entry 'x'`,
+`invalid input syntax for type integer: "x"`): treat the log pipeline as
+sensitive (ADR-014 Negative). The severity is ERROR and the naming
+`exception.*`, a deliberate deviation from the database exception
+conventions (root README gaps).
+
+`ext/otelsql` requires the core module for this channel (`replace => ../..`
+on the branch; a release tags the core first): importing it brings the
+core's dependency graph (OTLP exporters, gRPC, the Prometheus exporter) into
+your module graph; the binary links only what is used. Without
+`otelhelper.Setup` (or after `Shutdown`) the records still go to the stdout
+JSON fallback at INFO, so a program that uses `ext/otelsql` without `Setup`
+sees one stdout line per failed operation.
+
 `driver.ErrSkip`, the full story: database/sql retries a skipped
 `ExecContext`/`QueryContext` as prepare + `stmt.exec`/`stmt.query`. The
 skipped attempt is still a near-zero `sql.conn.exec` / `sql.conn.query` span

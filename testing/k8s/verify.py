@@ -1373,8 +1373,10 @@ def _d_db(b: Backends, run: DemoRun, lang: str, spans: list[Span]) -> list[str]:
         if s.attrs.get("db.response.status_code") != "23505":
             out.append(f"db_error: {s.name!r} db.response.status_code "
                        f"{s.attrs.get('db.response.status_code')!r}")
+        # At most one exception event, carrying exception.type only (ADR-014). None is fine:
+        # Python statement spans record none (observability ruling 2026-11-19, A36 review).
         excs = [a for n, a in s.events if n == "exception"]
-        if len(excs) != 1 or set(excs[0]) != {"exception.type"}:
+        if len(excs) > 1 or any(set(a) != {"exception.type"} for a in excs):
             out.append(f"db_error: {s.name!r} exception events {[sorted(a) for a in excs]}")
         records = [r for r in _loki_at_span(b, run, svc(lang, "backend"), s.trace_id, s.span_id)
                    if severity_number(r) >= 17]

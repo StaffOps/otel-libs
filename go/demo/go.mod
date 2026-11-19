@@ -5,7 +5,7 @@ go 1.26.0
 require (
 	github.com/jackc/pgx/v5 v5.13.0
 	github.com/redis/go-redis/v9 v9.23.0
-	github.com/staffops/otel-libs/go v0.0.0
+	github.com/staffops/otel-libs/go v0.3.0-rc.2
 	github.com/staffops/otel-libs/go/ext/otelredis v0.0.0
 	github.com/staffops/otel-libs/go/ext/otelsql v0.0.0
 	go.opentelemetry.io/otel v1.47.0

@@ -17,7 +17,9 @@
  *   design D16) becomes `db.response.status_code` and `error.type`, else
  *   `error.type` is `_OTHER`; the legacy `db.system` on the span-start
  *   attributes; an optional span-name rule; an optional attribute sanitizer
- *   (`-aws`).
+ *   (`-aws`); optionally (`-sql`, ADR-014, task A36) a type-only
+ *   `exception` event and one correlated ERROR record on the helper's log
+ *   channel per failed span.
  * - {@link dbMeterProvider}: the legacy key on synchronous measurements, and a
  *   generation guard (an instrument created before the latest bind records
  *   nothing; instrumentation-pg moves its pool max between instrument
@@ -31,7 +33,9 @@
  * @internal
  * @packageDocumentation
  */
-import { SpanStatusCode, type Attributes, type SpanKind, type Context, type Meter, type MeterProvider, type Span, type SpanOptions, type SpanStatus, type Tracer, type TracerProvider } from '@opentelemetry/api';
+import { context as apiContext, SpanStatusCode, trace, type Attributes, type SpanKind, type Context, type Meter, type MeterProvider, type Span, type SpanOptions, type SpanStatus, type Tracer, type TracerProvider } from '@opentelemetry/api';
+import { errorTypeOf, exceptionRecord, FAILURE_LOGGER } from './internal/failure';
+import { emitFailureRecord } from './internal/logging';
 
 /** @internal */
 export const ENV_SEMCONV_OPT_IN = 'OTEL_SEMCONV_STABILITY_OPT_IN';
@@ -191,6 +195,28 @@ export interface DbTracerOptions {
    * `setAttributes` calls `setAttribute`). Unset: attributes unchanged.
    */
   readonly sanitizeAttributes?: ((attributes: Attributes) => Attributes) | undefined;
+  /**
+   * ADR-014 (task A36, `-sql`): a recorded exception becomes an `exception`
+   * event with `exception.type` only, and the first `setStatus(ERROR)` hands
+   * one ERROR record to the helper's log channel (design D15 "Channel":
+   * logger `otel-helper`), in the span's context (recording or not): the
+   * detail of the recorded exception object, else of {@link pendingError},
+   * else the status message as body. Unset (`-redis`, `-aws`): unchanged.
+   */
+  readonly exceptionRecords?: boolean | undefined;
+  /**
+   * With {@link exceptionRecords}: the `exception.type` of a recorded
+   * exception (`-sql` pg: the name in instrumentation-pg's sanitized text).
+   * Undefined or a throw: the D15 rule (`errorTypeOf`).
+   */
+  readonly exceptionType?: ((exception: unknown) => string | undefined) | undefined;
+  /**
+   * With {@link exceptionRecords}: the error object of the failure being
+   * recorded now (`-sql` mysql2: the held error), read in `setStatus(ERROR)`
+   * before {@link pendingStatusCode} clears it. Never throws (a throw counts
+   * as none).
+   */
+  readonly pendingError?: (() => unknown) | undefined;
 }
 
 /** `read()`, or undefined when it throws (a status-code getter never breaks the instrumented call). */
@@ -215,7 +241,7 @@ function safeCode(read: () => string | undefined): string | undefined {
  * classifiable (2026-11-03, N1).
  * With `sanitizeAttributes`, `setAttribute`/`setAttributes` record only what it returns.
  */
-function wrapSpan(span: Span, opts: DbTracerOptions): Span {
+function wrapSpan(span: Span, opts: DbTracerOptions, startSystem?: unknown): Span {
   const original = span.setStatus.bind(span);
   const statusCode = opts.responseStatusCode;
   const exceptionCode = opts.exceptionStatusCode;
@@ -223,6 +249,10 @@ function wrapSpan(span: Span, opts: DbTracerOptions): Span {
   const copyPreset = opts.copyPresetStatusCode === true;
   // The code a recorded exception carried (pg records it before setStatus).
   let captured: string | undefined;
+  const records = opts.exceptionRecords === true;
+  // A36: the recorded exception (its type, and the object when it is not a string), and whether the record was written.
+  let recorded: { readonly type: string; readonly error: unknown } | undefined;
+  let written = false;
   try {
     // The status wrapper first: the description drop (A25) never depends on recordException.
     span.setStatus = (status: SpanStatus): Span => {
@@ -231,26 +261,57 @@ function wrapSpan(span: Span, opts: DbTracerOptions): Span {
         return span;
       }
       original({ code: SpanStatusCode.ERROR });
+      const record = records && !written;
+      // The held error before pendingStatusCode clears its slot (A36).
+      const held = record ? readPending(opts.pendingError) : undefined;
       // Read once per ERROR status, whether or not it is used (the slot behind it is per call).
       const pending = pendingCode === undefined ? undefined : safeCode(pendingCode);
       const attributes = (span as { readonly attributes?: Attributes }).attributes;
+      // What the span gets (an unsampled span keeps none, so the record is given these values).
+      let statusValue = attrText(attributes?.['db.response.status_code']);
+      let typeValue = attrText(attributes?.['error.type']);
       if (attributes?.['error.type'] === undefined) {
         const preset = copyPreset ? attributes?.['db.response.status_code'] : undefined;
         if (preset !== undefined) {
-          span.setAttribute('error.type', typeof preset === 'string' || typeof preset === 'number' || typeof preset === 'boolean' ? String(preset) : '_OTHER');
-          return span;
+          typeValue = attrText(preset) ?? '_OTHER';
+          span.setAttribute('error.type', typeValue);
+        } else {
+          const code = captured ?? pending ?? (statusCode === undefined ? undefined : safeCode(() => statusCode(status.message ?? '')));
+          if (code !== undefined) span.setAttribute('db.response.status_code', code);
+          span.setAttribute('error.type', code ?? '_OTHER');
+          statusValue = code;
+          typeValue = code ?? '_OTHER';
         }
-        const code = captured ?? pending ?? (statusCode === undefined ? undefined : safeCode(() => statusCode(status.message ?? '')));
-        if (code !== undefined) span.setAttribute('db.response.status_code', code);
-        span.setAttribute('error.type', code ?? '_OTHER');
+      }
+      if (record) {
+        written = true;
+        const db: Record<string, string> = {};
+        const system = attributes?.[ATTR_DB_SYSTEM_NAME] ?? startSystem;
+        if (typeof system === 'string') db[ATTR_DB_SYSTEM_NAME] = system;
+        if (statusValue !== undefined) db['db.response.status_code'] = statusValue;
+        if (typeValue !== undefined) db['error.type'] = typeValue;
+        writeRecord(span, status, recorded, held, db);
       }
       return span;
     };
-    if (exceptionCode !== undefined && typeof span.recordException === 'function') {
+    const typeOnly = records && typeof span.addEvent === 'function';
+    if ((exceptionCode !== undefined || typeOnly) && typeof span.recordException === 'function') {
       const recordException = span.recordException.bind(span);
+      const addEvent = typeOnly ? span.addEvent.bind(span) : undefined;
       span.recordException = (exception: Parameters<Span['recordException']>[0], time?: Parameters<Span['recordException']>[1]): void => {
-        captured ??= safeCode(() => exceptionCode(exception));
-        recordException(exception, time);
+        if (exceptionCode !== undefined) captured ??= safeCode(() => exceptionCode(exception));
+        if (addEvent === undefined) {
+          recordException(exception, time);
+          return;
+        }
+        // ADR-014 (A36): the type only; the detail goes to the record at setStatus(ERROR).
+        const type = recordedType(exception, opts.exceptionType);
+        recorded ??= { type, error: typeof exception === 'string' ? undefined : exception };
+        try {
+          addEvent('exception', { 'exception.type': type }, time);
+        } catch {
+          // Never into the instrumented call.
+        }
       };
     }
     const sanitize = opts.sanitizeAttributes;
@@ -276,6 +337,56 @@ function wrapSpan(span: Span, opts: DbTracerOptions): Span {
   return span;
 }
 
+/** The `exception.type` of a recorded exception: the hook's value, else the D15 rule. */
+function recordedType(exception: unknown, hook: DbTracerOptions['exceptionType']): string {
+  if (hook !== undefined) {
+    const type = safeCode(() => hook(exception));
+    if (type !== undefined && type !== '') return type;
+  }
+  return errorTypeOf(exception);
+}
+
+/** A scalar attribute value as text (`String(value)`, as Python), else undefined. */
+function attrText(value: unknown): string | undefined {
+  return typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean' ? String(value) : undefined;
+}
+
+/** `pendingError()`, or undefined when there is none or it throws. */
+function readPending(pendingError: DbTracerOptions['pendingError']): unknown {
+  if (pendingError === undefined) return undefined;
+  try {
+    return pendingError();
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * The A36 record of a failed DB span (ADR-014), in its context: the recorded
+ * exception object, else the held error, gives the body, the D15 type and
+ * the stack; else the status message is the body (with the recorded type,
+ * or `Error`) and there is no stack. `db` (`db.system.name`, and the
+ * span's `db.response.status_code` / `error.type`) is added, so DB records
+ * can be told apart. No error and no message: no record. Never throws.
+ */
+function writeRecord(span: Span, status: SpanStatus, recorded: { readonly type: string; readonly error: unknown } | undefined, held: unknown, db: Readonly<Record<string, string>>): void {
+  try {
+    const error = recorded?.error ?? held;
+    let body: string;
+    let attributes: Record<string, string>;
+    if (error !== undefined && error !== null) {
+      ({ body, attributes } = exceptionRecord(error, recorded?.type ?? errorTypeOf(error)));
+    } else {
+      if (typeof status.message !== 'string' || status.message === '') return;
+      body = status.message;
+      attributes = { 'exception.type': recorded?.type ?? 'Error', 'exception.message': body };
+    }
+    emitFailureRecord(FAILURE_LOGGER, body, { ...attributes, ...db }, trace.setSpan(apiContext.active(), span));
+  } catch {
+    // Never into the instrumented call (emitFailureRecord reports its own failures).
+  }
+}
+
 function spanOptions(options: SpanOptions | undefined, opts: DbTracerOptions): SpanOptions | undefined {
   if (options?.attributes === undefined) return options;
   let attributes = opts.legacyKeys ? withLegacyKey(options.attributes) : options.attributes;
@@ -289,14 +400,14 @@ function spanOptions(options: SpanOptions | undefined, opts: DbTracerOptions): S
 function dbTracer(tracer: Tracer, opts: DbTracerOptions): Tracer {
   const name = (requested: string, options: SpanOptions | undefined): string => (opts.spanName === undefined ? requested : opts.spanName(requested, options?.attributes));
   const startSpan = (spanName: string, options?: SpanOptions, context?: Context): Span =>
-    wrapSpan(tracer.startSpan(name(spanName, options), spanOptions(options, opts), context), opts);
+    wrapSpan(tracer.startSpan(name(spanName, options), spanOptions(options, opts), context), opts, options?.attributes?.[ATTR_DB_SYSTEM_NAME]);
   const startActiveSpan = (spanName: string, ...rest: unknown[]): unknown => {
     // (name, fn) | (name, options, fn) | (name, options, context, fn).
     const fn = rest.pop() as (span: Span) => unknown;
     const options = rest[0] as SpanOptions | undefined;
     const next: unknown[] = rest.length > 0 ? [spanOptions(options, opts), ...rest.slice(1)] : [];
     const start = tracer as unknown as { startActiveSpan(...args: unknown[]): unknown };
-    return start.startActiveSpan(name(spanName, options), ...next, (span: Span) => fn(wrapSpan(span, opts)));
+    return start.startActiveSpan(name(spanName, options), ...next, (span: Span) => fn(wrapSpan(span, opts, options?.attributes?.[ATTR_DB_SYSTEM_NAME])));
   };
   return forwarding(tracer, { startSpan, startActiveSpan });
 }

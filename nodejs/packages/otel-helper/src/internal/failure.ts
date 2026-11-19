@@ -129,14 +129,26 @@ function messageOf(err: unknown): string {
   return message === UNREADABLE || message === undefined ? '' : safeString(message);
 }
 
-/** The record of a failure, in `span`'s context (its ids, recording or not). */
-function emitRecord(err: unknown, type: string, span: Span | undefined): void {
+/**
+ * The body and attributes of the record for `err` (ADR-014): the message
+ * (`err.message`, or the value's string form), `exception.type` = `type`,
+ * `exception.message` and, for an `Error` with a string `stack`,
+ * `exception.stacktrace`. Shared with the DB spans of core `internal/db`
+ * (task A36).
+ */
+export function exceptionRecord(err: unknown, type: string): { readonly body: string; readonly attributes: Record<string, string> } {
   const body = messageOf(err);
   const attributes: Record<string, string> = { 'exception.type': type, 'exception.message': body };
   if (isError(err)) {
     const stack = read(err, 'stack');
     if (typeof stack === 'string') attributes['exception.stacktrace'] = stack;
   }
+  return { body, attributes };
+}
+
+/** The record of a failure, in `span`'s context (its ids, recording or not). */
+function emitRecord(err: unknown, type: string, span: Span | undefined): void {
+  const { body, attributes } = exceptionRecord(err, type);
   const ctx = span === undefined ? context.active() : trace.setSpan(context.active(), span);
   emitFailureRecord(FAILURE_LOGGER, body, attributes, ctx);
 }

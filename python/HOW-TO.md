@@ -692,6 +692,33 @@ setup_telemetry()
   `setup_telemetry()` is traced by `instrument_sql(engine)` (2026-11-03). Known
   gap: Python copies the dialect name unmapped (SQL Server → `mssql`, Go
   emits `microsoft.sql_server`); filter on both in cross-language queries.
+- **Exception detail in a correlated log (task A36, ADR-014):** a failed
+  SQLAlchemy span keeps no message or stack trace. Statement spans have no
+  `exception` event (contrib records none); the `connect` span's event keeps
+  only `exception.type`. A failed span writes one ERROR record on the
+  `staffops_otel_helper.failure` logger (the `traced` channel: stdout JSON
+  without a logs exporter, OTLP with one, never stderr), in the span's
+  context, sampled or not (contrib reports nothing on an unsampled span, so
+  the helper adds its own SQLAlchemy `handle_error` listener and catches
+  around the `connect` span; a cancellation such as `KeyboardInterrupt`
+  writes none): body and
+  `exception.message` = `str(exc)` of the captured exception (on statement
+  spans the DBAPI error, e.g. `sqlite3.OperationalError`; on `connect` the
+  SQLAlchemy wrapper), `exception.type` = the qualified class name (or
+  `__otel_error_type__`; the event gets the same value, where contrib's own
+  events use the bare `__name__`), `exception.stacktrace` = the frames still
+  running (your call down to the handler) above the exception's traceback,
+  without the helper's and OpenTelemetry's frames, chained exceptions
+  included, cut in the middle above 12 KiB; plus `db.system.name` (the
+  semconv value of the dialect: `mssql` → `microsoft.sql_server`, `oracle` →
+  `oracle.db`; the span keeps contrib's dialect name),
+  `db.response.status_code` and `error.type` as on the span. A fetch that
+  fails after its statement span ended successfully (`stream_results`,
+  `yield_per`) writes no record: that span did not fail.
+  Without a captured exception the dropped status description is the body
+  and the only detail attribute. A failed statement inside your own `traced`
+  block gives two records: the database span's and yours. The text can quote statement values (`unable to open database:
+  /path/x.db`, `Duplicate entry 'x'`): treat the log pipeline as sensitive.
 - **SQL error codes (contract D16, task A44):** when a SQLAlchemy span (a
   statement or the `connect` span) ends with status ERROR and has no
   `error.type` yet, the helper writes `db.response.status_code` and

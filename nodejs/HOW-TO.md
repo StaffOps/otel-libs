@@ -684,6 +684,31 @@ sqlInstrumentation({ pg: true, mysql2: false });   // true: warn once when pg do
   pg's `db.client.operation.duration` keeps upstream's own `error.type` (the
   driver's `code`, so also `ECONNREFUSED`), and only for the callback form
   (`pool.query(…, cb)`), not for a rejected `client.query()` promise.
+- **Exception detail in a correlated log (task A36, ADR-014).** No message or
+  stack trace stays on a failed span: pg's `exception` event keeps only
+  `exception.type` (the name in instrumentation-pg's sanitized text;
+  pg-protocol's server error name `error` is reported as `DatabaseError`),
+  mysql2 has none. At the
+  span's first `setStatus(ERROR)` the helper writes one ERROR record (logger
+  `otel-helper`, the `withSpan` channel: OTLP with a logs exporter, else a
+  stdout JSON line with `trace_id` / `span_id`) in the span's context,
+  sampled or not:
+  - mysql2 callback, promise and `execute`: the error object's `message`,
+    `exception.type` by the `withSpan` rule (`Error` for mysql2 errors) and
+    `err.stack` (built in mysql2's packet parser on a socket event, so it
+    holds no frame of your code);
+  - pg (every form) and the mysql2 streaming form: the status message
+    (`err.message`, e.g. `invalid input syntax for type integer: "x"`), the
+    event's type (pg) or `Error`, and **no `exception.stacktrace`**:
+    instrumentation-pg 0.77 and the streaming path hand the span no error
+    object (gap).
+
+  Every record also carries `db.system.name`, `db.response.status_code` and
+  `error.type` as on the span (also for an unsampled span). A failed query
+  inside your own `withSpan` gives two records: the database span's and
+  yours. The text can quote statement values or row data: treat the log
+  pipeline as sensitive. Redis and AWS keep their exception events (tasks
+  A52, A53).
 - Spans carry `db.system.name` (+ legacy `db.system` and `db.statement` = `db.query.text`, until 1.0 and unless `OTEL_SEMCONV_STABILITY_OPT_IN` holds `database` without `database/dup`; A30), `db.namespace`,
   `server.address`, `server.port` and `db.query.text` **as written**
   (placeholders kept, never the bound values; a literal you inline is kept).

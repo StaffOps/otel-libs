@@ -163,7 +163,7 @@ func applyFailure(ctx context.Context, span trace.Span, f failure) {
 // bridge's scope). The stack is taken only when the record is enabled; for a
 // recovered panic this still runs on the panicking stack, so it includes the
 // panic site.
-func emitFailureRecord(ctx context.Context, f failure) {
+func emitFailureRecord(ctx context.Context, f failure, extra ...slog.Attr) {
 	h := newSwitchHandler(&installedLogLevel, newStdoutJSONHandler(&installedLogLevel))
 	// The held-back scope logger is written on stdout only, never exported.
 	h.scopeLogger, h.hasScopeLogger = slog.StringValue(helperScopeName), true
@@ -176,6 +176,7 @@ func emitFailureRecord(ctx context.Context, f failure) {
 		slog.String(attrExceptionMessage, f.message),
 		slog.String(attrExceptionStacktrace, failureStack()),
 	)
+	r.AddAttrs(extra...)
 	if err := h.Handle(ctx, r); err != nil {
 		warnOncePerProcess("failure-record-write", "otelhelper: a failure log record could not be written", "error", errorText(err))
 	}
@@ -203,6 +204,8 @@ var helperFrames = map[string]bool{
 	helperFramePrefix + "failSpan":          true,
 	helperFramePrefix + "RecordFailure":     true,
 	helperFramePrefix + "WithSpan":          true,
+	// The instrumentation path (exclog.go): the hook and the span wrapper.
+	helperFramePrefix + "emitInstrumentationException": true,
 }
 
 // maxFailureStackBytes caps exception.stacktrace. debug.Stack already keeps
@@ -315,9 +318,11 @@ func frameName(line string) string {
 }
 
 // isHelperFrame reports whether a debug.Stack function line names a helper
-// marking frame or a WithSpan closure.
+// marking frame, a WithSpan closure or an internal/exclog function (the
+// instrumentation span wrapper).
 func isHelperFrame(line string) bool {
-	return helperFrames[frameName(line)] || isHelperClosure(line)
+	name := frameName(line)
+	return helperFrames[name] || isHelperClosure(line) || strings.HasPrefix(name, exclogFramePrefix)
 }
 
 // isHelperClosure reports whether a function line names a closure of

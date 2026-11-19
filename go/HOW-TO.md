@@ -842,6 +842,19 @@ sum by (db_response_status_code) (rate(db_client_operation_duration_seconds_coun
 sum(rate(db_client_operation_duration_seconds_count[5m]))
 ```
 
+A failed query's `exception` event keeps only `exception.type`; the error's
+text and a stack go to one ERROR log record in the span's context (OTLP with
+a logs exporter, else a stdout JSON line with `trace_id` / `span_id`; task
+A36, ADR-014). The record carries `db.system.name` and, when known,
+`db.response.status_code` / `error.type`; a cancellation writes none; a
+failed query inside your own `WithSpan` gives two records (the DB span's and
+yours). To read the detail of a failed span, follow its trace id to
+the logs (Grafana: Tempo → Loki). Example stdout line (shortened):
+
+```json
+{"time":"…","level":"ERROR","msg":"ERROR: duplicate key value violates unique constraint \"u\" (SQLSTATE 23505)","logger":"otel-helper","trace_id":"4bf9…","span_id":"00f0…","exception.type":"*pgconn.PgError","exception.message":"…","exception.stacktrace":"goroutine 1 [running]:\ngithub.com/XSAM/otelsql.recordSpanError(…)…","db.system.name":"postgresql","db.response.status_code":"23505","error.type":"23505"}
+```
+
 `driver.ErrSkip` (go-sql-driver, `interpolateParams=false`) no longer marks
 the span ERROR or the measurement failed; the skipped attempt still records a
 near-zero span and point before the prepare + `stmt.exec` retry, which

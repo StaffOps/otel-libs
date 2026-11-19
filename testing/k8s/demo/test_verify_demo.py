@@ -272,6 +272,8 @@ class ExpectationTest(unittest.TestCase):
             self.assertEqual(e[lang]["d.db"]["also"], [])
             self.assertNotIn("db.response.status_code None", e[lang]["d.db"]["reason"])
             self.assertIn("no correlated ERROR record", e[lang]["d.db"]["reason"])
+        # The python reason is the pre-2026-11-19 check (an event was required); the cell
+        # is re-measured on the cluster with the A36 images, where it should pass.
         self.assertIn("exception events []", e["python"]["d.db"]["reason"])
         self.assertIn("exception events [['exception.message']]", e["node"]["d.db"]["reason"])
         self.assertNotIn("A44", json.dumps(json.loads(verify.EXPECTED_JSON.read_text())["expected"]))
@@ -688,13 +690,16 @@ class CheckDTest(unittest.TestCase):
         self.assertNotIn("client description", c["d.grpc"].detail)  # 'order rejected' is allowed
         self.assertEqual(c["d.http"].state, "fail")  # FastAPI exception event (A37)
         self.assertIn("exception.stacktrace", c["d.http"].detail)
-        self.assertEqual(c["d.db"].state, "fail")  # SQLAlchemy: no exception event (A36)
-        self.assertIn("exception events []", c["d.db"].detail)
-        self.assertNotIn("db.response.status_code", c["d.db"].detail)  # D16: 23505 on the span
-        self.assertEqual(len(c["d.db"].problems), 1, c["d.db"].problems)
+        # No exception event is fine since 2026-11-19 (observability ruling, A36 review): with
+        # the synthetic Loki records of this fixture the cell passes; without a record it fails
+        # on the record only. expected.json keeps xfail:A36 until the cluster run (A36 images).
+        self.assertEqual(c["d.db"].state, "pass", c["d.db"].detail)
+        bare = self.cells("python", self.setup_lang("python", records=False))
+        self.assertEqual(bare["d.db"].problems, [p for p in bare["d.db"].problems if "no correlated ERROR record" in p])
+        self.assertTrue(bare["d.db"].problems)
         e = verify.load_expected()["python"]
         self.assertEqual([verify.judge(e[k]["expect"], c[k].state) for k in c],
-                         ["PASS", "XFAIL", "XFAIL", "XFAIL"])
+                         ["PASS", "XFAIL", "XFAIL", "XPASS"])
 
     def test_node(self) -> None:
         c = self.cells("node")
@@ -880,6 +885,15 @@ class CheckDTest(unittest.TestCase):
         problems = verify._d_db(b, make_run("dotnet"), "dotnet", spans)
         self.assertTrue(any("status description" in p for p in problems))
         self.assertTrue(any("no correlated ERROR record" in p for p in problems))
+        # Exception events (ruling 2026-11-19): none or one type-only event passes; two, or one
+        # with any other attribute, fail.
+        db.message = ""
+        for events, bad in (([], False), ([("exception", {"exception.type": "T"})], False),
+                            ([("exception", {"exception.type": "T"})] * 2, True),
+                            ([("exception", {"exception.type": "T", "exception.message": "m"})], True)):
+            db.events = events
+            got = [p for p in verify._d_db(b, make_run("dotnet"), "dotnet", spans) if "exception events" in p]
+            self.assertEqual(bool(got), bad, (events, got))
 
     def test_span_sets(self) -> None:
         sets = {}
@@ -1461,6 +1475,8 @@ class ReviewFixesTest(unittest.TestCase):
             b = CheckDTest().setup_lang(lang)
             rep = report()
             for cell, obs in verify.check_d(b, make_run(lang), lang, cache(b), rep).items():
+                if (lang, cell) == ("python", "d.db"):
+                    continue  # XPASS on synthetic records since the 2026-11-19 ruling (test_python)
                 want = expected[lang][cell]["expect"]
                 self.assertEqual(rep.cell(lang, cell, obs), "XFAIL" if want.startswith("xfail:") else "PASS",
                                  (lang, cell, obs.problems))

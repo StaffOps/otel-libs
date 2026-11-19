@@ -444,3 +444,126 @@ test('instruments of an older meter bind record nothing; without legacy keys att
   assert.deepEqual(point.attributes, { 'db.system.name': 'postgresql' });
   await provider.shutdown();
 });
+
+/** Runs fn with process.stdout.write captured; returns the helper's JSON lines (A36 records). */
+function captureRecords(fn) {
+  const chunks = [];
+  const original = process.stdout.write;
+  process.stdout.write = (chunk) => {
+    chunks.push(String(chunk));
+    return true;
+  };
+  try {
+    fn();
+  } finally {
+    process.stdout.write = original;
+  }
+  return chunks.flatMap((c) => c.split('\n')).filter((l) => l.startsWith('{"time":')).map((l) => JSON.parse(l));
+}
+
+test('A36: exceptionRecords — a recorded exception keeps a type-only event; setStatus(ERROR) writes one correlated record', () => {
+  const { exporter, wrapped } = tracerOf({ legacyKeys: false, exceptionRecords: true, exceptionType: (e) => (e === 'typed' ? 'pgname' : e === 'throw' ? (() => { throw new Error('hook'); })() : undefined) });
+  const tracer = wrapped.getTracer('t');
+  const err = Object.assign(new RangeError("duplicate 'bound-secret-a36'"), { code: '23505' });
+  let ids = {};
+  const lines = captureRecords(() => {
+    const object = tracer.startSpan('object');
+    ids.object = object.spanContext();
+    object.recordException(err);
+    object.setStatus({ code: api.SpanStatusCode.ERROR, message: "duplicate 'bound-secret-a36'" });
+    object.setStatus({ code: api.SpanStatusCode.ERROR, message: 'again' }); // one record per span
+    object.end();
+    const sanitized = tracer.startSpan('sanitized');
+    ids.sanitized = sanitized.spanContext();
+    sanitized.recordException('typed');
+    sanitized.setStatus({ code: api.SpanStatusCode.ERROR, message: 'invalid input syntax: "bound-secret-a36"' });
+    sanitized.end();
+    const hookThrows = tracer.startSpan('hook-throws');
+    hookThrows.recordException('throw');
+    hookThrows.setStatus({ code: api.SpanStatusCode.ERROR });
+    hookThrows.end();
+    const statusOnly = tracer.startSpan('status-only');
+    ids.statusOnly = statusOnly.spanContext();
+    statusOnly.setStatus({ code: api.SpanStatusCode.ERROR, message: 'server text' });
+    statusOnly.end();
+    const silent = tracer.startSpan('silent');
+    silent.setStatus({ code: api.SpanStatusCode.ERROR });
+    silent.setStatus({ code: api.SpanStatusCode.OK });
+    silent.end();
+  });
+  const byName = Object.fromEntries(exporter.getFinishedSpans().map((s) => [s.name, s]));
+  assert.deepEqual(byName.object.events.map((e) => [e.name, e.attributes]), [['exception', { 'exception.type': 'RangeError' }]], 'D15 type, not the code');
+  assert.deepEqual(byName.sanitized.events.map((e) => e.attributes), [{ 'exception.type': 'pgname' }]);
+  assert.deepEqual(byName['hook-throws'].events.map((e) => e.attributes), [{ 'exception.type': 'Error' }], 'a throwing hook: the D15 rule');
+  for (const s of exporter.getFinishedSpans()) {
+    assert.ok(s.status.message === undefined, s.name);
+    for (const v of [...Object.values(s.attributes), ...s.events.flatMap((e) => Object.values(e.attributes))]) {
+      assert.ok(!String(v).includes('bound-secret-a36') && !String(v).includes('at '), `${s.name}: ${v}`);
+    }
+  }
+  // object (from the exception object), sanitized and status-only (from the status message); hook-throws and silent: none.
+  assert.equal(lines.length, 3, JSON.stringify(lines));
+  const [o, z, st] = lines;
+  assert.deepEqual([o.level, o.logger, o.msg, o['exception.type'], o['exception.message'], o['exception.stacktrace']], ['ERROR', 'otel-helper', "duplicate 'bound-secret-a36'", 'RangeError', "duplicate 'bound-secret-a36'", err.stack]);
+  assert.deepEqual([o.trace_id, o.span_id], [ids.object.traceId, ids.object.spanId]);
+  assert.deepEqual([z.msg, z['exception.type'], z['exception.stacktrace'], z.span_id], ['invalid input syntax: "bound-secret-a36"', 'pgname', undefined, ids.sanitized.spanId]);
+  assert.deepEqual([st.msg, st['exception.type'], st.span_id], ['server text', 'Error', ids.statusOnly.spanId]);
+});
+
+test('A36: pendingError gives the record its detail; a throwing pendingError and an unsampled span; off by default', () => {
+  const held = new TypeError('Duplicate entry \'bound-secret-a36\'');
+  let pending = held;
+  const exporter = new InMemorySpanExporter();
+  const sampled = new TracerProvider({ spanProcessors: [new SimpleSpanProcessor({ exporter })] });
+  const never = new TracerProvider({ sampler: { shouldSample: () => ({ decision: 0 }), toString: () => 'never' } });
+  const opts = { legacyKeys: false, exceptionRecords: true, pendingError: () => {
+    if (pending === 'throw') throw new Error('slot');
+    return pending;
+  } };
+  const tracer = db.dbTracerProvider(sampled, opts).getTracer('t');
+  const lines = captureRecords(() => {
+    const a = tracer.startSpan('held');
+    a.setStatus({ code: api.SpanStatusCode.ERROR, message: 'ignored: the held error wins' });
+    a.end();
+    pending = 'throw';
+    const b = tracer.startSpan('slot-throws');
+    b.setStatus({ code: api.SpanStatusCode.ERROR, message: 'from the status' });
+    b.end();
+    pending = held;
+    const c = db.dbTracerProvider(never, opts).getTracer('t').startSpan('unsampled', { attributes: { 'db.system.name': 'mysql' } });
+    assert.equal(c.isRecording(), false);
+    c.setStatus({ code: api.SpanStatusCode.ERROR });
+    c.end();
+    const off = db.dbTracerProvider(sampled, { legacyKeys: false }).getTracer('t').startSpan('off');
+    off.recordException(new Error('kept detail'));
+    off.setStatus({ code: api.SpanStatusCode.ERROR, message: 'x' });
+    off.end();
+  });
+  assert.deepEqual(lines.map((l) => [l.msg, l['exception.type'], l['exception.stacktrace'] === held.stack]), [
+    ["Duplicate entry 'bound-secret-a36'", 'TypeError', true],
+    ['from the status', 'Error', false],
+    ["Duplicate entry 'bound-secret-a36'", 'TypeError', true],
+  ]);
+  assert.equal(lines[2].trace_id.length, 32, 'an unsampled span keeps its ids');
+  assert.deepEqual([lines[2]['db.system.name'], lines[2]['error.type'], lines[2]['db.response.status_code']], ['mysql', '_OTHER', undefined], 'from the start attributes and the computed type (the span keeps none)');
+  assert.deepEqual([lines[0]['db.system.name'], lines[0]['error.type']], [undefined, '_OTHER']);
+  const off = exporter.getFinishedSpans().find((s) => s.name === 'off');
+  assert.equal(off.events[0].attributes['exception.message'], 'kept detail', 'without exceptionRecords the event is unchanged (-redis, -aws)');
+});
+
+test('A36: a span without addEvent keeps its own recordException; a write failure never reaches the instrumented call', () => {
+  const recorded = [];
+  const bare = { attributes: {}, setStatus() {}, setAttribute() { return this; }, recordException: (e) => recorded.push(e), spanContext: () => api.INVALID_SPAN_CONTEXT };
+  const span = db.dbTracerProvider({ getTracer: () => ({ startSpan: () => bare }) }, { legacyKeys: false, exceptionRecords: true }).getTracer('x').startSpan('y');
+  span.recordException('e');
+  assert.deepEqual(recorded, ['e']);
+  const original = process.stdout.write;
+  process.stdout.write = () => {
+    throw new Error('EPIPE');
+  };
+  try {
+    span.setStatus({ code: api.SpanStatusCode.ERROR, message: 'server text' });
+  } finally {
+    process.stdout.write = original;
+  }
+});
