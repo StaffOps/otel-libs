@@ -43,6 +43,9 @@ const { S3Client } = require('@aws-sdk/client-s3'); // every send() produces a s
   context: wrap traced work in its listeners in `context.with(saved, …)`.
 - The AWS SDK stays your app's dependency; ES module apps need no loader
   hooks for it.
+- Create it before loading the AWS SDK; before or after requiring
+  `@staffops/otel-helper` (its first call builds the core instrumentations
+  first, task A41).
 
 Exports (the 0.x API contract, [API stability](https://github.com/StaffOps/otel-libs/blob/main/nodejs/README.md#api-stability-0x)):
 `awsInstrumentation(options?)`, `VERSION`; types `AwsInstrumentationOptions`, `AwsInstrumentation`.

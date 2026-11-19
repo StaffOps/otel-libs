@@ -92,6 +92,12 @@ What runs before `setup()` matters:
   `<module> was loaded before setup(); …`, but apps, routers and clients built
   before it may lack spans or have an incomplete `http.route`
   ([§2](#routes-modules-after-setup)).
+- **An instrumentation built before the helper's** — one you construct
+  yourself before `require('@staffops/otel-helper')` (or between it and
+  `setup()` while loading modules) leaves `node:http`, express or
+  `@grpc/grpc-js` loaded in that window uninstrumented, reported as
+  `<module> is not instrumented: …` ([§9](#9-opt-in-instrumentation-packages)).
+  The opt-in factories are safe anywhere before `setup()`.
 - **An ES module process without the hooks** — `setup()` warns once:
   `setup() runs in an ES module process without the module hooks; packages imported after setup() (…) are not instrumented`.
   The check recognizes an ES module entry by `--input-type=module`, an
@@ -650,22 +656,30 @@ Rules shared by the three:
   re-setup.
 - **Create it, and call `setup()`, before loading the library.** A library
   loaded earlier is still patched on the first enable (the helper re-requires
-  its cached files), but load order is the reliable path. Do not load other
-  modules between creating the factory result and calling `setup()`: the
-  instrumentation installs the shared require hook when it is created, and a
-  module loaded through it before `setup()` (`node:http`, express,
-  `@grpc/grpc-js`) is never patched by the core instrumentations — create it
-  inside the call, `setup({ instrumentations: [redisInstrumentation()] })`.
-  Requiring `@staffops/otel-helper` itself after the factory counts (it loads
-  `node:http`): require the helper first. When `node:http` ends up
-  uninstrumented this way, the first `setup()` reports it once on stderr:
-  `otelhelper: node:http is not instrumented: it was loaded after an
-  instrumentation was built and before setup(), …`. express and
-  `@grpc/grpc-js` loaded in that window get only the `was loaded before
-  setup()` line, and stay uninstrumented (task A41).
-  (In `0.3.0-rc.1`, fixed by task A39, the gRPC OTLP
-  exporters themselves triggered this: no http, express or gRPC spans with a
-  factory and OTLP over gRPC.)
+  its cached files), but load order is the reliable path. The factory may run
+  anywhere before `setup()`, even before `require('@staffops/otel-helper')`:
+  its first call builds the core instrumentations (http, fetch, express,
+  gRPC), disabled, before its own, so express and `@grpc/grpc-js` loaded
+  afterwards are still patched by `setup()`, and `node:http` is loaded by
+  that call before any require hook exists (task A41; before it, a module
+  loaded between the factory call and `setup()` stayed uninstrumented). Creating it inside the call,
+  `setup({ instrumentations: [redisInstrumentation()] })`, stays the simplest
+  form. (In `0.3.0-rc.1`, fixed by task A39, the gRPC OTLP exporters
+  themselves triggered this: no http, express or gRPC spans with a factory and
+  OTLP over gRPC.)
+- **An instrumentation you build yourself** (any `InstrumentationBase`, not
+  from these packages) installs the shared require hook when it is
+  constructed. A module loaded through that hook before the helper's
+  instrumentations exist (`node:http` from `require('@staffops/otel-helper')`,
+  express, `@grpc/grpc-js`) is never patched for the life of the process. Require
+  `@staffops/otel-helper` first and construct it inside the `setup()` call
+  (`setup({ instrumentations: [new MyInstrumentation()] })`), before the app
+  loads. When it happens, the first `setup()` reports each module once on
+  stderr (one copy per package), for example `otelhelper: express is not instrumented: it was loaded
+  after another instrumentation was built and before the helper's own, so its
+  routes get no request-handler spans and no http.route — … module=express`
+  (also `node:http`, `node:https`, `@grpc/grpc-js`); express and grpc-js then
+  get this line instead of `was loaded before setup()`.
 - Instrumentations are matched by name: passing a raw contrib instrumentation
   (`PgInstrumentation`, `IORedisInstrumentation`, `AwsInstrumentation`) next
   to the factory, or one the core already installs
@@ -1455,6 +1469,7 @@ Unset.
 |---|---|
 | `setup() runs in an ES module process without the module hooks` | Start with `--import @staffops/otel-helper/register`, or import `@staffops/otel-helper/hooks` first in your preload ([§1](#1-getting-started)) |
 | `<module> was loaded before setup()` | `express` or `@grpc/grpc-js` was required first. Move `setup()` to a preload or the top of the entry ([§2](#routes-modules-after-setup)) |
+| `<module> is not instrumented: it was loaded after another instrumentation was built …` | An instrumentation of your own was constructed before the helper's, and `node:http`, `node:https`, express or `@grpc/grpc-js` loaded in between. Require the helper first and construct it inside `setup({ instrumentations: [...] })`, or remove the other instrumentation preload (`--require`/`--import`) ([§9](#9-opt-in-instrumentation-packages)) |
 | `http.route` is `/api` instead of `/api/orders/:id` | The router was built before `setup()` |
 | No spans from an ioredis client in an ES module app | ioredis needs the loader hooks ([§9](#9-opt-in-instrumentation-packages)) |
 | A gRPC call has no SERVER span | The handler threw synchronously ([§3](#3-grpc)) |

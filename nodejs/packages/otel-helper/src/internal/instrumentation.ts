@@ -33,10 +33,13 @@
  * Lifecycle: the instrumentations are built once per process and kept on the
  * shared runtime; every `setup()` binds them to the helper's forwarding
  * providers (or to a foreign global provider), sets its exclusions and
- * enables them; `shutdown()` disables them (Python uninstruments at shutdown). They are not built under `OTEL_SDK_DISABLED=true`
- * (Python: no instrumentation, contract D1 row "OTEL_SDK_DISABLED").
+ * enables them; `shutdown()` disables them (Python uninstruments at shutdown). `setup()` does not build them under `OTEL_SDK_DISABLED=true`
+ * (Python: no instrumentation, contract D1 row "OTEL_SDK_DISABLED"); an
+ * opt-in factory builds them, disabled, before its own (task A41), and under
+ * that variable they are never enabled.
  */
 import type * as http from 'node:http';
+import type * as https from 'node:https';
 import { syncBuiltinESMExports } from 'node:module';
 import * as path from 'node:path';
 import type { LoggerProvider, MeterProvider, TracerProvider } from '@opentelemetry/api';
@@ -47,6 +50,7 @@ import type * as Grpc from '@opentelemetry/instrumentation-grpc';
 import type * as Http from '@opentelemetry/instrumentation-http';
 import type * as Undici from '@opentelemetry/instrumentation-undici';
 import { redactErrorText, report, reportOnce, truncateValue } from './diagnostics';
+import { debugEnabled } from './diag-logger';
 import { isHelperServer } from './metrics-endpoint';
 import { getState } from './state';
 import type { OtlpPlan } from './otlp';
@@ -284,7 +288,7 @@ export interface HelperInstrumentations {
 /** Third-party packages the core instrumentations patch through require-in-the-middle. */
 export const INSTRUMENTED_PACKAGES: readonly string[] = Object.freeze(['express', '@grpc/grpc-js']);
 
-// Loaded on first setup only: `require('@staffops/otel-helper')` stays light.
+// Loaded on the first build only (the first instrumenting setup(), or an opt-in factory's first call since A41): `require('@staffops/otel-helper')` stays light.
 /* eslint-disable @typescript-eslint/no-require-imports */
 const httpModule = (): typeof Http => require('@opentelemetry/instrumentation-http') as typeof Http;
 const undiciModule = (): typeof Undici => require('@opentelemetry/instrumentation-undici') as typeof Undici;
@@ -407,7 +411,10 @@ export function loadedPackages(): ReadonlySet<string> {
  * server) may keep unpatched references. `node:http` and `node:https` are
  * required again on every enable for the same reason, and
  * `module.syncBuiltinESMExports()` makes ESM named imports
- * (`import { request } from 'node:http'`) see the patched functions.
+ * (`import { request } from 'node:http'`) see the patched functions. A
+ * module the re-require cannot patch (cached by the shared hook before the
+ * core instrumentations existed, task A41) is reported as not instrumented
+ * instead, once per process.
  */
 export function enableInstrumentations(holder: HelperInstrumentations, exclusions: ClientExclusions, loadedBeforeSetup: ReadonlySet<string>): void {
   holder.exclusions = exclusions;
@@ -422,6 +429,12 @@ export function enableInstrumentations(holder: HelperInstrumentations, exclusion
       if (entries.length === 0) continue;
       // eslint-disable-next-line @typescript-eslint/no-require-imports -- re-require so the require hook patches it
       for (const entry of entries) require(entry);
+      // Never seen by its instrumentation (task A41): reported as not
+      // instrumented, not with the "loaded before setup()" line below.
+      if (neverSeen(holder, name)) {
+        reportUnpatched(name);
+        continue;
+      }
       // The gRPC exporters load grpc-js inside setup(): re-required, not reported.
       if (!loadedBeforeSetup.has(name)) continue;
       // Imported through ESM with the loader hooks installed: import-in-the-middle
@@ -436,34 +449,110 @@ export function enableInstrumentations(holder: HelperInstrumentations, exclusion
   }
   /* eslint-disable @typescript-eslint/no-require-imports */
   const nodeHttp = require('node:http') as typeof http;
-  require('node:https');
+  const nodeHttps = require('node:https') as typeof https;
   /* eslint-enable @typescript-eslint/no-require-imports */
   syncBuiltinESMExports();
-  if (first) reportUnpatchedHttp(holder, nodeHttp);
+  if (first) reportUnpatchedBuiltins(holder, { 'node:http': nodeHttp, 'node:https': nodeHttps });
+}
+
+/** What a module left unpatched loses, in its report (task A41). */
+const UNPATCHED_LOSS: Readonly<Record<string, string>> = Object.freeze({
+  'node:http': 'HTTP servers and clients get no spans',
+  'node:https': 'HTTPS servers and clients get no spans',
+  express: 'its routes get no request-handler spans and no http.route',
+  '@grpc/grpc-js': 'gRPC servers and clients get no spans',
+});
+
+/**
+ * Reports, once per process, a module the core instrumentations never
+ * patched because it was loaded through the shared require-in-the-middle hook
+ * after another instrumentation was built and before the helper's own were
+ * (tasks A39, A41): the hook caches it, so no re-require reaches them. Since
+ * A41 an opt-in factory builds the helper's first, so the cause left is an
+ * instrumentation the app builds itself.
+ */
+function reportUnpatched(module: string): void {
+  reportOnce(
+    `unpatched:${module}`,
+    `${module} is not instrumented: it was loaded after another instrumentation was built and before the helper's own, so ${UNPATCHED_LOSS[module] ?? 'it gets no spans'} — require @staffops/otel-helper first and build your own instrumentations inside the setup() call (setup({ instrumentations: [new MyInstrumentation()] })), before the app loads`,
+    { module },
+  );
+}
+
+/** The part of `InstrumentationBase` {@link neverSeen} reads: its module definitions (protected upstream). */
+interface ModuleDefinitionsHolder {
+  readonly _modules?: unknown;
+  readonly isEnabled?: () => boolean;
+}
+
+/** One upstream module definition, as {@link neverSeen} reads it. */
+interface ModuleDefinitionLike {
+  readonly name?: unknown;
 }
 
 /**
- * Task A39 (principle 8: failures are loud): after the first enable, an
- * enabled instrumentation-http whose `node:http` is still unpatched. The
- * shared require-in-the-middle hook caches every module it processes, so
- * `node:http` loaded through it before the core instrumentations were built
- * (an instrumentation built before `setup()`, then the helper or the app
- * required) never reaches instrumentation-http and the re-require above gets
- * the cached exports. Reported once per process; never throws.
+ * Whether the enabled core instrumentation of package `name` never saw it,
+ * though it is in `require.cache` and was just required again: its module
+ * definition has no own `moduleVersion`. upstream's `_onRequire` assigns it
+ * for every copy the hook hands over — supported version or not, `undefined`
+ * for a copy whose `package.json` has no version — and the definition class
+ * declares no such field (`@opentelemetry/instrumentation` 0.300,
+ * `dist/platform/node/instrumentation.cjs:105-106`,
+ * `instrumentationNodeModuleDefinition.cjs`; ESM imports through the loader
+ * hooks too), so a missing property means the require-in-the-middle cache
+ * answered — the A41 cause — and not an unsupported version (left
+ * unreported, as before). Reads the protected `_modules` (re-check on SDK
+ * bumps, release skill): when no enabled core instrumentation exposes it as
+ * an array, the detection is unavailable, said once at debug level, and
+ * nothing is reported. Of several copies, one seen counts as seen (one copy
+ * per package).
+ *
+ * @internal exported for tests
  */
-function reportUnpatchedHttp(holder: HelperInstrumentations, nodeHttp: typeof http): void {
+export function neverSeen(holder: { readonly instrumentations: readonly Instrumentation[] }, name: string): boolean {
+  try {
+    let detectable = false;
+    for (const instrumentation of holder.instrumentations) {
+      const base = instrumentation as unknown as ModuleDefinitionsHolder;
+      if (base.isEnabled?.() !== true) continue;
+      const modules = base._modules;
+      if (!Array.isArray(modules)) continue;
+      detectable = true;
+      const definitions = (modules as readonly ModuleDefinitionLike[]).filter((d) => d.name === name);
+      if (definitions.length > 0) return definitions.every((d) => !Object.hasOwn(d, 'moduleVersion'));
+    }
+    if (!detectable && debugEnabled()) {
+      reportOnce(
+        'unpatched-detection-unavailable',
+        'unpatched-module detection unavailable: no enabled core instrumentation exposes its module definitions (_modules), so express or @grpc/grpc-js left unpatched by the shared require hook would not be reported',
+        undefined,
+        { origin: 'helper', level: 'debug' },
+      );
+    }
+  } catch {
+    // A diagnostic only.
+  }
+  return false;
+}
+
+/**
+ * Tasks A39, A41 (principle 8: failures are loud): after the first enable,
+ * an enabled instrumentation-http whose `node:http` or `node:https` is still
+ * unpatched. The shared require-in-the-middle hook caches every module it
+ * processes, so a builtin loaded through it before the core instrumentations
+ * were built never reaches instrumentation-http and the re-require above gets
+ * the cached exports. Each reported once per process; never throws.
+ */
+function reportUnpatchedBuiltins(holder: HelperInstrumentations, modules: Readonly<Record<string, { readonly request: unknown }>>): void {
   try {
     const httpInstrumentation = holder.instrumentations.find((i) => i.instrumentationName === HTTP_INSTRUMENTATION);
     // `isEnabled()` is on InstrumentationBase, not on the Instrumentation interface.
     if ((httpInstrumentation as { isEnabled?: () => boolean } | undefined)?.isEnabled?.() !== true) return;
     // eslint-disable-next-line @typescript-eslint/no-require-imports -- loaded with the instrumentations
     const { isWrapped } = require('@opentelemetry/instrumentation') as typeof InstrumentationApi;
-    if (isWrapped(nodeHttp.request)) return;
-    reportOnce(
-      'unpatched:node:http',
-      'node:http is not instrumented: it was loaded after an instrumentation was built and before setup(), so HTTP servers and clients get no spans — require @staffops/otel-helper first and build opt-in instrumentations inside the setup() call (setup({ instrumentations: [redisInstrumentation()] }))',
-      { module: 'node:http' },
-    );
+    for (const [module, exports] of Object.entries(modules)) {
+      if (!isWrapped(exports.request)) reportUnpatched(module);
+    }
   } catch {
     // A diagnostic only.
   }

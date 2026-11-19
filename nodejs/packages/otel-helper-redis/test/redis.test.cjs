@@ -462,6 +462,26 @@ test('A39: redisInstrumentation() with OTLP over gRPC: the core http and gRPC sp
   }
 });
 
+test('A41: redisInstrumentation() created before the helper, express, grpc-js and redis are required: http, express, gRPC and Redis spans in one trace, nothing reported unpatched', async () => {
+  const fake = await startRespFake();
+  try {
+    const out = await runNode([path.join(FIXTURES, 'factory-first.cjs')], { env: { REDIS_FAKE_URL: fake.url } });
+    assert.equal(out.status, 0, out.stderr);
+    assert.deepEqual(out.reports.filter((l) => /is not instrumented|could not be/.test(l)), []);
+    const find = (scope, kind, name) => out.spans.find((s) => s.scope === scope && s.kind === kind && (name === undefined || s.name === name));
+    const server = find('@opentelemetry/instrumentation-http', 1, 'GET /orders');
+    const handler = find('@opentelemetry/instrumentation-express', 0, 'request handler - /orders');
+    const grpcClient = find('@opentelemetry/instrumentation-grpc', 2, 'a41.v1.Orders/Place');
+    const grpcServer = find('@opentelemetry/instrumentation-grpc', 1, 'a41.v1.Orders/Place');
+    const set = find('@opentelemetry/instrumentation-redis', 2, 'SET');
+    assert.ok(server && handler && grpcClient && grpcServer && set, `http SERVER, express, gRPC CLIENT/SERVER and Redis SET spans: ${JSON.stringify(out.spans)}`);
+    assert.ok(find('@opentelemetry/instrumentation-http', 2), `http CLIENT span: ${JSON.stringify(out.spans)}`);
+    assert.deepEqual([...new Set([server, handler, grpcClient, grpcServer, set].map((s) => s.traceId))], [server.traceId], 'one trace per request');
+  } finally {
+    await fake.close();
+  }
+});
+
 test('OTEL_SEMCONV_STABILITY_OPT_IN=database: only db.system.name', async () => {
   const fake = await startRespFake();
   try {

@@ -122,6 +122,81 @@ app's early load. A failed build is now reported even when the exporters
 then throw, and after a failed *build* the next setup's retry cannot patch
 what the exporters loaded through an already installed hook (a setup failing
 after the build is retried fine: test "A39 … fault").*
+*Amended 2026-11-19 (contract task A41, the structural fix for the A39
+residual; revised the same day after code-review and observability): the
+core instrumentations are built before the **first contrib
+instrumentation**, not only before the exporters. Mechanism: an opt-in
+package's registry (`contrib.ts` `contribRegistry`, `child()`) requires
+`internal/setup` **lazily** (so requiring an opt-in package stays light) and
+calls `prebuildInstrumentations()` before a library's first `spec.build`; it
+builds the four core instrumentations, disabled, into
+`Runtime.instrumentations` on the shared state — the slot `setup()`'s
+`instrumentationsOf` reads, so `setup()` reuses them. It does nothing when
+this copy of the helper is inactive (another version's state), under a
+foreign API registry (`foreignRegistry()`), or when they already exist, and
+is tried at most once per process (`Runtime.prebuildTried`). It never throws
+and never reports: after a failed build `setup()` builds them again and owns
+the "could not be built" report. Requiring an opt-in package, or creating a
+registry, builds nothing; only a factory call does. Under
+`OTEL_SDK_DISABLED=true` a factory builds them (the variable is read by
+`setup()`, not by the factory) but `setup()` never enables them, so their
+hooks stay inert — the D-JS7 "none under `OTEL_SDK_DISABLED=true`" now means
+none *enabled*. What it covers: express and `@grpc/grpc-js` loaded after the
+factory call reach the core hooks (disabled: `_onRequire` keeps
+`moduleExports`) and the first enable patches them. `node:http` is not at
+risk on the factory path for another reason: the lazy require of
+`internal/setup` loads it (through `metrics-endpoint.ts`) before the factory
+builds anything, so no hook exists yet and the first enable's re-require
+patches it; the same holds when the app requires `@staffops/otel-helper`
+first. Upstream's own preload warning (`_warnOnPreloadedModules`, run when a
+constructor enables an instrumentation) prints nothing on this path: it reads
+`globalThis.require`, undefined in CommonJS and ES modules, and before
+`setup()` the API `diag` is the no-op logger. The "loaded before setup()" set
+is now taken at the start of the first setup that instruments
+(`Runtime.loadedBeforeFirstSetup`, renamed from `loadedBeforeHooks`), since a
+factory may build the core instrumentations long before `setup()`; still once,
+so a failed setup's exporter loads are not reported by the retry. It is a
+snapshot: a package first loaded after that moment (between a failed first
+setup and its retry, say) is not reported as loaded before `setup()`.
+**Limit**: an instrumentation the app builds itself (any `InstrumentationBase`
+not created through an opt-in factory) before the core ones exist still
+installs the shared hook first, and `node:http`/`node:https`, express or
+grpc-js loaded through it in that window stay unpatched for the process; so
+does any module loaded that way when the prebuild is skipped (an inactive copy
+or a foreign API registry). Not fixable by the helper: it cannot reach into
+upstream's `RequireInTheMiddleSingleton`. Rejected alternative: building the
+core instrumentations on `require('@staffops/otel-helper')` — it would make
+the require heavy, build before `OTEL_SDK_DISABLED` and the API registry are
+known, and still lose when the app builds its instrumentation before
+requiring the helper. **Diagnostics** (principle 8, replacing
+`reportUnpatchedHttp`): after the first enable, each module that really
+stayed unpatched is reported once per process (one copy per package) on the
+diagnostics sink — `node:http` and `node:https` when an enabled
+instrumentation-http left `request` unwrapped (`reportUnpatchedBuiltins`);
+express and `@grpc/grpc-js` when a copy is in `require.cache` and was just
+required again, yet the enabled instrumentation's module definition has no
+own `moduleVersion` (`neverSeen`: upstream's `_onRequire` assigns it for every
+copy the hook hands over, supported version or not, `undefined` for a copy
+without a `package.json` version, `instrumentation.cjs:105-106`, and the
+definition class declares no such field, so a missing property means the
+hook's cache answered — an unsupported version is not reported, as before; of
+several copies, one seen counts as seen). It reads the protected `_modules`
+(release skill, Node.js SDK-bump checklist); when no enabled core
+instrumentation exposes it as an array, one debug-level line says
+`unpatched-module detection unavailable: …` and nothing is reported. Line,
+a constant per module: `<module> is not instrumented: it was loaded after
+another instrumentation was built and before the helper's own, so <loss> —
+require @staffops/otel-helper first and build your own instrumentations
+inside the setup() call (setup({ instrumentations: [new MyInstrumentation()]
+})), before the app loads module=<module>`, `<loss>` = `HTTP servers and
+clients get no spans`, `HTTPS servers and clients get no spans`, `its routes
+get no request-handler spans and no http.route`, `gRPC servers and clients
+get no spans`. express and grpc-js get this line instead of the "loaded
+before setup()" one, which would promise a patch that never happens. Tests:
+`test/instrumentation.test.cjs` "A41" (fixture `instrumentation-first.cjs`,
+a contrib registry or the app's own instrumentation built first; an inactive
+copy; a failed prebuild; a copy without a version; detection unavailable)
+and `otel-helper-redis/test/redis.test.cjs` "A41" (the real factory first).*
 **Justification**: ADR-012; 3.0
 registers no context manager (without it no in-process parent link).
 **Trade-offs**: more code than `NodeSDK`. **When wrong / reversal / alternatives**: ADR-012.

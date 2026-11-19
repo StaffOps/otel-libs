@@ -100,20 +100,29 @@ interface Runtime {
   /** The `diag` registry entry the helper's DiagLogger produced; `undefined` = not installed. */
   diagLogger: unknown;
   /**
-   * The instrumented packages the app had loaded when the core
-   * instrumentations were built (their require hooks registered): what the
-   * first enable reports as "loaded before setup()". Taken by the setup that
-   * builds them, so a failed setup's own exporter loads are not reported by
-   * the retry (A39 code review).
+   * The instrumented packages the app had loaded when the first setup that
+   * instruments started, before its exporters loaded anything: what the first
+   * enable reports as "loaded before setup()". Taken once, so a failed setup's
+   * own exporter loads are not reported by the retry (A39 code review); not
+   * when the core instrumentations are built, since an opt-in factory may
+   * build them long before `setup()` (task A41).
    */
-  loadedBeforeHooks?: ReadonlySet<string>;
+  loadedBeforeFirstSetup?: ReadonlySet<string>;
   /**
-   * The core instrumentations, built by the first setup that instruments and
-   * kept for the process: every later setup re-binds them (design D-JS7).
+   * The core instrumentations, built by the first setup that instruments, or
+   * earlier by an opt-in factory's first build (`prebuildInstrumentations`,
+   * task A41), and kept for the process: every later setup re-binds them
+   * (design D-JS7).
    * `undefined` = not built yet, or the last build failed (retried by the
    * next setup; each failure is reported).
    */
   instrumentations: HelperInstrumentations | undefined;
+  /**
+   * Whether an opt-in factory already tried to build the core instrumentations
+   * (`prebuildInstrumentations`, task A41): tried once per process, silently;
+   * after a failure `setup()` builds them again and reports.
+   */
+  prebuildTried?: boolean;
   /** The opt-in instrumentations enabled now (for `/testing` `reset()`, which disables them all); `shutdown()` removes its own. */
   optIn: Set<Instrumentation>;
   /**
@@ -169,6 +178,35 @@ function instrumentationsOf(rt: Runtime): HelperInstrumentations | undefined {
     });
   }
   return rt.instrumentations;
+}
+
+/**
+ * Task A41 (Node design D-JS1, amended 2026-11-19): builds the core
+ * instrumentations, disabled, into the shared runtime before an opt-in
+ * package builds its first contrib instrumentation (`contribRegistry`), so
+ * `setup()` reuses them. Every `InstrumentationBase` constructor installs the
+ * process-wide require-in-the-middle hook, which caches each module it
+ * processes with the hooks registered at that moment: built first, the core
+ * hooks see express and `@grpc/grpc-js` whenever they load, and the first
+ * enable patches them. Nothing is built when this copy of the helper is
+ * inactive (another version's state), into another API version's registry,
+ * or when they exist; it is tried at most once per process. Under
+ * `OTEL_SDK_DISABLED=true` they are built (the variable is read by
+ * `setup()`) but never enabled: their hooks stay inert. Never throws and
+ * never reports: after a failed build `setup()` builds them again and owns
+ * the "could not be built" report (one per failed setup, as before A41).
+ */
+export function prebuildInstrumentations(): void {
+  try {
+    const state = getState();
+    if (state === null || foreignRegistry() !== undefined) return;
+    const rt = runtimeOf(state);
+    if (rt.instrumentations !== undefined || rt.prebuildTried === true) return;
+    rt.prebuildTried = true;
+    rt.instrumentations = createInstrumentations();
+  } catch {
+    // Silent: setup() retries the build and reports a failure.
+  }
 }
 
 /**
@@ -875,10 +913,11 @@ function install(rt: Runtime, plan: Plan, options: SetupOptions, base: Resource,
   step('diag');
   const { sdkDisabled } = plan.resolved;
   const instrumentable = foreignApi === undefined && !sdkDisabled;
-  // Before the exporters load grpc-js: what the app had loaded itself when the
-  // core hooks did not exist yet (taken once, by the setup that builds them).
-  if (instrumentable && rt.instrumentations === undefined) rt.loadedBeforeHooks = loadedPackages();
-  const loadedBeforeSetup = rt.loadedBeforeHooks ?? new Set<string>();
+  // Before the exporters load grpc-js: what the app had loaded itself before
+  // the first setup that instruments (taken once; task A41: an opt-in factory
+  // may have built the core hooks earlier, so not taken when they are built).
+  if (instrumentable) rt.loadedBeforeFirstSetup ??= loadedPackages();
+  const loadedBeforeSetup = rt.loadedBeforeFirstSetup ?? new Set<string>();
   // The core instrumentations are built (disabled) before the exporters load
   // anything (task A39, design D-JS1 amended 2026-11-16): any instrumentation
   // built earlier — an opt-in factory passed to setup() — installed the

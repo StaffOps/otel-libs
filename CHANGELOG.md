@@ -4670,6 +4670,39 @@ Unsupported instrumentation versions, task A10 (P18):
   reports `@grpc/grpc-js` as "loaded before setup()" when the failed attempt's
   gRPC exporters loaded it.
 
+- **Node.js: an opt-in factory called before express or grpc-js are loaded
+  no longer leaves them uninstrumented (task A41, Node design D-JS1,
+  amendment of 2026-11-19).** The first call of `sqlInstrumentation()`,
+  `redisInstrumentation()` or `awsInstrumentation()` now builds the core
+  instrumentations (http, fetch, express, gRPC), disabled, before its own, so
+  express and `@grpc/grpc-js` loaded between the factory call and `setup()`
+  are patched by `setup()`; `node:http` is loaded by that first call before
+  any require hook exists, so it is patched too: the factory can be called
+  anywhere before `setup()`, even before `require('@staffops/otel-helper')`.
+  Requiring an opt-in package builds nothing and stays light (the core's
+  setup module is loaded on the first factory call), nor does a factory under
+  another `@opentelemetry/api` version's registry or in an inactive copy of
+  the helper; under `OTEL_SDK_DISABLED=true` they are built but never
+  enabled. The factory tries the build once, silently; if it fails,
+  `setup()` builds again and reports. Still unfixable by the helper: an
+  instrumentation the app constructs itself before the helper's exist. For
+  that order the first `setup()` now reports each module it really left
+  unpatched, once per process (one copy per package): `node:http`,
+  `node:https`, express or `@grpc/grpc-js` — `otelhelper: <module> is not
+  instrumented: it was loaded after another instrumentation was built and
+  before the helper's own, so <what is lost> — require @staffops/otel-helper
+  first and build your own instrumentations inside the setup() call
+  (setup({ instrumentations: [new MyInstrumentation()] })), before the app
+  loads module=<module>`. This line replaces the A39 `node:http is not
+  instrumented: it was loaded after an instrumentation was built and before
+  setup(), …` text, and express and grpc-js get it instead of the "loaded
+  before setup()" line, which promised a patch that never happened. A copy
+  without a `package.json` version is not mistaken for an unpatched one; when
+  the detection cannot run, one debug line says `unpatched-module detection
+  unavailable`. The "loaded before setup()" set is now taken when the first
+  instrumenting `setup()` starts, not when the core instrumentations are
+  built.
+
 - **Python: `OTEL_PROPAGATORS=none` failed every server request (task A34,
   owner decision 2026-11-10 to fix ahead of the queue).** The helper installed
   an empty `CompositePropagator`, whose `extract()` returns the `context`

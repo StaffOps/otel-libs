@@ -314,6 +314,15 @@ D-JS2) or the `@opentelemetry/api` peer range:
   (`otel-helper/src/internal/exporters.ts`) or passed explicitly, and none
   may be read after construction (the mask is lifted then). Re-run the
   parity export cases and the e2e smoke (both Node legs).
+- **A41 unpatched-module detection: a private seam.** `@opentelemetry/instrumentation`
+  still keeps its module definitions in the protected `_modules` array, and
+  `_onRequire` still assigns `moduleVersion` on each definition for every copy
+  its hook sees (`undefined` included), while the definition class declares no
+  `moduleVersion` field (`otel-helper/src/internal/instrumentation.ts`
+  `neverSeen`). Tests "A41" in `otel-helper/test/instrumentation.test.cjs`
+  (the app's own instrumentation first; a copy without a version); a rename
+  degrades to one debug line `unpatched-module detection unavailable` and no
+  report.
 - **`Span.status` writable in `onEnding`** (sdk-trace): the
   `GrpcServerStatusProcessor` sets the server span status there — test "A22
   gRPC server status through a real TracerProvider".

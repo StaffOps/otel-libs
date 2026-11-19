@@ -35,7 +35,9 @@ const { createClient } = require('redis'); // after setup()
   root spans; an ES module app needs the loader hooks for ioredis
   (`node --import @staffops/otel-helper/register`).
 - One `redisInstrumentation()` per process and per `setup()`; create it
-  before loading the clients, which stay your app's dependencies.
+  before loading the clients, which stay your app's dependencies (before or
+  after requiring `@staffops/otel-helper`: its first call builds the core
+  instrumentations first, task A41).
 
 Exports (the 0.x API contract, [API stability](https://github.com/StaffOps/otel-libs/blob/main/nodejs/README.md#api-stability-0x)):
 `redisInstrumentation(options?)`, `VERSION`; types `RedisInstrumentationOptions`, `RedisInstrumentation`.

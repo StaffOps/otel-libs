@@ -13,7 +13,8 @@
  *   it for that copy), their enable counts (several results enable a contrib
  *   instrumentation once; the last one disabled turns it off), the tracer and
  *   meter bindings (the same TracerProvider is not re-bound; every meter bind
- *   is a new generation, an older one records nothing), the re-require of
+ *   is a new generation, an older one records nothing), the core
+ *   instrumentations built before the first contrib one (task A41), the re-require of
  *   library files loaded before the hooks existed, and the one-time reports.
  * - {@link appDirectories}, {@link resolvesFromApp}, {@link contribLoadError}:
  *   the library detection and the load errors in the contract D14 words (a
@@ -36,6 +37,7 @@ import type { LoggerProvider, MeterProvider, TracerProvider } from '@opentelemet
 import type { Instrumentation, InstrumentationConfig } from '@opentelemetry/instrumentation';
 import { redactText, report, type DiagnosticValue } from './internal/diagnostics';
 import { debugEnabled } from './internal/diag-logger';
+import type * as Setup from './internal/setup';
 
 export { report, reportOnce } from './internal/diagnostics';
 export type { DiagnosticValue } from './internal/diagnostics';
@@ -276,6 +278,19 @@ export function contribRegistry<L extends string>(spec: ContribSpec<L>): Contrib
   function child(library: L): Child {
     let entry = built.get(library);
     if (entry === undefined) {
+      // Task A41 (Node design D-JS1, amended 2026-11-19): the core
+      // instrumentations first. The constructor below installs the shared
+      // require-in-the-middle hook, which caches every module loaded through
+      // it with the hooks registered at that moment, so express and
+      // `@grpc/grpc-js` loaded between this call and `setup()` would stay
+      // unpatched for the process. `node:http` is not at risk on this path:
+      // requiring `internal/setup` here loads it (through the helper's
+      // metrics endpoint) before any hook exists — unless the app built an
+      // instrumentation of its own earlier. Required lazily, so requiring an
+      // opt-in package stays light. Guarded there (inactive copy, foreign
+      // API registry, already built or tried).
+      // eslint-disable-next-line @typescript-eslint/no-require-imports -- lazy, on the first build only
+      (require('./internal/setup') as typeof Setup).prebuildInstrumentations();
       const instrumentation = spec.build(library);
       // Off until setup() enables it: InstrumentationBase enables itself in its
       // constructor, bound to the API's global providers.

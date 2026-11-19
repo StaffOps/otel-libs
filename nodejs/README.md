@@ -129,6 +129,15 @@ In an ES module app, code options need a preload file of your own (an
 `import` statement is hoisted, so `setup()` in the entry runs after the
 imports): see [HOW-TO §1](HOW-TO.md#1-getting-started).
 
+Opt-in factories (`sqlInstrumentation()`, `redisInstrumentation()`,
+`awsInstrumentation()`) may be called anywhere before `setup()`: the first
+call builds the core instrumentations before its own, so modules loaded
+afterwards are still instrumented (task A41). An instrumentation you
+construct yourself must come after `require('@staffops/otel-helper')`,
+inside the `setup()` call; otherwise `setup()` reports each module it left
+uninstrumented, one copy per package (`otelhelper: <module> is not instrumented: …`, see
+[HOW-TO §9](HOW-TO.md#9-opt-in-instrumentation-packages)).
+
 Either way, the helper installs no signal handler: flush on `SIGTERM`
 yourself.
 

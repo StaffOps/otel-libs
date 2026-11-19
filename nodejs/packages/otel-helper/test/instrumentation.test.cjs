@@ -846,7 +846,200 @@ test('A39: node:http loaded after an instrumentation was built and before setup(
   `);
   const lines = lastJson(res);
   assert.equal(lines.length, 1, 'once per process');
-  assert.match(lines[0], /^otelhelper: node:http is not instrumented: it was loaded after an instrumentation was built and before setup\(\), so HTTP servers and clients get no spans — require @staffops\/otel-helper first and build opt-in instrumentations inside the setup\(\) call .* module=node:http$/);
+  assert.equal(lines[0], `otelhelper: ${UNPATCHED('node:http', 'HTTP servers and clients get no spans')} module=node:http`);
+});
+
+/** The A41 report of a module left unpatched by the shared require hook's cache. */
+const UNPATCHED = (module, loss) =>
+  `${module} is not instrumented: it was loaded after another instrumentation was built and before the helper's own, so ${loss} — require @staffops/otel-helper first and build your own instrumentations inside the setup() call (setup({ instrumentations: [new MyInstrumentation()] })), before the app loads`;
+
+// Task A41: an opt-in factory result built before anything else builds the
+// core instrumentations first, so the app's express and grpc-js loaded before
+// setup() are patched (node:http was loaded by the factory call itself, before
+// any hook existed).
+test('A41: an opt-in factory built first, then the helper, express and grpc-js, then setup() with OTLP over gRPC: every core span is recorded', () => {
+  const out = lastJson(runNode([path.join(__dirname, 'fixtures', 'instrumentation-first.cjs'), 'factory']));
+  assert.equal(out.status, 200);
+  assert.deepEqual(out.patched, { 'node:http': true, 'node:https': true, express: true, '@grpc/grpc-js': true });
+  // node:http is covered on this path because the factory call loaded it before any hook
+  // existed (its lazy require of the helper's setup module), not by the prebuild.
+  assert.equal(out.httpLoadedFirst, true);
+  // express and grpc-js were loaded before setup() by the app: the usual line, and no "not instrumented" one.
+  assert.deepEqual(out.reports.filter((l) => /is not instrumented|could not be/.test(l)), []);
+  assert.deepEqual(out.reports.filter((l) => l.includes('was loaded before setup()')).map((l) => l.split(' was loaded')[0]).sort(), ['otelhelper: @grpc/grpc-js', 'otelhelper: express']);
+  const has = (scope, kind, name) => out.spans.some((s) => s.scope === scope && s.kind === kind && (name === undefined || s.name === name));
+  assert.ok(has('@opentelemetry/instrumentation-http', SERVER, 'GET /orders'), `http SERVER span: ${JSON.stringify(out.spans)}`);
+  assert.ok(has('@opentelemetry/instrumentation-http', CLIENT), `http CLIENT span: ${JSON.stringify(out.spans)}`);
+  assert.ok(has('@opentelemetry/instrumentation-express', api.SpanKind.INTERNAL, 'request handler - /orders'), `express span: ${JSON.stringify(out.spans)}`);
+  assert.ok(has('@opentelemetry/instrumentation-grpc', SERVER, 'a41.v1.Orders/Place'), `gRPC SERVER span: ${JSON.stringify(out.spans)}`);
+  assert.ok(has('@opentelemetry/instrumentation-grpc', CLIENT, 'a41.v1.Orders/Place'), `gRPC CLIENT span: ${JSON.stringify(out.spans)}`);
+  const server = out.spans.find((s) => s.kind === SERVER && s.scope === '@opentelemetry/instrumentation-http');
+  assert.deepEqual([...new Set(out.spans.filter((s) => s.kind !== CLIENT || s.scope === '@opentelemetry/instrumentation-grpc').map((s) => s.traceId))], [server.traceId], 'one trace per request');
+});
+
+// The order the helper cannot fix: an instrumentation the app builds itself
+// before requiring the helper. Each module left unpatched is reported once,
+// accurately, and express and grpc-js no longer get the misleading
+// "loaded before setup()" line.
+test('A41: the app\'s own instrumentation built before the helper: each unpatched module is reported once, with the cause and the fix', () => {
+  const out = lastJson(runNode([path.join(__dirname, 'fixtures', 'instrumentation-first.cjs'), 'own']));
+  assert.equal(out.status, 200);
+  assert.deepEqual(out.patched, { 'node:http': false, 'node:https': false, express: false, '@grpc/grpc-js': false });
+  assert.equal(out.httpLoadedFirst, false, 'node:http loaded in the window');
+  assert.deepEqual(out.reports.filter((l) => l.includes('was loaded before setup()')), [], 'no misleading line');
+  assert.deepEqual(out.reports.filter((l) => l.includes('is not instrumented')).sort(), [
+    `otelhelper: ${UNPATCHED('@grpc/grpc-js', 'gRPC servers and clients get no spans')} module=@grpc/grpc-js`,
+    `otelhelper: ${UNPATCHED('express', 'its routes get no request-handler spans and no http.route')} module=express`,
+    `otelhelper: ${UNPATCHED('node:http', 'HTTP servers and clients get no spans')} module=node:http`,
+    `otelhelper: ${UNPATCHED('node:https', 'HTTPS servers and clients get no spans')} module=node:https`,
+  ]);
+  assert.deepEqual(out.spans.filter((s) => s.scope !== 'a41-early'), [], 'the core instrumentations record nothing');
+});
+
+test('A41: no core instrumentation is built by requiring the contrib entry or creating a registry, nor by a factory under another API version\'s registry', () => {
+  const res = runCjs(`
+    const path = require('node:path');
+    const { InstrumentationBase } = require('@opentelemetry/instrumentation');
+    class Child extends InstrumentationBase { constructor() { super('a41-child', '0.0.0', {}); } init() { return []; } }
+    const spec = { name: 'a41-opt-in', version: '0.0.0', libraries: ['lib'], contrib: { lib: 'a41-contrib' }, packages: { lib: ['a41-not-installed'] }, build: () => new Child(), patchedFiles: { lib: [] }, tracerProvider: (_l, p) => p, meterProvider: (_l, p) => p };
+    const { contribRegistry } = require('@staffops/otel-helper/internal/contrib');
+    const setupLoaded = () => require.cache[path.resolve('dist/internal/setup.js')] !== undefined;
+    const registry = contribRegistry(spec);
+    // Requiring the contrib entry and creating a registry stay light: the setup module is not loaded.
+    const light = !setupLoaded();
+    const { getState } = require(path.resolve('dist/internal/state.js'));
+    const built = () => getState().runtime?.instrumentations !== undefined;
+    const afterRegistry = built();
+    // Another API version's registry: the factory still builds its own child, not the core ones.
+    const key = Symbol.for('opentelemetry.js.api.1');
+    const saved = globalThis[key];
+    globalThis[key] = { version: '1.9.0' };
+    registry.instrument({});
+    const underForeign = built();
+    globalThis[key] = saved;
+    // Back on this API version: the next registry's first build builds them, disabled.
+    contribRegistry({ ...spec, name: 'a41-second' }).instrument({});
+    const core = getState().runtime?.instrumentations?.instrumentations ?? [];
+    console.log(JSON.stringify({ light, afterRegistry, underForeign, names: core.map((i) => i.instrumentationName), enabled: core.filter((i) => i.isEnabled()).length }));
+  `);
+  assert.deepEqual(lastJson(res), {
+    light: true,
+    afterRegistry: false,
+    underForeign: false,
+    names: ['@opentelemetry/instrumentation-http', '@opentelemetry/instrumentation-undici', '@opentelemetry/instrumentation-express', '@opentelemetry/instrumentation-grpc'],
+    enabled: 0,
+  });
+});
+
+test('A41: OTEL_SDK_DISABLED=true with an opt-in factory built first: every instrumentation stays disabled', () => {
+  const res = runCjs(`
+    for (const k of Object.keys(process.env)) if (k.startsWith('OTEL_')) delete process.env[k];
+    process.env.OTEL_SERVICE_NAME = 'svc';
+    process.env.OTEL_SDK_DISABLED = 'true';
+    const path = require('node:path');
+    const { InstrumentationBase } = require('@opentelemetry/instrumentation');
+    class Child extends InstrumentationBase { constructor() { super('a41-child', '0.0.0', {}); } init() { return []; } }
+    const { contribRegistry } = require('@staffops/otel-helper/internal/contrib');
+    const optIn = contribRegistry({ name: 'a41-opt-in', version: '0.0.0', libraries: ['lib'], contrib: { lib: 'a41-contrib' }, packages: { lib: ['a41-not-installed'] }, build: () => new Child(), patchedFiles: { lib: [] }, tracerProvider: (_l, p) => p, meterProvider: (_l, p) => p }).instrument({});
+    require('@staffops/otel-helper/testing').setDiagnosticSink(() => {});
+    const helper = require('@staffops/otel-helper');
+    const express = require('express');
+    helper.setup({ instrumentations: [optIn] });
+    const { getState } = require(path.resolve('dist/internal/state.js'));
+    const { isWrapped } = require('@opentelemetry/instrumentation');
+    const core = getState().runtime?.instrumentations?.instrumentations ?? [];
+    console.log(JSON.stringify({ core: core.length, enabled: core.filter((i) => i.isEnabled()).length, optIn: optIn.getConfig().enabled, http: isWrapped(require('node:http').request), express: isWrapped(express.application.use) }));
+  `);
+  assert.deepEqual(lastJson(res), { core: 4, enabled: 0, optIn: false, http: false, express: false });
+});
+
+test('A41: an inactive copy of the helper (another version holds the state) makes a factory build nothing and throw nothing', () => {
+  const res = runCjs(`
+    Object.defineProperty(globalThis, Symbol.for('staffops.otel-helper.state.v1'), { value: { version: '9.9.9', hooks: undefined } });
+    const { InstrumentationBase } = require('@opentelemetry/instrumentation');
+    class Child extends InstrumentationBase { constructor() { super('a41-child', '0.0.0', {}); } init() { return []; } }
+    const { contribRegistry } = require('@staffops/otel-helper/internal/contrib');
+    let threw = false;
+    try {
+      contribRegistry({ name: 'a41-opt-in', version: '0.0.0', libraries: ['lib'], contrib: { lib: 'a41-contrib' }, packages: { lib: ['a41-not-installed'] }, build: () => new Child(), patchedFiles: { lib: [] }, tracerProvider: (_l, p) => p, meterProvider: (_l, p) => p }).instrument({});
+    } catch { threw = true; }
+    const core = ['http', 'undici', 'express', 'grpc'].filter((n) => Object.keys(require.cache).some((f) => f.includes('instrumentation-' + n + '/')));
+    console.log(JSON.stringify({ threw, core }));
+  `);
+  assert.equal(res.status, 0, res.stderr);
+  assert.deepEqual(lastJson(res), { threw: false, core: [] });
+});
+
+test('A41: a core build that fails under a factory is silent and tried once; setup() builds again and reports', () => {
+  const res = runCjs(`
+    for (const k of Object.keys(process.env)) if (k.startsWith('OTEL_')) delete process.env[k];
+    process.env.OTEL_SERVICE_NAME = 'svc';
+    process.env.OTEL_HELPER_METRICS_PORT = '0';
+    process.env.OTEL_TRACES_EXPORTER = 'none';
+    // A broken instrumentation-undici: the core build throws.
+    const Module = require('node:module');
+    const undici = require.resolve('@opentelemetry/instrumentation-undici', { paths: [require.resolve('@staffops/otel-helper')] });
+    const broken = new Module(undici);
+    broken.filename = undici;
+    broken.loaded = true;
+    broken.exports = {};
+    require.cache[undici] = broken;
+    const lines = [];
+    require('@staffops/otel-helper/testing').setDiagnosticSink((l, m) => { if (m.origin === 'helper') lines.push(l); });
+    const path = require('node:path');
+    const { InstrumentationBase } = require('@opentelemetry/instrumentation');
+    class Child extends InstrumentationBase { constructor() { super('a41-child', '0.0.0', {}); } init() { return []; } }
+    const { contribRegistry } = require('@staffops/otel-helper/internal/contrib');
+    const spec = { version: '0.0.0', libraries: ['lib'], contrib: { lib: 'a41-contrib' }, packages: { lib: ['a41-not-installed'] }, build: () => new Child(), patchedFiles: { lib: [] }, tracerProvider: (_l, p) => p, meterProvider: (_l, p) => p };
+    const first = contribRegistry({ ...spec, name: 'a41-first' }).instrument({});
+    contribRegistry({ ...spec, name: 'a41-second' }).instrument({});
+    const { getState } = require(path.resolve('dist/internal/state.js'));
+    const rt = getState().runtime;
+    const afterFactories = { lines: lines.length, tried: rt.prebuildTried, built: rt.instrumentations !== undefined };
+    require('@staffops/otel-helper').setup({ instrumentations: [first] });
+    console.log(JSON.stringify({ afterFactories, built: lines.filter((l) => l.includes('the instrumentations could not be built')).length }));
+  `);
+  assert.deepEqual(lastJson(res), { afterFactories: { lines: 0, tried: true, built: false }, built: 1 });
+});
+
+test('A41: a copy without a version in its package.json counts as seen: no "not instrumented" line, only "loaded before setup()"', () => {
+  const res = runCjs(`
+    for (const k of Object.keys(process.env)) if (k.startsWith('OTEL_')) delete process.env[k];
+    process.env.OTEL_SERVICE_NAME = 'svc';
+    process.env.OTEL_HELPER_METRICS_PORT = '0';
+    process.env.OTEL_TRACES_EXPORTER = 'none';
+    const fs = require('node:fs');
+    const os = require('node:os');
+    const path = require('node:path');
+    const dir = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'a41-')), 'node_modules', 'express');
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ name: 'express', main: 'index.js' }));
+    fs.writeFileSync(path.join(dir, 'index.js'), 'module.exports = { application: { use() {} }, Router() {} };');
+    const lines = [];
+    require('@staffops/otel-helper/testing').setDiagnosticSink((l, m) => { if (m.origin === 'helper') lines.push(l); });
+    const helper = require('@staffops/otel-helper');
+    require(dir);
+    helper.setup();
+    console.log(JSON.stringify(lines.filter((l) => /^otelhelper: express /.test(l)).map((l) => l.split(';')[0].split(':').slice(0, 2).join(':'))));
+  `);
+  assert.deepEqual(lastJson(res), ['otelhelper: express was loaded before setup()']);
+});
+
+test('A41: unpatched-module detection unavailable (no enabled instrumentation exposes _modules) is one debug line, and nothing is reported', () => {
+  const src = (level) => `
+    process.env.OTEL_LOG_LEVEL = '${level}';
+    const lines = [];
+    require('@staffops/otel-helper/testing').setDiagnosticSink((l, m) => lines.push([l, m.level]));
+    const { neverSeen } = require('./dist/internal/instrumentation.js');
+    const holder = { instrumentations: [{ instrumentationName: 'x', isEnabled: () => true, _modules: undefined }, { instrumentationName: 'y', isEnabled: () => false, _modules: [] }] };
+    const results = [neverSeen(holder, 'express'), neverSeen(holder, '@grpc/grpc-js')];
+    console.log(JSON.stringify({ results, lines }));
+  `;
+  assert.deepEqual(lastJson(runCjs(src('debug'))), {
+    results: [false, false],
+    lines: [['otelhelper: unpatched-module detection unavailable: no enabled core instrumentation exposes its module definitions (_modules), so express or @grpc/grpc-js left unpatched by the shared require hook would not be reported', 'debug']],
+  });
+  assert.deepEqual(lastJson(runCjs(src('info'))), { results: [false, false], lines: [] });
 });
 
 test('express and grpc-js required before setup() are instrumented and reported once each (CJS)', () => {

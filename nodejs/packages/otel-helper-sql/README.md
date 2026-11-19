@@ -41,7 +41,9 @@ const pg = require('pg'); // after setup()
 - pg also records `db.client.operation.duration` and pool metrics; mysql2
   records none.
 - One `sqlInstrumentation()` per process and per `setup()`; create it
-  before loading the libraries. `pg` and `mysql2` stay your app's
+  before loading the libraries (before or after requiring
+  `@staffops/otel-helper`: its first call builds the core instrumentations
+  first, task A41). `pg` and `mysql2` stay your app's
   dependencies. This package installs `@types/pg` and `@types/pg-pool`
   (runtime dependencies of `@opentelemetry/instrumentation-pg`).
 
