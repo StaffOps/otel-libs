@@ -4780,6 +4780,22 @@ Unsupported instrumentation versions, task A10 (P18):
   and Node.js `xfail:A37` cells are not flipped: a k8s01 run decides them.
   `test_verify_demo.py` asserts the new tags.
 
+- **A37 closed: demo HTTP and gRPC cells measured on k8s01 (2026-11-19).**
+  A k8s01 demo run with Go, Python and Node.js images built from 3f36074
+  (.NET unchanged) gave XPASS on the six strict `xfail:A37` cells
+  (`python/d.grpc`, `python/d.http`, `python/g.sentinel.app`,
+  `node/d.grpc`, `node/d.http`, `node/g.sentinel.app`; summary
+  `NA 6, PASS 50, XFAIL 2, XPASS 6`), so `testing/k8s/demo/expected.json`
+  marks them `pass` and no `xfail:A37` cell remains; the .NET cells keep
+  `xfail:A42` + `C20` and `xfail:C20`. `testing/k8s/demo/test_verify_demo.py`
+  moves its xfail examples to the .NET cells and asserts that the pre-A37
+  Python and Node.js fixtures now judge FAIL (a regression fails the run).
+  A first run judged `g.sentinel.app` XFAIL on spans of the replaced pods:
+  check g's start-up scan covers every language's pod starts, so after a
+  rolling update rotate the other languages too (`demo.sh delete --lang` /
+  `apply --lang`) before measuring a hygiene cell. Task A37 in
+  `specs/config-contract-v0.3/tasks.md` is done (.NET parked as C20, C21).
+
 - **A36 closed: demo DB cells measured on k8s01 (2026-11-19).** A k8s01 demo
   run with images built from 84372c0 gave XPASS on the four strict
   `xfail:A36` cells (`go/d.db`, `go/g.sentinel.db`, `python/d.db`,

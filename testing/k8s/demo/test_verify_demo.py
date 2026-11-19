@@ -260,6 +260,12 @@ class ExpectationTest(unittest.TestCase):
         for lang, cell in (("go", "d.db"), ("go", "g.sentinel.db"), ("python", "d.db"), ("node", "d.db")):
             self.assertEqual(e[lang][cell], {"expect": "pass", "ref": "", "also": [], "reason": [],
                                              "requires_series": False}, (lang, cell))
+        # A37 closed (k8s01 run with images 3f36074, 2026-11-19): the six strict xfail:A37
+        # cells gave XPASS, so they are plain expected passes with no reasons left.
+        for lang in ("python", "node"):
+            for cell in ("d.grpc", "d.http", "g.sentinel.app"):
+                self.assertEqual(e[lang][cell], {"expect": "pass", "ref": "", "also": [], "reason": [],
+                                                 "requires_series": False}, (lang, cell))
         self.assertEqual(e["python"]["g.sentinel.db"]["expect"], "pass")
         self.assertEqual(e["node"]["g.sentinel.db"]["expect"], "pass")
         self.assertEqual(e["dotnet"]["d.grpc"]["expect"], "pass")
@@ -271,9 +277,13 @@ class ExpectationTest(unittest.TestCase):
         self.assertNotIn("A36", json.dumps(json.loads(verify.EXPECTED_JSON.read_text())["expected"]))
         tasks = {v["expect"] for cells in e.values() for v in cells.values() if v["expect"].startswith("xfail:")}
         # A37 (2026-11-19, owner decision 8): the .NET part is parked as dotnet tasks C20, so the
-        # .NET cells name A42 / C20; the Go, Python and Node.js cells stay xfail:A37 until a k8s01 run.
-        self.assertEqual(tasks, {"xfail:A37", "xfail:A42", "xfail:C20"})
-        self.assertNotIn("A37", {t for c in e["dotnet"].values() for t in [c["expect"], *c["also"]]})
+        # .NET cells name A42 / C20; no cell of any language names A37 any more (closed 2026-11-19).
+        self.assertEqual(tasks, {"xfail:A42", "xfail:C20"})
+        self.assertNotIn("A37", {t for cells in e.values() for c in cells.values()
+                                 for t in [c["expect"], *c["also"]]})
+        self.assertEqual({(lang, cell) for lang, cells in e.items() for cell, c in cells.items()
+                          if c["expect"].startswith("xfail:")},
+                         {("dotnet", "d.http"), ("dotnet", "g.sentinel.app")})
         self.assertEqual(e["dotnet"]["d.http"]["expect"], "xfail:A42")
         self.assertEqual(e["dotnet"]["d.http"]["also"], ["C20"])
         self.assertEqual(e["dotnet"]["g.sentinel.app"]["expect"], "xfail:C20")
@@ -318,18 +328,17 @@ class ExpectationTest(unittest.TestCase):
         rep = report(out)
         rep.cell("go", "a", verify.Obs("pass", "ok"))
         self.assertFalse(rep.failed())
-        rep.cell("python", "d.grpc", verify.Obs("fail", "x", problems=[
-            "grpc_error: server span carries ['event exception.exception.message', "
-            "'event exception.exception.stacktrace']"]))
+        rep.cell("dotnet", "g.sentinel.app", verify.Obs("fail", "x", problems=[
+            "run token in server span 9a6e18a113016b01 event exception.exception.message"]))
         self.assertFalse(rep.failed())  # XFAIL does not fail the run
         rep.cell("go", "d.http", verify.Obs("pass", "fixed"))
         self.assertFalse(rep.failed())  # Go D16: d.http is an expected pass
-        rep.cell("python", "g.sentinel.app", verify.Obs("pass", "fixed"))
+        rep.cell("dotnet", "d.http", verify.Obs("pass", "fixed"))
         self.assertTrue(rep.failed())  # XPASS does
-        rep.matrix(["go", "python"])
+        rep.matrix(["go", "dotnet"])
         text = out.getvalue()
-        self.assertIn("XFAIL       python d.grpc: x [expected xfail:A37] (ref: contrib", text)
-        self.assertIn("XPASS       python g.sentinel.app", text)
+        self.assertIn("XFAIL       dotnet g.sentinel.app: x [expected xfail:C20] (ref: ASP.NET Core", text)
+        self.assertIn("XPASS       dotnet d.http", text)
         self.assertIn("verify demo: PASS 2, XFAIL 1, XPASS 1; FAIL", text)
         # Go D16 sets db.response.status_code: the A44 problem no longer explains a Go d.db XFAIL.
         rep3 = report()
@@ -698,8 +707,9 @@ class CheckDTest(unittest.TestCase):
         self.assertEqual(bare["d.db"].problems, [p for p in bare["d.db"].problems if "no correlated ERROR record" in p])
         self.assertTrue(bare["d.db"].problems)
         e = verify.load_expected()["python"]
+        # A37 closed (2026-11-19): the fixture predates A37, so its d.grpc and d.http now fail the run.
         self.assertEqual([verify.judge(e[k]["expect"], c[k].state) for k in c],
-                         ["PASS", "XFAIL", "XFAIL", "PASS"])
+                         ["PASS", "FAIL", "FAIL", "PASS"])
         self.assertEqual(verify.judge(e["d.db"]["expect"], bare["d.db"].state), "FAIL")
 
     def test_node(self) -> None:
@@ -716,7 +726,7 @@ class CheckDTest(unittest.TestCase):
         self.assertEqual(len(c["d.db"].problems), 1, c["d.db"].problems)
         e = verify.load_expected()["node"]
         self.assertEqual([verify.judge(e[k]["expect"], c[k].state) for k in c],
-                         ["PASS", "XFAIL", "XFAIL", "FAIL"])  # A36 closed: a regression fails
+                         ["PASS", "FAIL", "FAIL", "FAIL"])  # A36 and A37 closed: a regression fails
 
     def test_dotnet(self) -> None:
         c = self.cells("dotnet")
@@ -1474,9 +1484,12 @@ class ReviewFixesTest(unittest.TestCase):
         self.assertIn("1 exemplars with an invalid trace_id",
                       verify.check_b(b, run, "go", "b.demo_order", cache(b)).problems)
 
-    # Cells whose fixtures (recorded 2026-11-18, before A36) still show the old DB exception
-    # detail; A36 closed on 2026-11-19, so these judge FAIL: a regression is caught.
+    # Cells whose fixtures (recorded 2026-11-18, before A36 and A37) still show the old DB, HTTP
+    # and gRPC exception detail; A36 and A37 closed on 2026-11-19, so these judge FAIL: a
+    # regression is caught. The .NET cells (xfail:A42 / C20) stay explained by their reasons.
     PRE_A36 = {("go", "d.db"), ("node", "d.db"), ("go", "g.sentinel.db")}
+    PRE_A37 = {(lang, cell) for lang in ("python", "node") for cell in ("d.grpc", "d.http", "g.sentinel.app")}
+    PRE_FIX = PRE_A36 | PRE_A37
 
     def test_m2_every_fixture_xfail_is_explained_by_its_reasons(self) -> None:
         expected = verify.load_expected()
@@ -1486,26 +1499,27 @@ class ReviewFixesTest(unittest.TestCase):
             for cell, obs in verify.check_d(b, make_run(lang), lang, cache(b), rep).items():
                 want = expected[lang][cell]["expect"]
                 verdict = "XFAIL" if want.startswith("xfail:") else "PASS"
-                if (lang, cell) in self.PRE_A36:
-                    verdict = "FAIL"  # pre-A36 recording against the closed A36 expectation
+                if (lang, cell) in self.PRE_FIX:
+                    verdict = "FAIL"  # pre-A36/A37 recording against the closed expectation
                 self.assertEqual(rep.cell(lang, cell, obs), verdict, (lang, cell, obs.problems))
             for scen in verify.ERROR_SCENARIOS:
                 for cell, obs in HygieneTest().run_g(lang, scen).items():
                     if obs.state == "fail":
-                        verdict = "FAIL" if (lang, cell) in self.PRE_A36 else "XFAIL"
+                        verdict = "FAIL" if (lang, cell) in self.PRE_FIX else "XFAIL"
                         self.assertEqual(rep.cell(lang, cell, obs), verdict, (lang, scen, cell, obs.problems))
 
     def test_m2_unexplained_problem_fails_the_xfail_cell(self) -> None:
         out = io.StringIO()
         rep = report(out)
-        explained = ("grpc_error: server span carries ['event exception.exception.message', "
-                     "'event exception.exception.stacktrace']")
-        obs = verify.Obs("fail", "d", problems=[explained, "grpc_error: 'q' has a status description "
+        # A37 closed (2026-11-19): the remaining xfail cell with reasons is .NET d.http (A42, C20).
+        explained = ("unhandled: api SERVER error.type 'StaffOps.OtelLibs.Demo.DemoUnhandledError' "
+                     "(want 500)")
+        obs = verify.Obs("fail", "d", problems=[explained, "unhandled: 'q' has a status description "
                                                            "(contract A25: empty)"])
-        self.assertEqual(rep.cell("python", "d.grpc", verify.Obs("fail", "d", problems=[explained])), "XFAIL")
-        self.assertEqual(rep.cell("python", "d.grpc", obs), "FAIL")
+        self.assertEqual(rep.cell("dotnet", "d.http", verify.Obs("fail", "d", problems=[explained])), "XFAIL")
+        self.assertEqual(rep.cell("dotnet", "d.http", obs), "FAIL")
         self.assertIn("problems outside the xfail reasons", out.getvalue())
-        self.assertEqual(rep.cell("python", "d.grpc", verify.Obs("fail", "only the detail")), "FAIL")
+        self.assertEqual(rep.cell("dotnet", "d.http", verify.Obs("fail", "only the detail")), "FAIL")
         self.assertEqual(verify.unmatched(verify.Obs("fail", "abc"), ["b"]), [])
 
     def test_m2_loader_rules(self) -> None:

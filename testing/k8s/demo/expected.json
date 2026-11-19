@@ -61,34 +61,15 @@
       "b.demo_order": "pass",
       "c": "pass",
       "d.demo": "pass",
-      "d.grpc": {
-        "expect": "xfail:A37",
-        "ref": "contrib 0.66b2 _aio_server.py:107-114 records AbortError on context.abort",
-        "reason": [
-          "server span carries ['event exception.exception.message', 'event exception.exception.stacktrace']"
-        ]
-      },
-      "d.http": {
-        "expect": "xfail:A37",
-        "ref": "README.md:367 (FastAPI middleware event + description)",
-        "reason": [
-          "server span 'POST /orders' carries",
-          "run token on server span"
-        ]
-      },
+      "d.grpc": "pass",
+      "d.http": "pass",
       "d.db": "pass",
       "e.trace": "pass",
       "e.edges": "pass",
       "e.edge.db": "pass",
       "g.secret": "pass",
       "g.sentinel.db": "pass",
-      "g.sentinel.app": {
-        "expect": "xfail:A37",
-        "ref": "README.md:367 (FastAPI event + description)",
-        "reason": [
-          "run token in server span"
-        ]
-      }
+      "g.sentinel.app": "pass"
     },
     "node": {
       "a": "pass",
@@ -113,34 +94,15 @@
       },
       "c": "pass",
       "d.demo": "pass",
-      "d.grpc": {
-        "expect": "xfail:A37",
-        "ref": "README.md:367 (grpc.error_message)",
-        "reason": [
-          "client span carries ['attr grpc.error_message']"
-        ]
-      },
-      "d.http": {
-        "expect": "xfail:A37",
-        "ref": "README.md:367 (http/express recordException + description)",
-        "reason": [
-          "internal span 'request handler - /orders' carries",
-          "run token on internal span"
-        ]
-      },
+      "d.grpc": "pass",
+      "d.http": "pass",
       "d.db": "pass",
       "e.trace": "pass",
       "e.edges": "pass",
       "e.edge.db": "pass",
       "g.secret": "pass",
       "g.sentinel.db": "pass",
-      "g.sentinel.app": {
-        "expect": "xfail:A37",
-        "ref": "README.md:367 (express request handler copies unh-<run>)",
-        "reason": [
-          "run token in internal span"
-        ]
-      }
+      "g.sentinel.app": "pass"
     },
     "dotnet": {
       "a": "pass",
