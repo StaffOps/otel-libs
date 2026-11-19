@@ -215,7 +215,7 @@ a stack trace: statement spans have no `exception` event, the `connect`
 span's event keeps only `exception.type`, and one ERROR record on the
 `staffops_otel_helper.failure` logger, in the span's context, carries the
 message, `exception.type`, `exception.message` and `exception.stacktrace`
-(task A36, [ADR-014](../specs/decisions/ADR-014-exception-detail-in-correlated-logs.md); HOW-TO §9).
+(task A36, [ADR-014](https://github.com/StaffOps/otel-libs/blob/main/specs/decisions/ADR-014-exception-detail-in-correlated-logs.md); HOW-TO §9).
 
 HTTP and gRPC spans follow the same rule (task A37): every FastAPI / ASGI,
 requests, httpx and gRPC span keeps status ERROR without a description and a

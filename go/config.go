@@ -64,6 +64,15 @@ const (
 	EnvPrometheusHost = "OTEL_EXPORTER_PROMETHEUS_HOST"
 )
 
+// EnvMetricsExemplarFilter is the OTel spec's exemplar filter variable,
+// parsed by the helper (design D1 row "Metrics exporters / interval /
+// exemplars", A48).
+const EnvMetricsExemplarFilter = "OTEL_METRICS_EXEMPLAR_FILTER"
+
+// exemplarFilters are the values OTEL_METRICS_EXEMPLAR_FILTER accepts; the
+// first one is the spec default.
+var exemplarFilters = []string{"trace_based", "always_on", "always_off"}
+
 const (
 	defaultExportIntervalMs = 30_000
 	// maxExportIntervalMs bounds the metric export interval (design D1 row
@@ -273,6 +282,7 @@ func (o *Options) resolveFromEnv() {
 	}
 
 	o.resolveMetricsListener()
+	o.resolveExemplarFilter()
 
 	o.propagator = parsePropagators(os.Getenv(EnvPropagators))
 	o.warnIgnoredTimeouts()
@@ -362,6 +372,24 @@ func (o *Options) resolveMetricsListener() {
 			warnEnv(msgInvalidPrometheusHost, EnvPrometheusHost, redactEchoedValue(v), "every interface")
 		}
 	}
+}
+
+// resolveExemplarFilter parses OTEL_METRICS_EXEMPLAR_FILTER at every Setup,
+// metrics on or off (A48, as Python's A33): contract trim, ASCII case folding;
+// an unknown value warns once per Setup and resolves to trace_based. The
+// result is always passed to the SDK (configureMetrics): the SDK's own parse
+// trims Unicode whitespace too, so it would apply a value the helper rejects.
+func (o *Options) resolveExemplarFilter() {
+	o.exemplarFilter = exemplarFilters[0]
+	v := trimWS(os.Getenv(EnvMetricsExemplarFilter))
+	if v == "" {
+		return
+	}
+	if name := asciiLower(v); containsStr(exemplarFilters, name) {
+		o.exemplarFilter = name
+		return
+	}
+	warnEnv("unknown exemplar filter (valid: always_off, always_on, trace_based)", EnvMetricsExemplarFilter, v, exemplarFilters[0])
 }
 
 // parsePrometheusHost parses OTEL_EXPORTER_PROMETHEUS_HOST (already trimmed):

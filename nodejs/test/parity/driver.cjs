@@ -327,7 +327,12 @@ async function kindPropagation(c) {
   setupCase(c, snap);
   const { trace, context, propagation } = api();
   const carrier = {};
-  const ctx = propagation.setBaggage(context.active(), propagation.createBaggage({ parity: { value: '1' } }));
+  // input.traceparent / input.tracestate: an inbound context, extracted with the
+  // configured propagator before the span is started (A49).
+  const inbound = {};
+  for (const k of ['traceparent', 'tracestate']) if (typeof c.input?.[k] === 'string') inbound[k] = c.input[k];
+  const parent = propagation.extract(context.active(), inbound);
+  const ctx = propagation.setBaggage(parent, propagation.createBaggage({ parity: { value: '1' } }));
   context.with(ctx, () => {
     trace.getTracer('parity').startActiveSpan('parity-span', (span) => {
       propagation.inject(context.active(), carrier);
@@ -335,6 +340,7 @@ async function kindPropagation(c) {
     });
   });
   snap.headers = Object.keys(carrier).map((k) => k.toLowerCase()).sort();
+  for (const k of ['traceparent', 'tracestate']) if (k in carrier) snap[k] = carrier[k];
   await shutdown();
   return snap;
 }

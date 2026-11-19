@@ -28,7 +28,7 @@ const SCHEMA = {
   resolve: ['resource', 'metric_exporters', 'metric_export_interval_ms', 'log_level', 'prometheus_metrics_port', 'prometheus_metrics_host', 'http_opt_in_metrics', 'exemplar_filter'],
   export: ['received'],
   sampler: ['sampled', 'attributes'],
-  propagation: ['headers'],
+  propagation: ['headers', 'traceparent', 'tracestate'],
   http_server: ['server_spans', 'server_continues_inbound', 'response_statuses', 'requests_counted', 'handler_child_spans', 'scrape', 'server_span_error_type'],
   grpc_server: ['server_spans', 'rpcs_counted', 'call_ok', 'server_span_status', 'server_span_name', 'client_span_name', 'server_span_error_type', 'client_span_error_type'],
   logging: [],
@@ -38,6 +38,7 @@ const SCHEMA = {
 };
 const INPUT_SCHEMA = {
   sampler: ['scenario'],
+  propagation: ['traceparent', 'tracestate'],
   http_server: ['requests', 'traceparent', 'child_span', 'allow_server_error', 'response_status'],
   grpc_server: ['method'],
   metrics_listener: ['requests', 'connect_host'],
@@ -120,7 +121,7 @@ function validateCase(c) {
   for (const [key, val] of Object.entries(c.input ?? {})) {
     if (!(INPUT_SCHEMA[c.kind] ?? []).includes(key)) errs.push(`input key ${JSON.stringify(key)} is not valid for kind ${c.kind}`);
     else if (key === 'requests' && !(Array.isArray(val) && val.every((x) => typeof x === 'string'))) errs.push('input.requests must be a list of strings');
-    else if (['method', 'scenario', 'traceparent'].includes(key) && typeof val !== 'string') errs.push(`input.${key} must be a string`);
+    else if (['method', 'scenario', 'traceparent', 'tracestate'].includes(key) && typeof val !== 'string') errs.push(`input.${key} must be a string`);
     else if ((key === 'child_span' || key === 'allow_server_error' || key === 'in_span') && typeof val !== 'boolean') errs.push(`input.${key} must be a boolean`);
     else if (key === 'response_status' && !(Number.isInteger(val) && val >= 200 && val <= 599)) errs.push('input.response_status must be an integer literal from 200 to 599');
     else if (key === 'connect_host' && val !== '127.0.0.1' && val !== 'localhost') errs.push('input.connect_host must be "127.0.0.1" or "localhost"');

@@ -32,7 +32,7 @@ var snapshotSchema = map[string][]string{
 	"resolve":          {"resource", "metric_exporters", "metric_export_interval_ms", "log_level", "prometheus_metrics_port", "prometheus_metrics_host", "http_opt_in_metrics", "exemplar_filter"},
 	"export":           {"received"},
 	"sampler":          {"sampled", "attributes"},
-	"propagation":      {"headers"},
+	"propagation":      {"headers", "traceparent", "tracestate"},
 	"http_server":      {"server_spans", "server_continues_inbound", "response_statuses", "requests_counted", "handler_child_spans", "scrape", "server_span_error_type"},
 	"grpc_server":      {"server_spans", "rpcs_counted", "call_ok", "server_span_status", "server_span_name", "client_span_name", "server_span_error_type", "client_span_error_type"},
 	"logging":          {},
@@ -46,6 +46,7 @@ var listenerRequestRe = regexp.MustCompile(`^[A-Z]+ /\S*$`)
 
 var inputSchema = map[string][]string{
 	"sampler":          {"scenario"},
+	"propagation":      {"traceparent", "tracestate"},
 	"http_server":      {"requests", "traceparent", "child_span", "allow_server_error", "response_status"},
 	"grpc_server":      {"method"},
 	"metrics_listener": {"requests", "connect_host"},
@@ -124,7 +125,7 @@ func validateCase(c parityCase) []string {
 			if !ok {
 				errs = append(errs, "input.requests must be a list of strings")
 			}
-		case "method", "scenario", "traceparent":
+		case "method", "scenario", "traceparent", "tracestate":
 			if _, ok := v.(string); !ok {
 				errs = append(errs, fmt.Sprintf("input.%s must be a string", k))
 			}

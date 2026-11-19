@@ -138,8 +138,12 @@ func samplerRatioArg(sampler string) float64 {
 }
 
 // StartRootSpan starts a new span detached from any parent (new trace).
-// Use in workers where each iteration should be an independent trace.
+// Use in workers where each iteration should be an independent trace. The
+// span context in ctx is cleared first (A49): a no-op tracer (traces disabled)
+// ignores WithNewRoot and would return the parent, so the inbound context
+// would be injected downstream; with it cleared, the root carries none.
 func StartRootSpan(ctx context.Context, tracer trace.Tracer, name string, opts ...trace.SpanStartOption) (context.Context, trace.Span) {
+	ctx = trace.ContextWithSpanContext(ctx, trace.SpanContext{})
 	opts = append(opts, trace.WithNewRoot())
 	return tracer.Start(ctx, name, opts...)
 }

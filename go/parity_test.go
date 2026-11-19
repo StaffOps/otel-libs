@@ -426,7 +426,7 @@ func runCaseKind(t *testing.T, c parityCase, recv *fakeReceiver) map[string]any 
 	case "sampler":
 		snap = runSampler(opts, c.Input)
 	case "propagation":
-		snap = runPropagation(opts)
+		snap = runPropagation(opts, c.Input)
 	case "http_server":
 		snap = runHTTPServer(t, opts, c.Input)
 	case "grpc_server":
@@ -657,9 +657,9 @@ func runResolve(opts []Option) map[string]any {
 }
 
 // installedExemplarFilter names the exemplar filter of the installed SDK
-// MeterProvider ("" when none is installed). The helper leaves
-// OTEL_METRICS_EXEMPLAR_FILTER to the SDK (G7), which keeps the filter in an
-// unexported pipeline field: read by reflection, compared by code pointer.
+// MeterProvider ("" when none is installed). The SDK keeps the filter the
+// helper passed (A48) in an unexported pipeline field: read by reflection,
+// compared by code pointer.
 func installedExemplarFilter() string {
 	mp, ok := otel.GetMeterProvider().(*sdkmetric.MeterProvider)
 	if !ok {
@@ -828,15 +828,29 @@ func runSampler(opts []Option, input map[string]any) map[string]any {
 	return snap
 }
 
-func runPropagation(opts []Option) map[string]any {
+func runPropagation(opts []Option, input map[string]any) map[string]any {
 	shutdown, snap := setupForCase(opts)
 	defer shutdownQuick(shutdown)
+	// input.traceparent / input.tracestate: an inbound context, extracted with
+	// the configured propagator before the span is started (A49).
+	inbound := propagation.MapCarrier{}
+	for _, k := range []string{"traceparent", "tracestate"} {
+		if v, ok := input[k].(string); ok {
+			inbound[k] = v
+		}
+	}
+	parent := otel.GetTextMapPropagator().Extract(context.Background(), inbound)
 	m, _ := baggage.NewMember("parity", "1")
 	bag, _ := baggage.New(m)
-	ctx, span := GetTracer("parity").Start(baggage.ContextWithBaggage(context.Background(), bag), "parity-span")
+	ctx, span := GetTracer("parity").Start(baggage.ContextWithBaggage(parent, bag), "parity-span")
 	defer span.End()
 	carrier := propagation.MapCarrier{}
 	otel.GetTextMapPropagator().Inject(ctx, carrier)
+	for _, k := range []string{"traceparent", "tracestate"} {
+		if v, ok := carrier[k]; ok {
+			snap[k] = v
+		}
+	}
 	keys := carrier.Keys()
 	sort.Strings(keys)
 	list := []any{}

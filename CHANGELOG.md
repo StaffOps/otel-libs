@@ -3460,6 +3460,21 @@ Behavior changes, with migration notes:
   `modernc.org/sqlite` v1.61.0 (BSD-3-Clause), `github.com/alicebob/miniredis/v2`
   v2.40.0 (MIT), `github.com/aws/aws-sdk-go-v2/{credentials,service/sqs}`
   (Apache-2.0). `aws-sdk-go-v2` v1.47.1 → v1.47.5.
+- **`OTEL_METRICS_EXEMPLAR_FILTER` parsed by the helper (task A48, design D1
+  row "Metrics exporters / interval / exemplars"; 2026-11-19).** The Go SDK
+  read the variable alone, with `strings.ToLower(strings.TrimSpace(...))`
+  (`sdk/metric@v1.47.0/config.go:197`): an unknown value silently stayed
+  `trace_based`, and a value padded with Unicode whitespace (NBSP) was
+  accepted where Python and .NET reject it. The helper now parses it in option
+  resolution at every `Setup`, also with metrics off — `always_on`,
+  `always_off`, `trace_based`, contract (ASCII) trim, ASCII case-insensitive,
+  unset or blank = `trace_based` — and always passes
+  `sdkmetric.WithExemplarFilter`, which the SDK applies after its own parse.
+  Any other value writes one WARNING per `Setup` on the helper's stderr logger
+  (`variable=OTEL_METRICS_EXEMPLAR_FILTER`, the value cut to 64 characters,
+  `using=trace_based`). New exported constant `EnvMetricsExemplarFilter`. No
+  `os.Setenv` (G7). Parity case `metrics.exemplar_filter_env_invalid_warns`:
+  Go `xfail:A48` → `pass`. Tests: `go/a48_a49_test.go`.
 
 ### Python — detailed changes
 
@@ -4431,7 +4446,7 @@ Unsupported instrumentation versions, task A10 (P18):
   Node.js `xfail:A51` (they fail the export but write no helper line).
 
 - **Go, Python, Node.js: one failure rule for application spans (task A45,
-  [ADR-016](specs/decisions/ADR-016-application-span-failure-status.md),
+  [ADR-016](https://github.com/StaffOps/otel-libs/blob/main/specs/decisions/ADR-016-application-span-failure-status.md),
   requirement R11, design D15; .NET follows later, it is parked).** Owner
   decision 2026-11-17.
   - **New functions:**
@@ -4747,6 +4762,16 @@ Unsupported instrumentation versions, task A10 (P18):
 - **Go: IPv6 literal collector endpoints.** `http://[::1]:4318` became
   `::1:4318`, which the v1.47 OTLP/HTTP exporters reject at setup and OTLP/gRPC
   could not dial; the host is now re-bracketed (`[::1]:4318`).
+- **Go: `StartRootSpan` with traces disabled injected the inbound context**
+  (task A49, design D1 row "Propagation with traces off", 2026-11-19). The Go
+  no-op tracer ignores `trace.WithNewRoot()` and returns the parent span of
+  `ctx`, so with `OTEL_HELPER_DISABLED_SIGNALS=traces` a worker root started
+  from a consumed message's context sent that message's `traceparent` and
+  `tracestate` on, where Python and Node.js roots carry no context.
+  `StartRootSpan`, and `WithSpan` with `trace.WithNewRoot()`, now clear the
+  span context of `ctx` before starting the span (baggage is kept); with an SDK
+  provider nothing changes. A plain child still passes an inbound context on
+  unchanged. Tests: `go/a48_a49_test.go`.
 
 ### Examples and documentation
 
@@ -6551,6 +6576,16 @@ Unsupported instrumentation versions, task A10 (P18):
   `tests/test_propagation.py` is a real test module; tests no longer read the
   private `MeterProvider._metric_readers`. No library behavior changed.
   Test-only dev extras: `fastapi`, `httpx`, `grpcio`.
+- **Parity: inbound context for the `propagation` kind (task A49,
+  2026-11-19).** The kind takes `input.traceparent` / `input.tracestate`,
+  extracted with the configured propagator before `parity-span` starts, and
+  the snapshot gains `traceparent` / `tracestate` (the injected values, absent
+  when not injected), in the Go, Python and Node.js drivers and case
+  validators. No case uses them yet (395 cases): the case
+  `propagation.traces_disabled_inbound_passed_unchanged` (traces disabled, an
+  unsampled `traceparent` and a two-member `tracestate` injected unchanged),
+  measured passing in Go, Python and Node.js, waits for the .NET driver
+  (owner decision 2026-11-19, parked .NET task C22).
 
 ## [.NET 0.2.1] - 2026-11-04
 

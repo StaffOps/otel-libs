@@ -230,7 +230,12 @@ for {
 ```
 
 Without `StartRootSpan`, spans started from a context that already carries a
-span would join that trace; `StartRootSpan` always starts a new trace ID. On
+span would join that trace; `StartRootSpan` always starts a new trace ID. With
+traces disabled (`OTEL_HELPER_DISABLED_SIGNALS=traces`) the root carries no
+trace context, so a consumed message's `traceparent` is not injected into
+what the iteration sends on (since A49; before, the no-op tracer returned the
+parent and the inbound context leaked through); a plain `tracer.Start` child
+passes an inbound context on unchanged. On
 shutdown, let the in-flight iteration finish (wait for the worker goroutine)
 before calling `Shutdown`, so its span is exported.
 
@@ -241,11 +246,11 @@ before calling `Shutdown`, so its span is exported.
 Spans from the HTTP, gRPC and database instrumentations get their status from
 semantic conventions. For spans the application creates, `WithSpan` applies
 one rule, the same in Go, Python and Node.js (R11,
-[ADR-016](../specs/decisions/ADR-016-application-span-failure-status.md)):
+[ADR-016](https://github.com/StaffOps/otel-libs/blob/main/specs/decisions/ADR-016-application-span-failure-status.md)):
 a failure gives status ERROR with **no description** and `error.type`; success
 stays **Unset**; the helper never sets Ok. The message and the stack go to one
 ERROR log record in the span's context, not on the span
-([ADR-014](../specs/decisions/ADR-014-exception-detail-in-correlated-logs.md)).
+([ADR-014](https://github.com/StaffOps/otel-libs/blob/main/specs/decisions/ADR-014-exception-detail-in-correlated-logs.md)).
 
 ```go
 // OrderRejectedError carries its own error.type, the same literal in every

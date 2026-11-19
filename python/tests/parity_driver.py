@@ -294,9 +294,13 @@ def kind_propagation(case: dict) -> dict:
     _, snap = _setup(case)
     from opentelemetry import baggage, trace
     from opentelemetry import context as otel_context
-    from opentelemetry.propagate import inject
+    from opentelemetry.propagate import extract, inject
 
-    token = otel_context.attach(baggage.set_baggage("parity", "1"))
+    # input.traceparent / input.tracestate: an inbound context, extracted with the
+    # configured propagator before the span is started (A49).
+    inp = case.get("input") or {}
+    parent = extract({k: inp[k] for k in ("traceparent", "tracestate") if k in inp}, context=otel_context.get_current())
+    token = otel_context.attach(baggage.set_baggage("parity", "1", context=parent))
     try:
         with trace.get_tracer("parity").start_as_current_span("parity-span"):
             carrier: dict = {}
@@ -304,6 +308,9 @@ def kind_propagation(case: dict) -> dict:
     finally:
         otel_context.detach(token)
     snap["headers"] = sorted(k.lower() for k in carrier)
+    for key in ("traceparent", "tracestate"):
+        if key in carrier:
+            snap[key] = carrier[key]
     _flush_and_shutdown()
     return snap
 

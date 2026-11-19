@@ -109,7 +109,7 @@ back to the generic one, then to the default.
 | `OTEL_TRACES_EXPORTER` / `OTEL_LOGS_EXPORTER` | `otlp` | Comma list of `otlp`, `console` (compact JSON on stdout), `none`. `logging` = deprecated `console` (warned; in code it is an unknown exporter); `none` in a list wins (warned). Set to a valid entry, it wins over `OTEL_HELPER_DISABLED_SIGNALS` for its signal |
 | `OTEL_METRICS_EXPORTER` | _(inferred)_ | `otlp`, `prometheus`, `console`, `none` or a list (`otlp,prometheus`). Unset: `otlp` when a metrics endpoint is configured, else `prometheus`. `otlp` without an endpoint is warned and dropped |
 | `OTEL_METRIC_EXPORT_INTERVAL` | `30000` | Periodic export interval in ms (helper default; the SDK's is 60000): ASCII digits with an optional `+` (any number of digits; leading zeros ignored), > 0, else warned and 30 000; above 2 147 483 647 clamped with a warning |
-| `OTEL_METRICS_EXEMPLAR_FILTER` | SDK `trace_based` | Read by the SDK; the helper never sets it |
+| `OTEL_METRICS_EXEMPLAR_FILTER` | `trace_based` | Parsed by the helper at every `Setup`, metrics on or off (A48): `always_on`, `always_off`, `trace_based`, ASCII-trimmed and case-insensitive; any other value (a value padded with a non-ASCII space such as NBSP included) warns once per `Setup`, naming the variable and the value cut to 64 characters, and uses `trace_based`. The helper always passes the filter to the SDK, whose own parse would trim Unicode whitespace and never warn |
 | `OTEL_TRACES_SAMPLER` / `OTEL_TRACES_SAMPLER_ARG` | `parentbased_always_on` | The six spec samplers (case-insensitive); unknown or unsupported names warn and use the default. `_ARG` is a plain decimal in [0, 1] |
 | `OTEL_PROPAGATORS` | `tracecontext,baggage` | `tracecontext`, `baggage`, `none`. `b3`, `b3multi`, `jaeger`, `xray`, `ottrace` are warned and skipped |
 | `OTEL_SDK_DISABLED` | `false` | `true` installs no-op providers (no exporters, no `/metrics` listener) and logs one INFO line; propagation still works |
@@ -198,12 +198,15 @@ defaults to `otel-helper`.
 ### `StartRootSpan(ctx, tracer, name, ...SpanStartOption) (context.Context, trace.Span)`
 
 Starts a span with no parent (a new trace) even if `ctx` carries one — one
-trace per worker iteration or consumed message.
+trace per worker iteration or consumed message. The span context in `ctx` is
+cleared before the span starts (A49), so with traces disabled the root
+carries no context and the inbound `traceparent` is not injected downstream
+(the no-op tracer would otherwise return the parent); baggage in `ctx` is kept.
 
 ### `WithSpan(ctx, tracer, name, fn, ...SpanStartOption) error` / `RecordFailure(ctx, err)`
 
 Application spans with one failure rule in every language (R11,
-[ADR-016](../specs/decisions/ADR-016-application-span-failure-status.md)):
+[ADR-016](https://github.com/StaffOps/otel-libs/blob/main/specs/decisions/ADR-016-application-span-failure-status.md)):
 
 ```go
 err := otelhelper.WithSpan(ctx, tracer, "order.process", func(ctx context.Context) error {
@@ -225,7 +228,8 @@ otelhelper.RecordFailure(ctx, &OrderRejectedError{ID: id})
 | `runtime.Goexit` | Unset | none |
 
 The error is returned unchanged. `trace.WithNewRoot()` in the options makes a
-root span (`StartRootSpan` stays a plain span starter); a nil `tracer` is
+root span (`StartRootSpan` stays a plain span starter), and the span context in
+`ctx` is then cleared first, as `StartRootSpan` does (A49); a nil `tracer` is
 `GetTracer()` (scope `otel-helper`, global provider). `RecordFailure` marks
 `trace.SpanFromContext(ctx)` the same way, always records, and does not apply
 the cancellation rule; a nil error does nothing.
@@ -586,7 +590,7 @@ attributes getter. Exception: XSAM can call the getter twice for one
 overwrite the same keys, so a code-less second error leaves the first
 `db.response.status_code` next to `error.type=_OTHER`.
 
-**Exception detail goes to a correlated log** ([ADR-014](../specs/decisions/ADR-014-exception-detail-in-correlated-logs.md), task A36).
+**Exception detail goes to a correlated log** ([ADR-014](https://github.com/StaffOps/otel-libs/blob/main/specs/decisions/ADR-014-exception-detail-in-correlated-logs.md), task A36).
 A failed operation's `exception` event keeps only `exception.type` (the
 helper's `error.type` rule of `WithSpan`: the first `ErrorType()` method in
 the chain, else `semconv.ErrorType`, e.g. `*pgconn.PgError`); no

@@ -10067,7 +10067,7 @@
       "id": "metrics.exemplar_filter_env_invalid_warns",
       "kind": "resolve",
       "requirement": "R8",
-      "note": "Added 2026-11-18 (task A33, D1 row 'Metrics exporters / interval / exemplars'): an unknown OTEL_METRICS_EXEMPLAR_FILTER value warns once, naming the variable, and the provider uses the default trace_based. Go: its SDK lowercases and trims the value and silently keeps trace_based without a warning (task A48). Node: sdk-metrics has no exemplar filter (recorded gap).",
+      "note": "Added 2026-11-18 (task A33, D1 row 'Metrics exporters / interval / exemplars'): an unknown OTEL_METRICS_EXEMPLAR_FILTER value warns once, naming the variable, and the provider uses the default trace_based. Go fixed 2026-11-19 (task A48: the helper parses the variable and always passes the filter; its SDK alone kept trace_based silently). Node: sdk-metrics has no exemplar filter (recorded gap).",
       "env": {
         "OTEL_SERVICE_NAME": "parity-svc",
         "OTEL_METRICS_EXEMPLAR_FILTER": "sometimes"
@@ -10081,7 +10081,7 @@
         "warning": "OTEL_METRICS_EXEMPLAR_FILTER"
       },
       "status": {
-        "go": "xfail:A48",
+        "go": "pass",
         "python": "pass",
         "dotnet": "pass",
         "nodejs": "skip:no-upstream-node-exemplar-filter"

@@ -20,12 +20,26 @@ import (
 	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp"
 	promexporter "go.opentelemetry.io/otel/exporters/prometheus"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
+	"go.opentelemetry.io/otel/sdk/metric/exemplar"
 	"go.opentelemetry.io/otel/sdk/resource"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/encoding"
 )
+
+// exemplarFilterFor maps a resolved filter name to the SDK filter; any other
+// name (an Options built without resolveFromEnv) is the default trace_based.
+func exemplarFilterFor(name string) exemplar.Filter {
+	switch name {
+	case "always_on":
+		return exemplar.AlwaysOnFilter
+	case "always_off":
+		return exemplar.AlwaysOffFilter
+	default:
+		return exemplar.TraceBasedFilter
+	}
+}
 
 // promRegistry is the dedicated registry backing the Prometheus reader.
 // Deliberately NOT the client_golang global registry, so application metrics
@@ -99,9 +113,10 @@ func effectiveIntervalMs(o *Options) int {
 // every signal was built (G1). The returned release (possibly nil) stops the
 // standalone /metrics listener and frees its port synchronously.
 func configureMetrics(ctx context.Context, res *resource.Resource, opts *Options) (*sdkmetric.MeterProvider, func(context.Context) error, *prometheus.Registry, error) {
-	// Exemplars: the SDK default is trace_based and it honors
-	// OTEL_METRICS_EXEMPLAR_FILTER itself — the helper sets nothing (G7).
-	mpOpts := []sdkmetric.Option{sdkmetric.WithResource(res)}
+	// Exemplars: the helper's own parse of OTEL_METRICS_EXEMPLAR_FILTER is
+	// always passed; the option is applied after the SDK's env parse, which
+	// would accept a value padded with Unicode whitespace (A48).
+	mpOpts := []sdkmetric.Option{sdkmetric.WithResource(res), sdkmetric.WithExemplarFilter(exemplarFilterFor(opts.exemplarFilter))}
 	var (
 		release  func(context.Context) error
 		registry *prometheus.Registry

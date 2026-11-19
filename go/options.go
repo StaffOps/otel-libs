@@ -87,6 +87,9 @@ type Options struct {
 	// prometheusHost: the standalone listener's bind address from
 	// OTEL_EXPORTER_PROMETHEUS_HOST ("" = every interface; A29).
 	prometheusHost string
+	// exemplarFilter: OTEL_METRICS_EXEMPLAR_FILTER as the helper resolved it
+	// (trace_based, always_on or always_off; A48).
+	exemplarFilter string
 
 	// Resolution results (filled by resolveFromEnv / lazily).
 	identityResolved    bool

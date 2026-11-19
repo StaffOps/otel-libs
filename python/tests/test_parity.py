@@ -44,7 +44,7 @@ _SCHEMA = {
                 "prometheus_metrics_host", "http_opt_in_metrics", "exemplar_filter"},
     "export": {"received"},
     "sampler": {"sampled", "attributes"},
-    "propagation": {"headers"},
+    "propagation": {"headers", "traceparent", "tracestate"},
     "http_server": {"server_spans", "server_continues_inbound", "response_statuses", "requests_counted", "handler_child_spans", "scrape",
                     "server_span_error_type"},
     "grpc_server": {"server_spans", "rpcs_counted", "call_ok", "server_span_status", "server_span_name", "client_span_name",
@@ -56,6 +56,7 @@ _SCHEMA = {
 }
 _INPUT_SCHEMA = {
     "sampler": {"scenario"},
+    "propagation": {"traceparent", "tracestate"},
     "http_server": {"requests", "traceparent", "child_span", "allow_server_error", "response_status"},
     "grpc_server": {"method"},
     "metrics_listener": {"requests", "connect_host"},
@@ -129,7 +130,7 @@ def validate_case(case: dict) -> list[str]:
             errs.append(f"input key {key!r} is not valid for kind {kind}")
         elif key == "requests" and not (isinstance(val, list) and all(isinstance(x, str) for x in val)):
             errs.append("input.requests must be a list of strings")
-        elif key in ("method", "scenario", "traceparent") and not isinstance(val, str):
+        elif key in ("method", "scenario", "traceparent", "tracestate") and not isinstance(val, str):
             errs.append(f"input.{key} must be a string")
         elif key in ("child_span", "allow_server_error", "in_span") and not isinstance(val, bool):
             errs.append(f"input.{key} must be a boolean")

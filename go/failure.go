@@ -59,11 +59,16 @@ const maxFailureChain = 256
 //
 // The span is started with tracer.Start(ctx, name, opts...); a nil tracer is
 // GetTracer() (scope "otel-helper", global provider). Pass
-// trace.WithNewRoot() for a root span (StartRootSpan stays a plain starter).
+// trace.WithNewRoot() for a root span (StartRootSpan stays a plain starter);
+// the span context in ctx is then cleared before Start, as StartRootSpan does
+// (A49), so a root carries no inbound context with traces disabled.
 // fn receives the span's context.
 func WithSpan(ctx context.Context, tracer trace.Tracer, name string, fn func(context.Context) error, opts ...trace.SpanStartOption) (err error) {
 	if tracer == nil {
 		tracer = GetTracer()
+	}
+	if cfg := trace.NewSpanStartConfig(opts...); cfg.NewRoot() {
+		ctx = trace.ContextWithSpanContext(ctx, trace.SpanContext{})
 	}
 	ctx, span := tracer.Start(ctx, name, opts...)
 	returned, ended := false, false
