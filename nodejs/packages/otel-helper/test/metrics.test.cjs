@@ -687,9 +687,12 @@ test('A21 fix round: a client holding a connection (partial request, keep-alive)
   const afterReady = Date.now() - res.readyAt;
   assert.ok(afterReady < 2_000, `the child exited ${afterReady} ms after setup() returned (${res.exitedAfter.ms} ms after spawn)`);
   assert.match(res.out, /scraped/);
-  const closedAfter = await Promise.race([res.stalledClosed, new Promise((resolve) => setTimeout(() => resolve(Infinity), 6_500))]);
+  // Measured from the child's exit, not from spawn(): startup time is not what
+  // this asserts. The held connection must not outlive the process.
+  const closedAt = await Promise.race([res.stalledClosed, new Promise((resolve) => setTimeout(() => resolve(Infinity), 6_500))]);
   res.stalled().destroy();
-  assert.ok(closedAfter < 6_500, `the stalled client was closed after ${closedAfter} ms`);
+  const closedAfterExit = closedAt - res.exitedAfter.ms;
+  assert.ok(closedAfterExit < 2_000, `the stalled client was closed ${closedAfterExit} ms after the child exited (${closedAt} ms after spawn)`);
 });
 
 test('errorText never throws: a throwing toString or message getter, a revoked Proxy, a non-string message (B14 round 3)', () => {

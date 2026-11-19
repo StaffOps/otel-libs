@@ -4533,6 +4533,12 @@ Unsupported instrumentation versions, task A10 (P18):
 
 ### Internal
 
+- **Node.js: A21 keep-alive test no longer timing-dependent (2026-11-18).**
+  `nodejs/packages/otel-helper/test/metrics.test.cjs` ("a client holding a
+  connection … never keeps the process alive") measured the stalled
+  client's close from `spawn()`, so a slow child startup failed it; it now
+  measures from the child's exit (`closedAfterExit < 2_000`), which keeps
+  the claim that the held connection does not outlive the process. Test only.
 - **D16 parity cases (2026-11-18, design D16, R12, task A46).** Four new cases
   in `parity/cases.json` (391 cases): `http.server_5xx_error_type` (an HTTP
   SERVER span answering 500 carries `error.type=500`),
