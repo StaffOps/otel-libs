@@ -9566,10 +9566,54 @@
         }
       },
       "status": {
-        "go": "xfail:A31",
-        "python": "xfail:A31",
+        "go": "pass",
+        "python": "pass",
         "dotnet": "pass",
-        "nodejs": "xfail:A31"
+        "nodejs": "pass"
+      }
+    },
+    {
+      "id": "export.grpc_redirect_status_warned",
+      "kind": "export",
+      "requirement": "R2/R8",
+      "note": "Design D1 row 'OTLP export redirects', amendments (2) and (8), task A51 (added 2026-11-18): on gRPC the rule applies when the HTTP/2 response status is 3xx. fakeotlp answers a gRPC request carrying x-parity-grpc-redirect=307 with :status 307 and Location http://<host>/redirected/<method>?token=parity-redirect-token, no gRPC body or trailers. The helper line carries 'redirects are not followed' with signal= and status= on the same line, never the Location. Metrics and logs are off: one behavior, one signal.",
+      "env": {
+        "OTEL_SERVICE_NAME": "parity-svc",
+        "OTEL_EXPORTER_OTLP_ENDPOINT": "http://{receiver}:4317",
+        "OTEL_EXPORTER_OTLP_PROTOCOL": "grpc",
+        "OTEL_EXPORTER_OTLP_HEADERS": "x-parity-grpc-redirect=307",
+        "OTEL_METRICS_EXPORTER": "none",
+        "OTEL_LOGS_EXPORTER": "none"
+      },
+      "code": {},
+      "expect": {
+        "received": {
+          "traces": {
+            "proto": "grpc",
+            "headers": {
+              "x-parity-grpc-redirect": "307"
+            }
+          }
+        },
+        "helper_log": {
+          "all": [
+            {
+              "regex": "redirects are not followed[^\\n]*signal=traces[^\\n]*status=307"
+            },
+            {
+              "not_contains": "parity-redirect-token"
+            }
+          ]
+        },
+        "log": {
+          "not_contains": "parity-redirect-token"
+        }
+      },
+      "status": {
+        "go": "xfail:A51",
+        "python": "xfail:A51",
+        "dotnet": "pass",
+        "nodejs": "xfail:A51"
       }
     },
     {

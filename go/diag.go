@@ -40,9 +40,11 @@ func warnEnv(msg, variable, value, using string) {
 	diagLogger.Warn("otelhelper: "+msg, "variable", variable, "value", truncateValue(value), "using", using)
 }
 
-// deprecationsWarned records which deprecation warnings this process already
-// emitted: each is logged once per process (design D8), however many times
-// Setup runs. Tests reset it with resetDeprecationsForTest.
+// deprecationsWarned records which once-per-process diagnostics this process
+// already emitted, keyed by kind ("deprecated:", "env:", "once:", "unused:",
+// "redirect:" for the A31 redirect ERROR): each is logged once per process
+// (design D8), however many times Setup runs. The name predates the wider
+// use. Tests reset it with resetDeprecationsForTest.
 var deprecationsWarned sync.Map
 
 // warnDeprecated logs, once per process, that variable is deprecated and names

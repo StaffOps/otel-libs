@@ -331,6 +331,9 @@ func newOTLPMetricExporter(ctx context.Context, e *signalExport) (sdkmetric.Expo
 		} else {
 			o = append(o, otlpmetrichttp.WithCompression(otlpmetrichttp.GzipCompression))
 		}
+		// Last: the helper's client refuses redirects (A31) and carries the
+		// same transport, TLS and timeout the options above would give.
+		o = append(o, otlpmetrichttp.WithHTTPClient(newOTLPHTTPClient(signalMetrics, e)))
 		return otlpmetrichttp.New(ctx, o...)
 	}
 	var o []otlpmetricgrpc.Option

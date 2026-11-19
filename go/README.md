@@ -100,6 +100,8 @@ back to the generic one, then to the default.
 | `OTEL_EXPORTER_OTLP[_<SIGNAL>]_TIMEOUT` | SDK `10000` | Export timeout in **milliseconds**, clamped to [1 ms, 24 h] |
 | `OTEL_EXPORTER_OTLP[_<SIGNAL>]_COMPRESSION` | `gzip` | `gzip` or `none` (case-insensitive) |
 
+> **Redirects are refused** (0.3, task A31). The OTLP/HTTP exporters never follow a `3xx`: that export fails (it is not retried) and the helper writes one ERROR per signal and status code on its stderr logger (`msg="otelhelper: the OTLP endpoint for traces answered HTTP 307 (a redirect); redirects are not followed, …" signal=traces status=307`), never the `Location` value; the `3xx` response reaches the exporter with an empty body (redirectors often repeat the `Location` there), so its export error carries no body either. 0.2.x followed redirects: a 307/308 replayed the POST, its body and the custom OTLP headers to the `Location` host (net/http drops its credential headers — `Authorization`, `Www-Authenticate`, `Cookie`, `Cookie2` — only on a redirect to a different domain that is not a subdomain; other headers, API keys included, were always forwarded); a 301/302/303 turned it into a GET without a body. Configure the final endpoint URL.
+
 ### Signals, exporters and propagation
 
 | Variable | Default | Description |

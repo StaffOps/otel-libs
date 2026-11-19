@@ -312,6 +312,13 @@ Runtime and operations:
     body-size series go quiet without an error unless they use `absent()`.
     Check rules keyed on `span_kind`, `connection_type`, `server`,
     `client="user"` or span names.
+31. **BREAKING (narrow) — OTLP redirects are refused (A31, added
+    2026-11-18).** An OTLP/HTTP endpoint behind a redirect (HTTP→HTTPS, a path
+    rewrite, a load balancer answering 301/302/307/308) now drops that signal:
+    the export fails, is not retried, and the helper writes one ERROR per
+    signal and status code (`redirects are not followed … signal=<signal>
+    status=<code>`). 0.2.x followed it (see the Go entry below). Configure the
+    final endpoint URL (scheme, host, port and path).
 
 ### Migration guide 0.2 → 0.3 — Python
 
@@ -627,6 +634,15 @@ Telemetry and runtime:
     move them to `http_server_request_duration_seconds_count`, or set the
     switch. Check rules keyed on `span_kind`, `connection_type`, `server`,
     `client="user"` or span names.
+31. **BREAKING (narrow) — OTLP redirects are refused (A31, added
+    2026-11-18).** An OTLP/HTTP endpoint behind a redirect (HTTP→HTTPS, a path
+    rewrite, a load balancer answering 301/302/307/308) now drops that signal:
+    the export fails (FAILURE to the processor, the SDK's own export error per
+    batch), is not retried, and the helper writes one ERROR per signal and
+    status code (`redirects are not followed … signal=<signal>
+    status=<code>`). With exporter 1.42, 0.2.x followed it (see the Python
+    entry below). Configure the final endpoint URL (scheme, host, port and
+    path).
 
 ### Migration guide 0.2 → 0.3 — .NET (in progress, Phase C)
 
@@ -1339,6 +1355,8 @@ dashboards and alerts.
    decision 2026-11-10):** the contract now refuses redirects in every
    language (task A31); until A31, Go and Python follow 307/308 and Node.js
    fails the export without a helper line.
+   *Note 2026-11-18:* A31 landed on 2026-11-18 — Go, Python and Node.js refuse
+   OTLP/HTTP redirects with the shared ERROR line; the gRPC line is task A51.
 
 18. **Signals and exporters follow the 0.3 contract** (task C9, contract A19,
    R2, R8, ADR-013). Before (0.2.x) → after:
@@ -1703,6 +1721,12 @@ Owned outside this repo (design D11); each item blocks the rollout, not the rc:
    (design D5).
 8. Consumers using portless gRPC URLs: add an explicit `:4317` (design D1.b
    warning).
+9. OTLP endpoints behind a redirect (added 2026-11-18, task A31): every
+   language refuses OTLP redirects, so an endpoint reached through an
+   HTTP→HTTPS redirect, a path rewrite or a load balancer answering a `3xx`
+   loses that signal (one ERROR per signal and status code). Point
+   `OTEL_EXPORTER_OTLP[_<SIGNAL>]_ENDPOINT` at the final URL before the
+   rollout.
 
 ### .NET
 
@@ -2682,6 +2706,32 @@ renamed span or a dropped metric.
 
 ### Go — detailed changes
 
+- **OTLP redirects refused (task A31, design D1 row "OTLP export redirects";
+  2026-11-18).** The OTLP/HTTP exporters followed redirects (net/http): a
+  307/308 replayed the POST, its body and the custom OTLP headers to the
+  `Location` host (net/http drops its credential headers — `Authorization`,
+  `Www-Authenticate`, `Cookie`, `Cookie2` — only on a redirect to a
+  different domain that is not a subdomain; other headers, API keys included,
+  were always forwarded), and a 301/302/303 turned it into a GET without a
+  body. They now get the
+  helper's `http.Client` (`WithHTTPClient`): `CheckRedirect` returns
+  `http.ErrUseLastResponse`, so a `3xx` fails the export (not retried), and
+  one ERROR per process, signal and status code goes to the helper's stderr
+  logger — `otelhelper: the OTLP endpoint for traces answered HTTP 307 (a
+  redirect); redirects are not followed, so these traces are not exported:
+  configure the final endpoint URL` with `signal=traces status=307` — never
+  the `Location` value. The client keeps the SDK default client's transport
+  settings (proxy from the environment, dial, idle and TLS-handshake
+  timeouts, HTTP/2), the helper's TLS configuration and the export timeout.
+  gRPC never followed redirects; it writes no helper line yet (task A51).
+  Parity case `export.http_redirect_refused_warned`: `xfail:A31` → `pass`.
+  *A31 review round (2026-11-18):* the redirect-reporting `RoundTripper`
+  forwards `CloseIdleConnections` to its transport, so a caller of
+  `http.Client.CloseIdleConnections` still reaches the transport, and hands the exporter the `3xx` response
+  with an empty body (at most 64 KiB read and discarded): redirectors often
+  repeat the `Location` in the body, which the SDK copies into its export
+  error.
+
 - **Protocol span error attributes (requirement R12, design D16, tasks A38,
   A40, A44, A46; 2026-11-18; Python and Node.js follow in later tasks).**
   - `ext/otelsql`: `Open(driverName, dsn string, opts ...Option)` (variadic:
@@ -3340,6 +3390,40 @@ Behavior changes, with migration notes:
   (Apache-2.0). `aws-sdk-go-v2` v1.47.1 → v1.47.5.
 
 ### Python — detailed changes
+
+- **OTLP redirects refused (task A31, design D1 row "OTLP export redirects";
+  2026-11-18).** With `opentelemetry-exporter-otlp-proto-http` 1.42 the
+  OTLP/HTTP exporters followed redirects: a 307/308 replayed the POST, its
+  body and the custom OTLP headers to the `Location` host (requests drops only
+  `Authorization` and `Cookie` when the host changes, so other headers, API
+  keys included, were forwarded), and a 301/302/303 turned it into a GET
+  without a body (1.45 already does not follow, silently). The helper now
+  passes its own `requests.Session` (`session=`) that never follows a
+  redirect — a credential-provider session
+  (`OTEL_PYTHON_EXPORTER_OTLP_HTTP[_<SIGNAL>]_CREDENTIAL_PROVIDER`) is loaded
+  by the SDK's loader and refused the same way — so a `3xx` export is
+  dropped (not retried), and one ERROR per process, signal and status code goes to
+  `staffops_otel_helper.export`: `otelhelper: the OTLP endpoint for traces
+  answered HTTP 307 (a redirect); redirects are not followed, so these traces
+  are not exported: configure the final endpoint URL signal=traces
+  status=307`. The `Location` value is never logged. gRPC never followed
+  redirects; it writes no helper line yet (task A51). Parity case
+  `export.http_redirect_refused_warned`: `xfail:A31` → `pass`.
+  *A31 review round (2026-11-18, design amendment (10), superseding (9)):*
+  left alone, the exporter (1.42 and 1.45) reported a `3xx` export to the
+  processor as successful, and the SDK self-metrics
+  (`OTEL_PYTHON_SDK_INTERNAL_METRICS_ENABLED`) counted the lost batch as
+  exported. The helper's response hook now closes the response unread and
+  raises a `requests.exceptions.RequestException` subclass (not a connection
+  error or timeout) naming only the signal and status: both bounds return
+  FAILURE without a retry and write their own export error for every refused
+  batch (`Failed to export … batch code: None, reason: OTLP export answered
+  HTTP 307, a redirect; not followed (signal=traces status=307)`; the logs
+  exporter's errors pass through the SDK `DuplicateFilter`, one per message
+  template per 20-second window). A
+  credential-provider loader that returns no session gets a plain refusing
+  session; if the SDK's private loader is missing, one WARNING names the
+  variable and that provider's session keeps the SDK's redirect handling.
 
 - **`OTEL_METRICS_EXEMPLAR_FILTER` honored (task A33, design D1 row "Metrics
   exporters / interval / exemplars"; 2026-11-18).** The helper used to pass
@@ -4085,6 +4169,28 @@ Unsupported instrumentation versions, task A10 (P18):
   Go → `microsoft.sql_server`).
 
 ### Changed
+
+- **Node.js: OTLP redirects reported (task A31, design D1 row "OTLP export
+  redirects"; 2026-11-18).** The OTLP/HTTP transport never followed a `3xx`
+  (plain `http`/`https`), but the failed export wrote no helper line. The
+  helper now wraps each OTLP/HTTP exporter's `export` and, when the result is
+  an `OTLPExporterError` with a `3xx` code, writes one ERROR per process,
+  signal and status code on the diagnostics sink: `otelhelper: the OTLP
+  endpoint for traces answered HTTP 307 (a redirect); redirects are not
+  followed, so these traces are not exported: configure the final endpoint
+  URL signal=traces status=307`, never the `Location` value. gRPC writes no
+  helper line yet (task A51). Parity case `export.http_redirect_refused_warned`:
+  `xfail:A31` → `pass`.
+  *A31 review round (2026-11-18, design amendment (11)):* the raw `3xx`
+  response body, where redirectors often repeat the `Location`, no longer
+  reaches callers: the wrapper replaces the export error's `data` with
+  `<response body omitted: N characters>` before the processor,
+  `shutdown()`'s `AggregateError` or a logger sees it.
+- **Parity: gRPC redirect case (task A51, 2026-11-18).** fakeotlp answers a
+  gRPC request carrying `x-parity-grpc-redirect: <3xx>` with that HTTP/2
+  `:status` and a token-carrying `Location`. New case
+  `export.grpc_redirect_status_warned` (395 cases): .NET `pass`; Go, Python and
+  Node.js `xfail:A51` (they fail the export but write no helper line).
 
 - **Go, Python, Node.js: one failure rule for application spans (task A45,
   [ADR-016](specs/decisions/ADR-016-application-span-failure-status.md),

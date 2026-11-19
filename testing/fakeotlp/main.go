@@ -13,6 +13,9 @@
 // An OTLP/HTTP request whose path starts with /parity-redirect-<letter>/ (a=301,
 // b=302, c=307, d=308) is answered with that status and Location http://<host>/redirected/<rest>?token=
 // parity-redirect-token (contract task A31: clients must not follow it).
+// An OTLP/gRPC request carrying the header x-parity-grpc-redirect=<3xx code>
+// is answered with that HTTP/2 :status and the same kind of Location, no gRPC
+// body or trailers (contract task A51: the helper line for a gRPC 3xx).
 //
 // A request carrying the header x-parity-echo-error is answered with an error
 // that echoes its x-parity-* headers, as a collector or proxy echoing the
@@ -46,6 +49,7 @@ import (
 	"net/http"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -96,6 +100,9 @@ func parityHeaders(h http.Header) map[string]string {
 // echoErrorHeader asks the receiver to answer with an error echoing the
 // request's x-parity-* headers.
 const echoErrorHeader = "x-parity-echo-error"
+
+// grpcRedirectHeader asks for an HTTP/2 3xx answer to a gRPC request (task A51).
+const grpcRedirectHeader = "x-parity-grpc-redirect"
 
 // echoText renders the x-parity-* headers as JSON (sorted keys).
 func echoText(h map[string]string) string {
@@ -192,6 +199,11 @@ func handler(g *grpc.Server, isTLS bool) http.Handler {
 		if r.ProtoMajor == 2 && strings.HasPrefix(r.Header.Get("Content-Type"), "application/grpc") {
 			add(rec{Addr: addr, Proto: "grpc", TLS: isTLS, Host: r.Host, Port: port, Path: r.URL.Path, RawPath: r.URL.EscapedPath(),
 				Encoding: r.Header.Get("Grpc-Encoding"), Timeout: r.Header.Get("Grpc-Timeout"), Headers: parityHeaders(r.Header)})
+			if code, err := strconv.Atoi(r.Header.Get(grpcRedirectHeader)); err == nil && code >= 300 && code <= 399 {
+				w.Header().Set("Location", "http://"+r.Host+"/redirected"+r.URL.Path+"?token="+redirectToken)
+				w.WriteHeader(code)
+				return
+			}
 			g.ServeHTTP(w, r)
 			return
 		}

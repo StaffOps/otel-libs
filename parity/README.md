@@ -80,6 +80,14 @@ other `x-parity-*` value (the credential of `Bearer <token>`): in the HTTP
 reason phrase (`400 Rejected invalid token <t>`, HTTP/1.1) and in the gRPC
 status message.
 
+An OTLP/HTTP request whose path starts with `/parity-redirect-<letter>/`
+(`a`=301, `b`=302, `c`=307, `d`=308) is answered with that status and a
+`Location` on `/redirected/<rest>?token=parity-redirect-token` (A31, case
+`export.http_redirect_refused_warned`). An OTLP/gRPC request carrying
+`x-parity-grpc-redirect: <3xx code>` is answered with that HTTP/2 `:status` and
+the same kind of `Location`, without a gRPC body or trailers (added 2026-11-18,
+task A51; case `export.grpc_redirect_status_warned`).
+
 Protocol, URL and TLS are asserted only by `export` cases (per signal, from
 what reached the wire), never from resolved options.
 

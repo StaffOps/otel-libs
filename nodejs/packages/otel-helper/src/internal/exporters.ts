@@ -29,7 +29,8 @@ import { OTLPTraceExporter as HttpTraceExporter } from '@opentelemetry/exporter-
 import type { LogRecordExporter } from '@opentelemetry/sdk-logs';
 import type { PushMetricExporter } from '@opentelemetry/sdk-metrics';
 import type { SpanExporter } from '@opentelemetry/sdk-trace';
-import { truncateValue } from './diagnostics';
+import { omittedBody } from './diag-logger';
+import { reportOnce, truncateValue } from './diagnostics';
 import { trimWS, type Warn } from './env';
 import type { OtlpEndpoint } from './otlp';
 import { otlpEnv, type OtlpCompression, type ResolvedHeaders, type Signal } from './otlp-settings';
@@ -316,9 +317,66 @@ function httpConfig(input: ExporterInput): HttpConfig {
 
 const isGrpc = (input: ExporterInput): boolean => input.endpoint.protocol === 'grpc';
 
+/**
+ * The status of an export failed by a `3xx` answer: the OTLP/HTTP transport of
+ * `@opentelemetry/otlp-exporter-base` sends with plain `http`/`https`, which
+ * never follows a redirect, and resolves a status above 299 that is not
+ * retryable as an `OTLPExporterError` whose `code` is the HTTP status.
+ */
+function redirectStatus(error: unknown): number | undefined {
+  if (!(error instanceof Error)) return undefined;
+  const code: unknown = (error as { code?: unknown }).code;
+  return typeof code === 'number' && Number.isInteger(code) && code >= 300 && code <= 399 ? code : undefined;
+}
+
+/**
+ * The redirect ERROR of task A31 (design D1 row "OTLP export redirects"), once
+ * per process for each signal and status. The wording is shared with the
+ * other languages (contract fragment `redirects are not followed`, then
+ * `signal=` and `status=`); the `Location` value is never printed.
+ */
+function reportRedirect(signal: Signal, status: number): void {
+  reportOnce(
+    `redirect:${signal}:${String(status)}`,
+    `the OTLP endpoint for ${signal} answered HTTP ${String(status)} (a redirect); redirects are not followed, so these ${signal} are not exported: configure the final endpoint URL`,
+    { signal, status },
+    { origin: 'helper', level: 'error' },
+  );
+}
+
+/** The callback shape of the three OTLP exporters' `export(items, resultCallback)`. */
+interface CallbackExporter {
+  export(items: unknown, resultCallback: (result: { error?: Error }) => void): void;
+}
+
+/**
+ * Wraps `exporter.export` so a redirect answer writes the helper ERROR. The
+ * result still reaches the processor as a failed export, but the error's
+ * `data` (the raw `3xx` response body, where redirectors often repeat the
+ * `Location`: "Redirecting to <url>") is replaced by the diag form
+ * `<response body omitted: N characters>`, so neither the processor, the
+ * `AggregateError` of a failed `shutdown()` nor any logger receives it.
+ */
+export function withRedirectReport<E extends object>(exporter: E, signal: Signal): E {
+  const target = exporter as unknown as CallbackExporter;
+  const original = target.export.bind(target);
+  target.export = (items, resultCallback) => {
+    original(items, (result) => {
+      const status = redirectStatus(result.error);
+      if (status !== undefined) {
+        reportRedirect(signal, status);
+        const error = result.error as Error & { data?: unknown };
+        if (error.data != null) error.data = omittedBody(error.data);
+      }
+      resultCallback(result);
+    });
+  };
+  return exporter;
+}
+
 /** The OTLP span exporter of a configured traces endpoint. */
 export function spanExporter(input: ExporterInput): SpanExporter {
-  return isGrpc(input) ? new (grpcTraces().OTLPTraceExporter)(grpcConfig(input)) : new HttpTraceExporter(httpConfig(input));
+  return isGrpc(input) ? new (grpcTraces().OTLPTraceExporter)(grpcConfig(input)) : withRedirectReport(new HttpTraceExporter(httpConfig(input)), input.signal);
 }
 
 /**
@@ -328,10 +386,10 @@ export function spanExporter(input: ExporterInput): SpanExporter {
  * variable is not helper-owned and stays visible).
  */
 export function metricExporter(input: ExporterInput): PushMetricExporter {
-  return isGrpc(input) ? new (grpcMetrics().OTLPMetricExporter)(grpcConfig(input)) : new HttpMetricExporter(httpConfig(input));
+  return isGrpc(input) ? new (grpcMetrics().OTLPMetricExporter)(grpcConfig(input)) : withRedirectReport(new HttpMetricExporter(httpConfig(input)), input.signal);
 }
 
 /** The OTLP log record exporter of a configured logs endpoint. */
 export function logExporter(input: ExporterInput): LogRecordExporter {
-  return isGrpc(input) ? new (grpcLogs().OTLPLogExporter)(grpcConfig(input)) : new HttpLogExporter(httpConfig(input));
+  return isGrpc(input) ? new (grpcLogs().OTLPLogExporter)(grpcConfig(input)) : withRedirectReport(new HttpLogExporter(httpConfig(input)), input.signal);
 }

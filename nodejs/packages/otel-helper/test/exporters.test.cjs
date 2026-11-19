@@ -20,7 +20,7 @@ const helper = require('@staffops/otel-helper');
 const testing = require('@staffops/otel-helper/testing');
 const { parseHeaders, resolveHeaders, resolveTimeout, resolveCompression } = require('../dist/internal/otlp-settings.js');
 const { resolveSdkSettings } = require('../dist/internal/sdk-settings.js');
-const { grpcCredentials, maskedVariables, tlsMaterial, withMaskedEnv } = require('../dist/internal/exporters.js');
+const { grpcCredentials, maskedVariables, tlsMaterial, withMaskedEnv, withRedirectReport } = require('../dist/internal/exporters.js');
 const { tryBuild } = require('../dist/internal/setup.js');
 const { runCjs, lastJson } = require('./helpers.cjs');
 
@@ -664,4 +664,100 @@ test('item 1: requiring the helper does not load @grpc/grpc-js; an http/protobuf
     console.log(JSON.stringify({ before, http }));
   `);
   assert.deepEqual(lastJson(res), { before: 0, http: 0 });
+});
+
+// ── A31: OTLP export redirects (design D1 row "OTLP export redirects") ──
+
+const REDIRECT_TOKEN = 'a31-redirect-token';
+
+/**
+ * /redirect-<code>/... answers <code> with a Location on /redirected/... carrying a token,
+ * repeated in the body ("Redirecting to <url>", as redirectors commonly write).
+ */
+function redirectServer() {
+  const requests = [];
+  const server = http.createServer((req, res) => {
+    req.resume();
+    req.on('end', () => {
+      requests.push(req.url);
+      const m = /^\/redirect-(\d{3})(\/.*)$/.exec(req.url);
+      if (m) {
+        const location = `http://${req.headers.host}/redirected${m[2]}?token=${REDIRECT_TOKEN}`;
+        res.writeHead(Number(m[1]), { location, 'content-type': 'text/plain' });
+        res.write(`Redirecting to ${location}`);
+      } else {
+        res.writeHead(200, { 'content-type': 'application/x-protobuf' });
+      }
+      res.end();
+    });
+  });
+  return new Promise((resolve) => {
+    server.listen(0, '127.0.0.1', () => resolve({ server, requests, port: server.address().port }));
+  });
+}
+
+for (const status of [307, 308]) {
+  test(`A31 a ${status} answer is not followed: one ERROR per signal and status, never the Location`, async () => {
+    const { server, requests, port } = await redirectServer();
+    try {
+      process.env.OTEL_EXPORTER_OTLP_HEADERS = 'x-a31=a31-header-value';
+      for (let i = 0; i < 2; i++) {
+        helper.setup({ otelEndpoint: `http://127.0.0.1:${port}/redirect-${status}`, otlpProtocol: 'http/protobuf' });
+        emitAll();
+        // The final flush failed (a 3xx is a failed export), so shutdown() rejects, naming
+        // the provider and the exporter error, never the Location (pattern of line 652).
+        await assert.rejects(helper.shutdown(), (err) => {
+          assert.ok(err instanceof AggregateError, String(err));
+          assert.match(err.message, /failed to shut down \(first: [^)]*Redirect\)/);
+          for (const e of err.errors) {
+            assert.equal(e.code, status, String(e));
+            // The redirect body is replaced by the diag placeholder (its size only).
+            assert.match(String(e.data), /^<response body omitted: \d+ characters>$/);
+          }
+          const text = [err.message, ...err.errors.map((e) => `${e.message} ${e.data ?? ''} ${e.stack ?? ''}`)].join('\n');
+          for (const secret of [REDIRECT_TOKEN, '/redirected', 'Redirecting to']) assert.ok(!text.includes(secret), text);
+          return true;
+        });
+      }
+      assert.deepEqual(requests.filter((u) => u.startsWith('/redirected')), [], 'the redirect was followed');
+      assert.equal(requests.length, 6, JSON.stringify(requests));
+      for (const signal of ['traces', 'metrics', 'logs']) {
+        const re = new RegExp(`redirects are not followed[^\\n]*signal=${signal}[^\\n]*status=${status}`);
+        const hits = records.filter((r) => re.test(r.line));
+        assert.equal(hits.length, 1, `${signal}: ${JSON.stringify(lines())}`);
+        assert.equal(hits[0].level, 'error');
+        assert.equal(hits[0].origin, 'helper');
+      }
+      assert.equal(lines((r) => r.line.includes('redirects are not followed')).length, 3);
+      const all = lines().join('\n');
+      for (const secret of [REDIRECT_TOKEN, '/redirected', 'Redirecting to', 'a31-header-value']) assert.ok(!all.includes(secret), secret);
+    } finally {
+      server.close();
+    }
+  });
+}
+
+test('A31 the wrapper reports 3xx statuses only, and passes every result on (a 3xx body replaced by its size)', () => {
+  const results = [
+    { code: 1, error: Object.assign(new Error('Found'), { code: 302, data: 'Redirecting to http://example.com/x?token=a31-redirect-token' }) },
+    { code: 1, error: Object.assign(new Error('Found'), { code: 302 }) },
+    { code: 1, error: Object.assign(new Error('Not Found'), { code: 404, data: 'not a redirect' }) },
+    { code: 1, error: Object.assign(new Error('grpc'), { code: '307' }) },
+    { code: 1, error: { code: 301 } },
+    { code: 1 },
+    { code: 0 },
+  ];
+  const seen = [];
+  let next = 0;
+  const fake = { export: (_items, cb) => cb(results[next++]) };
+  const wrapped = withRedirectReport(fake, 'logs');
+  assert.equal(wrapped, fake);
+  for (let i = 0; i < results.length; i++) wrapped.export([], (r) => seen.push(r));
+  assert.deepEqual(seen, results);
+  assert.equal(results[0].error.data, '<response body omitted: 60 characters>');
+  assert.equal(results[2].error.data, 'not a redirect');
+  const hits = lines((r) => r.line.includes('redirects are not followed'));
+  assert.deepEqual(hits, [
+    'otelhelper: the OTLP endpoint for logs answered HTTP 302 (a redirect); redirects are not followed, so these logs are not exported: configure the final endpoint URL signal=logs status=302',
+  ]);
 });

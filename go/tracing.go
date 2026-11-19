@@ -173,6 +173,9 @@ func newOTLPTraceExporter(ctx context.Context, e *signalExport) (sdktrace.SpanEx
 		} else {
 			o = append(o, otlptracehttp.WithCompression(otlptracehttp.GzipCompression))
 		}
+		// Last: the helper's client refuses redirects (A31) and carries the
+		// same transport, TLS and timeout the options above would give.
+		o = append(o, otlptracehttp.WithHTTPClient(newOTLPHTTPClient(signalTraces, e)))
 		return otlptracehttp.New(ctx, o...)
 	}
 	var o []otlptracegrpc.Option

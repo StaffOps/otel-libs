@@ -702,6 +702,9 @@ func newOTLPLogExporter(ctx context.Context, e *signalExport) (sdklog.Exporter, 
 		} else {
 			o = append(o, otlploghttp.WithCompression(otlploghttp.GzipCompression))
 		}
+		// Last: the helper's client refuses redirects (A31) and carries the
+		// same transport, TLS and timeout the options above would give.
+		o = append(o, otlploghttp.WithHTTPClient(newOTLPHTTPClient(signalLogs, e)))
 		return otlploghttp.New(ctx, o...)
 	}
 	var o []otlploggrpc.Option

@@ -69,7 +69,7 @@ const SCANNED_FOR_MESSAGE = Math.min(MAX_MESSAGE_STRING * 2, REDACT_SCAN_LIMIT);
 const SIGNALS: readonly Signal[] = ['traces', 'metrics', 'logs'];
 
 /** Placeholder for a dropped response body (its size only). */
-function omittedBody(body: unknown): string {
+export function omittedBody(body: unknown): string {
   const size = typeof body === 'string' ? `${String(body.length)} characters` : body instanceof Uint8Array ? `${String(body.byteLength)} bytes` : 'non-string';
   return `<response body omitted: ${size}>`;
 }

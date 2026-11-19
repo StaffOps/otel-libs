@@ -899,6 +899,21 @@ setup({
   handshake; warned on every version).
 - An endpoint answering `Retry-After: 0` makes the SDK retry print Node's
   `TimeoutNegativeWarning` (see [Troubleshooting](#troubleshooting)).
+- Redirects are refused (contract task A31): an `http/protobuf` export
+  answered with a `3xx` fails (the exporter's transport never follows one,
+  and does not retry it), and the helper writes one ERROR per process,
+  signal and status code on the diagnostics sink:
+  `otelhelper: the OTLP endpoint for traces answered HTTP 307 (a redirect); redirects are not followed, so these traces are not exported: configure the final endpoint URL signal=traces status=307`.
+  The `Location` value is never written. Configure the final endpoint URL.
+  When the failed export is the final flush, `shutdown()` rejects, as for any
+  failed flush, with an `AggregateError` such as `shutdown(): TracerProvider failed
+  to shut down (first: Temporary Redirect)`; its errors carry the HTTP status as
+  `code`. The response body of a `3xx` (redirectors often repeat the
+  `Location` there, `Redirecting to <url>`) never reaches a caller: the
+  helper replaces the error's `data` with `<response body omitted: N characters>`
+  before the processor, `shutdown()` or a logger sees it.
+  gRPC never follows a redirect either; no helper line is written for it yet
+  (task A51).
 
 ---
 

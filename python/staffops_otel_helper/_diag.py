@@ -23,6 +23,15 @@ def warn_once_per_process(logger: logging.Logger, key: str, msg: str, *args: obj
     logger.warning(msg, *args)
 
 
+def error_once_per_process(logger: logging.Logger, key: str, msg: str, *args: object) -> None:
+    """Log ``msg`` at ERROR on ``logger`` the first time ``key`` is seen in this process."""
+    with _lock:
+        if key in _emitted:
+            return
+        _emitted.add(key)
+    logger.error(msg, *args)
+
+
 def _reset() -> None:
     """Forget what was emitted. For tests only."""
     with _lock:

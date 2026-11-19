@@ -193,6 +193,8 @@ metrics use the Prometheus fallback and logs stay local. While the exporters
 are built, the helper hides these variables from `process.env`, so a value it
 rejected never reaches the SDK or the wire.
 
+> **Redirects are refused** (0.3, task A31). The OTLP/HTTP exporters never follow a `3xx` (their transport uses plain `http`/`https`, which does not follow redirects): that export fails (it is not retried) and the helper writes one ERROR per signal and status code on the diagnostics sink (`otelhelper: the OTLP endpoint for traces answered HTTP 307 (a redirect); redirects are not followed, … signal=traces status=307`), never the `Location` value. When that export is the final flush, `shutdown()` rejects with an `AggregateError` (`… failed to shut down (first: Temporary Redirect)`), as for any failed flush; the `3xx` response body is replaced by `<response body omitted: N characters>` in its errors. Before A31 the export failed with no helper line. Configure the final endpoint URL.
+
 ### Signals, sampling, propagation
 
 | Variable | Default | Notes |
