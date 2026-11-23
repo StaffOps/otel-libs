@@ -178,6 +178,7 @@ testing/k8s/demo/demo.sh scale --all 1         # every language in LANGS back to
 | Forced roll | `DEMO_RESTART_NONCE` is an allowed name the apps ignore: a new value changes the pod template, so `apply` rolls the Deployments (`Recreate`) |
 | No file | Without `DEMO_ENV_FILE` (or with an empty or comment-only file) the manifests are byte-identical to the hook-less ones (`demo/fixtures/render-default.yaml`) |
 | Other commands | `delete` and `scale` ignore `DEMO_ENV_FILE` |
+| Restore | `DEMO_RESTORE=1` (with `apply --lang/--all` or `scale` only) puts already-running apps back without the hook's values and skips the K-D2 capacity pre-flight (the apps already hold their requests); it refuses `DEMO_ENV_FILE` and refuses when any app Deployment of those languages is not applied; `apply` also refuses a target that runs another image tag than `TAG` or has replicas 0, and `scale` refuses an `n` above the current replicas of every target (a scale-up runs the normal pre-flight); the rollout and the FailedScheduling watch still run. Used by the soak trap (`testing/k8s/soak/`) |
 
 `scale --lang <lang> <n>` or `scale --all <n>` (LANGS) sets the replicas of the
 demo app Deployments (selector `otel-libs/lang in (...)`, so PostgreSQL and
@@ -200,7 +201,43 @@ python3 -I testing/k8s/verify.py --langs node,dotnet examples
 python3 -I testing/k8s/verify.py --langs go,python --fresh 15 examples
 python3 -I testing/k8s/verify.py demo --run "$RUN" --dry-run          # pre-flight only
 python3 -I testing/k8s/verify.py demo --run "$RUN" --window 15m --settle 2m
+python3 -I testing/k8s/verify.py platform --run "$RUN" \
+  --fakeotlp-image harbor.staffops.space/development/otel-libs-fakeotlp:<tag>@sha256:<digest>
 ```
+
+`platform` (specs/soak-simulation K1, r6.2; code in `soakplatform.py`) is the
+soak's platform snapshot and entry gate, read-only apart from one `kubectl
+exec` per demo container that reads `/proc/1/comm` and `/proc/1/cmdline`
+(`--skip-exec` drops it). It prints one PASS / FAIL / NA line per item: the
+Collector CRs and `soak-agent` ConfigMap, Prometheus `spec.otlp` and PVC,
+roll-list pods, node, namespace labels, Tempo and Loki limits, the K8a runtime
+metric names, the copy's `exported_instance` label, the Tempo selectors, PID 1
+per demo container, the mesh and platform guard (a)–(h) and the sentinels over
+`--lookback` (30m). INFO lines give the `--baseline` (24h) read of every
+sentinel and guard counter — when each was last noisy, and from when a clean
+24 h baseline (counters clean, no roll-list container start) is readable —
+and the node reading from `--floor-window` (1h): a minimum below the initial
+K-D13 floors (2 GiB, 15 %, 10 %) is a FAIL, and the floors stay the initial
+ones until K-cal measures the run's footprint (rule in K-D13, dated
+2026-11-23). The PVC item notes that the 20Gi capacity differs from the 60Gi
+request: tracked, not an outage risk (local-path does not enforce PVC
+capacity; the TSDB lives on the node root fs, bounded by `retentionSize`).
+Raw reads reach `BORN_GRACE` + one scrape before their window, so a counter
+series with no sample before the window's start was born in it and counts.
+Guard (a) tolerates pods in transition (deleting, a container not running
+yet, a container start or Ready transition, or a Running exit, within 60 s;
+a pod of the previous read that is gone), which may not be in ztunnel's
+scraped count yet; a series born in a window that has a sample in the hour
+before its start only had a scrape gap and is reset-unknown (an error item),
+not an increase; guard (g) skips Terminating pods and judges the
+run's languages; a roll-list container that is not running fails (d,e). Guard (h) and the copy's
+sentinels without a success sibling are NA until the apps export to the copy;
+`--expect-copy` makes them required. Every shared-job query carries
+`cluster="k8s01"`. Files go to `testing/k8s/soak/runs/<run>/` (git-ignored):
+`snapshot.json` (read by later soak tasks), `baseline.json`,
+`edges-report-only.json` and `crs/` (credentials stripped; a file the secret
+scan flags is not written). Exit `0` every item PASS or NA, `1` any FAIL,
+`2` usage errors.
 
 `demo` (specs/demo-environment DE-D11) checks the window `[now − settle − W,
 now − settle]` against `testing/k8s/demo/expected.json` and prints one line per

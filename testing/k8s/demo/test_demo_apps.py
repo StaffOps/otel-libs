@@ -243,6 +243,8 @@ case "$args" in
   *" get namespace "*) echo namespace/dev-otel-libs ;;
   *" get deployments -l app.kubernetes.io/part-of=otel-libs,app.kubernetes.io/component=demo,!otel-libs/lang "*)
     cat "$d/backing.txt" ;;
+  *" get deployments -l app.kubernetes.io/part-of=otel-libs,app.kubernetes.io/component=demo,otel-libs/lang in ("*" jsonpath="*)
+    cat "$d/app_state.txt" 2>/dev/null ;;  # DEMO_RESTORE=1 checks: "<name> <replicas> <image>"
   *" get deployments -l app.kubernetes.io/part-of=otel-libs,app.kubernetes.io/component=demo,otel-libs/lang in ("*)
     cat "$d/app_deploys.txt" 2>/dev/null ;;  # demo.sh scale (DE13)
   *" get secret "*) echo secret/a ;;

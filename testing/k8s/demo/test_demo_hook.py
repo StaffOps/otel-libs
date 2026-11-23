@@ -349,5 +349,93 @@ class ScaleUsage(HookCase):
         self.assert_untouched()
 
 
+def app_state(langs, replicas=1, tag="abc1234") -> str:
+    return "".join(f"demo-{lang}-{app} {replicas} harbor.staffops.space/development/otel-libs-demo-{lang}-{app}:{tag}\n"
+                   for lang in langs for app in APPS)
+
+
+class Restore(FakeCluster):
+    """DEMO_RESTORE=1: the soak trap puts the running apps back without the
+    hook's values, with no K-D2 capacity pre-flight (soak task K-loop, H5;
+    the refusals of the re-review M2)."""
+
+    def setUp(self):
+        super().setUp()
+        (self.dir / "app_state.txt").write_text(app_state(LANGS))
+
+    def test_apply_restore_refuses_another_tag(self):
+        (self.dir / "app_deploys.txt").write_text(deploys("go"))
+        (self.dir / "app_state.txt").write_text(app_state(["go"], tag="0ther00"))
+        result = self.apply("--lang", "go", DEMO_RESTORE="1")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("runs image tag 0ther00, not TAG=abc1234", result.stderr)
+        self.assertFalse((self.dir / "applied.yaml").exists())
+
+    def test_apply_restore_refuses_replicas_zero(self):
+        (self.dir / "app_deploys.txt").write_text(deploys("go"))
+        (self.dir / "app_state.txt").write_text(app_state(["go"], replicas=0))
+        result = self.apply("--lang", "go", DEMO_RESTORE="1")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("has replicas 0", result.stderr)
+        self.assertFalse((self.dir / "applied.yaml").exists())
+
+    def test_scale_restore_refuses_a_scale_up(self):
+        (self.dir / "app_deploys.txt").write_text(deploys("go"))
+        (self.dir / "app_state.txt").write_text(app_state(["go"], replicas=1))
+        result = self.demo("scale", "--lang", "go", "2", DEMO_RESTORE="1")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("above the current replicas", result.stderr)
+        self.assertFalse(any("--replicas=" in c for c in self.calls()))
+        self.assertEqual(self.demo("scale", "--lang", "go", "0", DEMO_RESTORE="1").returncode, 0)
+
+    def test_scale_restore_refuses_when_any_target_would_grow(self):
+        # Mixed replicas: n above ANY target's current count is a scale-up.
+        (self.dir / "app_deploys.txt").write_text(deploys("go"))
+        state = app_state(["go"], replicas=2).splitlines(keepends=True)
+        state[0] = state[0].replace(" 2 ", " 1 ", 1)
+        (self.dir / "app_state.txt").write_text("".join(state))
+        result = self.demo("scale", "--lang", "go", "2", DEMO_RESTORE="1")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("above the current replicas of: demo-go-", result.stderr)
+        self.assertFalse(any("--replicas=" in c for c in self.calls()))
+
+    def test_apply_restore_skips_the_preflight(self):
+        (self.dir / "app_deploys.txt").write_text(deploys("go"))
+        result = self.apply("--lang", "go", DEMO_RESTORE="1")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("DEMO_RESTORE=1: no K-D2 pre-flight", result.stdout)
+        self.assertFalse(any("get nodes" in c for c in self.calls()))
+        docs = documents((self.dir / "applied.yaml").read_text())
+        self.assertNotIn("DEMO_RESTART_NONCE", env_of(docs[("Deployment", "demo-go-api")]))
+
+    def test_restore_needs_the_apps_applied(self):
+        (self.dir / "app_deploys.txt").write_text("deployment.apps/demo-go-api\n")
+        result = self.apply("--lang", "go", DEMO_RESTORE="1")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("is not applied", result.stderr)
+        self.assertFalse((self.dir / "applied.yaml").exists())
+
+    def test_scale_restore_skips_the_preflight(self):
+        (self.dir / "app_deploys.txt").write_text(deploys("go"))
+        (self.dir / "app_state.txt").write_text(app_state(["go"], replicas=3))
+        result = self.demo("scale", "--lang", "go", "2", DEMO_RESTORE="1")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(any("get nodes" in c for c in self.calls()))
+        self.assertTrue(any("--replicas=2" in c for c in self.calls()))
+
+    def test_refusals_before_any_call(self):
+        env_file = self.dir / "soak.env"
+        env_file.write_text("*/* DEMO_RESTART_NONCE=n1\n")
+        for args, env in ((("apply", "--all"), {"DEMO_RESTORE": "1", "DEMO_ENV_FILE": str(env_file)}),
+                          (("apply",), {"DEMO_RESTORE": "1"}),
+                          (("delete", "--all"), {"DEMO_RESTORE": "1"}),
+                          (("render",), {"DEMO_RESTORE": "1"}),
+                          (("apply", "--all"), {"DEMO_RESTORE": "yes"})):
+            with self.subTest(args=args, env=env):
+                result = self.demo(*args, **env)
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertEqual(self.calls(), [])
+
+
 if __name__ == "__main__":
     unittest.main()

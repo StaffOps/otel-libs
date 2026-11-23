@@ -4829,6 +4829,62 @@ Unsupported instrumentation versions, task A10 (P18):
 
 ### Internal
 
+- **K-loop: the soak run loop (2026-11-23, soak r6.2).** New
+  `testing/k8s/soak/` (standard library only): `soak.py` runs a window on the
+  laptop under `caffeinate` with a 60 s guard read and a heartbeat (a
+  wall-clock gap over 180 s invalidates the window; a guard breach suspends
+  the k6 Job and invalidates it with the item that fired; a blind read deletes
+  the k6 Job, retried until the Job's deadline; a failed k6 Job or a k6 pod
+  not running after the pull allowance invalidates it); reads (pre-flight,
+  entry gate) before any write, and after the hook waits for the rolled demo
+  pods and a copy-count increase; an EXIT / INT / TERM / HUP trap that saves
+  `kubectl logs job/<k6>`, deletes only the objects labelled
+  `otel-libs/soak-run=<run>`, restores the namespace label only when it is
+  not `ambient`, and — only when the hook was applied — puts the demo back
+  at its recorded image tag and replicas; `cleanup --run <id>`; a pre-flight
+  that refuses while any soak-run object or an unlabelled object with a soak
+  name exists, the label is not `ambient`, or the running demo tag is not the
+  expected one; renderers for every soak-run object (k6 ConfigMap and Job on
+  `grafana/k6:2.3.0` by digest, the `soak-otlp` variants, the fakeotlp hung
+  and redirect pods and Services, the telemetrygen positive control, the SR6
+  fallback Service); and the k6 script generator (open loop, one no-op
+  threshold per cell and outcome, `maxVUs` and `activeDeadlineSeconds` from
+  the plan, the reservoir as stdout lines bounded per cell across VUs). The
+  guard reuses K1's `soakplatform.py`. `demo.sh` gains `DEMO_RESTORE=1`
+  (`apply --lang/--all` and `scale` only): it puts running apps back without
+  the hook's values and skips the capacity pre-flight; it refuses
+  `DEMO_ENV_FILE`, apps that are not applied, a scale-up, another running
+  image tag and a target at 0 replicas. With the hook, the entry gate is read
+  again right before the window. Guard (a) breaches only on two consecutive
+  mismatches and tolerates pods in transition. `soak.py dry-run` proves offline that the trap deletes
+  exactly the objects it created. Docs: `testing/k8s/soak/README.md`.
+
+- **K1: `verify.py platform`, the soak platform snapshot and entry gate
+  (2026-11-23, soak r6.2).** New mode in `testing/k8s/soakplatform.py`,
+  read-only on the cluster: records the three Collector CRs and the
+  `soak-agent` ConfigMap (credentials stripped), Prometheus `spec.otlp`,
+  retention and the PVC capacity against the CR request, versions and
+  digests of the backends, Collectors and mesh, the namespace ambient labels,
+  the gateway `span_metrics` settings, the Tempo and Loki limits, node
+  allocatable and requests, the roll list and the K8a runtime-metric names;
+  runs the mesh and platform guard (a)–(h) and the sentinels over a 30 min
+  lookback (entry gate); reads a 24 h baseline of every sentinel and guard
+  counter, including `istio_tcp_connections_failed_total` on the two
+  telemetry edges, and 1 h of node MemAvailable, idle CPU and root
+  filesystem free space, which fails below the initial K-D13 floors (the
+  floors stay the initial ones until K-cal measures the run's footprint);
+  checks that
+  PID 1 is the app in every demo container (one read-only `exec` each); and
+  measures the Tempo resource-attribute set and the selectors it supports.
+  Every shared-job query carries `cluster="k8s01"`. Output, including
+  `snapshot.json` for later tasks, goes to the git-ignored
+  `testing/k8s/soak/runs/<run>/`; a file the secret scan flags is not
+  written. A raw read reaches one scrape plus a grace before its window, so a
+  counter series born in the window counts, unless it has a sample in the
+  hour before the window (a scrape gap: reset-unknown, an error item); guard
+  (a) tolerates pods in transition; guard (g) skips Terminating pods. Tests:
+  `testing/k8s/demo/test_platform.py`. Docs: `testing/k8s/README.md`.
+
 - **DE13: demo env-override hook and `demo.sh scale` (2026-11-23, soak r6.2
   prerequisite).** `testing/k8s/demo/demo.sh apply` and `render` read an
   optional `DEMO_ENV_FILE` (`<lang>/<app> NAME=VALUE`, `*` for either part):

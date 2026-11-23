@@ -26,6 +26,14 @@ Modes:
                      UNEXPECTED or BLOCKED. --dry-run runs the read-only pre-flight
                      only (Prometheus flags and start time, exemplar storage, the run's
                      target_info series and pods).
+  platform --run <id> the soak K1 platform snapshot, entry gate and baselines
+                     (specs/soak-simulation K1, r6.2; soakplatform.py): records the
+                     Collector CRs, Prometheus, versions, limits and node; runs the mesh
+                     and platform guard (a)-(h) and the sentinels over a 30 min lookback;
+                     reads the 24 h sentinel and guard baseline and the 1 h node floors;
+                     checks PID 1 in each demo container (one read-only exec each) and the
+                     Tempo attribute set; writes testing/k8s/soak/runs/<run>/. Exit 1 on
+                     any FAIL.
 
 smoke/examples: one PASS/FAIL line per check; exit 1 when any check fails. Every
 mode exits 2 on usage errors.
@@ -1911,6 +1919,10 @@ def main(argv: list[str] | None = None) -> int:
                       help="check a: trace ids sampled from Loki per language (default 200)")
     demo.add_argument("--dry-run", action="store_true",
                       help="read-only pre-flight only (flags, start time, target_info, pods)")
+    # The soak K1 mode lives in its own module, next to this file (python3 -I drops the script dir).
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import soakplatform
+    soakplatform.add_parser(sub)
     args = parser.parse_args(argv)
 
     b = Backends(
@@ -1923,6 +1935,8 @@ def main(argv: list[str] | None = None) -> int:
     end = int(time.time())
     if args.mode == "demo":
         return main_demo(b, args, end)
+    if args.mode == "platform":
+        return soakplatform.main_platform(b, args, end)
     start = end - args.since
     rep = Report()
     if args.mode == "smoke":

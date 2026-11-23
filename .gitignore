@@ -62,3 +62,6 @@ coverage/
 
 # Built e2e smoke binary
 testing/e2e/go-smoke/go-smoke
+
+# Soak raw run output (specs/soak-simulation SR15 "Evidence (r6.2)"): never committed
+testing/k8s/soak/runs/

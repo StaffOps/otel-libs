@@ -97,6 +97,17 @@
 #        DEMO_RESTART_NONCE=<value> is an allowed name the apps ignore: a new
 #        value changes the pod template, so apply rolls the Deployment.
 #        Without the file the manifests are byte-identical to the hook-less ones.
+#        DEMO_RESTORE=1 (apply --lang/--all and scale only; the soak trap,
+#        testing/k8s/soak): puts already-running apps back without the hook's
+#        values, so the K-D2 capacity pre-flight is skipped (the apps already
+#        hold their requests: a restore only removes env or returns to the
+#        recorded replica count). Refused with DEMO_ENV_FILE, and refused when
+#        any Deployment of those languages is not applied. In restore mode
+#        `apply` also refuses when a target runs another image tag than TAG or
+#        has replicas 0 (apply would set 1: a scale-up), and `scale` refuses
+#        an n above the current replicas of every target (a scale-up runs the
+#        normal pre-flight, without DEMO_RESTORE). The rollout and the
+#        FailedScheduling watch still run.
 set -euo pipefail
 set +x # never trace: secret values pass through shell variables
 
@@ -976,6 +987,11 @@ apply_apps() {
   apply_backing
 
   read -r cpu mem pods <<<"$(apps_requests "$sel_langs")"
+  if [ "$restore" = 1 ]; then
+    require_applied "$sel_langs"
+    restore_check_apply "$sel_langs"
+    echo "demo: restore of the running apps of: $sel_langs (DEMO_RESTORE=1: no K-D2 pre-flight; run $run, image tag $tag)"
+  else
   echo "demo: pre-flight (soak K-D2) for the apps of: $sel_langs (run $run, image tag $tag)"
   if ! python3 -I "$here/preflight.py" --context "$ctx" --cpu "$cpu" --memory "$mem" --pods "$pods"; then
     read -r -a lang_list <<<"$sel_langs"
@@ -986,6 +1002,7 @@ apply_apps() {
     fi
     backing_note
     exit 1
+  fi
   fi
 
   sel="$selector,otel-libs/run=$run,otel-libs/lang in ($(lang_csv "$sel_langs"))"
@@ -999,17 +1016,61 @@ apply_apps() {
 
 # scale_apps <langs> <n>: the demo app Deployments of those languages to n
 # replicas (task DE13; the backing services are never scaled).
-scale_apps() {
-  local sel_langs=$1 n=$2 sel since deploys present cpu mem pods d
+# restore_state <langs>: "<name> <replicas> <image>" per app Deployment.
+restore_state() {
+  k get deployments -l "$selector,otel-libs/lang in ($(lang_csv "$1"))" \
+    -o jsonpath='{range .items[*]}{.metadata.name} {.spec.replicas} {.spec.template.spec.containers[0].image}{"\n"}{end}'
+}
+
+# restore_check_apply <langs>: DEMO_RESTORE=1 apply only re-applies running
+# apps at their running tag (never a scale-up from 0, never another tag).
+restore_check_apply() {
+  local name n image
+  while read -r name n image; do
+    [ -n "$name" ] || continue
+    if [ "$n" = 0 ]; then
+      echo "demo: DEMO_RESTORE=1: $name has replicas 0 (apply would scale it up); nothing applied" >&2
+      exit 1
+    fi
+    if [ "${image##*:}" != "$tag" ]; then
+      echo "demo: DEMO_RESTORE=1: $name runs image tag ${image##*:}, not TAG=$tag; nothing applied" >&2
+      exit 1
+    fi
+  done <<<"$(restore_state "$1")"
+}
+
+# restore_check_scale <langs> <n>: DEMO_RESTORE=1 scale never goes above the
+# current replicas of any target (a scale-up needs the K-D2 pre-flight).
+restore_check_scale() {
+  local name cur image above=""
+  while read -r name cur image; do
+    [ -n "$name" ] || continue
+    [ "$2" -gt "${cur:-0}" ] && above="$above $name"
+  done <<<"$(restore_state "$1")"
+  [ -z "$above" ] || {
+    echo "demo: DEMO_RESTORE=1: $2 replica(s) is above the current replicas of:$above; scale up without DEMO_RESTORE; nothing scaled" >&2
+    exit 1
+  }
+}
+
+# require_applied <langs>: every demo app Deployment of those languages exists.
+require_applied() {
+  local sel_langs=$1 sel present d
   sel="$selector,otel-libs/lang in ($(lang_csv "$sel_langs"))"
-  deploys=$(app_deploys "$sel_langs")
   present=$(k get deployments -l "$sel" -o name)
-  for d in $deploys; do
+  for d in $(app_deploys "$sel_langs"); do
     grep -qxF "deployment.apps/$d" <<<"$present" || {
-      echo "demo: $d is not applied; run '$0 apply --lang <lang>' first; nothing scaled" >&2
+      echo "demo: $d is not applied; run '$0 apply --lang <lang>' first; nothing changed" >&2
       exit 1
     }
   done
+}
+
+scale_apps() {
+  local sel_langs=$1 n=$2 sel since deploys cpu mem pods
+  sel="$selector,otel-libs/lang in ($(lang_csv "$sel_langs"))"
+  deploys=$(app_deploys "$sel_langs")
+  require_applied "$sel_langs"
   if [ "$n" -eq 0 ]; then
     k scale deployment -l "$sel" --replicas=0
     if [ -n "$(k get pods -l "$sel" -o name)" ]; then
@@ -1018,6 +1079,10 @@ scale_apps() {
     echo "demo: scaled to 0: $sel_langs"
     return 0
   fi
+  if [ "$restore" = 1 ]; then
+    restore_check_scale "$sel_langs" "$n"
+    echo "demo: restore to $n replica(s) of the apps of: $sel_langs (DEMO_RESTORE=1: no K-D2 pre-flight)"
+  else
   read -r cpu mem pods <<<"$(apps_requests "$sel_langs")"
   cpu=$(( ${cpu%m} * n ))m mem=$(( ${mem%Mi} * n ))Mi pods=$((pods * n))
   echo "demo: pre-flight (soak K-D2) for $n replica(s) of the apps of: $sel_langs"
@@ -1025,6 +1090,7 @@ scale_apps() {
     echo "demo: pre-flight failed for $n replica(s) of $sel_langs; nothing scaled" >&2
     exit 1
   }
+  fi
   since=$(date -u +%Y-%m-%dT%H:%M:%SZ)
   k scale deployment -l "$sel" --replicas="$n"
   await_rollout "$deploys" "$sel" "$since"
@@ -1040,6 +1106,18 @@ scale_count() {
 }
 
 case "$action" in render|apply) [ -z "${DEMO_ENV_FILE:-}" ] || load_env_file "$DEMO_ENV_FILE" ;; esac
+
+restore=${DEMO_RESTORE:-}
+case "$restore" in
+  "") ;;
+  1)
+    case "$action ${2:-}" in
+      "apply --all"|"apply --lang"|"scale --all"|"scale --lang") ;;
+      *) echo "demo: DEMO_RESTORE=1 applies only to apply --lang/--all and scale; nothing done" >&2; exit 2 ;;
+    esac
+    [ -z "${DEMO_ENV_FILE:-}" ] || { echo "demo: DEMO_RESTORE=1 removes the hook's values: it refuses DEMO_ENV_FILE; nothing done" >&2; exit 2; } ;;
+  *) echo "demo: DEMO_RESTORE must be 1 or unset (got '$restore')" >&2; exit 2 ;;
+esac
 
 case "$action" in
   render)

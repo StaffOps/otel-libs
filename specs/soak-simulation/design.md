@@ -1001,6 +1001,23 @@ records MemAvailable, idle CPU and root filesystem free space for 1 h and
 sets the floors from that reading (dated note in the summary); K1 also
 records the Prometheus PVC (reported 20Gi bound vs 60Gi requested).)*
 
+*(K-loop code review, 2026-11-23, for owner review — two dated rules:)*
+*(1) Floor rule (review H7), replacing "sets the floors from that reading"
+above: the initial floors (MemAvailable 2 GiB, idle CPU 15 %, root fs free
+10 %) are the lower bound; a K1 1 h minimum below an initial floor is
+`BELOW_INITIAL`, a FAIL of the snapshot; a stricter floor may come only from a
+run footprint K-cal measures, as observed_min − projected footprint × margin
+(1.5), and only when that is above the initial floor; until K-cal the floors
+are the initial ones. The loop reads floors only from a passing K1 snapshot no
+older than 48 h. Reversal action: a guard that fires with no run-caused signal
+is recalibrated from the K-cal footprint, dated here.*
+*(2) Shared sentinels in a window (owner ruling M13, 2026-11-23): a rise of a
+shared agent / gateway / Tempo / Loki sentinel during a loaded window is a
+breach (the load may hurt the shared pipeline: k6 stops, the window is
+invalid); during a passive window it is a finding that invalidates only the
+end-to-end checks (K0e B1 scoping). At the entry gate every sentinel must be
+clean over the lookback.*
+
 ### K-D14 — Failure modes on the app → copy hop, by soak-run objects
 **Choice**: the apps always export to `soak-otlp`, a soak-run ExternalName
 Service whose `externalName` is `soak-agent.dev-otel-libs.svc.cluster.local`.
@@ -1197,6 +1214,17 @@ the run does not depend on. (d) exempts the two requested back-pressure
 flips; (h) applies at window start only; (e), (g), (h) values are initial,
 `unmeasured`. **Reversal action**: widen (b) to an edge again if a finding
 on it is shown to affect the run's telemetry.)*
+
+*(Note 2026-11-23, K-loop code review, second round:)* guard (a) compares a
+scraped ztunnel count with a live pod list, so the implementation tolerates
+pods in transition (container start or Ready within 60 s, deleting, finished
+within 60 s, gone since the previous read) and breaches only on a mismatch
+seen on two consecutive reads. A real (a) fault therefore stops the load
+within two guard intervals, not one as SR15 states for the other items; the
+trade is no false `platform: mesh` breach from a scrape lag over a 30 h
+window. The 30 s scrape interval and the 60 s transition window are initial
+values, `unmeasured`. **Reversal action**: if K1/K8a shows the scrape lag is
+shorter, drop to a single read with the transition tolerance only.
 
 ### K-D19 — Counting in bounds on the fixed span families
 **Choice**: the verdicts count only the fixed span families (requirements
