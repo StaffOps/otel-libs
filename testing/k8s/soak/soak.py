@@ -806,6 +806,121 @@ class Loop:
         return res
 
 
+# ── positive control (task K-copy) ─────────────────────────────────────────
+
+# The control Job's own deadline (render.control_job) plus a margin; the count
+# wait (batch + one 15 s scrape, several times over) and the settle re-read
+# (two scrapes): initial values, 2026-11-23.
+CONTROL_JOB_S = 360
+CONTROL_COUNT_S = 120
+CONTROL_SETTLE_S = 30
+CONTROL_STEP_S = 5
+
+
+def control_counts(r: "guard.sp.Reader", at: float) -> dict:
+    """The copy's cumulative control counts now: ``spans`` (all spans of
+    ``soak-control``) and ``fixed`` by ``service_instance_id``."""
+    m = {"job": guard.sp.COPY_JOB, "service_name": render.CONTROL_SERVICE}
+    spans = guard.sp.cluster_only(r.prom(f"sum by (cluster) ({guard.sp.sel('otel_libs_soak_spans_total', m)})", at))
+    fixed = guard.sp.cluster_only(r.prom(
+        f"sum by (cluster, service_instance_id) ({guard.sp.sel(soakcount.FIXED_METRIC, m)})", at))
+    return {"spans": sum(float(s["value"][1]) for s in spans),
+            "fixed": {(s.get("metric") or {}).get("service_instance_id", ""): float(s["value"][1]) for s in fixed}}
+
+
+def control_delta(before: dict, after: dict) -> tuple[dict | None, str]:
+    """``after - before`` (an absent series counts 0: the copy holds no series
+    of a new instance id); a decrease is a copy reset, and the delta is unknown."""
+    fixed = {}
+    for iid in set(before["fixed"]) | set(after["fixed"]):
+        a, b = after["fixed"].get(iid, 0.0), before["fixed"].get(iid, 0.0)
+        if a < b:
+            return None, f"fixed[{iid}] went down {b:g} -> {a:g} (copy reset)"
+        if a != b:
+            fixed[iid] = a - b
+    if after["spans"] < before["spans"]:
+        return None, f"spans went down {before['spans']:g} -> {after['spans']:g} (copy reset)"
+    return {"spans": after["spans"] - before["spans"], "fixed": fixed}, ""
+
+
+def control_job_state(kube: Kube) -> str | None:
+    """None while the control runs; "done"; or why it failed."""
+    try:
+        status = kube.get(["jobs", render.CONTROL_SERVICE]).get("status") or {}
+    except SoakError:
+        return None
+    if status.get("succeeded"):
+        return "done"
+    if status.get("failed"):
+        conds = [c for c in status.get("conditions") or [] if c.get("type") == "Failed"]
+        return "control Job failed (" + ((conds[0].get("reason") or "no reason") if conds else "no reason") + ")"
+    return None
+
+
+def positive_control(kube: Kube, r: "guard.sp.Reader", run: str, d: Path, *,
+                     clock: Callable[[], float] = time.time, sleep: Callable[[float], None] = time.sleep,
+                     log: Callable[[str], None] = print) -> dict:
+    """Task K-copy: the telemetrygen control through ``soak-otlp`` (copy). Reads
+    the copy's control series, applies ``soak-control``, waits for the Job,
+    polls until the counts arrive, re-reads after two scrapes and judges
+    exact equality (``render.control_expected``). Writes ``control.json`` and one
+    ``windows.jsonl`` record; returns the record (``verdict`` PASS / FAIL).
+    The Job stays for the trap."""
+    expected = render.control_expected(run)
+    rec: dict = {"window": "control", "expected": expected}
+    try:
+        before = control_counts(r, clock())
+    except guard.ReadError as exc:
+        raise SoakError(f"control counts before the Job: {exc}") from exc
+    if before["fixed"].get(soakcount.UNSET):
+        # Measured 2026-11-23 (runs kcopy-20261123a/b): two control streams without
+        # service.instance.id differ only in k8s.pod.ip (a target_info attribute),
+        # so the copy's Prometheus exporter shows one series for both and the new
+        # one never counts. A live earlier one makes the "unset" case unjudgeable.
+        raise SoakError(f"an earlier control's {soakcount.UNSET} series is still live on the copy "
+                        f"({before['fixed'][soakcount.UNSET]:g}); streams without service.instance.id "
+                        f"collide at its Prometheus exporter: retry {soakcount.COPY_EXPIRY_S // 60} min "
+                        "after the last control")
+    rec["before"], rec["applied_at"] = before, clock()
+    kube.apply(run, [render.control_job(run)])
+    deadline = clock() + CONTROL_JOB_S
+    while (st := control_job_state(kube)) is None and clock() < deadline:
+        sleep(CONTROL_STEP_S)
+    rec["job"] = st or f"control Job not finished after {CONTROL_JOB_S}s"
+    rc, text = kube.logs(f"job/{render.CONTROL_SERVICE}")
+    write_evidence(d / "raw" / ("soak-control.log" if rc == 0 else "soak-control.log.err"), text)
+    delta, why = None, rec["job"] if st != "done" else ""
+    if st == "done":
+        deadline = clock() + CONTROL_COUNT_S
+        while True:
+            try:
+                delta, why = control_delta(before, control_counts(r, clock()))
+            except guard.ReadError as exc:
+                delta, why = None, f"blind read: {exc}"
+            if delta is not None and delta["spans"] >= expected["spans"] and \
+                    all(delta["fixed"].get(k, 0) >= v for k, v in expected["fixed"].items()):
+                break
+            if clock() >= deadline:
+                break
+            sleep(CONTROL_STEP_S)
+        rec["first"] = delta
+        sleep(CONTROL_SETTLE_S)  # a late increment after the first match would show here
+        try:
+            delta, why = control_delta(before, control_counts(r, clock()))
+        except guard.ReadError as exc:
+            delta, why = None, f"blind read: {exc}"
+    rec["delta"], rec["read_at"] = delta, clock()
+    if delta is not None and not why:
+        if delta != expected:
+            why = f"counted {delta}, expected {expected}"
+    rec["verdict"], rec["reason"] = ("PASS", "") if delta == expected and not why else ("FAIL", why)
+    write_evidence(d / "control.json", json.dumps(rec, indent=1, sort_keys=True) + "\n")
+    append_jsonl(d / "windows.jsonl", rec)
+    log(f"control: {rec['verdict']}" + (f": {rec['reason']}" if rec["reason"] else
+                                         f" (spans +{delta['spans']:g}, fixed {delta['fixed']})"))
+    return rec
+
+
 # ── CLI ────────────────────────────────────────────────────────────────────
 
 def _langs(text: str) -> list[str]:
@@ -950,6 +1065,8 @@ def main(argv: list[str] | None = None) -> int:
         sp.add_argument("--fakeotlp-image", default=render.FAKEOTLP_IMAGE)
     sub.choices["run"].add_argument("--hook", action="store_true")
     sub.choices["run"].add_argument("--worker-interval", type=int)
+    sub.choices["run"].add_argument("--control", action="store_true",
+                                    help="K-copy: the telemetrygen positive control first, before the hook")
     args = p.parse_args(argv)
     try:
         render.check_run(args.run)
@@ -1039,6 +1156,10 @@ def run_mode(args: argparse.Namespace, kube: Kube, d: Path) -> int:
     res = None
     with trapped(on_exit):
         kube.apply(args.run, [render.soak_otlp(args.run, "copy")])
+        if args.control:
+            ctl = positive_control(kube, reader, args.run, d)
+            if ctl["verdict"] != "PASS":
+                raise SoakError(f"positive control: {ctl['reason']}")
         services, since = [], None
         if args.hook:
             try:

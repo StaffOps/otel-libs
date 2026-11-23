@@ -233,35 +233,55 @@ def sink_service(run: str, mode: str) -> dict:
 CONTROL_SERVICE = "soak-control"
 
 
+# Per control container: the span attribute its spans carry (None: none) and
+# the fixed spans it adds on the copy. Measured on k8s01 2026-11-23 (K-copy
+# run kcopy-20261123a, Tempo): telemetrygen v0.165.0 with ``--child-spans 0``
+# still sends two spans per trace, the CLIENT root ``lets-go`` and one SERVER
+# child, both with the telemetry attributes. The SERVER span is always fixed,
+# so a CLIENT span with a gRPC key makes 2 and one without makes 1.
+CONTROL_CONTAINERS = {
+    "rpc-system": ("rpc.system", 2),
+    "rpc-system-name": ("rpc.system.name", 2),
+    "no-rpc": (None, 1),
+    "no-instance": ("rpc.system", 2),
+}
+CONTROL_SPANS_PER_CONTAINER = 2
+
+
 def control_instances(run: str) -> dict[str, str]:
     """The control's service.instance.id per container; "unset" for the one
     sent without it (the copy's count defaults the label to "unset")."""
     return {"rpc-system": f"{run}-ctl-a", "rpc-system-name": f"{run}-ctl-b",
-            "no-instance": "unset"}
+            "no-rpc": f"{run}-ctl-n", "no-instance": "unset"}
+
+
+def control_expected(run: str) -> dict:
+    """What the control adds on the copy: ``spans`` (all spans of
+    ``soak-control``) and ``fixed`` per ``service_instance_id``."""
+    inst = control_instances(run)
+    return {"spans": float(CONTROL_SPANS_PER_CONTAINER * len(CONTROL_CONTAINERS)),
+            "fixed": {inst[c]: float(n) for c, (_, n) in CONTROL_CONTAINERS.items()}}
 
 
 def control_job(run: str, *, image: str = TELEMETRYGEN_IMAGE,
                 endpoint: str = "soak-otlp:4317") -> dict:
-    """The fixed-family positive control (task K-copy): three telemetrygen
-    containers, each one trace of one CLIENT span (``--child-spans 0``):
-    one with ``rpc.system=grpc``, one with ``rpc.system.name=grpc`` (both with
-    a ``service.instance.id``), and one with ``rpc.system=grpc`` and no
-    ``service.instance.id``. Expected on the copy: ``otel_libs_soak_fixed_spans_total``
-    +1 for each of the three ``service_instance_id`` values of
-    ``control_instances`` and ``otel_libs_soak_spans_total{service_name="soak-control"}`` +3.
-    That the root span is CLIENT is read from the delivery smoke (2 spans per
-    trace, the server one always fixed); K-copy confirms it.
+    """The fixed-family positive control (task K-copy): four telemetrygen
+    containers, each one trace (``--traces 1 --child-spans 0``: a CLIENT root
+    and one SERVER child, see ``CONTROL_CONTAINERS``): ``rpc.system=grpc``,
+    ``rpc.system.name=grpc``, no rpc key (the negative case: only its SERVER
+    span is fixed), all three with a ``service.instance.id``, and
+    ``rpc.system=grpc`` without one (``unset``). Expected on the copy:
+    ``control_expected``.
     """
     inst = control_instances(run)
-    attrs = {"rpc-system": "rpc.system", "rpc-system-name": "rpc.system.name",
-             "no-instance": "rpc.system"}
     containers = []
-    for cname, key in attrs.items():
+    for cname, (key, _) in CONTROL_CONTAINERS.items():
         args = ["traces", "--traces", "1", "--child-spans", "0", "--workers", "1",
                 "--otlp-endpoint", endpoint, "--otlp-insecure",
                 "--service", CONTROL_SERVICE,
-                "--telemetry-attributes", f'{key}="grpc"',
                 "--otlp-attributes", 'deployment.environment.name="dev"']
+        if key is not None:
+            args += ["--telemetry-attributes", f'{key}="grpc"']
         if inst[cname] != "unset":
             args += ["--otlp-attributes", f'service.instance.id="{inst[cname]}"']
         containers.append({

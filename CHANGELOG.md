@@ -4829,6 +4829,22 @@ Unsupported instrumentation versions, task A10 (P18):
 
 ### Internal
 
+- **K-copy: the Collector copy accepted on k8s01, with `soak.py run --control`
+  (2026-11-23, soak r6.2).** New `run --control` runs the telemetrygen
+  positive control through `soak-otlp` (copy) inside the trap, before the
+  hook: it reads the copy's `soak-control` series, applies `soak-control`,
+  waits for the Job, polls the counts and re-reads them two scrapes later,
+  and passes only on an exact delta (`control.json`, a `windows.jsonl`
+  record, `raw/soak-control.log`); a FAIL ends the run before the demo is
+  touched. Two facts measured on the cluster changed the control:
+  telemetrygen v0.165.0 with `--child-spans 0` still sends a CLIENT root and
+  one SERVER child per trace (Tempo), so the control now has a fourth
+  container with no rpc key (`<run>-ctl-n`, SERVER only) and expects +2 /
+  +2 / +1 / +2 fixed spans and +8 spans (`render.control_expected`); and two
+  streams without `service.instance.id` that differ only in `k8s.pod.ip`
+  show as one series at the copy's Prometheus exporter, so the control
+  refuses while an earlier control's `unset` series is still live (30 min).
+  Results in `specs/soak-simulation/tasks.md` (K-copy row).
 - **K-count: `verify.py soak`, the soak count and passive verdicts
   (2026-11-23, soak r6.2).** New `testing/k8s/soakcount.py`, read-only on the
   cluster, actions `passive`, `gate`, `count`, `shut`, `cal` and `report`.

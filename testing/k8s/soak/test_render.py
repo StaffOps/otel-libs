@@ -133,9 +133,11 @@ class Objects(unittest.TestCase):
     def test_control_job(self):
         job = render.control_job(RUN)
         containers = {c["name"]: c["args"] for c in job["spec"]["template"]["spec"]["containers"]}
-        self.assertEqual(set(containers), {"rpc-system", "rpc-system-name", "no-instance"})
+        self.assertEqual(set(containers), {"rpc-system", "rpc-system-name", "no-rpc", "no-instance"})
         self.assertIn('rpc.system="grpc"', containers["rpc-system"])
         self.assertIn('rpc.system.name="grpc"', containers["rpc-system-name"])
+        self.assertIn('rpc.system="grpc"', containers["no-instance"])
+        self.assertNotIn("--telemetry-attributes", containers["no-rpc"])
         for name, args in containers.items():
             self.assertEqual(args[args.index("--child-spans") + 1], "0")
             self.assertEqual(args[args.index("--traces") + 1], "1")
@@ -144,6 +146,13 @@ class Objects(unittest.TestCase):
             self.assertEqual(has_instance, name != "no-instance", name)
         self.assertEqual(render.control_instances(RUN)["no-instance"], "unset")
         self.assertIn("@sha256:", job["spec"]["template"]["spec"]["containers"][0]["image"])
+
+    def test_control_expected(self):
+        """Measured 2026-11-23: two spans per container (CLIENT + SERVER); the
+        SERVER always fixed, the CLIENT only with a gRPC key."""
+        self.assertEqual(render.control_expected(RUN),
+                         {"spans": 8.0, "fixed": {f"{RUN}-ctl-a": 2.0, f"{RUN}-ctl-b": 2.0,
+                                                  f"{RUN}-ctl-n": 1.0, "unset": 2.0}})
 
     def test_fallback_service(self):
         svc = render.fallback_service(RUN, "node")

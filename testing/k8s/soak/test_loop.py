@@ -661,6 +661,127 @@ class Window(Base):
             self.assertIsNone(loop.load_state(soak.Load("missing", 1, 1), NOW))
 
 
+class CtlReader:
+    """The copy's control series per read (two queries per read: spans, fixed);
+    the last entry repeats."""
+
+    def __init__(self, reads: list[tuple[float, dict[str, float]]], blind_at: int | None = None):
+        self.reads, self.calls, self.blind_at = reads, 0, blind_at
+
+    def prom(self, q, at):
+        i = min(self.calls // 2, len(self.reads) - 1)
+        self.calls += 1
+        if self.blind_at is not None and i == self.blind_at:
+            raise sp.verify.QueryError("prometheus unreachable")
+        spans, fixed = self.reads[i]
+        assert 'service_name="soak-control"' in q and 'job="dev-otel-libs/soak-agent"' in q, q
+        if q.startswith("sum by (cluster) (otel_libs_soak_spans_total{"):
+            return [tp.instant(tp.k8s(), spans)] if spans else []
+        assert q.startswith("sum by (cluster, service_instance_id) (otel_libs_soak_fixed_spans_total{"), q
+        return [tp.instant(tp.k8s(service_instance_id=k), v) for k, v in fixed.items()]
+
+
+EXPECTED_FIXED = {f"{RUN}-ctl-a": 2, f"{RUN}-ctl-b": 2, f"{RUN}-ctl-n": 1, "unset": 2}
+CTL_SPANS = 8
+
+
+class Control(Base):
+    def run_control(self, c: FakeCluster, reader, job_status: dict | None = None):
+        clock = Clock()
+        orig = soak.Kube.apply
+
+        def apply(self_, run, objs):
+            out = orig(self_, run, objs)
+            if job_status is not None and any(o["kind"] == "Job" for o in objs):
+                c.edit(lambda st: [o.__setitem__("status", job_status) for o in st["objects"] if o["kind"] == "Job"])
+            return out
+        soak.Kube.apply = apply
+        try:
+            return soak.positive_control(self.kube, reader, RUN, self.d, clock=clock, sleep=clock.sleep,
+                                         log=self.lines.append), clock
+        finally:
+            soak.Kube.apply = orig
+
+    def test_exact_counts_pass(self):
+        with self.cluster() as c:
+            c.logs({"job/soak-control": "traces generated\n"})
+            rec, _ = self.run_control(c, CtlReader([(0, {}), (CTL_SPANS, EXPECTED_FIXED)]), {"succeeded": 1})
+            job = [o for o in c.state()["objects"] if o["kind"] == "Job"][0]
+        self.assertEqual(rec["verdict"], "PASS", rec)
+        self.assertEqual(rec["delta"], {"spans": 8.0, "fixed": {k: float(v) for k, v in EXPECTED_FIXED.items()}})
+        self.assertEqual(job["metadata"]["labels"][soak.RUN_LABEL], RUN)
+        self.assertEqual(json.loads((self.d / "control.json").read_text())["verdict"], "PASS")
+        self.assertEqual(json.loads((self.d / "windows.jsonl").read_text().splitlines()[-1])["window"], "control")
+        self.assertEqual((self.d / "raw" / "soak-control.log").read_text(), "traces generated\n")
+        self.assertIn("control: PASS", self.lines[-1])
+
+    def test_existing_series_count_as_a_delta(self):
+        before = (7, {"old": 2})
+        after = (15, {"unset": 2, "old": 2, f"{RUN}-ctl-a": 2, f"{RUN}-ctl-b": 2, f"{RUN}-ctl-n": 1})
+        with self.cluster() as c:
+            rec, _ = self.run_control(c, CtlReader([before, after]), {"succeeded": 1})
+        self.assertEqual(rec["verdict"], "PASS", rec)
+
+    def test_a_late_extra_span_fails_on_the_settle_read(self):
+        with self.cluster() as c:
+            rec, _ = self.run_control(c, CtlReader([(0, {}), (CTL_SPANS, EXPECTED_FIXED), (CTL_SPANS + 1, EXPECTED_FIXED)]),
+                                      {"succeeded": 1})
+        self.assertEqual(rec["verdict"], "FAIL")
+        self.assertEqual(rec["first"]["spans"], 8.0)
+        self.assertIn("expected", rec["reason"])
+
+    def test_a_missing_rpc_key_fails_after_the_count_wait(self):
+        fixed = {**EXPECTED_FIXED, f"{RUN}-ctl-b": 1}  # rpc.system.name clause missing: SERVER only
+        with self.cluster() as c:
+            rec, clock = self.run_control(c, CtlReader([(0, {}), (CTL_SPANS, fixed)]), {"succeeded": 1})
+        self.assertEqual(rec["verdict"], "FAIL")
+        self.assertIn("expected", rec["reason"])
+        self.assertGreaterEqual(clock.t - NOW, soak.CONTROL_COUNT_S + soak.CONTROL_SETTLE_S)
+
+    def test_a_client_span_counted_without_an_rpc_key_fails(self):
+        """The negative case: ctl-n must add its SERVER span only."""
+        fixed = {**EXPECTED_FIXED, f"{RUN}-ctl-n": 2}
+        with self.cluster() as c:
+            rec, _ = self.run_control(c, CtlReader([(0, {}), (CTL_SPANS, fixed)]), {"succeeded": 1})
+        self.assertEqual(rec["verdict"], "FAIL")
+        self.assertIn("ctl-n", rec["reason"])
+
+    def test_failed_or_unfinished_job_fails_without_counting(self):
+        for status, why in (({"failed": 1, "conditions": [{"type": "Failed", "reason": "DeadlineExceeded"}]},
+                             "control Job failed (DeadlineExceeded)"),
+                            ({}, f"not finished after {soak.CONTROL_JOB_S}s")):
+            with self.subTest(why=why), self.cluster() as c:
+                reader = CtlReader([(0, {})])
+                rec, _ = self.run_control(c, reader, status)
+                self.assertEqual((rec["verdict"], rec["delta"]), ("FAIL", None))
+                self.assertIn(why, rec["reason"])
+                self.assertEqual(reader.calls, 2)  # the before read only
+                self.assertTrue((self.d / "raw" / "soak-control.log.err").exists())
+
+    def test_reset_and_blind_reads_fail(self):
+        for reader, why in ((CtlReader([(5, {"old": 3}), (3, {"old": 1})]), "copy reset"),
+                            (CtlReader([(5, {}), (2, {})]), "spans went down"),
+                            (CtlReader([(0, {}), (CTL_SPANS, EXPECTED_FIXED)], blind_at=1), "blind read")):
+            with self.subTest(why=why), self.cluster() as c:
+                rec, _ = self.run_control(c, reader, {"succeeded": 1})
+                self.assertEqual(rec["verdict"], "FAIL")
+                self.assertIn(why, rec["reason"])
+
+    def test_a_live_unset_series_refuses_before_the_job(self):
+        """Streams without service.instance.id collide at the copy's exporter
+        (measured 2026-11-23): an earlier control's must have expired first."""
+        with self.cluster() as c:
+            with self.assertRaisesRegex(soak.SoakError, "still live on the copy"):
+                self.run_control(c, CtlReader([(2, {"unset": 2})]), {"succeeded": 1})
+            self.assertFalse(any("apply" in a for a in c.verbs()))
+
+    def test_blind_before_read_is_a_soak_error(self):
+        with self.cluster() as c:
+            with self.assertRaises(soak.SoakError):
+                self.run_control(c, CtlReader([(0, {})], blind_at=0), {"succeeded": 1})
+            self.assertFalse(any("apply" in a for a in c.verbs()))
+
+
 class Signals(unittest.TestCase):
     def test_signals_run_the_exit_function(self):
         before = signal.getsignal(signal.SIGINT)
@@ -1035,6 +1156,31 @@ class Cli(Base):
         finally:
             (soak.DEMO_SH, soak.start_caffeinate, guard.entry_read, guard.wait_demo_ready,
              guard.wait_copy_counts, guard.copy_totals) = orig
+
+    def test_run_mode_control_failure_ends_before_the_hook(self):
+        """K-copy: a failed control ends the run before the hook; the trap
+        removes soak-otlp and the control Job, and the demo is not touched."""
+        self.runs_env()
+        kubectl = self.fake_kubectl()
+        demo = self.script("demo.sh", f"#!/bin/sh\nexec {sys.executable} -I {HERE / 'fakekube.py'} demo-sh \"$@\"\n")
+        orig = soak.DEMO_SH, soak.start_caffeinate, guard.entry_read, soak.positive_control
+        soak.DEMO_SH, soak.start_caffeinate = demo, lambda: None
+        guard.entry_read = lambda r, cfg, at, **kw: guard.GuardRead(at, [guard.Item("x", "ok")])
+
+        def failing(kube, r, run, d, **kw):
+            kube.apply(run, [render.control_job(run)])
+            return {"verdict": "FAIL", "reason": "counted 2, expected 3"}
+        soak.positive_control = failing
+        try:
+            with self.cluster() as c:
+                rc, out, err = self.main("run", "--run", RUN, "--kubectl", str(kubectl), "--tag", "abc1234",
+                                         "--hook", "--control", "--duration", "60", "--langs", "go")
+                self.assertEqual(rc, 1)
+                self.assertIn("positive control: counted 2, expected 3", err)
+                self.assertEqual(c.keys(), c.seeded)
+                self.assertEqual(c.demo_calls(), [])
+        finally:
+            soak.DEMO_SH, soak.start_caffeinate, guard.entry_read, soak.positive_control = orig
 
     def test_copy_totals_error_is_one_line(self):
         """Re-review LOW: a QueryError from copy_totals ends the run with one line."""
