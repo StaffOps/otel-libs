@@ -329,6 +329,10 @@ what to check in dashboards/alerts):
    key keep HTTP-shaped spans (a fleet can show both); spanmetrics `span_name`
    and `status_code` change (`dashboards/03-traces-reliability.json` uses
    both); error rate rises for the six A22 codes.
+   *Note 2026-11-23 (contract task A50): `dashboards/03-traces-reliability.json`
+   was removed; the demo dashboards in `dashboards/demo/` replace it. Their
+   span-metrics panels filter on `span_kind` and `status_code`
+   (`dashboards/demo/01-overview.json`), not on `span_name`.*
 6. gRPC client spans: `rpc.system`/`rpc.service`/`rpc.grpc.status_code` →
    `rpc.system.name`/`rpc.response.status_code`; one CLIENT span per call.
 7. Health paths `/live`, `/livez`, `/readyz`, `/metrics` and trailing-slash

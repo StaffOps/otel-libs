@@ -40,33 +40,65 @@ theme:
   language: en
 
 nav:
-  - Home: index.md
-  - .NET:
-      - Overview: dotnet/README.md
-      - HOW-TO Guide: dotnet/HOW-TO.md
-      - Tests: dotnet/TESTS.md
-      - Example Apps: dotnet/example/README.md
-      - Example Details: dotnet/example/EXAMPLES.md
-  - Python:
-      - Overview: python/README.md
-      - HOW-TO Guide: python/HOW-TO.md
-      - Tests: python/TESTS.md
-      - Example Apps: python/example/README.md
-      - Example Details: python/example/EXAMPLES.md
-  - Go:
-      - Overview: go/README.md
-      - HOW-TO Guide: go/HOW-TO.md
-      - Tests: go/TESTS.md
-      - Example Apps: go/example/README.md
-  - Node.js:
-      - Overview: nodejs/README.md
-      - HOW-TO Guide: nodejs/HOW-TO.md
-      - Tests: nodejs/TESTS.md
-      - Example Apps: nodejs/example/README.md
-      - Example Details: nodejs/example/EXAMPLES.md
-  - Consuming Packages: CONSUMING.md
+  - Overview: index.md
+  - Library:
+      - Overview and parity: library/overview.md
+      - Auto-instrumentation: library/auto-instrumentation.md
+      - Custom spans, metrics and logs: library/custom-signals.md
+      - Go:
+          - Overview: go/README.md
+          - HOW-TO Guide: go/HOW-TO.md
+          - Examples: go/example/README.md
+      - Python:
+          - Overview: python/README.md
+          - HOW-TO Guide: python/HOW-TO.md
+          - Examples: python/example/README.md
+          - Example Details: python/example/EXAMPLES.md
+      - Node.js:
+          - Overview: nodejs/README.md
+          - HOW-TO Guide: nodejs/HOW-TO.md
+          - Examples: nodejs/example/README.md
+          - Example Details: nodejs/example/EXAMPLES.md
+          - Packages:
+              - otel-helper: nodejs/packages/otel-helper.md
+              - otel-helper-sql: nodejs/packages/otel-helper-sql.md
+              - otel-helper-redis: nodejs/packages/otel-helper-redis.md
+              - otel-helper-aws: nodejs/packages/otel-helper-aws.md
+              - otel-helper-pino: nodejs/packages/otel-helper-pino.md
+              - otel-helper-winston: nodejs/packages/otel-helper-winston.md
+      - .NET:
+          - Overview: dotnet/README.md
+          - HOW-TO Guide: dotnet/HOW-TO.md
+          - Examples: dotnet/example/README.md
+          - Example Details: dotnet/example/EXAMPLES.md
+      - Consuming packages: CONSUMING.md
+  - Observability:
+      - Overview: observe/overview.md
+      - Signals:
+          - Traces: observe/signals/traces.md
+          - Metrics: observe/signals/metrics.md
+          - Logs: observe/signals/logs.md
+          - Profiles: observe/signals/profiles.md
+      - Correlation: observe/correlation.md
+      - Diagnosis:
+          - RED: observe/diagnosis/red.md
+          - Errors: observe/diagnosis/errors.md
+          - Latency and saturation: observe/diagnosis/latency-saturation.md
+          - Database: observe/diagnosis/database.md
+  - Dashboards:
+      - Overview: dashboards/overview.md
+  - Platform:
+      - Collector prerequisites: platform/collector.md
+  - Contributing:
+      - Overview: contributing/index.md
+      - Handoff: handoff.md
+      - Tests:
+          - Go: go/TESTS.md
+          - Python: python/TESTS.md
+          - Node.js: nodejs/TESTS.md
+          - .NET: dotnet/TESTS.md
+      - Specs & Decisions: https://github.com/StaffOps/otel-libs/blob/main/specs/README.md
   - Changelog & Migration: CHANGELOG.md
-  - Specs & Decisions: https://github.com/StaffOps/otel-libs/blob/main/specs/README.md
 
 plugins:
   - search:

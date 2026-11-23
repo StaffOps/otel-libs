@@ -1,0 +1,1177 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {
+          "type": "grafana",
+          "uid": "-- Grafana --"
+        },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "links": [
+    {
+      "asDropdown": false,
+      "includeVars": true,
+      "keepTime": true,
+      "tags": [
+        "demo-otel-libs"
+      ],
+      "title": "demo-otel-libs",
+      "type": "dashboards"
+    }
+  ],
+  "panels": [
+    {
+      "gridPos": {
+        "h": 4,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "id": 1,
+      "options": {
+        "content": "### Is the demo up, and do the four languages behave the same?\nAll of them get the same load from their worker and fail in the same proportion (≈ 10% at the api, on purpose). If one language stands out, there is something to investigate. Terms: see [0. Start here](/d/demo-otel-start).",
+        "mode": "markdown"
+      },
+      "type": "text"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Requests per second received by each language's api (last 5 min). The four values should be close; red = the api stopped receiving requests.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 2,
+          "noValue": "0",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red"
+              },
+              {
+                "color": "green",
+                "value": 0.05
+              }
+            ]
+          },
+          "unit": "reqps"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 8,
+        "x": 0,
+        "y": 4
+      },
+      "id": 2,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showPercentChange": false,
+        "textMode": "value_and_name",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "exemplar": false,
+          "expr": "sum by (lang) (label_replace(rate(traces_span_metrics_calls_total{service_name=~\"demo-(${lang:pipe})-(api|backend|worker)\", service_name=~\"${service:pipe}\", service_name=~\"demo-.*-api\", span_kind=\"SPAN_KIND_SERVER\"}[5m]), \"lang\", \"$1\", \"service_name\", \"demo-([a-z]+)-.*\"))",
+          "instant": true,
+          "legendFormat": "{{lang}}",
+          "range": false,
+          "refId": "A"
+        }
+      ],
+      "title": "Requests per second at the api",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "The demo fails on purpose in about 1 of every 10 requests. **Green between 5% and 20%.** Orange (almost zero) = the error scenarios are not running; red = failures beyond the planned ones.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 0,
+          "noValue": "0",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "orange"
+              },
+              {
+                "color": "green",
+                "value": 0.05
+              },
+              {
+                "color": "red",
+                "value": 0.2
+              }
+            ]
+          },
+          "unit": "percentunit"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 8,
+        "x": 8,
+        "y": 4
+      },
+      "id": 3,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showPercentChange": false,
+        "textMode": "value_and_name",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "exemplar": false,
+          "expr": "sum by (lang) (label_replace(rate(traces_span_metrics_calls_total{service_name=~\"demo-(${lang:pipe})-(api|backend|worker)\", service_name=~\"${service:pipe}\", service_name=~\"demo-.*-api\", span_kind=\"SPAN_KIND_SERVER\", status_code=\"STATUS_CODE_ERROR\"}[5m]), \"lang\", \"$1\", \"service_name\", \"demo-([a-z]+)-.*\")) / sum by (lang) (label_replace(rate(traces_span_metrics_calls_total{service_name=~\"demo-(${lang:pipe})-(api|backend|worker)\", service_name=~\"${service:pipe}\", service_name=~\"demo-.*-api\", span_kind=\"SPAN_KIND_SERVER\"}[5m]), \"lang\", \"$1\", \"service_name\", \"demo-([a-z]+)-.*\"))",
+          "instant": true,
+          "legendFormat": "{{lang}}",
+          "range": false,
+          "refId": "A"
+        }
+      ],
+      "title": "% of api requests with an error (expected ≈ 10%)",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "95% of the requests finish below this time. Green < 100 ms, orange < 500 ms, red above.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 0,
+          "noValue": "0",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green"
+              },
+              {
+                "color": "orange",
+                "value": 0.1
+              },
+              {
+                "color": "red",
+                "value": 0.5
+              }
+            ]
+          },
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 8,
+        "x": 16,
+        "y": 4
+      },
+      "id": 4,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showPercentChange": false,
+        "textMode": "value_and_name",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "exemplar": false,
+          "expr": "histogram_quantile(0.95, sum by (le, lang) (label_replace(rate(traces_span_metrics_duration_seconds_bucket{service_name=~\"demo-(${lang:pipe})-(api|backend|worker)\", service_name=~\"${service:pipe}\", service_name=~\"demo-.*-api\", span_kind=\"SPAN_KIND_SERVER\"}[5m]), \"lang\", \"$1\", \"service_name\", \"demo-([a-z]+)-.*\")))",
+          "instant": true,
+          "legendFormat": "{{lang}}",
+          "range": false,
+          "refId": "A"
+        }
+      ],
+      "title": "api response time p95",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Requests per second received by the api and backend of each language (the worker only sends). Stable, close lines = healthy. A line that drops to zero = service stopped or not exporting telemetry.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "lineWidth": 2,
+            "showPoints": "never",
+            "spanNulls": true,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "unit": "reqps"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 9
+      },
+      "id": 5,
+      "interval": "2m",
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "exemplar": false,
+          "expr": "sum by (lang, role) (label_replace(label_replace(rate(traces_span_metrics_calls_total{service_name=~\"demo-(${lang:pipe})-(api|backend|worker)\", service_name=~\"${service:pipe}\", span_kind=\"SPAN_KIND_SERVER\"}[$__rate_interval]), \"lang\", \"$1\", \"service_name\", \"demo-([a-z]+)-.*\"), \"role\", \"$1\", \"service_name\", \"demo-[a-z]+-(.*)\"))",
+          "instant": false,
+          "legendFormat": "{{lang}} · {{role}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Does every service get the same load?",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Fraction of requests that end in an error. The backend does not show because it does not answer with a server error. The dashed red line (20%) marks the expected limit. A36/A37 do not change this ratio: they change **where** the error detail is kept.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "lineWidth": 2,
+            "showPoints": "never",
+            "spanNulls": true,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "dashed"
+            }
+          },
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green"
+              },
+              {
+                "color": "red",
+                "value": 0.2
+              }
+            ]
+          },
+          "unit": "percentunit"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 9
+      },
+      "id": 6,
+      "interval": "2m",
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "exemplar": false,
+          "expr": "sum by (lang, role) (label_replace(label_replace(rate(traces_span_metrics_calls_total{service_name=~\"demo-(${lang:pipe})-(api|backend|worker)\", service_name=~\"${service:pipe}\", span_kind=\"SPAN_KIND_SERVER\", status_code=\"STATUS_CODE_ERROR\"}[$__rate_interval]), \"lang\", \"$1\", \"service_name\", \"demo-([a-z]+)-.*\"), \"role\", \"$1\", \"service_name\", \"demo-[a-z]+-(.*)\")) / sum by (lang, role) (label_replace(label_replace(rate(traces_span_metrics_calls_total{service_name=~\"demo-(${lang:pipe})-(api|backend|worker)\", service_name=~\"${service:pipe}\", span_kind=\"SPAN_KIND_SERVER\"}[$__rate_interval]), \"lang\", \"$1\", \"service_name\", \"demo-([a-z]+)-.*\"), \"role\", \"$1\", \"service_name\", \"demo-[a-z]+-(.*)\"))",
+          "instant": false,
+          "legendFormat": "{{lang}} · {{role}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Is the error ratio the same in every language?",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Responses by HTTP code, summed over the four languages. **201** = order created (green). **409** = duplicate, **422** = rejected, **500** = unhandled error: the demo's three error scenarios.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 25,
+            "lineWidth": 2,
+            "showPoints": "never",
+            "spanNulls": true,
+            "stacking": {
+              "group": "A",
+              "mode": "normal"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "min": 0,
+          "unit": "reqps"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "201"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "green",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "200"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "green",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "409"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "orange",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "422"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "yellow",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "500"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "red",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 17
+      },
+      "id": 7,
+      "interval": "2m",
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "exemplar": false,
+          "expr": "sum by (http_response_status_code) (rate(http_client_request_duration_seconds_count{service_name=~\"demo-(${lang:pipe})-worker\", service_name=~\"${service:pipe}\", http_response_status_code!~\"|200\"}[$__rate_interval]))",
+          "instant": false,
+          "legendFormat": "{{http_response_status_code}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Which responses does the worker get from the api?",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "95th percentile of server span duration. Isolated spikes are normal on a shared cluster; a higher plateau in one language only deserves investigation (use dashboard 5 to open a slow trace).",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "lineWidth": 2,
+            "showPoints": "never",
+            "spanNulls": true,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 17
+      },
+      "id": 8,
+      "interval": "2m",
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "exemplar": false,
+          "expr": "histogram_quantile(0.95, sum by (le, lang, role) (label_replace(label_replace(rate(traces_span_metrics_duration_seconds_bucket{service_name=~\"demo-(${lang:pipe})-(api|backend|worker)\", service_name=~\"${service:pipe}\", span_kind=\"SPAN_KIND_SERVER\"}[$__rate_interval]), \"lang\", \"$1\", \"service_name\", \"demo-([a-z]+)-.*\"), \"role\", \"$1\", \"service_name\", \"demo-[a-z]+-(.*)\")))",
+          "instant": false,
+          "legendFormat": "{{lang}} · {{role}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "How long do requests take? (p95)",
+      "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 25
+      },
+      "id": 9,
+      "panels": [],
+      "title": "Telemetry volume per language",
+      "type": "row"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Spans per second, of every kind, before sampling. Differences come from each framework's instrumentation (some create more spans per request). A step after a deploy = spans added or removed.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "lineWidth": 2,
+            "showPoints": "never",
+            "spanNulls": true,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "unit": "short"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "go"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#56B4E9",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "python"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#E69F00",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "node"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#009E73",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "dotnet"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#CC79A7",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 0,
+        "y": 26
+      },
+      "id": 10,
+      "interval": "2m",
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "exemplar": false,
+          "expr": "sum by (lang) (label_replace(rate(traces_span_metrics_calls_total{service_name=~\"demo-(${lang:pipe})-(api|backend|worker)\", service_name=~\"${service:pipe}\"}[$__rate_interval]), \"lang\", \"$1\", \"service_name\", \"demo-([a-z]+)-.*\"))",
+          "instant": false,
+          "legendFormat": "{{lang}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "How many spans does each language produce per second?",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
+      "description": "Log lines per second, every level. One language well above the others usually means duplicated logs (see dashboard 2).",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 0,
+            "lineWidth": 2,
+            "showPoints": "never",
+            "spanNulls": true,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "unit": "short"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "go"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#56B4E9",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "python"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#E69F00",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "node"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#009E73",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "dotnet"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#CC79A7",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 12,
+        "y": 26
+      },
+      "id": 11,
+      "interval": "2m",
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "expr": "sum by (lang) (rate({service_name=~\"demo-(${lang:pipe})-(api|backend|worker)\", service_name=~\"${service:pipe}\"} | label_format lang=`{{ regexReplaceAll \"demo-([a-z]+)-.*\" .service_name \"$1\" }}` [$__auto]))",
+          "legendFormat": "{{lang}}",
+          "queryType": "range",
+          "refId": "A"
+        }
+      ],
+      "title": "How many logs does each language produce per second?",
+      "type": "timeseries"
+    },
+    {
+      "collapsed": true,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 33
+      },
+      "id": 12,
+      "panels": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "description": "The `http.server.request.duration`, `rpc.server.call.duration` and `db.client.operation.duration` metrics emitted by the SDK itself (not derived from spans). Uneven coverage is known: see the table next to it.",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "barAlignment": 0,
+                "drawStyle": "line",
+                "fillOpacity": 0,
+                "lineWidth": 2,
+                "showPoints": "never",
+                "spanNulls": true,
+                "stacking": {
+                  "group": "A",
+                  "mode": "none"
+                },
+                "thresholdsStyle": {
+                  "mode": "off"
+                }
+              },
+              "unit": "s"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 9,
+            "w": 14,
+            "x": 0,
+            "y": 34
+          },
+          "id": 13,
+          "interval": "2m",
+          "options": {
+            "legend": {
+              "calcs": [
+                "mean",
+                "max"
+              ],
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "exemplar": false,
+              "expr": "histogram_quantile(0.95, sum by (le, service_name) (rate(http_server_request_duration_seconds_bucket{service_name=~\"demo-(${lang:pipe})-(api|backend|worker)\", service_name=~\"${service:pipe}\"}[$__rate_interval])))",
+              "instant": false,
+              "legendFormat": "{{service_name}} · HTTP server",
+              "range": true,
+              "refId": "A"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "exemplar": false,
+              "expr": "histogram_quantile(0.95, sum by (le, service_name) (rate(rpc_server_call_duration_seconds_bucket{service_name=~\"demo-(${lang:pipe})-(api|backend|worker)\", service_name=~\"${service:pipe}\"}[$__rate_interval])))",
+              "instant": false,
+              "legendFormat": "{{service_name}} · gRPC server",
+              "range": true,
+              "refId": "B"
+            },
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "exemplar": false,
+              "expr": "histogram_quantile(0.95, sum by (le, service_name) (rate(db_client_operation_duration_seconds_bucket{service_name=~\"demo-(${lang:pipe})-(api|backend|worker)\", service_name=~\"${service:pipe}\"}[$__rate_interval])))",
+              "instant": false,
+              "legendFormat": "{{service_name}} · database",
+              "range": true,
+              "refId": "C"
+            }
+          ],
+          "title": "p95 of the duration metrics emitted by the SDKs (per service)",
+          "transformations": [],
+          "type": "timeseries"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "description": "Number of series of each metric per service; **— = the service does not emit it**. Known gaps: gRPC server in Python and Node.js, database in Python, and .NET gRPC recorded as HTTP server.",
+          "fieldConfig": {
+            "defaults": {
+              "custom": {
+                "align": "auto",
+                "filterable": true
+              },
+              "noValue": "—"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 9,
+            "w": 10,
+            "x": 14,
+            "y": 34
+          },
+          "id": 14,
+          "options": {
+            "cellHeight": "sm",
+            "footer": {
+              "show": false
+            },
+            "showHeader": true
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "exemplar": false,
+              "expr": "count by (__name__, service_name) ({__name__=~\"http_server_request_duration_seconds_count|http_client_request_duration_seconds_count|rpc_server_call_duration_seconds_count|rpc_client_call_duration_seconds_count|db_client_operation_duration_seconds_count\", service_name=~\"demo-(${lang:pipe})-(api|backend|worker)\", service_name=~\"${service:pipe}\"})",
+              "format": "table",
+              "instant": true,
+              "legendFormat": "__auto",
+              "range": false,
+              "refId": "A"
+            }
+          ],
+          "title": "Which duration metrics does each service emit?",
+          "transformations": [
+            {
+              "id": "groupingToMatrix",
+              "options": {
+                "columnField": "__name__",
+                "rowField": "service_name",
+                "valueField": "Value"
+              }
+            },
+            {
+              "id": "organize",
+              "options": {
+                "renameByName": {
+                  "db_client_operation_duration_seconds_count": "database",
+                  "http_client_request_duration_seconds_count": "HTTP client",
+                  "http_server_request_duration_seconds_count": "HTTP server",
+                  "rpc_client_call_duration_seconds_count": "gRPC client",
+                  "rpc_server_call_duration_seconds_count": "gRPC server",
+                  "service_name\\__name__": "service"
+                }
+              }
+            }
+          ],
+          "type": "table"
+        }
+      ],
+      "title": "Technical detail — SDK metrics and coverage",
+      "type": "row"
+    }
+  ],
+  "refresh": "1m",
+  "schemaVersion": 42,
+  "tags": [
+    "demo-otel-libs",
+    "otel-libs"
+  ],
+  "templating": {
+    "list": [
+      {
+        "allValue": "go|python|node|dotnet",
+        "current": {
+          "selected": true,
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        },
+        "includeAll": true,
+        "label": "Language",
+        "multi": true,
+        "name": "lang",
+        "options": [
+          {
+            "selected": true,
+            "text": "All",
+            "value": "$__all"
+          },
+          {
+            "selected": false,
+            "text": "go",
+            "value": "go"
+          },
+          {
+            "selected": false,
+            "text": "python",
+            "value": "python"
+          },
+          {
+            "selected": false,
+            "text": "node",
+            "value": "node"
+          },
+          {
+            "selected": false,
+            "text": "dotnet",
+            "value": "dotnet"
+          }
+        ],
+        "query": "go,python,node,dotnet",
+        "type": "custom"
+      },
+      {
+        "allValue": "demo-.*",
+        "current": {
+          "selected": true,
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        },
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "definition": "label_values(traces_span_metrics_calls_total{service_name=~\"demo-(${lang:pipe})-(api|backend|worker)\"}, service_name)",
+        "includeAll": true,
+        "label": "Service",
+        "multi": true,
+        "name": "service",
+        "options": [],
+        "query": {
+          "qryType": 1,
+          "query": "label_values(traces_span_metrics_calls_total{service_name=~\"demo-(${lang:pipe})-(api|backend|worker)\"}, service_name)",
+          "refId": "PrometheusVariableQueryEditor-VariableQuery"
+        },
+        "refresh": 2,
+        "sort": 1,
+        "type": "query"
+      }
+    ]
+  },
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "demo-otel-libs — 1. Overview: is the demo up?",
+  "uid": "demo-otel-overview",
+  "version": 5,
+  "weekStart": ""
+}

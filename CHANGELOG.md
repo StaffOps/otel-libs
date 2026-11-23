@@ -53,6 +53,47 @@ until the first stable release, npm `latest` points at the deprecated
 Read the migration guide for your language first; the sections after it are
 the detailed record of every change.
 
+### Documentation site and dashboards (task A50, phase 1)
+
+- **Added** an Observability section to the documentation site, separate
+  from the library reference:
+  - an overview of the pipeline and the Grafana data-source wiring;
+  - one page per signal (traces, metrics, logs, profiles);
+  - correlation (exemplars, trace ↔ log, trace → metrics, service graph);
+  - diagnosis pages (RED, errors, latency and saturation, database errors).
+
+  The correlation page documents the **unsampled dead link**: a Loki failure
+  record from an unsampled span (database records, task A36; Python and
+  Node.js HTTP and gRPC server records, task A37) carries a valid `trace_id`
+  that Tempo does not have. Select those records by `db_system_name` /
+  `error_type` instead.
+- **Added** library pages:
+  - an overview with the cross-language similarities and differences;
+  - auto-instrumentation, with the installed instrumentations, upstream
+    versions and the auto-emitted metrics per language (observed on the
+    demo; rows still to be measured are marked);
+  - custom spans, metrics and logs, with one snippet per language that
+    follows the failure rule (ADR-014, ADR-016) through the helper failure
+    APIs. The `custom-signals` example apps predate that rule and are
+    rewritten in phase 2.
+- **Added** `docs/handoff.md` (state, open work, how to resume), a
+  Contributing page, a Collector prerequisites page, and the Node.js package
+  READMEs to the site navigation (`.gitignore` now keeps
+  `docs/site/nodejs/packages/`; the docs workflow also watches `README.md`,
+  `docs/handoff.md` and `nodejs/packages/*/README.md`). The per-language test guides move to
+  Contributing in the navigation; their files do not move.
+- **Added** `dashboards/demo/`: the six Grafana dashboards of the
+  four-language demo (start page, overview, exceptions and logs, span
+  hygiene, database errors, exemplars), in English.
+- **Removed** the sample dashboards `dashboards/01-api-business-metrics.json`,
+  `02-workers-background.json` and `03-traces-reliability.json`. They queried
+  .NET-example business metrics only, and span-metric names
+  (`spanmetrics_apm_*`) that the Collector no longer produces.
+- **Changed** the root README: the "Known emitted-telemetry gaps" table, the
+  Collector prerequisites list and the dashboards paragraph moved to the
+  site (library overview, Collector prerequisites, Dashboards). The headings
+  stay, each with a link, so existing anchors still resolve.
+
 ### Migration guide 0.2 → 0.3 — Go
 
 **First: the module path changed** ([ADR-010](https://github.com/StaffOps/otel-libs/blob/main/specs/decisions/ADR-010-go-module-path-matches-repo.md)).

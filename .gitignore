@@ -48,6 +48,8 @@ dotnet/StaffOps.OtelHelper.Tests/coverage/
 packages/
 # ...but the Node.js workspace keeps its sources in nodejs/packages/.
 !nodejs/packages/
+# ...and the site mirrors their READMEs in docs/site/nodejs/packages/.
+!docs/site/nodejs/packages/
 
 # Claude Code — personal overrides, not for the team
 .claude/settings.local.json

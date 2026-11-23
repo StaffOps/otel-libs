@@ -25,7 +25,7 @@ equivalent**: `go/` (module `github.com/staffops/otel-libs/go` +
 `dotnet/` (`StaffOps.OtelHelper` + `.AWS`/`.Redis`/`.Sql`/`.Profiling`; `0.2.x` released as `OtelHelper*`;
 first published as `0.3.0-rc.2`, tag `dotnet/v0.3.0-rc.2`, on GitHub Packages; rc.1 was tagged, never published), `nodejs/`
 (npm workspaces: `@staffops/otel-helper` + `-sql`/`-redis`/`-aws`/`-pino`/`-winston`;
-release candidate `0.3.0-rc.1`, tag `nodejs/v0.3.0-rc.1`, on npmjs with dist-tag `next` and on GitHub Packages; `latest` stays the deprecated bootstrap placeholder until the first stable release). Shared Grafana dashboards in `dashboards/`, MkDocs site in
+release candidate `0.3.0-rc.1`, tag `nodejs/v0.3.0-rc.1`, on npmjs with dist-tag `next` and on GitHub Packages; `latest` stays the deprecated bootstrap placeholder until the first stable release). Grafana dashboards of the four-language demo in `dashboards/demo/`, MkDocs site in
 `docs/site/`, specs in [`specs/`](specs/README.md).
 
 ## Core principles
@@ -110,7 +110,8 @@ without effect; the code option `replaceGlobals`, not an env var) are in [`nodej
   are the target, not yet the fact: current gaps (Python and Node.js gRPC
   legacy `rpc.*` attributes and no RPC metrics; .NET Redis status, AWS
   attribute values and the `/metrics` exposition) are listed under "Known
-  emitted-telemetry gaps" in [`README.md`](README.md#known-emitted-telemetry-gaps).
+  emitted-telemetry gaps" in
+  [`docs/site/library/overview.md`](docs/site/library/overview.md#known-emitted-telemetry-gaps).
 - Parity is enforced by the shared fixture `parity/cases.json` (from `0.3.0`),
   run by every language's test suite. A language that lags marks its cases
   `xfail:<reason>` — never delete a case to make CI green.
