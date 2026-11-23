@@ -45,7 +45,9 @@ the trap runs.
   heartbeat, or a clock that went back, invalidates the window: `laptop:
   wall-clock gap`. `caffeinate -dims -w <pid>` keeps macOS awake while the
   loop runs.
-- **Guard read (60 s).** K1's guard over the last 120 s (twice the interval,
+- **Guard read (60 s, fixed cadence).** A read starts every 60 s: the loop
+  sleeps 60 s minus the read's own time (FD sweep included), and not at all
+  after a read longer than that. K1's guard over the last 120 s (twice the interval,
   so a start between two reads is never missed; raw reads reach a further
   `BORN_GRACE` + one scrape back, so a series born in the window counts),
   without (g) and (h), which apply at window start only; every roll-list pod
@@ -58,9 +60,14 @@ the trap runs.
   rise is a finding (it gates the copy verdicts, judged by K-count). Item (d)
   exempts the copy rolls a window asks for, inside their time bound
   (`exempt_copy_rolls`, `exempt_window`: the two back-pressure flips, K0e M1).
-  Failing edges other than the two telemetry edges are findings (B2). An
-  optional FD reader is called at every read (the K-count `exec` sweep; an
-  interface here).
+  Failing edges other than the two telemetry edges are findings (B2). The
+  FD sweep runs after every read (K-count, owner ruling K0e-2):
+  `ls -1 /proc/1/fd` (no shell; the lines are counted) in every Running demo
+  container of the run's languages, in parallel, 10 s per call, through
+  `Kube.exec_fd` (that fixed command, a demo pod and a DNS-1123 container
+  name only); each read's `fd` record in `guard.jsonl` is what `verify.py
+  soak passive` judges. A failed exec or an empty listing is recorded as an
+  error, never as 0 FDs, and never fatal.
 - **Breach.** The window is invalid with the reason `platform: mesh (<item>)`
   (an item of (a)–(h)) or `platform: guard (<item>)`; `kubectl logs job/<k6>`
   is saved to `raw/<job>.stop.log`, then the Job is suspended (its pods go,

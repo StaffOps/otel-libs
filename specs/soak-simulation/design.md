@@ -172,6 +172,25 @@ again — `kubectl exec … sh -c 'ls /proc/1/fd | wc -l'` per demo container
 per sweep, a named read-only soak-run read (SR15 "Checker"), all four
 languages. **Reversal action**: drop the exec read and judge FDs from
 `process_open_file_descriptor_count` (Python) only.)*
+*(Owner ruling 2026-11-23, after the K-count code review — integer gauges,
+`unmeasured`: for threads, goroutines, FDs and the .NET thread-pool count and
+queue length, when every sample of the span is an integer, the slope limit
+per judged span or half is max(1 %/h × median, Q / span_h) with Q = 2 units
+(span_h = 18 h for the judged span, 9 h for its second half); the queue
+length is fitted on 15 min medians. Q supersedes the 1-unit floor first used
+for a median of 0. Motivation: a live read of 2026-11-23 had a .NET thread
+count with median 5 (limit 0.05/h), so a single one-thread step in a 9 h half
+would fail. A single +1 step passes; two steps, or a sustained +1 every 6 h
+or less, fail. Also from the review: the passive verdict is INVALID
+(`platform: telemetry gap`) when a judged series has fewer than 95 % of its
+expected samples in any hour or in total — runtime series at the export
+interval (10 s), cAdvisor at its scrape interval (15 s, 242 samples per hour
+read 2026-11-23), FDs as successful FD samples per guard read that ran in
+that hour (re-review HIGH-2: the loop's period is not exactly 60 s; it now
+keeps a fixed cadence, sleeping the interval minus the read's own time, and
+hours without reads are left to the wall-clock heartbeat rule). The FD read runs without a
+shell (`ls -1 /proc/1/fd`, lines counted). **Reversal action**: set Q from the
+K8a noise floor of the first valid run.)*
 
 ### S-D6 — Counting and loss accounting
 **Choice**: per signal, at quiesced checkpoints:

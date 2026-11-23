@@ -34,6 +34,11 @@ Modes:
                      checks PID 1 in each demo container (one read-only exec each) and the
                      Tempo attribute set; writes testing/k8s/soak/runs/<run>/. Exit 1 on
                      any FAIL.
+  soak <action> --run <id> the soak K-count verdicts (soakcount.py): passive (K8a S-D5
+                     slope rules per container, FDs from the exec sweep), gate (coverage),
+                     count (K8b fixed-family bounds, copy primary, gateway cross-check,
+                     drain), shut (K-shut), cal (K-cal k values), report (the summary
+                     after the secret scan). Writes runs/<run>/soak-<action>.json.
 
 smoke/examples: one PASS/FAIL line per check; exit 1 when any check fails. Every
 mode exits 2 on usage errors.
@@ -1923,6 +1928,8 @@ def main(argv: list[str] | None = None) -> int:
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     import soakplatform
     soakplatform.add_parser(sub)
+    import soakcount
+    soakcount.add_parser(sub)
     args = parser.parse_args(argv)
 
     b = Backends(
@@ -1937,6 +1944,8 @@ def main(argv: list[str] | None = None) -> int:
         return main_demo(b, args, end)
     if args.mode == "platform":
         return soakplatform.main_platform(b, args, end)
+    if args.mode == "soak":
+        return soakcount.main_soak(b, args, end)
     start = end - args.since
     rep = Report()
     if args.mode == "smoke":

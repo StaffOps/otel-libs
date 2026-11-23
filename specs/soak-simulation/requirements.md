@@ -468,6 +468,12 @@ For each mode (design S-D12): **refused** (agent stopped, address kept),
   or backing service; every demo image has `sh`, `ls` and `wc` (alpine,
   Debian slim and `aspnet:10.0` bases, read 2026-11-23); K1 checks that PID 1
   is the app process in each container.)*
+  *(Corrected 2026-11-23, K-count code review H2: the read runs without a
+  shell — `kubectl exec -n dev-otel-libs <pod> -c <container> -- ls -1
+  /proc/1/fd` — and the checker counts the listed lines. A non-zero exit is
+  an error, never 0 FDs, and an empty listing (0 FDs) is rejected as
+  implausible. The pod name must be a demo pod's and the container a DNS-1123
+  label; the command is fixed.)*
 - **Enrichment (K2).** WHEN a single-container pod in `dev-otel-libs` exports
   THEN its resource SHALL carry `k8s.namespace.name`, `k8s.pod.name`,
   `k8s.node.name`, `k8s.container.name` and `k8s.cluster.name` in Tempo,
@@ -819,7 +825,7 @@ form of SR3–SR7, SR10 and SR12.
     data, and the steps ran out to 12 h). *(Was 24 h = 6 h + 18 h in the
     first r6.2 draft of the same day.)*
   - *FDs* (owner ruling K0e-2, 2026-11-23): judged in all four languages
-    from the named `exec` read of "Checker" (`ls /proc/1/fd | wc -l` per
+    from the named `exec` read of "Checker" (`ls /proc/1/fd | wc -l` — now `ls -1 /proc/1/fd`, no shell, 2026-11-23 — per
     demo container per sweep), with the S-D5 slope rule; Python's
     `process_open_file_descriptor_count` is kept as a cross-check. cAdvisor
     exposes no `container_file_descriptors`. *(Was: Python only, proposed
@@ -1179,6 +1185,26 @@ stays as dated history.
   - *Reappearance (H4)*: a series gap at least as long as its source's
     expiry (gateway `span_metrics` 5 m, copy 30 m) is a reset and adds the
     reappearing value v; a shorter gap adds v − last, or v when v < last.
+    *(Corrected 2026-11-23, K-count code review H1: the expiry is decided
+    by the time since the value last changed, not by the sample gap — the
+    exporters keep scraping a flat value until the expiry, then the series
+    vanishes and comes back about one scrape later. Rule: when the sample
+    gap is more than 2 × the scrape interval and the reappearance is at
+    least expiry − one scrape after the last change, it is an expiry and
+    adds v; otherwise the sample adds v − last, or v when v < last. Scrape
+    interval 30 s, an initial value (`unmeasured`).)*
+    *(Corrected 2026-11-23, K-count re-review HIGH-1: a reappearance one or
+    two scrapes after the expiry cannot be told from a real update just
+    before it. The band — sample gap ≤ 2 × scrape, value unchanged for at
+    least expiry − one scrape, v ≥ last — is ambiguous: the lower count adds
+    v − last, the upper count adds v, both are carried into the bound (LOSS
+    only when the upper count is below it, DUPLICATES only when the lower
+    count is above it), and the event "ambiguous: expiry or update" is
+    recorded. The scrape interval is per source: measured 2026-11-23 on
+    k8s01 as 15 s for the copy (`count_over_time(up{job="dev-otel-libs/soak-agent",
+    endpoint="count"}[1h])` = 240) and 30 s for the gateway span metrics
+    (120 samples per hour); each read uses its own median sample spacing when
+    it has at least ten spacings, else these values.)*
   - *Cluster scope (H5)*: every query on a shared job carries
     `cluster="k8s01"`.
   - *FD sweep (L2)*: the exec read runs at every 60 s guard read: 12 demo

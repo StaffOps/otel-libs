@@ -79,7 +79,10 @@ sys.path.insert(0, str(HERE))
 import guard  # noqa: E402
 import k6script  # noqa: E402
 import render  # noqa: E402
+import soakcount  # noqa: E402  (K-count: the FD exec sweep, testing/k8s/soakcount.py)
 from render import NAMESPACE, ROLE_LABEL, RUN_LABEL  # noqa: E402
+
+DNS1123_LABEL_RE = re.compile(r"[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?")
 
 DEMO_SH = HERE.parent / "demo" / "demo.sh"
 DEMO_TAG = HERE.parent / "demo" / "demo-tag.sh"
@@ -241,6 +244,21 @@ class Kube:
         else:
             self._ok(["delete", "jobs", "-l", f"{RUN_LABEL}={render.check_run(run)},{ROLE_LABEL}=k6",
                       "--field-selector", f"metadata.name={name}", "--ignore-not-found"], timeout=60)
+
+    def exec_fd(self, pod: str, container: str) -> str:
+        """The one named exec of SR15 "Checker" (owner ruling K0e-2): the fixed,
+        read-only FD listing of PID 1 (``ls -1 /proc/1/fd``) in a demo
+        container; no other command."""
+        if not guard.verify.POD_RE.fullmatch(pod) or not DNS1123_LABEL_RE.fullmatch(container):
+            raise SoakError(f"refusing exec in {pod}/{container}: not a demo pod and container")
+        # No shell (review H2): the listing comes back and is counted in Python;
+        # a non-zero exit raises (SoakError), so a failed ls is never 0 FDs.
+        return self._ok(["exec", pod, "-c", container, "--", *soakcount.FD_ARGV],
+                        timeout=soakcount.FD_TIMEOUT_S)
+
+    def fd_sweep(self, langs) -> "soakcount.FdSweep":
+        """The K-count FD reader for ``Loop(fd_reader=...)``: every guard read."""
+        return soakcount.FdSweep(lambda: self.get(["pods"]).get("items") or [], self.exec_fd, time.time, langs)
 
     def namespace_label(self) -> str | None:
         ns = self.get(["namespace", self.namespace], namespaced=False)
@@ -747,6 +765,7 @@ class Loop:
         res.started, res.valid, res.start = True, True, self.clock()
         self.last_beat = None
         while True:
+            iteration_start = self.clock()
             gap = self.heartbeat()
             if gap:
                 res.valid, res.reason = False, gap + "; " + self.stop_load(load, "suspend", res.start)
@@ -773,7 +792,10 @@ class Loop:
                     break
             if self.clock() - res.start >= duration_s:
                 break
-            self.sleep(self.interval)
+            # A fixed cadence (K-count re-review HIGH-2): the read's own time is
+            # taken off the sleep, so a read starts every interval, not every
+            # interval + read time; a read longer than the interval sleeps 0.
+            self.sleep(max(0.0, self.interval - (self.clock() - iteration_start)))
         return self._finish(res)
 
     def _finish(self, res: WindowResult) -> WindowResult:
@@ -991,7 +1013,7 @@ def run_mode(args: argparse.Namespace, kube: Kube, d: Path) -> int:
         return 1
     reader = KubeReader(kube)
     cfg = guard_config(d, time.time(), args.langs)
-    loop = Loop(args.run, kube, reader, cfg, d)
+    loop = Loop(args.run, kube, reader, cfg, d, fd_reader=kube.fd_sweep(args.langs).read)
     gate = guard.entry_read(reader, cfg, time.time(), clock=time.time, sleep=time.sleep)
     append_jsonl(d / "guard.jsonl", {"window": args.window, "phase": "entry", **gate.as_json()})
     if gate.blind or gate.breaches:

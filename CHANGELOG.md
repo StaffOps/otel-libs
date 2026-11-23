@@ -4829,6 +4829,55 @@ Unsupported instrumentation versions, task A10 (P18):
 
 ### Internal
 
+- **K-count: `verify.py soak`, the soak count and passive verdicts
+  (2026-11-23, soak r6.2).** New `testing/k8s/soakcount.py`, read-only on the
+  cluster, actions `passive`, `gate`, `count`, `shut`, `cal` and `report`.
+  `passive` (K8a) judges each demo container after the 12 h warm-up over the
+  18 h judged span with the S-D5 slope rule (judged span and its second half;
+  the 1.10 ratio report-only; integer gauges by the owner ruling of the same
+  day: limit max(1 %/h × median, 2 units / span), the queue on 15 min medians)
+  on RSS, working set, `container_threads`, Go
+  `go_goroutine_count`, the .NET thread pool (thread count, queue length) and
+  the FDs of all four languages from the `exec` sweep; restarts must be 0;
+  Python `process_open_file_descriptor_count` is a cross-check; Node.js
+  runtime state is `n/a` (AG12); a judged series below 95 % of its expected
+  samples in any hour makes the container INVALID (`platform: telemetry gap`;
+  FDs: successful samples per guard read that ran);
+  a demo pod first seen after the start counts as a restart. `gate` is the coverage gate (span metrics
+  growing per demo job, runtime samples on ≥ 95 % of the export intervals).
+  `count` (K8b) counts the fixed span families per service from the copy's
+  `otel_libs_soak_fixed_spans_total` (primary, gated by the copy's own
+  sentinels) and the gateway `traces_span_metrics_calls_total` per family
+  (cross-check, gated by the shared sentinels, the queue floors and the
+  gateway-restart detector) against the k6 cells × the K-cal k, with the
+  series rules (first sample, reset, and an expiry decided by the time since
+  the value last changed — a sample gap over 2 × scrape with the reappearance
+  at least expiry − one scrape after the last change, copy 30 m, gateway 5 m;
+  corrected 2026-11-23 after the code review, which found that the exporters
+  keep a flat value until the expiry so the sample gap alone never shows it;
+  a reappearance within two scrapes of the expiry is ambiguous and makes the
+  count an interval, v − last to v; scrape interval per source, 15 s copy and
+  30 s gateway, measured)
+  and the verdicts PASS / LOSS / DUPLICATES / UNQUALIFIED, never a vacuous
+  PASS (no answered request, or no drain with answered `ok` requests); a
+  demo series with `service_instance_id="unset"` is a finding and makes that
+  service UNQUALIFIED; the drain check is send = process per language.
+  `count` also checks each worker's window (the t1 rule, no drive before
+  t2 + quiesce, no worker restart). `shut` bounds the old
+  `service_instance_id`'s count with the no-answer requests in the upper
+  bound, gated by the copy's sentinels, and folds in the exit within the
+  Deployment's `terminationGracePeriodSeconds` (FAIL on exit 137 or at
+  grace − 1 s). `cal` derives
+  the per-cell k (integral and equal over two repeats, else excluded with the
+  cause named) and the rate cap against the drain rate. `report` writes
+  `specs/soak-simulation/reports/<run>.md` (counts, queries, digests, commit
+  and tag) only after the secret scan with the run's canary and the fakeotlp
+  token. The run loop now records the FD sweep (`ls -1 /proc/1/fd` per demo
+  container, no shell, lines counted; a failed or empty listing is an error,
+  never 0) at every guard read, through a new `Kube.exec_fd` that runs that
+  fixed command in demo pods only, and keeps a fixed cadence (it sleeps the
+  interval minus the read's own time).
+
 - **K-loop: the soak run loop (2026-11-23, soak r6.2).** New
   `testing/k8s/soak/` (standard library only): `soak.py` runs a window on the
   laptop under `caffeinate` with a 60 s guard read and a heartbeat (a

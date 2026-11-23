@@ -458,6 +458,33 @@ class Window(Base):
         self.assertTrue((self.d / "heartbeat").exists())
         self.assertIsNone(self.kube.deadline)  # the read deadline is cleared after each read
 
+    def test_fixed_cadence_with_slow_reads(self):
+        # K-count re-review HIGH-2: the read's time is taken off the sleep. Reads
+        # of 70 s (FD sweep included) sleep 0 and the next read starts at once;
+        # reads of 10 s sleep 50 s, so a read starts every 60 s.
+        for read_s, want_sleep in ((70, 0.0), (10, 50.0)):
+            reader, clock = Switch(), Clock()
+            sleeps, starts = [], []
+            real_sleep = clock.sleep
+
+            def sleep(s, real_sleep=real_sleep, sleeps=sleeps):
+                sleeps.append(s)
+                real_sleep(s)
+
+            def fd(clock=clock, starts=starts, read_s=read_s):
+                starts.append(clock.t)
+                clock.t += read_s
+                return {"at": clock.t, "containers": {}}
+
+            with self.cluster():
+                loop = soak.Loop(RUN, self.kube, reader, guard.GuardConfig(), self.d, clock=clock, sleep=sleep,
+                                 interval=60, log=self.lines.append, fd_reader=fd)
+                res = loop.window("passive", 600)
+            self.assertTrue(res.valid, res.reason)       # no wall-clock gap: 70 s < 3 x 60 s
+            self.assertTrue(sleeps and all(abs(x - want_sleep) < 1e-6 for x in sleeps), (read_s, sleeps))
+            period = [b - a for a, b in zip(starts, starts[1:])]
+            self.assertTrue(all(abs(p - max(60, read_s)) < 1e-6 for p in period), (read_s, period))
+
     def test_breach_stops_k6_and_invalidates(self):
         reader = Switch()
         clock = Clock(on_sleep=lambda n: reader.pods.append(tp.pod_obj(sp.APP_NS, "new-pod", NOW - tp.DAY)))
