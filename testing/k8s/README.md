@@ -15,7 +15,8 @@ run of the deferred soak Phase K check K2
 | `smoke-jobs.sh` | One Job per language x {grpc, http}; `apply [--verify]`, `delete`, `render` |
 | `examples/examples.sh` | The example apps as Deployments; `apply`, `delete`, `render` |
 | `build-demo.sh` | Builds and pushes the twelve demo images (`otel-libs-demo-<lang>-<app>`, tag from `demo/demo-tag.sh`); `MIN_FREE_GB` disk guard, exit 4 when the registry refuses authentication (specs/demo-environment DE4) |
-| `demo/demo.sh` | The demo environment: shared PostgreSQL + Redis and the worker/api/backend apps per language; `apply [--lang <lang> \| --all]` (K-D2 pre-flight + FailedScheduling watch), `delete --lang <lang> \| --all`, `render` (DE2, DE4) |
+| `demo/demo.sh` | The demo environment: shared PostgreSQL + Redis and the worker/api/backend apps per language; `apply [--lang <lang> \| --all]` (K-D2 pre-flight + FailedScheduling watch), `scale --lang <lang> <n> \| --all <n>` (demo apps only), `delete --lang <lang> \| --all`, `render`; env overrides through `DEMO_ENV_FILE` ([below](#demo-env-overrides-and-scale-de13)) (DE2, DE4, DE13) |
+| `build-fakeotlp.sh` | Builds and pushes the test-only OTLP receiver `otel-libs-fakeotlp` from `testing/fakeotlp` of HEAD (tag: newest commit that touched it), the soak's hung (`--hang`) and redirect (`/parity-redirect-c/`) sinks; prints the digest to record; `PUSH=0` builds into the builder cache only; same `MIN_FREE_GB` guard and exit codes as `build-demo.sh` (specs/soak-simulation K-hang) |
 | `verify.py` | Read-only checks in Tempo, Loki and Prometheus; `smoke --run <id>`, `examples`, `demo --run <id>` (demo checks a–g against `demo/expected.json`, `--dry-run` = pre-flight only; specs/demo-environment DE-D11) |
 | `images/<lang>.Dockerfile` | Smoke images; `images/python-smoke.py` is the Python smoke program |
 
@@ -54,6 +55,8 @@ testing/k8s/build-images.sh              # go python node dotnet
 testing/k8s/build-images.sh python       # one language
 testing/k8s/build-examples.sh            # all twelve example apps
 testing/k8s/build-examples.sh go python/api
+testing/k8s/build-fakeotlp.sh            # the soak's hung/redirect sink; prints the digest
+PUSH=0 testing/k8s/build-fakeotlp.sh     # build check only, nothing pushed
 ```
 
 Images are `linux/amd64` only (the test node), tagged with the short HEAD sha
@@ -142,6 +145,52 @@ LANGS="node dotnet" testing/k8s/examples/examples.sh apply
 so run it for the languages deployed right now, once per rotation:
 `--langs node,dotnet`, then `--langs go,python` after rotating. A language that
 is not running fails.
+
+## Demo env overrides and scale (DE13)
+
+The soak reuses the demo as its workload
+([`specs/demo-environment/design.md`](../../specs/demo-environment/design.md)
+DE-D7, amendments 2026-11-19 and 2026-11-23). `demo.sh apply` and `render`
+read an optional env file, `DEMO_ENV_FILE`:
+
+```text
+# <lang>/<app> NAME=VALUE — `*` for either part; comment and blank lines skipped
+*/* OTEL_EXPORTER_OTLP_ENDPOINT=http://soak-otlp.dev-otel-libs.svc.cluster.local:4317
+*/worker DEMO_INTERVAL_SECONDS=10800
+*/* DEMO_RESTART_NONCE=20261123t1200
+python/api OTEL_EXPORTER_OTLP_HEADERS=x-canary=<token>
+```
+
+```bash
+DEMO_ENV_FILE=testing/k8s/soak/runs/<run>/demo.env testing/k8s/demo/demo.sh render   # *_HEADERS shown as <set>
+DEMO_ENV_FILE=testing/k8s/soak/runs/<run>/demo.env testing/k8s/demo/demo.sh apply --all
+testing/k8s/demo/demo.sh scale --lang go 0     # the go worker, api and backend to 0 replicas
+testing/k8s/demo/demo.sh scale --all 1         # every language in LANGS back to 1
+```
+
+| Rule | Behavior |
+|---|---|
+| Replace or add | A line replaces the value of a variable the app already sets, in the same position, or adds a new variable after the defaults. Two lines that set one name for the same app (wildcards included) are an error, so the `env` list never holds a name twice |
+| Allow-list | Names `OTEL_*` and `DEMO_*` only. Denied: `OTEL_SERVICE_NAME` and `OTEL_RESOURCE_ATTRIBUTES` (the identity the soak checks read), `DEMO_PG_*`, `DEMO_REDIS_*` and `DEMO_*_PASSWORD_FILE` (the DE-D13 credential wiring) |
+| Values | Any text without `"`, `\` or a control character (an empty value is allowed: OTel treats it as unset) |
+| Errors | A malformed, denied or duplicate line, an unknown language or app, or a missing file exits 2 with the line number and the name, never the value, before any `kubectl` or `docker` call |
+| Masking | `render` prints every `*_HEADERS` value as `<set>`; `apply` sends the real value |
+| Forced roll | `DEMO_RESTART_NONCE` is an allowed name the apps ignore: a new value changes the pod template, so `apply` rolls the Deployments (`Recreate`) |
+| No file | Without `DEMO_ENV_FILE` (or with an empty or comment-only file) the manifests are byte-identical to the hook-less ones (`demo/fixtures/render-default.yaml`) |
+| Other commands | `delete` and `scale` ignore `DEMO_ENV_FILE` |
+
+`scale --lang <lang> <n>` or `scale --all <n>` (LANGS) sets the replicas of the
+demo app Deployments (selector `otel-libs/lang in (...)`, so PostgreSQL and
+Redis are never scaled), with `n` from 0 to 999. It refuses when one of the
+apps is not applied. For `n` > 0 it runs the K-D2 pre-flight on `n` times the
+apps' requests (running app pods are counted again: conservative), then the
+rollout and FailedScheduling watch of `apply`; for `n` = 0 it runs no
+pre-flight and waits for the pods to go. A later `apply` sets the replicas
+back to 1: the apps are applied with `--force-conflicts`, because `kubectl
+scale` leaves `.spec.replicas` owned by the `kubectl` field manager and a
+plain server-side apply would fail with a conflict. The demo's own checks
+(`verify.py demo`) assume the default 5 s worker interval: a run with
+overrides is not a DE-D11 run.
 
 ## Verify
 

@@ -29,7 +29,10 @@ Per language:
   build (tasks DE3c–DE3d).
 
 Backing services on the cluster: `testing/k8s/demo/demo.sh apply | delete
---lang <lang> | delete --all | render` (task DE2). Connection contract for the
+--lang <lang> | delete --all | render` (task DE2); the apps with `apply --lang
+<lang> | --all` and `scale --lang <lang> <n> | --all <n>`, their env overridable
+through `DEMO_ENV_FILE` for the soak (task DE13, rules in
+[`testing/k8s/README.md`](../testing/k8s/README.md#demo-env-overrides-and-scale-de13)). Connection contract for the
 apps (namespace `dev-otel-libs`; passwords generated at `apply`, kept until
 `delete --all`, never printed — DE-D13):
 

@@ -29,10 +29,23 @@
 //     (status line "400 Rejected invalid token <t>", body = the marker only) and
 //     in the gRPC status message.
 //
+// Hang mode (--hang or HANG=true; soak task K-hang, specs/soak-simulation
+// SR15 "Failure modes (r6.2)", design K-D14): every OTLP request — gRPC or
+// HTTP, on every listener — completes the TCP and HTTP/2 (h2c) or HTTP/1.1
+// handshake, is recorded and has its body read, and then gets no answer: no
+// gRPC response headers, status or trailers, no HTTP status line. The call is
+// held until the client gives up (deadline, timeout or closed connection).
+// At most --hang-max (HANG_MAX, default 256) calls are held; a new call beyond
+// the cap closes the oldest one (HTTP/2 stream reset, HTTP/1.1 connection
+// closed), so a client that never gives up cannot exhaust memory. Redirect
+// paths and the echo/redirect headers are not honored in hang mode. ADMIN
+// also serves GET /held: {"held": <calls held now>, "evicted": <closed by the cap>}.
+//
 // Test-only: no auth. Never run it outside a test network.
 package main
 
 import (
+	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -41,6 +54,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/json"
 	"encoding/pem"
+	"flag"
 	"fmt"
 	"io"
 	"log"
@@ -193,12 +207,18 @@ func certs(out string, hosts []string, writeLeaf bool) tls.Certificate {
 	return tls.Certificate{Certificate: [][]byte{der}, PrivateKey: key}
 }
 
-func handler(g *grpc.Server, isTLS bool) http.Handler {
+// handler serves OTLP/gRPC (HTTP/2 + application/grpc) through g and OTLP/HTTP
+// itself; with a non-nil hang it holds every request unanswered instead.
+func handler(g *grpc.Server, isTLS bool, hang *hanger) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		addr, port, _ := net.SplitHostPort(r.Context().Value(http.LocalAddrContextKey).(net.Addr).String())
 		if r.ProtoMajor == 2 && strings.HasPrefix(r.Header.Get("Content-Type"), "application/grpc") {
 			add(rec{Addr: addr, Proto: "grpc", TLS: isTLS, Host: r.Host, Port: port, Path: r.URL.Path, RawPath: r.URL.EscapedPath(),
 				Encoding: r.Header.Get("Grpc-Encoding"), Timeout: r.Header.Get("Grpc-Timeout"), Headers: parityHeaders(r.Header)})
+			if hang != nil {
+				_, _ = io.Copy(io.Discard, http.MaxBytesReader(w, r.Body, maxBody))
+				hang.hold(r.Context())
+			}
 			if code, err := strconv.Atoi(r.Header.Get(grpcRedirectHeader)); err == nil && code >= 300 && code <= 399 {
 				w.Header().Set("Location", "http://"+r.Host+"/redirected"+r.URL.Path+"?token="+redirectToken)
 				w.WriteHeader(code)
@@ -206,6 +226,12 @@ func handler(g *grpc.Server, isTLS bool) http.Handler {
 			}
 			g.ServeHTTP(w, r)
 			return
+		}
+		if hang != nil {
+			n, _ := io.Copy(io.Discard, http.MaxBytesReader(w, r.Body, maxBody))
+			add(rec{Addr: addr, Proto: "http", TLS: isTLS, Host: r.Host, Port: port, Path: r.URL.Path, RawPath: r.URL.EscapedPath(), Bytes: int(n),
+				Encoding: r.Header.Get("Content-Encoding"), Headers: parityHeaders(r.Header)})
+			hang.hold(r.Context())
 		}
 		b, _ := io.ReadAll(http.MaxBytesReader(w, r.Body, maxBody))
 		add(rec{Addr: addr, Proto: "http", TLS: isTLS, Host: r.Host, Port: port, Path: r.URL.Path, RawPath: r.URL.EscapedPath(), Bytes: len(b),
@@ -267,9 +293,11 @@ func redirectPath(path string) (code int, rest string, ok bool) {
 // maxBody caps a recorded HTTP payload; OTLP test batches are a few KB.
 const maxBody = 8 << 20
 
-func main() {
-	out := envOr("OUT", "/tmp")
-	g := grpc.NewServer(grpc.UnknownServiceHandler(func(_ any, s grpc.ServerStream) error {
+// newGRPCServer answers every method: the request is drained, never decoded,
+// and the reply is an empty message (a valid Export*ServiceResponse), unless
+// the x-parity-echo-error header asks for an echoing error.
+func newGRPCServer() *grpc.Server {
+	return grpc.NewServer(grpc.UnknownServiceHandler(func(_ any, s grpc.ServerStream) error {
 		var m emptypb.Empty // unknown fields retained; we only need to drain the request
 		if err := s.RecvMsg(&m); err != nil {
 			return err
@@ -288,6 +316,65 @@ func main() {
 		}
 		return s.SendMsg(&emptypb.Empty{}) // zero bytes == valid Export*ServiceResponse
 	}))
+}
+
+// newServer is one listener: HTTP/1.1 plus HTTP/2 (h2c when plaintext).
+func newServer(addr string, h http.Handler, isTLS bool) *http.Server {
+	p := new(http.Protocols)
+	p.SetHTTP1(true)
+	if isTLS {
+		p.SetHTTP2(true)
+	} else {
+		p.SetUnencryptedHTTP2(true)
+	}
+	return &http.Server{Addr: addr, Handler: h, Protocols: p}
+}
+
+// defaultHangMax caps the calls held in hang mode.
+const defaultHangMax = 256
+
+// parseOptions reads the hang mode from the command line, falling back to the
+// HANG / HANG_MAX environment (the other options are environment only).
+func parseOptions(args []string, getenv func(string) string) (hang bool, hangMax int, err error) {
+	fs := flag.NewFlagSet("fakeotlp", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	if v := getenv("HANG"); v != "" {
+		if hang, err = strconv.ParseBool(v); err != nil {
+			return false, 0, fmt.Errorf("HANG=%q is not a boolean", v)
+		}
+	}
+	hangMax = defaultHangMax
+	if v := getenv("HANG_MAX"); v != "" {
+		if hangMax, err = strconv.Atoi(v); err != nil {
+			return false, 0, fmt.Errorf("HANG_MAX=%q is not a whole number", v)
+		}
+	}
+	fs.BoolVar(&hang, "hang", hang, "hold every OTLP request unanswered until the client gives up")
+	fs.IntVar(&hangMax, "hang-max", hangMax, "most calls held at once in hang mode; the oldest is closed beyond it")
+	if err := fs.Parse(args); err != nil {
+		return false, 0, err
+	}
+	if fs.NArg() > 0 {
+		return false, 0, fmt.Errorf("unexpected argument %q", fs.Arg(0))
+	}
+	if hangMax < 1 {
+		return false, 0, fmt.Errorf("the hang cap must be at least 1 (got %d)", hangMax)
+	}
+	return hang, hangMax, nil
+}
+
+func main() {
+	hangOn, hangMax, err := parseOptions(os.Args[1:], os.Getenv)
+	if err != nil {
+		log.Fatalf("fakeotlp: %v", err)
+	}
+	var hang *hanger
+	if hangOn {
+		hang = newHanger(hangMax)
+		log.Printf("fakeotlp: hang mode, at most %d held calls", hangMax)
+	}
+	out := envOr("OUT", "/tmp")
+	g := newGRPCServer()
 	// fakeotlp / fakeotlp-tls: DNS names the Node.js runner maps to 127.0.0.2 /
 	// 127.0.0.3 (Node 26 refuses an IP literal as TLS ServerName; design D-JS14).
 	hosts := strings.Split(envOr("TLS_HOSTS", "localhost,127.0.0.1,127.0.0.2,127.0.0.3,::1,fakeotlp,fakeotlp-tls"), ",")
@@ -298,14 +385,7 @@ func main() {
 	}
 	cert := certs(out, hosts, false)
 	serve := func(addr string, isTLS bool) {
-		p := new(http.Protocols)
-		p.SetHTTP1(true)
-		if isTLS {
-			p.SetHTTP2(true)
-		} else {
-			p.SetUnencryptedHTTP2(true)
-		}
-		s := &http.Server{Addr: addr, Handler: handler(g, isTLS), Protocols: p}
+		s := newServer(addr, handler(g, isTLS, hang), isTLS)
 		var err error
 		if isTLS {
 			s.TLSConfig = &tls.Config{Certificates: []tls.Certificate{cert}}
@@ -321,22 +401,88 @@ func main() {
 	for _, a := range strings.Split(envOr("TLS", "127.0.0.2:14317,127.0.0.2:14318,127.0.0.2:443,127.0.0.3:4317"), ",") {
 		go serve(a, true)
 	}
-	http.HandleFunc("/requests", func(w http.ResponseWriter, r *http.Request) {
-		mu.Lock()
-		defer mu.Unlock()
-		if r.Method == http.MethodDelete {
-			reqs = nil
-			return
-		}
+	http.HandleFunc("/requests", serveRequests)
+	http.HandleFunc("/held", func(w http.ResponseWriter, _ *http.Request) {
+		held, evicted := hang.stats()
 		w.Header().Set("Content-Type", "application/json")
-		if reqs == nil {
-			_, _ = w.Write([]byte("[]\n"))
-			return
-		}
-		_ = json.NewEncoder(w).Encode(reqs)
+		_ = json.NewEncoder(w).Encode(map[string]int{"held": held, "evicted": evicted})
 	})
 	log.Printf("fakeotlp ready uid=%d", os.Getuid())
 	log.Fatal(http.ListenAndServe(envOr("ADMIN", "127.0.0.2:8888"), nil))
+}
+
+// serveRequests is the admin GET (JSON list) and DELETE (reset) of the log.
+func serveRequests(w http.ResponseWriter, r *http.Request) {
+	mu.Lock()
+	defer mu.Unlock()
+	if r.Method == http.MethodDelete {
+		reqs = nil
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if reqs == nil {
+		_, _ = w.Write([]byte("[]\n"))
+		return
+	}
+	_ = json.NewEncoder(w).Encode(reqs)
+}
+
+// hanger holds hang-mode calls, oldest first, at most max at a time.
+type hanger struct {
+	max     int
+	mu      sync.Mutex
+	held    []chan struct{} // closed to evict the call
+	evicted int
+}
+
+func newHanger(limit int) *hanger { return &hanger{max: limit} }
+
+// hold blocks until ctx ends (the client gave up) or the cap evicts the call,
+// then aborts the handler: http.ErrAbortHandler resets the HTTP/2 stream or
+// closes the HTTP/1.1 connection, so no status is ever sent (a handler that
+// returned would send an implicit 200, a successful export).
+func (h *hanger) hold(ctx context.Context) {
+	evict := make(chan struct{})
+	h.mu.Lock()
+	h.held = append(h.held, evict)
+	var oldest chan struct{}
+	if len(h.held) > h.max {
+		oldest, h.held = h.held[0], h.held[1:]
+		h.evicted++
+	}
+	h.mu.Unlock()
+	if oldest != nil {
+		close(oldest)
+		log.Printf("fakeotlp: hang cap %d reached; closed the oldest held call", h.max)
+	}
+	select {
+	case <-ctx.Done():
+		h.release(evict)
+	case <-evict:
+	}
+	panic(http.ErrAbortHandler)
+}
+
+func (h *hanger) release(evict chan struct{}) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for i, c := range h.held {
+		if c == evict {
+			h.held = append(h.held[:i], h.held[i+1:]...)
+			return
+		}
+	}
+}
+
+// stats returns the calls held now and those closed by the cap (0, 0 outside
+// hang mode).
+func (h *hanger) stats() (held, evicted int) {
+	if h == nil {
+		return 0, 0
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return len(h.held), h.evicted
 }
 
 func envOr(k, d string) string {

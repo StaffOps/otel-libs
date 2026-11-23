@@ -399,6 +399,35 @@ more image; the worker must exist for the queue anyway).
 > `kubectl rollout restart` and scales with `kubectl scale` (two more
 > named writes in its scope rule).
 
+> *Amended 2026-11-23 (DE13 and soak K-hang implementation; owner accepted
+> (1) on 2026-11-23; (2) records calls the amendments above left open):*
+> (1) **`--force-conflicts` on the apps apply.** `demo.sh scale` uses
+> `kubectl scale`, an Update through the `scale` subresource; Kubernetes
+> server-side apply then moves ownership of `.spec.replicas` from the
+> `otel-libs-demo` field manager to `kubectl`. A later `demo.sh apply` would
+> set `replicas: 1` on a field another manager owns, and when the value
+> differs (after a scale to 0, the soak's case) server-side apply refuses it
+> with a conflict. The apps apply therefore passes `--force-conflicts` and
+> takes the field back, resetting the replicas to 1. Only the demo app
+> manifests are applied this way; the backing services' apply is unchanged.
+> *Trade-off*: a manual edit of a demo app field by another manager is
+> overwritten silently — intended, the script owns these objects.
+> *Not measured on k8s01* (the conflict follows the documented ownership
+> rules). *Reversal*: drop the flag and make `scale` render and apply the
+> Deployments itself (then it must also get the soak's `DEMO_ENV_FILE`, or
+> it changes the pod template). (2) **Decisions** (DE13): `scale` refuses
+> when one of the selected apps' Deployments is not applied (nothing is
+> scaled); for `n` > 0 it runs the K-D2 pre-flight on n times the requests
+> **and** the FailedScheduling watch of `apply`; `n` is 0-999 without a
+> leading zero; `scale --all` follows `LANGS`, as `apply --all` does;
+> `delete` and `scale` ignore `DEMO_ENV_FILE`. (K-hang, `testing/fakeotlp`):
+> in `--hang` mode every OTLP request hangs, so the redirect paths and the
+> echo and gRPC-redirect headers are not honored (a sink is one mode at a
+> time; the redirect mode runs the default receiver); at most 256 calls are
+> held (`--hang-max` / `HANG_MAX`), the oldest closed beyond the cap; the
+> admin listener adds `GET /held` (`{"held": n, "evicted": m}`) so a run can
+> see that calls are held.
+
 ### DE-D8 — Exceptions in demo code follow ADR-014 by hand; instrumentations are left as they are
 **Choice**: demo spans use the tracer name `otel-libs-demo` (the scope check d
 selects them by).

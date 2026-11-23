@@ -4829,6 +4829,36 @@ Unsupported instrumentation versions, task A10 (P18):
 
 ### Internal
 
+- **DE13: demo env-override hook and `demo.sh scale` (2026-11-23, soak r6.2
+  prerequisite).** `testing/k8s/demo/demo.sh apply` and `render` read an
+  optional `DEMO_ENV_FILE` (`<lang>/<app> NAME=VALUE`, `*` for either part):
+  a line replaces an app default in place or adds a variable, never a second
+  entry for one name; only `OTEL_*` / `DEMO_*` names, with
+  `OTEL_SERVICE_NAME`, `OTEL_RESOURCE_ATTRIBUTES`, `DEMO_PG_*`,
+  `DEMO_REDIS_*` and `DEMO_*_PASSWORD_FILE` denied; a bad line exits 2 with
+  its number and name (never its value) before any write; `render` shows
+  `*_HEADERS` values as `<set>`; `DEMO_RESTART_NONCE` forces a roll. Without
+  the file the manifests are byte-identical (golden
+  `testing/k8s/demo/fixtures/render-default.yaml`). New `scale --lang <lang>
+  <n> | --all <n>` scales the demo apps only (pre-flight and FailedScheduling
+  watch for n > 0, none for 0); the apps apply now passes `--force-conflicts`
+  so an apply after `scale` takes `.spec.replicas` back. Tests:
+  `testing/k8s/demo/test_demo_hook.py`. Docs: `testing/k8s/README.md`,
+  `demo/README.md`.
+
+- **K-hang: `testing/fakeotlp --hang` (2026-11-23, soak r6.2 prerequisite).**
+  The receiver gains a hang mode (`--hang` / `HANG=true`): every OTLP
+  request completes the handshake, is recorded and its body read, and is
+  never answered, so a gRPC client ends with `DEADLINE_EXCEEDED` and an HTTP
+  client with its own timeout; at most `--hang-max` (`HANG_MAX`, 256) calls
+  are held and the oldest is closed beyond the cap; admin `GET /held`. The
+  default modes (A29 echo, A31 redirects, A51 gRPC 3xx) are unchanged; the
+  gRPC server and listener setup moved into `newGRPCServer` / `newServer`
+  for the new `testing/fakeotlp/main_test.go`. New
+  `testing/k8s/build-fakeotlp.sh` builds `otel-libs-fakeotlp` (linux/amd64,
+  `build-images.sh` flags, `build-demo.sh` guards) and prints the digest to
+  record. Docs: `testing/README.md`, `testing/k8s/README.md`.
+
 - **A37: .NET demo cells retagged (2026-11-19, owner decision 8).** The
   .NET part of A37 is parked as `specs/dotnet-otel-helper/tasks.md` C20
   (ASP.NET Core and HttpClient `RecordException=false`) and C21 (gRPC server

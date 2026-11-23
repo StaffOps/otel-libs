@@ -243,6 +243,8 @@ case "$args" in
   *" get namespace "*) echo namespace/dev-otel-libs ;;
   *" get deployments -l app.kubernetes.io/part-of=otel-libs,app.kubernetes.io/component=demo,!otel-libs/lang "*)
     cat "$d/backing.txt" ;;
+  *" get deployments -l app.kubernetes.io/part-of=otel-libs,app.kubernetes.io/component=demo,otel-libs/lang in ("*)
+    cat "$d/app_deploys.txt" 2>/dev/null ;;  # demo.sh scale (DE13)
   *" get secret "*) echo secret/a ;;
   *" get pods -l app.kubernetes.io/name=demo-postgres "*) printf '0 ' ;;
   *" exec "*) echo 4 ;;
@@ -338,7 +340,8 @@ class Apply(FakeCluster):
         self.assertEqual(applied.count("kind: Deployment"), 12)
         self.assertEqual(applied.count("kind: Service"), 8)
         self.assertNotIn("name: demo-postgres", applied)
-        self.assertTrue(any("--server-side --field-manager=otel-libs-demo" in c for c in self.calls()))
+        # The apps take .spec.replicas back from a `scale` (kubectl field manager).
+        self.assertTrue(any("--server-side --force-conflicts --field-manager=otel-libs-demo" in c for c in self.calls()))
         self.assertFalse(any(" create " in f" {c} " for c in self.calls()))  # backing reused, no Secret written
         self.assertIn("run=r1 langs=go python node dotnet", result.stdout)
         self.assertFalse((self.dir / "docker.log").exists())  # explicit TAG: no image look-up

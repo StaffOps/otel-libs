@@ -32,6 +32,7 @@
 #                  blip makes a pod unready, not restarted).
 #
 # Usage: testing/k8s/demo/demo.sh apply [--lang <lang> | --all]
+#                                 | scale --lang <lang> <n> | scale --all <n>
 #                                 | delete --lang <lang> | delete --all | render
 #   apply   (no option) the backing services only. K-D2 pre-flight, then
 #           creates the Secrets (stringData through `kubectl create -f -`;
@@ -54,7 +55,17 @@
 #           FailedScheduling watch (schedwatch.py) runs; on a hit the apps of
 #           this apply are scaled to 0 and apply fails; when every look-up
 #           was blind (schedwatch exit 2) apply fails too, with the apps left
-#           up, and a partly blind watch is a warning with the counts.
+#           up, and a partly blind watch is a warning with the counts. The
+#           apps are applied with --force-conflicts: after `scale`, the
+#           `kubectl` field manager owns .spec.replicas, and a plain
+#           server-side apply of replicas 1 would fail with a conflict.
+#   scale --lang <lang> <n> | --all <n>  sets the replicas of the demo app
+#           Deployments of one language (or of every language in LANGS) to n
+#           (0-999); the backing services are never scaled. For n > 0, the
+#           K-D2 pre-flight on n times the apps' requests (running app pods
+#           counted again: conservative), then the rollout and the
+#           FailedScheduling watch as for apply; for n = 0 no pre-flight, and
+#           it waits for the pods to go. Refuses when the apps are not applied.
 #   delete --lang <lang>  deletes that language's demo apps (label
 #           otel-libs/lang), waits for their pods to go, and keeps the
 #           backing services.
@@ -72,7 +83,20 @@
 #        no `latest` fallback, and `latest` is refused). With the default tag,
 #        apply --lang/--all first checks read-only that every image exists
 #        (`docker buildx imagetools inspect`); an explicit TAG skips the check;
-#        DEMO_WATCH_SECONDS (FailedScheduling watch after the rollout, 60).
+#        DEMO_WATCH_SECONDS (FailedScheduling watch after the rollout, 60);
+#        DEMO_ENV_FILE (apply and render: env overrides for the apps, task
+#        DE13, design DE-D7 amendments 2026-11-19 and 2026-11-23). One
+#        `<lang>/<app> NAME=VALUE` per line, `*` for either part, `#` comment
+#        and blank lines skipped. A line replaces the value of a variable the
+#        app already sets (same position) or adds a new one after them; two
+#        lines setting one name for the same app are an error. Names: OTEL_*
+#        and DEMO_* only; denied: OTEL_SERVICE_NAME, OTEL_RESOURCE_ATTRIBUTES,
+#        DEMO_PG_*, DEMO_REDIS_* and DEMO_*_PASSWORD_FILE. Values: no `"`, `\`
+#        or control character. Any bad line fails before a write, without
+#        printing its value. `render` shows every *_HEADERS value as <set>.
+#        DEMO_RESTART_NONCE=<value> is an allowed name the apps ignore: a new
+#        value changes the pod template, so apply rolls the Deployment.
+#        Without the file the manifests are byte-identical to the hook-less ones.
 set -euo pipefail
 set +x # never trace: secret values pass through shell variables
 
@@ -442,33 +466,128 @@ env_var() { # <name> <value>
   printf '            - name: %s\n              value: "%s"\n' "$1" "$2"
 }
 
-# app_env <lang> <app>: DE-D2 telemetry settings plus the DE-D13 r3.3 wiring.
+# ── Env-override hook (task DE13; design DE-D7 amendments 2026-11-19 and
+# 2026-11-23). Parallel arrays, one entry per accepted DEMO_ENV_FILE line
+# (bash 3.2 has no associative arrays): selector language and app ("*" = any),
+# variable name, value.
+ov_lang=() ov_app=() ov_name=() ov_value=() ov_line=()
+env_mask="" # render: show every *_HEADERS value as <set>
+
+# env_file_error <line> <message>: the value of a refused line is never printed.
+env_file_error() {
+  echo "demo: DEMO_ENV_FILE line $1: $2; nothing applied" >&2
+  exit 2
+}
+
+# env_name_denied <name>: the identity the soak checks read (K2, K3, K5) and
+# the DE-D13 credential wiring are not overridable.
+env_name_denied() {
+  case "$1" in
+    OTEL_SERVICE_NAME|OTEL_RESOURCE_ATTRIBUTES|DEMO_PG_*|DEMO_REDIS_*|DEMO_*_PASSWORD_FILE) return 0 ;;
+  esac
+  return 1
+}
+
+# load_env_file <path>: parses and validates every line before anything renders.
+load_env_file() {
+  local file=$1 raw line n=0 l a name value i
+  local re='^([a-z]+|\*)/([a-z]+|\*)[[:space:]]+([A-Za-z0-9_]+)=(.*)$'
+  if [ ! -f "$file" ] || [ ! -r "$file" ]; then
+    echo "demo: DEMO_ENV_FILE '$file' is not a readable file; nothing applied" >&2
+    exit 2
+  fi
+  while IFS= read -r raw || [ -n "$raw" ]; do
+    n=$((n + 1))
+    line=${raw#"${raw%%[![:space:]]*}"} # leading whitespace
+    case "$line" in ''|'#'*) continue ;; esac
+    [[ "$line" =~ $re ]] || env_file_error "$n" "not '<lang>/<app> NAME=VALUE'"
+    l=${BASH_REMATCH[1]} a=${BASH_REMATCH[2]} name=${BASH_REMATCH[3]} value=${BASH_REMATCH[4]}
+    case "$l" in go|python|node|dotnet|'*') ;; *) env_file_error "$n" "unknown language '$l' (go python node dotnet *)" ;; esac
+    case "$a" in worker|api|backend|'*') ;; *) env_file_error "$n" "unknown app '$a' (worker api backend *)" ;; esac
+    [[ "$name" =~ ^(OTEL|DEMO)_[A-Z0-9_]+$ ]] || env_file_error "$n" "$name is not an OTEL_* or DEMO_* name"
+    ! env_name_denied "$name" || env_file_error "$n" "$name may not be overridden (identity or credential wiring)"
+    # The value goes into a YAML double-quoted scalar: no quote, backslash or control character.
+    if [[ "$value" == *'"'* || "$value" == *'\'* || "$value" =~ [[:cntrl:]] ]]; then
+      env_file_error "$n" "the value of $name holds a quote, a backslash or a control character"
+    fi
+    for ((i = 0; i < ${#ov_name[@]}; i++)); do
+      if [ "${ov_name[i]}" = "$name" ] \
+        && { [ "${ov_lang[i]}" = "$l" ] || [ "${ov_lang[i]}" = '*' ] || [ "$l" = '*' ]; } \
+        && { [ "${ov_app[i]}" = "$a" ] || [ "${ov_app[i]}" = '*' ] || [ "$a" = '*' ]; }; then
+        env_file_error "$n" "duplicate: $name is already set for an overlapping app by line ${ov_line[i]}"
+      fi
+    done
+    ov_lang+=("$l") ov_app+=("$a") ov_name+=("$name") ov_value+=("$value") ov_line+=("$n")
+  done <"$file"
+}
+
+# ov_matches <index> <lang> <app>
+ov_matches() {
+  { [ "${ov_lang[$1]}" = '*' ] || [ "${ov_lang[$1]}" = "$2" ]; } \
+    && { [ "${ov_app[$1]}" = '*' ] || [ "${ov_app[$1]}" = "$3" ]; }
+}
+
+env_out() { # <name> <value>
+  if [ -n "$env_mask" ] && [[ "$1" == *_HEADERS ]]; then
+    env_var "$1" "<set>"
+  else
+    env_var "$1" "$2"
+  fi
+}
+
+# emit_env <lang> <app> <name> <value> [...]: the app's defaults, each replaced
+# in place by a matching override, then the overrides that add a variable.
+emit_env() {
+  local lang=$1 app=$2 name value i used=" "
+  shift 2
+  while [ $# -gt 0 ]; do
+    name=$1 value=$2
+    shift 2
+    for ((i = 0; i < ${#ov_name[@]}; i++)); do
+      if [ "${ov_name[i]}" = "$name" ] && ov_matches "$i" "$lang" "$app"; then
+        value=${ov_value[i]} used="$used$i "
+      fi
+    done
+    env_out "$name" "$value"
+  done
+  for ((i = 0; i < ${#ov_name[@]}; i++)); do
+    if [[ "$used" != *" $i "* ]] && ov_matches "$i" "$lang" "$app"; then
+      env_out "${ov_name[i]}" "${ov_value[i]}"
+    fi
+  done
+}
+
+# app_env <lang> <app>: DE-D2 telemetry settings plus the DE-D13 r3.3 wiring,
+# with the DEMO_ENV_FILE overrides applied.
 app_env() {
-  local lang=$1 app=$2
-  env_var OTEL_SERVICE_NAME "demo-$lang-$app"
-  env_var OTEL_RESOURCE_ATTRIBUTES "deployment.environment.name=dev,otel_libs.run=$run"
-  env_var OTEL_EXPORTER_OTLP_ENDPOINT "$agent"
-  env_var OTEL_EXPORTER_OTLP_PROTOCOL grpc
-  env_var OTEL_METRIC_EXPORT_INTERVAL 10000
+  local lang=$1 app=$2 defaults
+  defaults=(
+    OTEL_SERVICE_NAME "demo-$lang-$app"
+    OTEL_RESOURCE_ATTRIBUTES "deployment.environment.name=dev,otel_libs.run=$run"
+    OTEL_EXPORTER_OTLP_ENDPOINT "$agent"
+    OTEL_EXPORTER_OTLP_PROTOCOL grpc
+    OTEL_METRIC_EXPORT_INTERVAL 10000
+  )
   case "$app" in
     worker)
-      env_var DEMO_API_URL "http://demo-$lang-api:$http_port"
-      env_var DEMO_REDIS_ADDR "demo-redis:6379"
-      env_var DEMO_REDIS_PASSWORD_FILE /run/secrets/demo-redis/password ;;
+      defaults+=(DEMO_API_URL "http://demo-$lang-api:$http_port"
+        DEMO_REDIS_ADDR "demo-redis:6379"
+        DEMO_REDIS_PASSWORD_FILE /run/secrets/demo-redis/password) ;;
     api)
-      env_var DEMO_HTTP_PORT "$http_port"
-      env_var DEMO_BACKEND_ADDR "demo-$lang-backend:$grpc_port"
-      env_var DEMO_REDIS_ADDR "demo-redis:6379"
-      env_var DEMO_REDIS_PASSWORD_FILE /run/secrets/demo-redis/password ;;
+      defaults+=(DEMO_HTTP_PORT "$http_port"
+        DEMO_BACKEND_ADDR "demo-$lang-backend:$grpc_port"
+        DEMO_REDIS_ADDR "demo-redis:6379"
+        DEMO_REDIS_PASSWORD_FILE /run/secrets/demo-redis/password) ;;
     backend)
-      env_var DEMO_GRPC_PORT "$grpc_port"
-      env_var DEMO_PG_HOST demo-postgres
-      env_var DEMO_PG_DB "demo_$lang"
-      env_var DEMO_PG_USER "demo_$lang"
-      env_var DEMO_PG_PASSWORD_FILE /run/secrets/demo-postgres/password
+      defaults+=(DEMO_GRPC_PORT "$grpc_port"
+        DEMO_PG_HOST demo-postgres
+        DEMO_PG_DB "demo_$lang"
+        DEMO_PG_USER "demo_$lang"
+        DEMO_PG_PASSWORD_FILE /run/secrets/demo-postgres/password)
       # Without it the .NET gRPC server spans are not RPC-shaped (DE-D2).
-      [ "$lang" != dotnet ] || env_var OTEL_DOTNET_EXPERIMENTAL_ASPNETCORE_ENABLE_GRPC_INSTRUMENTATION true ;;
+      [ "$lang" != dotnet ] || defaults+=(OTEL_DOTNET_EXPERIMENTAL_ASPNETCORE_ENABLE_GRPC_INSTRUMENTATION true) ;;
   esac
+  emit_env "$lang" "$app" "${defaults[@]}"
 }
 
 # app_probes <app>: startup and readiness on the app's own health check, a
@@ -801,37 +920,28 @@ check_images() {
   echo "demo: images present for tag $tag"
 }
 
-# apply_apps <langs>: the apps of the given languages on the running (or just
-# created) backing services, with their run id.
-apply_apps() {
-  local sel_langs=$1 lang app req cpu mem pods since sel deploys d deadline pending lang_list
-  resolve_tag
-  check_images "$sel_langs"
-  apply_backing
-
-  read -r cpu mem pods <<<"$(apps_requests "$sel_langs")"
-  echo "demo: pre-flight (soak K-D2) for the apps of: $sel_langs (run $run, image tag $tag)"
-  if ! python3 -I "$here/preflight.py" --context "$ctx" --cpu "$cpu" --memory "$mem" --pods "$pods"; then
-    read -r -a lang_list <<<"$sel_langs"
-    if [ "${#lang_list[@]}" -gt 1 ]; then
-      echo "demo: the apps of '$sel_langs' do not fit; nothing applied. Rotate one language per window (DE-O8): $0 delete --lang <previous>; $0 apply --lang <lang>" >&2
-    else
-      echo "demo: pre-flight failed for $sel_langs; nothing applied" >&2
-    fi
-    backing_note
-    exit 1
-  fi
-
-  req=""
-  for lang in $sel_langs; do req="$req${req:+,}$lang"; done
-  sel="$selector,otel-libs/run=$run,otel-libs/lang in ($req)"
-  since=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-  render_apps "$sel_langs" | kubectl --context "$ctx" apply --server-side --field-manager=otel-libs-demo -f -
-
-  deploys=""
-  for lang in $sel_langs; do
-    for app in $apps; do deploys="$deploys demo-$lang-$app"; done
+# app_deploys <langs>: the demo app Deployment names of those languages.
+app_deploys() {
+  local lang app out=""
+  for lang in $1; do
+    for app in $apps; do out="$out demo-$lang-$app"; done
   done
+  echo "$out"
+}
+
+# lang_csv <langs>: "go,python" for an `otel-libs/lang in (...)` selector,
+# which matches only the demo apps (the backing services carry no lang label).
+lang_csv() {
+  local lang req=""
+  for lang in $1; do req="$req${req:+,}$lang"; done
+  echo "$req"
+}
+
+# await_rollout <deploys> <selector> <since>: waits up to 600 s for the
+# Deployments, with the K-D2 FailedScheduling watch during the rollout and
+# DEMO_WATCH_SECONDS after it.
+await_rollout() {
+  local deploys=$1 sel=$2 since=$3 d deadline pending
   deadline=$((SECONDS + 600))
   while :; do
     sched_check "$since" "$sel"
@@ -855,11 +965,85 @@ apply_apps() {
   done
   k get pods -l "$sel" -o wide
   sched_verdict
+}
+
+# apply_apps <langs>: the apps of the given languages on the running (or just
+# created) backing services, with their run id.
+apply_apps() {
+  local sel_langs=$1 cpu mem pods since sel lang_list
+  resolve_tag
+  check_images "$sel_langs"
+  apply_backing
+
+  read -r cpu mem pods <<<"$(apps_requests "$sel_langs")"
+  echo "demo: pre-flight (soak K-D2) for the apps of: $sel_langs (run $run, image tag $tag)"
+  if ! python3 -I "$here/preflight.py" --context "$ctx" --cpu "$cpu" --memory "$mem" --pods "$pods"; then
+    read -r -a lang_list <<<"$sel_langs"
+    if [ "${#lang_list[@]}" -gt 1 ]; then
+      echo "demo: the apps of '$sel_langs' do not fit; nothing applied. Rotate one language per window (DE-O8): $0 delete --lang <previous>; $0 apply --lang <lang>" >&2
+    else
+      echo "demo: pre-flight failed for $sel_langs; nothing applied" >&2
+    fi
+    backing_note
+    exit 1
+  fi
+
+  sel="$selector,otel-libs/run=$run,otel-libs/lang in ($(lang_csv "$sel_langs"))"
+  since=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+  # --force-conflicts: `scale` leaves .spec.replicas owned by the kubectl field
+  # manager; this apply takes it back (replicas 1) instead of failing.
+  render_apps "$sel_langs" | kubectl --context "$ctx" apply --server-side --force-conflicts --field-manager=otel-libs-demo -f -
+  await_rollout "$(app_deploys "$sel_langs")" "$sel" "$since"
   echo "demo: run=$run langs=$sel_langs"
 }
 
+# scale_apps <langs> <n>: the demo app Deployments of those languages to n
+# replicas (task DE13; the backing services are never scaled).
+scale_apps() {
+  local sel_langs=$1 n=$2 sel since deploys present cpu mem pods d
+  sel="$selector,otel-libs/lang in ($(lang_csv "$sel_langs"))"
+  deploys=$(app_deploys "$sel_langs")
+  present=$(k get deployments -l "$sel" -o name)
+  for d in $deploys; do
+    grep -qxF "deployment.apps/$d" <<<"$present" || {
+      echo "demo: $d is not applied; run '$0 apply --lang <lang>' first; nothing scaled" >&2
+      exit 1
+    }
+  done
+  if [ "$n" -eq 0 ]; then
+    k scale deployment -l "$sel" --replicas=0
+    if [ -n "$(k get pods -l "$sel" -o name)" ]; then
+      k wait --for=delete pods -l "$sel" --timeout=120s
+    fi
+    echo "demo: scaled to 0: $sel_langs"
+    return 0
+  fi
+  read -r cpu mem pods <<<"$(apps_requests "$sel_langs")"
+  cpu=$(( ${cpu%m} * n ))m mem=$(( ${mem%Mi} * n ))Mi pods=$((pods * n))
+  echo "demo: pre-flight (soak K-D2) for $n replica(s) of the apps of: $sel_langs"
+  python3 -I "$here/preflight.py" --context "$ctx" --cpu "$cpu" --memory "$mem" --pods "$pods" || {
+    echo "demo: pre-flight failed for $n replica(s) of $sel_langs; nothing scaled" >&2
+    exit 1
+  }
+  since=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+  k scale deployment -l "$sel" --replicas="$n"
+  await_rollout "$deploys" "$sel" "$since"
+  echo "demo: scaled to $n: $sel_langs"
+}
+
+# scale_count <n>: a whole number 0-999 without a leading zero.
+scale_count() {
+  [[ "${1:-}" =~ ^(0|[1-9][0-9]{0,2})$ ]] || {
+    echo "demo: scale needs a replica count 0-999 (got '${1:-}')" >&2
+    exit 2
+  }
+}
+
+case "$action" in render|apply) [ -z "${DEMO_ENV_FILE:-}" ] || load_env_file "$DEMO_ENV_FILE" ;; esac
+
 case "$action" in
   render)
+    env_mask=yes
     placeholder_credentials
     render_secrets
     render_workloads
@@ -878,6 +1062,19 @@ case "$action" in
         esac ;;
       *) echo "demo: apply takes no option (backing services), --lang <lang> or --all" >&2; exit 2 ;;
     esac ;;
+  scale)
+    guard_target
+    case "${2:-}" in
+      --all) scale_count "${3:-}"; [ $# -eq 3 ] || { echo "demo: scale --all takes one count" >&2; exit 2; }
+        scale_apps "$app_langs" "$3" ;;
+      --lang)
+        case "${3:-}" in
+          go|python|node|dotnet) scale_count "${4:-}"; [ $# -eq 4 ] || { echo "demo: scale --lang takes one language and one count" >&2; exit 2; }
+            scale_apps "$3" "$4" ;;
+          *) echo "demo: scale --lang needs one of go python node dotnet" >&2; exit 2 ;;
+        esac ;;
+      *) echo "demo: scale needs --lang <lang> <n> or --all <n>" >&2; exit 2 ;;
+    esac ;;
   delete)
     guard_target
     case "${2:-}" in
@@ -895,5 +1092,5 @@ case "$action" in
         esac ;;
       *) echo "demo: delete needs --lang <lang> (apps only) or --all (backing services and Secrets too)" >&2; exit 2 ;;
     esac ;;
-  *) echo "usage: $0 apply [--lang <lang> | --all] | delete --lang <lang> | delete --all | render" >&2; exit 2 ;;
+  *) echo "usage: $0 apply [--lang <lang> | --all] | scale --lang <lang> <n> | scale --all <n> | delete --lang <lang> | delete --all | render" >&2; exit 2 ;;
 esac
