@@ -10,8 +10,13 @@ Planning artefacts for `otel-libs`. Conventions and principles live in
    config contract, parity harness, Go/Python fixes (Phase A), Node.js (B),
    .NET (C). [requirements](config-contract-v0.3/requirements.md) ·
    [design](config-contract-v0.3/design.md) · [tasks](config-contract-v0.3/tasks.md)
-2. [`soak-simulation/`](soak-simulation/) — **active**. Local DEV/HML/PRD soak
-   of the rc (Docker Compose; Kubernetes deferred as Phase K).
+2. [`soak-simulation/`](soak-simulation/) — **active**, draft r6.2 "lean
+   soak" (2026-11-23, not yet reviewed). Soak of
+   the 0.3 branch for D10. *(Amended 2026-11-19, owner: the Docker Compose
+   phase is dropped; Phase K on `k8s01` — demo apps in four languages, k6, a
+   dedicated Collector copy — is the only phase and the D10 evidence, with
+   owner-signed accepted gaps.)* *(Amended 2026-11-23, owner: lean scope —
+   counts are bounds on the fixed span families; accepted gaps AG1–AG12.)*
 3. [`nodejs-otel-helper/`](nodejs-otel-helper/) — **active**. Phase B: Node.js
    helper at parity on the 0.3 contract.
    [`dotnet-otel-helper/`](dotnet-otel-helper/) — **active** (reviewed r3, 2026-11-04). Phase C:

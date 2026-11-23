@@ -345,6 +345,60 @@ validates correlation, not performance.
 **Alternatives**: random error share (non-deterministic counts); k6 (one
 more image; the worker must exist for the queue anyway).
 
+> *Amended 2026-11-19 (soak r6, owner ruling 2; task DE13; not yet reviewed):*
+> **env-override hook.** The soak (`specs/soak-simulation/` r6) reuses the
+> demo as its workload: k6 drives `POST /orders`, the worker keeps consuming
+> the queue with `DEMO_INTERVAL_SECONDS=3600`, and every app exports to the
+> soak's Collector copy. `demo.sh apply --lang|--all` therefore gains an
+> optional env file `DEMO_ENV_FILE`: one `<lang>/<app> NAME=VALUE` per line,
+> `*` allowed for either part, `#` comments. Rules: (1) a line **replaces**
+> the value of a variable `app_env` already sets, or adds a new one — never a
+> second entry with the same name (server-side apply rejects duplicate keys
+> in the `env` list); (2) only names matching `OTEL_*` or `DEMO_*` are
+> accepted, and never `DEMO_*_PASSWORD_FILE`, `DEMO_PG_*` or `DEMO_REDIS_*`
+> (the DE-D13 credential wiring is not overridable); any other line fails
+> `apply` before a write; (3) `render` prints the overridden values, with
+> the value of any `*_HEADERS` variable shown as `<set>`; (4) the K-D2
+> pre-flight and `FailedScheduling` watch run unchanged — a changed value
+> changes the pod template, so `apply` rolls the Deployment (`Recreate`);
+> (5) without `DEMO_ENV_FILE` the rendered manifests are byte-identical to
+> today's. The demo's own checks (`verify.py demo`) assume the default 5 s
+> interval; a run with the hook's 3600 s worker is not a DE-D11 run.
+> **Trade-off**: an env file is one more input to keep out of git when it
+> carries the soak's fake canary token (it lives in the soak's git-ignored
+> run directory). **Reversal action**: remove `DEMO_ENV_FILE` handling; the
+> soak then renders its own manifests (a second copy of the app manifests).
+
+> *Amended 2026-11-20 (soak r6.1, owner ruling on AG8; task DE14; not yet
+> reviewed):* the soak's loaded window sets `DEMO_INTERVAL_SECONDS=10800`
+> (not 3600, above). For the soak's multi-worker check (K8c) the Python api
+> gains an opt-in server mode: `DEMO_PY_SERVER=gunicorn` with
+> `DEMO_PY_WORKERS=<N>` runs gunicorn with `uvicorn.workers.UvicornWorker`,
+> `--preload`, and the helper set up in `post_fork` (the D4 fork path; the
+> plain `uvicorn --workers` path spawns and skips it); unset keeps today's
+> single `uvicorn.run`. gunicorn becomes a new pinned dependency in
+> `python/demo/requirements.lock` — a dependency addition the owner approves
+> before DE14 starts (licence: MIT, to be confirmed against the pinned
+> release). **Reversal action**: drop the mode and the dependency; K8c then
+> needs a soak-owned Python image.
+
+> *Amended 2026-11-23 (soak r6.2 "lean soak", owner ruling; tasks DE13, DE14;
+> not yet reviewed):* (1) **DE14 is dropped** — the soak accepts multi-worker
+> Python as a gap (soak AG8), so the gunicorn mode of the 2026-11-20
+> amendment above is not built and **no dependency is added**; that
+> amendment stays as dated history. (2) The DE13 hook gains three rules:
+> `DEMO_RESTART_NONCE` is an allowed `DEMO_*` name the apps ignore — a new
+> value changes the pod template, so `apply` rolls the Deployment (the
+> soak's forced restart); `demo.sh scale --lang|--all <n>` scales the
+> selected demo Deployments to `n` (the backing services are never scaled)
+> and runs no pre-flight for `n = 0`; and the allow-list **denies**
+> `OTEL_SERVICE_NAME` and `OTEL_RESOURCE_ATTRIBUTES` (with the credential
+> names already denied), so the soak cannot change the identity its K2, K3
+> and K5 checks read. **Reversal action**: remove the nonce, the `scale`
+> subcommand and the two denials; the soak then restarts pods with
+> `kubectl rollout restart` and scales with `kubectl scale` (two more
+> named writes in its scope rule).
+
 ### DE-D8 — Exceptions in demo code follow ADR-014 by hand; instrumentations are left as they are
 **Choice**: demo spans use the tracer name `otel-libs-demo` (the scope check d
 selects them by).
@@ -1226,6 +1280,11 @@ re-scoped to the aio client (N8).)*
 A37-owned spans; Python d.grpc reason moved to the aio server span (M1).)*
 
 ## Relation to Phase K (reference)
+
+*(Amended 2026-11-19, soak r6: the soak now runs on the demo apps — they are
+its workload in all four languages, through the DE-D7 env-override hook; the
+K6 caveat below is handled there by counting at a dedicated Collector copy
+and judging only the api → backend service-graph edge.)*
 
 The demo does not change `specs/soak-simulation/`. It can feed:
 - **K2**: twelve single-container pods with the agent's attributes in Tempo,

@@ -4,6 +4,23 @@
 r1 superseded after the S0 review (see the requirements r2 note).
 r5 (2026-11-15, draft, not yet reviewed — K0): Phase K on `k8s01`, decisions
 K-D1…K-D9 at the end; dated notes on S-D1 and S-D2.
+r6 (2026-11-19, draft, not yet reviewed — K0c): Phase S dropped (owner);
+Phase K carries the D10 evidence. New decisions K-D10…K-D16 (Collector copy,
+workload, counting, platform guards, failure modes, orchestration and
+evidence, artifact and durations); dated r6 notes on S-D1…S-D12 and
+K-D1…K-D9.
+r6.1 (2026-11-20): owner rulings on r6 (tasks.md K0d) — loaded-window worker
+at 10800 s, no Tempo subtraction (K-D11, K-D12); runtime DNS mode removed and
+a burst mode added (K-D14); floors accepted (K-D13); K4 and K7 promoted
+(K-D5, K-D6). r6 was never committed: edited in place, each change marked
+"r6.1, 2026-11-20".
+r6.2 "lean soak" (2026-11-23): owner ruling after the two K0c reviews
+BLOCKED r6.1 — scope cut to the guard, the passive window, one loaded window
+counted in bounds on the fixed span families, four failure modes, K-shut, K3
+and K5 (new K-D17 scope, K-D18 mesh and platform guard, K-D19 counting in
+bounds); K4, K7, K8c, the burst and per-severity counts deferred again,
+the black hole dropped; dated r6.2 notes on K-D5, K-D6, K-D11…K-D15. Not yet
+reviewed (task K0e). Each change is marked "r6.2, 2026-11-23".
 
 ## Topology (reference)
 
@@ -29,6 +46,10 @@ Tempo, Loki, VictoriaMetrics, Grafana, k6 pinned in the compose file at S1.
 
 ## Decisions
 
+> *Amended 2026-11-19 (r6):* Phase S is dropped (owner ruling 1). S-D1…S-D12
+> stay as written for the record; each carries a one-line r6 note saying
+> what, if anything, Phase K keeps from it.
+
 ### S-D1 — Docker Compose now, Kubernetes later (Phase K)
 **Choice**: Compose project `otel-libs-soak`.
 **Justification**: SR0–SR14 are process/pipeline-level; reuses the Docker-only
@@ -46,6 +67,7 @@ built, and the cluster now available (`k8s01`) has no tail-sampling or
 load-balancing gateway, so the sampling and routing checks have nothing to
 read there. Phase K uses `testing/k8s/verify.py` and the platform pipeline
 instead — K-D1, K-D3.)*
+*(r6, 2026-11-19: dropped with Phase S; Kubernetes is the only phase.)*
 
 ### S-D2 — Backends: Tempo, Loki, VictoriaMetrics single-node, Grafana
 **Choice**: the platform's backend family, single-node, OTLP ingest.
@@ -60,6 +82,8 @@ metadata (default ≥ 3.0) and compactor retention.
 `3.16.0` through its OTLP receiver, not VictoriaMetrics — measured on
 `k8s01`. Phase S keeps VictoriaMetrics until the owner rules which platform
 is the reference (K0b); Phase K reads Prometheus — K-D9.)*
+*(r6, 2026-11-19: ruled — the homelab Prometheus is the reference;
+VictoriaMetrics is accepted gap AG4.)*
 
 ### S-D3 — Phases and durations
 **Choice**: order = calibration (5 min, sampling 100%) → steady phase →
@@ -71,6 +95,8 @@ must not pollute leak data.
 **When wrong**: leaks appear only after > 2 h.
 **Reversal action**: raise the steady parameter.
 **Alternatives**: 24 h (no evidence it is needed yet).
+*(r6, 2026-11-19: Phase K durations are K-D16 — a ≥ 24 h passive window and
+a 2 h loaded window, owner ruling 4.)*
 
 ### S-D4 — Host orchestrates; checker has no socket
 **Choice**: `run.sh` (host) does every Docker action through `docker compose
@@ -93,6 +119,7 @@ system df`, and `docker inspect`/`stats` filtered by label
 **Reversal action**: a socket proxy allowlisting `stop|start|kill|pause|
 unpause|stats|exec` on containers labeled `com.docker.compose.project=
 otel-libs-soak`, denying `create`.
+*(r6, 2026-11-19: dropped; the cluster checker is K-D3 and the run loop K-D15.)*
 
 ### S-D5 — Criteria (initial, owner-chosen, recalibrated after S7)
 
@@ -114,6 +141,37 @@ otel-libs-soak`, denying `create`.
 
 **When wrong**: thresholds misfire on the first run. **Reversal action**:
 adjust with run data; record the change dated here.
+*(r6, 2026-11-19: Phase K keeps the memory, thread, restart, request-impact,
+export-timeout and binomial-tolerance rows, on cluster sources (SR15 "Soak
+rules", K-D12); the Compose sweep, the sampling and `prd-debug` rows (AG2) and
+the host run-validity row (replaced by K-D13 and K-D15) are dropped.)*
+*(Recalibrated 2026-11-23, r6.2, for K8a — evidence: a read-only pre-soak
+analysis through the Prometheus MCP over 78.9 h of nine demo processes that
+never restarted (images `3f36074`, .NET `8e19973`), 2026-11-20 06:43Z →
+2026-11-23 13:40Z. RSS rose in steps over the first 6–12 h, then went flat:
+second-half slopes 0–0.08 Mi/h, thread counts constant — no leak in any
+container. With a 1 h warm-up the ratio rule above still FAILED six
+containers (last 15 min / first 15 min: dotnet-worker 1.246, dotnet-backend
+1.156, python-api 1.128, go-worker 1.116, python-worker 1.114,
+python-backend 1.111) because of those early steps, while the slope rule
+passed everywhere. **Change for K8a**: warm-up 6 h, then 18 h judged (the
+window stays 24 h); the verdict is the slope rule (≤ 1 % of the median per
+hour over the judged span) **and** the same slope rule over the judged
+span's second half; the 1.10 ratio is reported, not judged. Trade-off: a
+leak that only steps (flat between steps) and keeps stepping after 6 h is
+caught by the second-half slope only if a step lands in that half. **When
+wrong**: a container still steps after 6 h of a valid window. **Reversal
+action**: extend K8a to 30 h with a 12 h warm-up, and judge the ratio again;
+record dated here.)*
+*(Owner ruling K0e-1, 2026-11-23, supersedes the "Change for K8a" above: K8a
+is **30 h = 12 h warm-up + 18 h judged** — the steps ran out to 12 h, so a
+6 h warm-up could leave a step in the judged span. The verdict stays the
+slope rule over the judged span and its second half, the 1.10 ratio
+report-only. Owner ruling K0e-2: the Threads / FDs row has a cluster source
+again — `kubectl exec … sh -c 'ls /proc/1/fd | wc -l'` per demo container
+per sweep, a named read-only soak-run read (SR15 "Checker"), all four
+languages. **Reversal action**: drop the exec read and judge FDs from
+`process_open_file_descriptor_count` (Python) only.)*
 
 ### S-D6 — Counting and loss accounting
 **Choice**: per signal, at quiesced checkpoints:
@@ -168,6 +226,10 @@ on self-load, state-dependent branches, dropped health spans and batching;
 the tail-sampling counters have no environment label (r2 review).
 **When wrong**: a counter is renamed at the pinned version.
 **Reversal action**: adapter per version; fail loudly on a missing counter.
+*(r6, 2026-11-19: the counting path — `count` → `deltatocumulative` → a local
+`prometheus` exporter, never fed back into the audited pipeline, and the
+`telemetrygen` positive control — is what the copy `soak-agent` runs
+(K-D10); the gateway pre/post-sampling counts are dropped (AG2).)*
 
 ### S-D7 — Disk, memory and teardown safety
 **Choice**:
@@ -206,6 +268,7 @@ conservative) or still let the daemon fill.
 **Reversal action**: recalibrate the constants from S7 data (dated note
 here); if disk still fills, run the soak on a dedicated Docker context/VM
 and drop the shared-daemon assumptions.
+*(r6, 2026-11-19: dropped; the cluster disk and memory guards are K-D13.)*
 
 ### S-D8 — Gateway tail-sampling policy (literal; any-match)
 **Choice**: `tail_sampling` evaluates **all** policies; a trace is kept if
@@ -253,6 +316,7 @@ rate.
 **Reversal action**: replace `gateway.yaml` with the platform policy and the
 formulas with its semantics; re-run. D11.3's "p99 trace duration" input is
 corrected accordingly (dated note in config-contract design D11).
+*(r6, 2026-11-19: not checked — accepted gap AG2.)*
 
 ### S-D9 — Artifacts under test
 **Choice** (repo is public — owner, 2026-10-28):
@@ -293,6 +357,11 @@ corrected accordingly (dated note in config-contract design D11).
   persisted in a layer.
 **When wrong**: only `--from-tree` validated a fix.
 **Reversal action**: acceptance requires the final run on released artifacts.
+*(Deviation 2026-11-19, r6, owner ruling 3: this round soaks the branch HEAD,
+not a released rc — the demo images are built from the commit under test and
+their digests recorded (K-D16). The reversal action above does not apply this
+round; the D10 amendment of the same date bounds what may change between the
+soaked commit and `0.3.0`.)*
 
 ### S-D10 — Soak-owned apps
 **Choice**: `testing/soak/apps/{go,python}/` implementing SR0 — api (HTTP
@@ -308,6 +377,8 @@ stores (S0 B1/B2/B4/B5).
 **Reversal action**: derive them from the examples once the examples meet SR0.
 **Alternatives**: patch the examples (they are documentation; changing their
 domain breaks docs and dashboards).
+*(r6, 2026-11-19: superseded — the demo apps of `specs/demo-environment/`
+are the workload (K-D11); they exist since 2026-11-16 in all four languages.)*
 
 ### S-D11 — App matrix (reference)
 Per language: `prd` api+backend+worker (3); `dev`, `hml`, `unset`,
@@ -318,6 +389,8 @@ assigned to `prd`, `dev` and the canary (never dropped). SR6 cases, SR11 0.2
 apps and SR13 multi-worker run as **separate phases** (never with the steady
 soak). If the pre-flight memory check fails, drop `hml` first, then `unset`;
 dropped checks are reported `n/a: dropped`, never passed.
+*(r6, 2026-11-19: superseded by the demo layout — 12 apps + PostgreSQL +
+Redis, `dev` only; the other sets are accepted gap AG5.)*
 
 ### S-D12 — Failure-injection modes
 **Choice**: the agent runs in `network_mode: service:agent-net`, a holder
@@ -335,6 +408,7 @@ failures, not a black hole (S0 H3/H4).
 **When wrong**: iptables unavailable in the Docker Desktop VM.
 **Reversal action**: toxiproxy `timeout` toxic for the hung/black-hole-like
 case, documented as not a SYN black hole.
+*(r6, 2026-11-19: superseded by K-D14 on the cluster.)*
 
 ## Phase K on `k8s01` (added 2026-11-15, r5)
 
@@ -380,6 +454,11 @@ those checks on `kind`; record the switch as a dated note here.
 **Alternatives**: `kind` on the laptop (no real enrichment, mesh or OBI);
 editing the platform gateway (shared and ArgoCD-managed — the owner limited
 Phase K to `dev-otel-libs`).
+*(Reversed 2026-11-19, r6, owner ruling 5: a dedicated agent-only copy
+`soak-agent` now runs in `dev-otel-libs`, deployed by the platform owner's
+GitOps session — K-D10. The "no Collector of its own" choice no longer holds;
+the gateway half of the reversal (a namespaced gateway with `tail_sampling`)
+was not taken: accepted gap AG2.)*
 
 ### K-D2 — Resource budget: requests-based pre-flight, one language per window, a platform reserve
 *(r5 revision, 2026-11-15, after the K0 review. The first r5 text budgeted
@@ -442,6 +521,12 @@ negative-value PriorityClass for test pods so platform pods preempt them (a
 cluster-scoped object — owner decision, K0b); or move the load generator
 back into the api pod (compact layout) only if slots become the constraint
 again.
+*(r6, 2026-11-19: read during r6 — 4970 m CPU and 25 456 Mi memory
+requested of 8 / 31 941 Mi, 130 pods of 200 (≈ 3.0 cores free). The default
+is now all four languages in one window when the pre-flight fits (as the
+demo's DE-O8 ruling); rotation is a pre-flight outcome. The pre-flight and
+watch are the existing `testing/k8s/demo/preflight.py` and `schedwatch.py`,
+run with the soak-run pods' requests added.)*
 **Alternatives**: load from outside the cluster through the `public` Istio
 Gateway (needs routes in ArgoCD-managed config, LAN latency in the data);
 pod-slot budget only (the first r5 text — blind to the CPU/memory constraint
@@ -504,6 +589,10 @@ New code K1 adds to `verify.py` (it has neither today): a Prometheus
 `query_range` call is Loki's) and a read-only `kubectl get -o json` wrapper
 for Kubernetes objects (today every call is `kubectl get --raw` through a
 service proxy).
+*(Corrected 2026-11-19, r6: stale — `verify.py` now has
+`Backends.prom_query_range` and the read-only `kubectl_json` (added for the
+demo, DE5), plus `scan_secret` and `loki_hygiene`. K1 and the new `soak`
+mode reuse them; no new client is needed.)*
 **Trade-offs**: every query goes through the API server; proxy limits on
 long range queries and response size are `unmeasured`. The service-graph
 metric is produced by the gateway `service_graph` connector (its series carry
@@ -575,6 +664,14 @@ istio.io/dataplane-mode=ambient --overwrite` (also the trap), restart the
 namespace's pods, re-read `ambient.istio.io/redirection`; if the platform
 forbids opting out, record K4 as `n/a: platform` and keep only the ambient
 measurements.
+*(r6, 2026-11-19: K4 deferred; the results carry the ambient condition,
+accepted gap AG10.)*
+*(r6.1, 2026-11-20: AG10 not accepted (owner) — K4 is promoted and runs in
+its own window after K10, the demo apps scaled to 0 while the label is
+switched and restarted in each mode.)*
+*(r6.2, 2026-11-23, lean soak: AG10 accepted (owner) — K4 is deferred again;
+the decision above stays for when it is promoted. The trap keeps a guarded
+label restore, K-D15 r6.2 note.)*
 **Alternatives**: enrolling a waypoint to test L7 mesh tracing (mesh-wide
 tracing provider in ArgoCD-managed `istiod` config — out of scope, SR15);
 not testing (every K result would carry an unstated mesh condition).
@@ -597,6 +694,10 @@ the platform drops `filter/noise` (then Tempo absence becomes meaningful).
 filters health paths; otherwise keep the console canary.
 **Alternatives**: SDK self-observability span counters (not in every
 language).
+*(r6, 2026-11-19: K7 deferred; health-span absence is accepted gap AG9.)*
+*(r6.1, 2026-11-20: AG9 not accepted (owner) — K7 is promoted and runs as
+chosen above, before the passive window.)*
+*(r6.2, 2026-11-23, lean soak: AG9 accepted (owner) — K7 is deferred again.)*
 
 ### K-D7 — OBI comparison is an opt-in experiment in an owner-created `staffops*` namespace
 **Choice**: K9 runs only after the owner creates a `staffops*` namespace for it
@@ -618,6 +719,7 @@ namespace; if OBI ever covers `dev-otel-libs`, K2–K8 add an OBI-span check
 (`telemetry.sdk.name` per span) before trusting counts.
 **Alternatives**: label-based OBI selection in `dev-otel-libs` (OBI config
 change, platform-owned).
+*(r6, 2026-11-19: K9 deferred, optional.)*
 
 ### K-D8 — Cluster failure modes only by namespaced means
 **Choice**: K10 injects only: DNS failure (endpoint host that does not
@@ -635,6 +737,9 @@ succeeds) — then it is reported as `not injected`, not as a pass.
 keep the full SR5 set in Phase S.
 **Alternatives**: toxiproxy as a sidecar in the app pod (no slot, an extra
 container image; a later option).
+*(r6, 2026-11-19: superseded by K-D14 — the copy and the soak-run Services
+make DNS, refused, hung, back-pressure and redirect modes possible without
+touching the shared agent; the NetworkPolicy stays as the black-hole mode.)*
 
 ### K-D9 — Prometheus label checks replace the VictoriaMetrics row (K5)
 **Choice**: K5 checks the label set the cluster's Prometheus produces from
@@ -660,9 +765,509 @@ platform (K0b) and the homelab is not representative.
 **Reversal action**: keep K5 as homelab evidence, mark it non-representative,
 and keep the VictoriaMetrics checks in Phase S (S-D2).
 **Alternatives**: none on this cluster without a platform change.
+*(Corrected 2026-11-19, r6: the promoted list changed — `kps`
+`spec.otlp.promoteResourceAttributes` now holds 13 attributes: `cluster`,
+`service.name`, `service.namespace`, `service.version`,
+`deployment.environment.name`, and `k8s.{cluster,namespace,pod,container,
+deployment,statefulset,daemonset,node}.name` (read 2026-11-19). The
+`target_info` join above is no longer needed. K1 reads the list on every run
+and K5 asserts against what it read. The owner ruled Prometheus the reference
+(AG4), so the "when it would be wrong" case is closed for this round.)*
+
+## Phase K r6 (added 2026-11-19)
+
+Facts about the copy come from the platform owner's session that deployed it
+(relayed by the coordinator, 2026-11-19); cluster reads are read-only
+`kubectl` calls made during r6 on 2026-11-19 (node requests, Prometheus
+`spec.otlp`, gateway CR connectors, backend images).
+
+```
+k6 Job (soak-run) ─HTTP POST /orders─▶ demo-<lang>-api ─gRPC─▶ demo-<lang>-backend ─▶ demo-postgres
+                                            │ XADD                         (all four languages, dev)
+demo-<lang>-worker ◀── XREADGROUP (untraced) ┘   worker: DEMO_INTERVAL_SECONDS 5 (K8a) | 10800 (K8b)
+   every demo app ─OTLP/gRPC, plaintext─▶ soak-otlp (ExternalName, soak-run; switched in K10)
+                                            ▼
+ soak-agent (dev-otel-libs, GitOps): otlp → memory_limiter → k8s_attributes(passthrough) → batch
+     → otlp_grpc otel-agent-collector.opentelemetry:4317        + count → delta_to_cumulative → :8889 (local)
+                                            ▼
+ shared otel-agent → otel-gateway (span_metrics, service_graph) → Tempo 3.1.1 · Loki 3.7.10 · Prometheus 3.16.0
+ checker (laptop): kubectl get / get --raw service proxy only; run loop under caffeinate (K-D15)
+```
+*(r6.2, 2026-11-23: in K10 `soak-otlp` points at a `testing/fakeotlp` pod
+for *hung* (`--hang`) and *redirect*; no NetworkPolicy is created. The run
+loop lives in `testing/k8s/soak/` (task K-loop).)*
+
+### K-D10 — A dedicated agent-only Collector copy `soak-agent` in `dev-otel-libs`
+**Choice**: the demo apps export to `soak-agent` (through the soak-run
+ExternalName `soak-otlp`, K-D14). As delivered by the platform session: a
+plain Deployment, ConfigMap, Service and PodMonitor (not an
+`OpenTelemetryCollector` CR), GitOps-managed (Argo CD app `soak-agent`),
+`otel/opentelemetry-collector-contrib:0.165.0` by digest, 1 replica, request
+100 m / 256 Mi, limit 512 Mi, `GOMEMLIMIT` 450 MiB; labels
+`app.kubernetes.io/name=soak-agent`, `app.kubernetes.io/part-of=otel-libs`,
+`otel-libs/role=soak-agent`; Service `:4317` (gRPC) and `:4318` (HTTP),
+plaintext. Pipelines per signal: `otlp` → `memory_limiter` → `k8s_attributes`
+(passthrough: stamps only `k8s.pod.ip`) → `batch` → `otlp_grpc` to
+`otel-agent-collector.opentelemetry:4317`, plus `count` → `delta_to_cumulative`
+→ `prometheus` exporter on `:8889`, never forwarded. Prometheus job
+`dev-otel-libs/soak-agent` (PodMonitor, 15 s): counts
+`otel_libs_soak_{spans,span_events,datapoints,log_records}_total` by
+`service_name`, `deployment_environment_name` (the sender's job in
+`exported_job`); own telemetry at level `detailed` (receiver
+accepted/refused/failed, `otelcol_processor_memory_limiter_*`, exporter
+sent/send_failed, queue size and capacity, `otelcol_process_memory_rss`,
+`otelcol_process_uptime`). Back-pressure on/off is a request to the platform
+session (`memory_limiter` 64 / 16 MiB on, 400 / 100 off); each flip rolls the
+pod about 1–2 min after the push. Smoke at delivery: `telemetrygen` 10 spans
+→ 10 counted, 10 accepted, 10 sent.
+**Justification, strongest first**: (1) the shared agent's and gateway's
+counters aggregate every tenant and carry no `service.name` (K-D1
+trade-off), so the r5 plan could not count per service or account for loss;
+the copy carries only the run's apps, so its exporter counters are the run's
+own and its `count` metrics are exact per service. (2) It makes failure modes
+possible without touching shared Collectors (K-D14): refused and hung on
+the app → copy hop (r6.1, 2026-11-20: DNS moved to start-up only), back-pressure in the copy. (3) Passthrough
+`k8s_attributes` keeps the platform enrichment honest: the shared agent's
+`pod_association` resolves `k8s.pod.ip` to the demo pod instead of the
+copy's connection IP. (4) The count path follows S-D6 (cumulative, local,
+positive-controlled), so the copy never counts through the pipeline it audits.
+**Trade-offs**: one more hop (an extra batch delay in every quiesce wait); a
+copy restart resets its counters (handled as a reset, K-D12) and closes the
+apps' connections; the copy is agent-only, so gateway tail sampling and
+trace-ID routing stay unchecked (AG2); plaintext only (AG1); the count metrics
+reach Prometheus through a scrape, so a missed scrape is a gap the reader must
+detect; passthrough relies on the connection's source IP, which ambient
+preserves for in-mesh pod traffic — `unmeasured` here, checked by K-copy.
+**When it would be wrong**: K-copy finds the demo telemetry enriched with the
+copy's pod; the copy drops or delays items under the K-cal rate (its own
+sentinels fire); or the platform owner withdraws the Argo CD app.
+**Reversal action**: point the apps back at the shared agent (hook default),
+drop the per-service count checks to report-only end-to-end `span_metrics`
+reads, and record the switch dated here; if enrichment is wrong, ask the
+platform session to set `pod_association` from `k8s.pod.ip` explicitly or
+stamp `k8s.pod.name` from the Downward API.
+**Alternatives**: the r5 plan (shared pipeline only — no exact counts, no
+injection); an `OpenTelemetryCollector` CR (operator-managed, CR changes go
+through the platform anyway; the session chose plain objects); a namespaced
+agent + gateway copy with `tail_sampling` (more requests; the owner limited
+the copy to an agent).
+*(Updated 2026-11-23, soak-agent 1f56009 + b4c1dae: component names are the
+non-deprecated `k8s_attributes` and `delta_to_cumulative`, behavior
+unchanged; `count` also emits `otel_libs_soak_fixed_spans_total` (K-D19),
+with `service.instance.id` defaulted to `"unset"`.)*
+
+### K-D11 — Workload: the demo apps, k6 in a pod, the worker as consumer
+**Choice**: the demo's twelve apps (four languages × worker, api, backend)
+with the shared PostgreSQL and Redis, deployed by `demo.sh apply` with the
+env-override hook (demo DE-D7 amendment 2026-11-19) setting
+`OTEL_EXPORTER_OTLP_ENDPOINT=http://soak-otlp:4317`, the canary header, and
+`DEMO_INTERVAL_SECONDS` per window. Passive window: worker at 5 s (the demo's
+own rate, DE-D7). Loaded window: worker at 10800 s (consumer only; r6.1,
+2026-11-20, owner ruling 2 — was 3600 s), the window placed between two
+drives (SR15 "Windows"); a k6 Job
+(`grafana/k6` from docker.io by digest, `constant-arrival-rate`,
+`activeDeadlineSeconds`, explicit requests) drives `POST /orders` on every
+api with the demo body (`order_id` bounded as DE-D7 r3.4, `customer` over
+three values, `amount` ≤ 1000 except `business_error` at 5000, `scenario`),
+a fixed scenario mix and a fixed inbound-class mix. `handleSummary` writes
+one JSON with counters per language × route × scenario × status × class;
+pass/fail of the k6 run itself is `dropped_iterations` = 0.
+**Justification**: the demo apps already meet SR0's intent in all four
+languages, with ADR-014 error routes, correlated logs, a queue and DB
+clients — more than the never-built soak apps (S2); k6 is the open-loop
+generator SR3 asked for; a 10800 s worker interval keeps the queue consumed
+(CONSUMER spans exist) while no drive falls inside a 2 h window, so the
+exact count needs no Tempo read.
+*(r6.1, 2026-11-20: the r6 text used 3600 s and subtracted the one or two
+worker-driven traces found in Tempo; the owner set 10800 s and removed the
+subtraction.)*
+**Trade-offs**: the loaded window must be placed between two drives (the
+worker container's start time bounds it; a worker restart inside the window
+invalidates it); the demo is `dev`-only (AG5, accepted); POST is the only
+route k6 drives (health spans are K7's job); the summary carries no
+per-request timing, so p99 is k6's trend percentile.
+**When it would be wrong**: a language's worker drives at start or on a
+schedule the K-cal read did not see, so a drive lands inside the window; or
+the scenario mix gives too few error requests per language for the binomial
+tolerance.
+**Reversal action**: raise `DEMO_INTERVAL_SECONDS` further or restart the
+worker just before t1 (its first drive then comes one interval later); raise
+the error shares or the rate after K-cal.
+**Alternatives**: the worker as the only load at a short interval (closed
+loop, not SR3); soak-owned apps (S2, never built, dropped); k6 outside the
+cluster (LAN latency, no route without platform changes, K-D2).
+*(r6.2, 2026-11-23, after K0c: (1) corrected — only Go drives at start +
+interval; Python, Node.js and .NET drive immediately once their api answers
+(SR15 "Windows and drain (r6.2)", code lines there), so the "When it would be
+wrong" case above is the normal case for three languages and t1 follows the
+observed first `demo.drive`; (2) the worker's drain (`COUNT 10` per 2 s poll,
+about 5 msg/s per language, `unmeasured`) caps the loaded rate × the enqueuing
+share, or the hook lowers `DEMO_POLL_SECONDS`; t2 waits for a stable consumer
+count, and send = process is checked; (3) a roll is forced by
+`DEMO_RESTART_NONCE` and scaling is `demo.sh scale` (demo task DE13); the
+hook denies `OTEL_SERVICE_NAME` and `OTEL_RESOURCE_ATTRIBUTES`. **Reversal
+action** for (2): raise the poll rate or lower the loaded rate.)*
+
+### K-D12 — Counting: copy counts as raw samples, sentinels, a gateway-restart detector
+**Choice**: per window, the checker reads at checkpoint t2 the raw samples
+of `otel_libs_soak_spans_total` and `otel_libs_soak_log_records_total`
+over [t1, t2] (`<metric>{job="dev-otel-libs/soak-agent"}[<w>s]` through
+`prom_query`), sums positive differences per series, adds a lower value as a
+reset, and invalidates the window on a gap > 2 × 15 s while load ran. t1 is
+taken after a quiesce before k6 starts, t2 after k6 ends plus a quiesce of
+SDK batch delay + copy batch + one scrape interval (+ for end-to-end reads:
+agent and gateway batch + `metrics_flush_interval` 30 s). The same rules
+read `traces_span_metrics_calls_total` end to end, summing series that
+differ only by `service.version`. Expected = Σ (route × scenario × class)
+k6-answered × K-cal spans (logs: records) per service; DUPLICATES and LOSS
+are separate verdicts. Sentinels per SR15. Gateway-restart detector: the
+gateway pod's name and `status.startTime` (`kubectl_json`) at t1 and t2 plus
+`otelcol_process_uptime` of job `otel-gateway-collector-monitoring` (exact
+exposed name read at K1) growing without a drop over the range.
+**Justification**: `span_metrics` expires an idle series after 5 m and keys
+on `service.version` (gateway CR, read 2026-11-19), so r5's two instant
+reads lose counts on rare cells and across rebuilds; raw samples see every
+reset. The copy's counts are cumulative after `deltatocumulative` and local,
+so they do not expire with traffic gaps on the gateway. The gateway is a
+Deployment: a rollout changes the pod name, so a restart counter per pod
+would miss it; pod identity plus uptime catches both a container restart and
+a rollout. An absent counter is ambiguous (never incremented, or not
+scraped), hence the sibling-success rule.
+**Trade-offs**: exactness depends on K-cal's spans per request being stable
+per (route × scenario × class) — a branch the calibration did not see breaks
+the equality (it is then a finding to explain, not a tolerance to widen);
+copy counts are what the apps sent, so app-internal drops before export show
+only as LOSS against k6; the end-to-end check depends on a shared gateway
+that may restart for platform reasons (window invalid, not failed).
+**When it would be wrong**: the copy's counts disagree with its own
+`otelcol_receiver_accepted_*` at a clean window (then the count connector,
+not the libs, is suspect), or raw range reads time out through the proxy.
+**Reversal action**: compare against `otelcol_receiver_accepted_*` of the copy
+filtered to the run's window (aggregate but run-only); split range reads by
+window (K-D3 reversal).
+**Alternatives**: `increase()` (extrapolates, never exact); Tempo or Loki
+counts as the primary (Tempo search is paged and eventually consistent;
+Loki counts stay as a cross-check).
+*(Corrected 2026-11-23, r6.2: the Justification sentence "the copy's counts
+… do not expire with traffic gaps" is false. The copy's ConfigMap sets
+`deltatocumulative: {}` and its `prometheus/count` exporter has no
+`metric_expiration` (read 2026-11-23, `kubectl get cm soak-agent`); upstream
+defaults are `max_stale: 5m` and `metric_expiration: 5m`, so an idle copy
+series disappears after 5 min and comes back from a new value, like the
+gateway's. Also corrected: the otelcol counter names carry no `_total`
+suffix, and the gateway-restart detector reads `restartCount` and
+`state.running.startedAt`, not `status.startTime` (a container restart keeps
+the pod's start time). The counting rules are replaced by K-D19; sentinels
+by SR15 "Sentinels (r6.2)".)*
+*(Corrected 2026-11-23, K0e review B1, H2, H5: the copy's expiry is now
+30 m (`max_stale` and `metric_expiration`, live 2026-11-23), the gateway's
+stays 5 m. Sentinels are scoped by verdict: the copy's `count` connector
+counts before export, so the copy's own sentinels gate the copy verdicts;
+the shared agent and gateway sentinels gate only the end-to-end checks
+(gateway `span_metrics` cross-check, SR9, SR10, service graph). K1 reads a
+24 h baseline of every sentinel and guard counter, and each window starts
+only after a clean 30 min lookback. Every shared-job query carries
+`cluster="k8s01"`. **Reversal action**: if the shared sentinels are clean
+on every window, gate the copy verdicts on them too.)*
+
+### K-D13 — Platform guards with dated initial floors
+**Choice**: every 60 s the run loop reads the guard set of SR15 "Platform
+guards" (shared agent and gateway refused / failed / send-failed /
+enqueue-failed and `memory_limiter` refusals, Tempo and Loki discards, node
+free memory and idle CPU share, `node_filesystem_avail_bytes{mountpoint="/"}`)
+and acts on the first breach. Initial floors, dated 2026-11-19, basis
+`unmeasured` (accepted by the owner 2026-11-20, ruling 4), to be replaced
+from K1 and K-cal reads: node
+`MemAvailable` ≥ 2 GiB, idle CPU ≥ 15 % over 5 min, root filesystem free ≥
+10 % of its size.
+**Justification**: the run shares one node and one pipeline with every
+platform workload; requests-based admission (K-D2) does not see real use, and
+a counter rise at the shared Collectors is the earliest sign the run hurts
+others. Both reviews asked for it.
+**Trade-offs**: a platform incident unrelated to the run invalidates a window
+(cost: a re-run, never a false pass); floors are guesses until measured; a
+60 s interval lets a burst run one interval longer.
+**When it would be wrong**: guards fire on most windows with no run-caused
+signal (floors too high or a noisy neighbour), or a platform degradation
+starts between reads and is missed.
+**Reversal action**: recalibrate the floors from K1/K-cal reads (dated note
+here); shorten the interval; if neighbour noise dominates, ask the owner for a
+quiet time slot.
+**Alternatives**: no guards (both reviews BLOCKED on it); only the
+`FailedScheduling` watch (sees admission, not use).
+*(r6.2, 2026-11-23: the mesh and platform guard (K-D18) runs with these
+guards at every read. The floors are no longer guesses carried to K-cal: K1
+records MemAvailable, idle CPU and root filesystem free space for 1 h and
+sets the floors from that reading (dated note in the summary); K1 also
+records the Prometheus PVC (reported 20Gi bound vs 60Gi requested).)*
+
+### K-D14 — Failure modes on the app → copy hop, by soak-run objects
+**Choice**: the apps always export to `soak-otlp`, a soak-run ExternalName
+Service whose `externalName` is `soak-agent.dev-otel-libs.svc.cluster.local`.
+Modes (SR15 "Failure modes"): refused — `soak-otlp` recreated as a
+selector-less ClusterIP Service; hung — a soak-run sink pod (a pinned image
+already used by the repo, image recorded) whose listener accepts and never
+reads; burst with a hung peer — the hung mode plus a k6 burst above the SDK
+batch queue (r6.1, 2026-11-20: AG7 not accepted); back-
+pressure — the platform session's flip (the pod roll is part of the mode);
+redirect — a soak-run pod answering 307 with a token-carrying `Location`, one
+language at a time on `http/protobuf` through the hook; black hole — an
+egress NetworkPolicy selecting the pods of the languages under test. Each
+mode is labelled by what the apps observed, never by intent.
+*(r6.1, 2026-11-20, owner ruling 3: the runtime DNS mode (ExternalName to a
+`.invalid` name plus a copy roll) is removed; DNS failure is checked only at
+start-up, SR6 "Misconfiguration". Consequence for the remaining switch modes:
+established connections to the copy survive a change of `soak-otlp`, so
+after the refused and hung switches the apps of the languages under test are
+restarted through the hook with unchanged values, and those modes start at
+process start; resume is measured after `soak-otlp` is switched back,
+without a restart — the clients' own reconnect re-resolves it.)*
+**Justification**: the indirection lets a mode end without restarting the
+apps (resume is measurable) and without touching any shared object.
+**Trade-offs**: the refused and hung modes begin with fresh processes (the
+restart needed to drop the established connection), so they measure "peer
+failing from the first export" and recovery, not a peer that fails mid-run;
+only back-pressure and the black hole act on live connections. What a
+no-endpoint Service and a NetworkPolicy produce under ambient (RST, timeout,
+nothing) is `unmeasured`; the redirect mode changes protocol and restarts one
+language's apps.
+**When it would be wrong**: a mode never yields an export failure (then
+`not injected`), or the owner wants a peer that fails mid-run for refused
+and hung.
+**Reversal action**: delete the soak-run objects (the trap does) and restore
+`soak-otlp`; for a mid-run refused or hung peer, request a copy roll from the
+platform session right after the switch (as the back-pressure flip), so live
+clients reconnect into the failure.
+**Alternatives**: toxiproxy sidecar (K-D8 alternative); stopping the shared
+agent (forbidden, SR15).
+*(r6.2, 2026-11-23, lean soak: modes are refused, hung, back-pressure and
+redirect. Hung: `testing/fakeotlp` gains a `--hang` mode (handshake done,
+Export blocked; task K-hang), built from `testing/fakeotlp/Dockerfile` with
+the builder and platform flags of `testing/k8s/build-images.sh` and pushed
+to `harbor.staffops.space/development/otel-libs-fakeotlp:<tag>` by digest;
+the same image serves the redirect mode through its existing
+`/parity-redirect-c/` path. The burst mode is deferred (AG7) and the black
+hole dropped (AG11). The back-pressure mode window runs from the new copy
+pod Ready plus the first `memory_limiter` refusal to the next copy pod
+Ready; the 1–2 min roll delay is `unmeasured`. Criterion 4 is the
+failure-line interval proxy and the resume bound starts from upstream
+backoff, SR15 "Failure modes (r6.2)".)*
+
+### K-D15 — Orchestration from the operator's laptop; evidence in a committed summary
+**Choice**: one run loop on the laptop (`caffeinate`; heartbeat each guard
+interval; a wall-clock gap > 3 × the interval invalidates the active window;
+a fully blind guard read deletes the k6 Job). An EXIT / INT / TERM trap deletes
+objects labelled `otel-libs/soak-run=<run>` only and then re-applies the demo
+apps without the soak values. Evidence: `specs/soak-simulation/reports/<run>.md`
+committed per run (SR15 "Evidence"); raw output under a git-ignored path.
+**Justification**: the owner ruled the loop stays on the laptop (no cluster
+writes for a controller); the demo apps carry `otel-libs/run` too, so a
+separate `soak-run` label keeps the trap from deleting them; a committed,
+reviewed summary is what D10 can link.
+**Trade-offs**: a 24 h (30 h, K0e-1) passive window on a laptop risks sleep, network loss
+and kube-API outages (windows invalidated, not passed); raw output is not in
+git, so a later reviewer has the summary only.
+**When it would be wrong**: the passive window is invalidated repeatedly by
+laptop gaps.
+**Reversal action**: run the loop as a Job in `dev-otel-libs` with a
+read-only ServiceAccount (needs a Role that the owner creates) and keep the
+trap logic as a finalizer step; record dated here.
+**Alternatives**: a CronJob controller in-cluster (cluster writes for RBAC);
+no committed evidence (D10 could link nothing durable).
+*(r6.2, 2026-11-23, after K0c: the loop was described but owned by no
+task. It is task K-loop in `testing/k8s/soak/`: the laptop loop, guards and
+heartbeat; a trap that first saves `kubectl logs job/<k6>`, then deletes
+only `otel-libs/soak-run=<run>` objects, restores the namespace label if
+needed and re-applies the demo; `cleanup --run <id>`; a pre-flight that
+refuses to start while any soak-run object exists; renderers for every
+soak-run object; the k6 script generator; unit tests. `activeDeadlineSeconds`
+bounds k6 when the laptop is cut off. Raw output goes to
+`testing/k8s/soak/runs/<run>/` (git-ignored); `scan_secret` runs over the
+summary with the canary and `parity-redirect-token` before commit. Code
+freeze: the soaked commit carries a local tag `soak/<run>` (owner ruling
+K0e-4, 2026-11-23; the owner pushes tags) and no change lands
+under `go/`, `python/`, `nodejs/packages/` or `dotnet/` from K8a to K11, or
+the loaded window is re-run. **Reversal action** for the freeze: re-run the
+loaded window on the new commit (K-D16 reversal).)*
+*(Corrected 2026-11-23, K0e review M4, M5, L2, L3: the freeze diff runs
+over `testing/k8s/demo/demo-tag.sh`'s input list (adds `nodejs/demo/` and the
+`nodejs/package*.json` files), and the running image tags must equal
+`demo-tag.sh` at `soak/<run>`; a runtime-behavior change re-runs the passive
+window too (K-D16 reversal). The K-loop tests prove the k6 reservoir on the
+pinned k6 (fallback: a bounded stdout line per request, first 50 per cell
+per VU, saved by the trap's `kubectl logs`) and the guarded label no-op. The
+FD exec read runs at every 60 s guard read — 12 calls a minute.)*
+
+### K-D16 — Artifact under test and durations
+**Choice**: the commit under test is the branch HEAD at run start; the demo
+images are built by `build-demo.sh` from that commit (`git archive HEAD`,
+tag from `demo-tag.sh`, which equals the newest commit that touched an image
+input) and their digests recorded with `docker buildx imagetools inspect`;
+the report records HEAD, the tag and the digests. Durations: passive ≥ 24 h (30 h, K0e-1),
+loaded 2 h (owner ruling 4); K-cal before the loaded window; K10 windows after
+it.
+**Justification**: owner ruling 3 — no rc cut this round, so the soak must
+name exactly what ran; digests make "what ran" checkable after the tag moves.
+24 h covers daily cycles the 2 h S-D3 window did not.
+**Trade-offs**: HEAD moves; the D10 rule (only version strings, CHANGELOG and
+docs may differ before `0.3.0`) is the guard; `demo-tag.sh` ignores `*.md`, so
+a docs-only HEAD reuses the images (intended).
+**When it would be wrong**: a code change lands after the soaked commit.
+**Reversal action**: re-run the loaded window (and the passive window if
+the change touches runtime behavior) on the new HEAD, or cut an rc and soak
+it (S-D9).
+**Alternatives**: cut an rc first (owner declined this round).
+
+## Phase K r6.2 — lean soak (added 2026-11-23)
+
+The owner's ruling of 2026-11-23 (tasks.md K0d2) follows two K0c reviews
+that BLOCKED r6.1 and estimated 19–28 engineering days for it. The decisions
+below are new; K-D10…K-D16 stay with dated r6.2 notes.
+
+### K-D17 — Lean scope: guard, passive window, one loaded window in bounds, four modes, shutdown and identity
+**Choice**: the run keeps (1) the mesh and platform guard (K-D18); (2) the
+≥ 24 h passive window (30 h with a 12 h warm-up, owner ruling K0e-1,
+2026-11-23) with the S-D5 leak and thread rules, FDs (four languages by the
+named `exec` read, ruling K0e-2; was Python only), Go
+goroutines, the .NET thread pool and restarts (Node.js container metrics
+only); (3) one 2 h loaded window with k6, counted in bounds on the fixed
+span families only (K-D19), every other span and every log count
+report-only; (4) the refused, hung, back-pressure and A31 redirect modes;
+(5) K-shut, K3 and K5. K4, K7, K8c, the burst mode and the per-severity
+counts are deferred (AG10, AG9, AG8, AG7, AG6); the NetworkPolicy black
+hole is dropped (AG11); DE14 and its gunicorn dependency are dropped.
+**Justification, strongest first**: (1) cost — the K0c estimate for r6.1 was
+19–28 days; the lean path is re-estimated at about 6–9 (tasks.md), and the
+dropped items are the ones with new infrastructure (gunicorn mode, canary
+containers, a namespace toggle with the demo scaled to 0) or no reliable
+injection under ambient (black hole); (2) the kept items carry the D10
+question — does the 0.3 branch leak, lose or duplicate telemetry over time
+and under exporter failure — and each has a verdict a reviewer can refute;
+(3) exact equality across every span family cannot hold on this workload
+(DB, Redis and client spans vary per request), so a smaller, provable claim
+beats a large unprovable one.
+**Trade-offs**: per-severity log loss, burst drops, multi-worker identity,
+helper health filtering and mesh effects are not soak-checked in this round
+(per-request parity cases still cover the helper filter and the D4 rules);
+non-fixed span families can lose items without a verdict (they are in the
+summary, report-only).
+**When it would be wrong**: a release blocker appears in a deferred area (a
+user report of health spans, a multi-worker Python deployment, a burst loss),
+or the report-only counts show a loss pattern the fixed families do not.
+**Reversal action**: promote the deferred row named by its trigger
+(tasks.md), sign the gap as covered again, and re-run only that window.
+**Alternatives**: r6.1 as ruled on 2026-11-20 (cost above); a passive window
+only (no loss accounting under load or failure).
+
+### K-D18 — Mesh and platform guard: a broken mesh invalidates, never fails
+**Choice**: the guard of SR15 "Mesh and platform guard (r6.2)" — ztunnel's
+`workload_manager_active_proxy_count` against the annotated Running pods,
+`istio_tcp_connections_failed_total{reporter="source"}` for the three
+namespaces, ztunnel `Connection refused` lines to `:15008`, restart counts of
+the path including ztunnel, istio-cni-node, istiod and kube-state-metrics, a
+30-minute clean lookback, `up == 1` for the copy and shared Collectors,
+demo pods Ready for 10 min, and a non-zero copy count per service within
+60 s of the switch — runs in the pre-flight and at every 60 s guard read; a
+breach is reason `platform: mesh`.
+**Justification**: the istio-cni-node restart of 2026-11-20 left the mesh
+half-enrolled for three days (reported with the owner's ruling): pods kept
+the redirection annotation while ztunnel did not proxy them, so their
+connections to the copy and the shared agent could fail. Under r6.1 that
+would have shown as LOSS in the libraries. All the series were present on
+2026-11-23 (instant read: `workload_manager_active_proxy_count` and
+`istio_tcp_connections_failed_total` under job `istio-system/ztunnel`).
+**Trade-offs**: (a) assumes one node (ztunnel counts the workloads of its
+node); (c) parses log text whose format can change with Istio; a mesh fault
+that matches none of (a)–(h) still reads as a library result, which the
+refutation must catch.
+**When it would be wrong**: the cluster gains a node (then compare per node),
+the guard fires on windows with no mesh fault (a series whose semantics
+differ from the reading above), or Istio leaves ambient.
+**Reversal action**: compare (a) per node by ztunnel pod; drop (c) if its
+pattern proves unstable and rely on (b); record the change dated here.
+**Alternatives**: the r6.1 restart-only roll check (missed the 2026-11-20
+case); a mesh-off window (K4, deferred).
+*(Corrected 2026-11-23, K0e review B2, M1, M2, M6: item (b) judges only
+the run's telemetry edges (demo pods → `soak-agent`, `soak-agent` →
+`otel-agent-collector`) against a K1-measured, dated per-edge baseline; the
+series counts the TCP connections the source-side ztunnel failed to
+establish to that destination. Other edges are report-only findings.
+Judging every edge of three namespaces would invalidate windows on traffic
+the run does not depend on. (d) exempts the two requested back-pressure
+flips; (h) applies at window start only; (e), (g), (h) values are initial,
+`unmeasured`. **Reversal action**: widen (b) to an edge again if a finding
+on it is shown to affect the run's telemetry.)*
+
+### K-D19 — Counting in bounds on the fixed span families
+**Choice**: the verdicts count only the fixed span families (requirements
+Glossary) per `service_name`: from the gateway's
+`traces_span_metrics_calls_total` by `span_name` / `span_kind`, and from the
+copy's `otel_libs_soak_spans_total` total only for a service whose K-cal
+shows the total fixed per cell. Expected is an interval [answered × k,
+(answered + no answer) × k]; LOSS below, DUPLICATES above. Raw samples over
+(t1, t2] follow the series rules of SR15 "Counting in bounds (r6.2)" (a
+series first seen in the window adds its first value; one that reappears
+adds v if v < last, else v − last; copy series summed over `pod`,
+`instance`, `exported_instance`). t1 is at most 4 min after the last
+traffic. K-cal checks integrality and stability per cell over two repeats
+and excludes, by name, the families that fail. A copy roll reports loss as
+an interval with the unscraped tail.
+**Justification**: the K0c reviews showed the r6.1 equality could not hold:
+spans other than the fixed families vary per request (retries, pool
+connects, Redis commands), the copy series expire after 5 min (K-D12
+correction) and come back from a new value, one service is spread over
+several series (pod, instance, exported_instance), and k6's no-answer
+requests may or may not have produced spans. A bound absorbs only the last
+two, which are known; it does not widen for unexplained variation — a family
+that K-cal finds non-integral is excluded and named, not tolerated.
+**Trade-offs**: loss in non-fixed families is report-only; the family counts
+depend on the shared gateway's `span_metrics` (a gateway restart invalidates
+the window, K-D12); the copy cannot separate families without a second
+count metric.
+**When it would be wrong**: K-cal finds no fixed family stable for a language
+(then that language has no count verdict), or the gateway series and the
+copy total disagree at a clean window.
+*(Owner ruling K0e-3, 2026-11-23: the OTTL-filtered `count` metric — fixed
+families only, per sending instance — is requested from the platform
+session now; family verdicts use it once it exists and fall back to the
+gateway's `span_metrics` until then.)*
+**Reversal action**: if the filtered metric is not delivered or disagrees
+with the gateway at a clean window, judge families from the gateway only; if a language has no stable family, report its
+counts only and list it in the summary.
+**Alternatives**: the r6.1 exact equality (cannot hold); Tempo trace counts
+(paged, eventually consistent, K-D12 alternative).
+*(Corrected 2026-11-23, K0e review H1–H4, M3, superseding parts of the
+choice above: the copy metric is delivered as
+`otel_libs_soak_fixed_spans_total` with `service_instance_id`,
+`exported_instance`, `exported_job`, `pod`, `instance`, `endpoint=count` and
+**no family label** (smoke: 10 spans, 5 fixed). The verdict is therefore
+one fixed total per `service_instance_id` at the copy, gated by the copy's
+own sentinels; the gateway per-family counts (summed by `service_name`,
+`span_kind`, `span_name` over all other labels) are a cross-check, valid
+only with clean shared sentinels; per-family copy counts are not available.
+A non-integral K-cal total names its cause and reports the gateway
+cross-check. The delivered OTTL condition misses Go's and .NET's gRPC client
+spans (`rpc.system.name`, not `rpc.system`); the platform session is asked
+to add the `rpc.system.name` clause, and K-copy's control sends a CLIENT
+span with each key. Reappearance: a gap ≥ the source's expiry (copy 30 m,
+gateway 5 m) is a reset; a shorter gap adds v − last, or v when v < last.
+The "t1 ≤ 4 min" constraint is dropped. K-shut reads the old
+`service_instance_id` on this metric. **Reversal action**: if the platform
+session adds a family label, judge families at the copy and demote the
+gateway to report-only.)*
+*(Updated 2026-11-23, soak-agent 1f56009 + b4c1dae: H1 closed — the
+`rpc.system.name` clause is live (smoke: `rpc.system` 4/4 fixed,
+`rpc.system.name` 4/4, neither 2/4, server only). `service.instance.id`
+defaults to `"unset"` in the `count` connector, which otherwise drops a span
+missing a listed attribute; a demo series with `service_instance_id="unset"`
+is a finding (D4) and invalidates that service's per-instance verdict.
+Components renamed `k8s_attributes`, `delta_to_cumulative`, behavior
+unchanged.)*
 
 ## Report format (reference)
 `reports/<UTC>/report.md` + `report.json`: header (rc, commit, image digests,
 `go version -m`, `pip freeze`, parameters, VM resources, neighbour aggregate
 load — counts and totals only), calibration outputs, per-scenario verdict
 with criterion, values and exact queries, disk/memory usage, SR11 table.
+*(Amended 2026-11-19, r6: Phase K writes `specs/soak-simulation/reports/<run>.md`
+(committed; SR15 "Evidence", K-D15) instead of `reports/<UTC>/report.{md,json}`.)*

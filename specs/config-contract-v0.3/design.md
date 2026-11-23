@@ -744,6 +744,42 @@ and `opentelemetry-instrumentation-logging`) `>=0.63b0,<0.67b0`. CI: py
 > (Docker Compose; Kubernetes deferred as its Phase K). Its acceptance replaces
 > "soaked in DEV/HML" below.
 
+> **Amended 2026-11-19 (owner rulings, soak spec r6 — not yet reviewed, task
+> K0c):** Phase S (Docker Compose) is dropped. The rc soak evidence is Phase K
+> on the homelab cluster `k8s01`
+> ([`specs/soak-simulation/`](../soak-simulation/) r6, Acceptance "in Phase K
+> terms"): the demo apps in **all four languages** (Go, Python, Node.js,
+> .NET) through a dedicated agent-only Collector copy, a ≥ 24 h passive
+> window and a 2 h loaded window. Changes against the text below and the
+> 2026-10-28 amendment: (1) the artifact is the **branch HEAD**, not a
+> released rc — no rc cut this round, the soaked commit and image digests are
+> recorded (soak design S-D9 deviation, K-D16); (2) `0.3.0` may differ from
+> the soaked commit only in version strings, `CHANGELOG.md` and documentation
+> (`*.md`, `docs/site/`), diff checked — any other change needs a new loaded
+> window or an owner ruling; (3) what the cluster cannot show is an
+> owner-signed accepted gap (soak requirements "Accepted gaps"): TLS with a
+> private CA, gateway tail sampling and trace-ID load balancing (D11.1–D11.3),
+> a backend outage, VictoriaMetrics (the homelab Prometheus is the
+> reference) — *signed 2026-11-20 (owner), with a fifth: only the `dev`
+> environment runs (soak AG5); the other proposed gaps were not accepted and
+> are covered by soak tasks*; (4) the soak summary `specs/soak-simulation/reports/<run>.md` is
+> what this section and the CHANGELOG link. The .NET and Node.js release
+> lines are soaked in the same run; that does not change ADR-004's rollout
+> order for contract changes.
+>
+> *Amended 2026-11-23 (owner, soak r6.2 "lean soak" — not yet reviewed, task
+> K0e):* the soak scope is cut after two reviews BLOCKED r6.1. Its counts are
+> **bounds on the span families fixed per request** (SERVER, CONSUMER,
+> PRODUCER, the demo-scope and RPC spans); other spans and all log counts are
+> report-only. The owner accepted six more gaps — per-severity logs, burst,
+> multi-worker Python, health-span absence, the mesh toggle and the
+> NetworkPolicy black hole (soak AG6–AG11), and no Node.js runtime metrics
+> (AG12) — so the signed list is AG1–AG12.
+> A code freeze binds the soaked commit (local tag `soak/<run>`, pushed by the
+> owner): from the start of the passive window
+> to the report, no change under `go/`, `python/`, `nodejs/packages/` or
+> `dotnet/`, or the loaded window is re-run. Rule (2) above is unchanged.
+
 **Choice**: one coordinated `0.3.0` for Go + Python, preceded by
 `0.3.0-rc.1` soaked in DEV/HML; no legacy-behavior flag; .NET stays on 0.2.x
 until Phase C ([ADR-004](../decisions/ADR-004-phased-rollout-go-python-first.md)).

@@ -11,23 +11,25 @@ P15 uncovered at introduction (2026-10-28); owner task: A1 (done; enforced by th
 # repo-tooling (draft spec).
 RT7 implemented as the CI job spec-checks (.github/workflows/ci.yml); no test file can cite it; owner task: T11 review
 #
-# soak-simulation (draft spec, under review: owner tasks taken from its tasks.md on 2026-10-28).
-SR0 not implemented yet (spec draft); owner task: S2
-SR1 not implemented yet (spec draft); owner task: S1
-SR2 not implemented yet (spec draft); owner task: review (no task lists it)
-SR3 not implemented yet (spec draft); owner task: S3
-SR4 not implemented yet (spec draft); owner task: S4a
-SR5 not implemented yet (spec draft); owner task: S4b
-SR6 not implemented yet (spec draft); owner task: S4c
-SR7 not implemented yet (spec draft); owner task: S4d
-SR8 not implemented yet (spec draft); owner task: S4e
-SR9 not implemented yet (spec draft); owner task: S4f
-SR10 not implemented yet (spec draft); owner task: S4g
-SR11 not implemented yet (spec draft); owner task: S5
-SR12 not implemented yet (spec draft); owner task: S4h
-SR13 not implemented yet (spec draft); owner task: S4i
-SR14 not implemented yet (spec draft); owner task: S6
-SR15 not implemented yet (spec draft r5, added 2026-11-15); owner tasks: K1-K8 (verify.py modes; testing/k8s is not a citation path)
+# soak-simulation (draft spec r6.2 "lean soak", 2026-11-23: Phase S dropped by the owner 2026-11-19; Phase K on
+# k8s01 only — checks live in testing/k8s/verify.py and testing/k8s/soak/, which are not citation paths;
+# tasks from its tasks.md r6.2 table).
+SR0 Phase K: demo apps as workload, not cited by a test (per-severity counts accepted gap AG6); owner tasks: K-cal, K8a, K8b
+SR1 Phase K: Collector copy soak-agent (gateway part accepted gap AG2); owner task: K-copy
+SR2 Phase K: dev + OTLP/gRPC only (other envs accepted gap AG5, TLS AG1); owner tasks: K8a, K8b, K10
+SR3 Phase K: k6 open-loop Job; owner tasks: K-loop, K8b
+SR4 Phase K: leaks (FDs by exec, Node.js runtime AG12) and fixed-family count bounds; owner tasks: K-count, K8a, K8b
+SR5 Phase K: refused, hung, back-pressure on the app-to-copy hop (black hole accepted gap AG11); owner tasks: K-hang, K10
+SR6 Phase K: misconfiguration at start-up; owner task: K10b
+SR7 Phase K: shutdown in its own k6 run after the loaded window; owner task: K-shut
+SR8 Phase K: sampled=00 class (sampling shares AG2, health spans AG9); owner task: K8b
+SR9 Phase K: orphan check on the k6 reservoir (routing accepted gap AG2); owner task: K8b
+SR10 Phase K: cross-language comparison; owner task: K8b
+SR11 dropped with Phase S (owner 2026-11-19); evidence only, never a gate; no owner task
+SR12 Phase K: restart identity; owner task: K3
+SR13 Phase K: back-pressure, Prometheus fallback (backend outage AG3, burst AG7, multi-worker Python AG8); owner tasks: K10, K10b
+SR14 dropped with Phase S (owner 2026-11-19); its safety rules live in SR15; no owner task
+SR15 Phase K on k8s01 (r5 2026-11-15, r6 2026-11-19, r6.1 2026-11-20, r6.2 2026-11-23); owner tasks: K1, K-loop, K-count, K-copy, K8a, K-cal, K8b, K-shut, K10, K11
 #
 # nodejs-otel-helper (Phase B): "JS<n> pending B<x>" = not cited yet; owner task B<x>
 # from specs/nodejs-otel-helper/tasks.md. The owner task deletes its line when its
