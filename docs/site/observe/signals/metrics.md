@@ -5,8 +5,7 @@ and over long ranges. They are where an alert or a dashboard starts. Once a
 metric shows a problem, its exemplars and labels lead you to a trace.
 
 **Audience:** dashboard authors and engineers on call.
-**Backend:** a Prometheus-compatible backend (Prometheus on the demo,
-VictoriaMetrics in production), queried with PromQL / MetricsQL.
+**Backend:** a Prometheus-compatible backend, queried with PromQL.
 
 ## Two sources of request metrics
 

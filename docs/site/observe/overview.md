@@ -16,7 +16,7 @@ flowchart LR
   agent --> gw["Collector gateway<br/>tail sampling, span metrics,<br/>service graph"]
   gw -- traces --> tempo["Tempo"]
   gw -- logs --> loki["Loki"]
-  gw -- metrics --> prom["Prometheus-compatible backend<br/>(Prometheus on the demo,<br/>VictoriaMetrics in production)"]
+  gw -- metrics --> prom["Prometheus-compatible backend"]
   tempo --> grafana["Grafana"]
   loki --> grafana
   prom --> grafana
