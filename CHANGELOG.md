@@ -104,6 +104,18 @@ Rewrite imports, e.g.
 then `go get github.com/staffops/otel-libs/go@v0.3.0-rc.2 && go mod tidy`.
 Pinned `go/v0.2.x` releases keep the old path.
 
+**Pinned `go/v0.1.0`–`go/v0.2.1` fail checksum verification on a cold module
+cache (found 2026-11-24 by a consumer's CI).** The repository history was
+rewritten on 2026-10-28 (`git filter-repo`); the tags kept their names and
+dates but point at rewritten commits, so the module zip hash no longer matches
+the one `sum.golang.org` recorded at the first fetch (`SECURITY ERROR ...
+checksum mismatch` or `verifying module` in `go mod download`). The original
+contents cannot be restored. Until you move to 0.3.0 (new module path, never
+rewritten): set `GONOSUMDB=github.com/staffops/*` (or `GOPRIVATE`) in CI and
+dev, and refresh the two `go.sum` lines of
+`github.com/staffops/staffops-otel-libs/go` with the hashes `go mod download`
+computes now.
+
 Build and API (compile errors):
 
 1. **Toolchain ≥ Go 1.26** — older toolchains fail with
