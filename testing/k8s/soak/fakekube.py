@@ -2,7 +2,9 @@
 
 Never talks to a cluster. State is a JSON file (``FAKEKUBE_STATE``):
 ``{"objects": [...], "logs": {"job/<name>": "..."}, "ztunnel_log": "...",
-"raw": {"<path prefix>": <JSON answer>}, "fail": {"<verb>": "<stderr>"}}``.
+"raw": {"<path prefix>": <JSON answer>}, "fail": {"<verb>": "<stderr>"},
+"flaky": {"<verb>": {"times": N, "stderr": "<stderr>"}}}``: ``fail`` fails every
+call of the verb, ``flaky`` only the next N (a transient error).
 Every call is appended to ``FAKEKUBE_LOG`` as one JSON line
 ``{"argv": [...], "stdin": "...", "env": {...}}``.
 
@@ -126,6 +128,12 @@ def main(argv: list[str]) -> int:
     state = _load()
     pos, opts = _opts(argv)
     verb = pos[0] if pos else ""
+    flaky = (state.get("flaky") or {}).get(verb)
+    if flaky and flaky.get("times", 0) > 0:
+        flaky["times"] -= 1
+        _save(state)
+        print(flaky["stderr"], file=sys.stderr)
+        return 1
     fail = (state.get("fail") or {}).get(verb)
     if fail:
         print(fail, file=sys.stderr)

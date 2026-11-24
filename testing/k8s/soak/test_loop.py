@@ -881,8 +881,6 @@ class Helpers(Base):
         k = soak.Kube("k8s01", kubectl=[sys.executable, "-c", "print('not json')"])
         with self.assertRaises(soak.SoakError):
             k.get(["pods"])
-        with self.assertRaises(soak.SoakError):
-            k.get_raw("/x")
         self.assertLessEqual(soak.Kube("k8s01").timeout, 30)  # review M5
         slow = soak.Kube("k8s01", kubectl=[sys.executable, "-c", "import time; time.sleep(5)"], timeout=1)
         self.assertIn("timed out", slow._run(["get"]).stderr)
@@ -951,6 +949,115 @@ class Reader(Base):
                          lambda: r.logs("istio-system", "ztunnel-x", 1)):
                 with self.assertRaises(guard.ReadError):
                     call()
+
+    RESET = ("Unable to connect to the server: read tcp 10.0.0.1:63251->10.0.0.2:6443: "
+             "read: connection reset by peer")
+    QUERY = "/api/v1/namespaces/monitoring/services/kps-prometheus:9090/proxy/api/v1/query"
+
+    def raw_calls(self, c) -> int:
+        return len([a for a in c.verbs() if "--raw" in a])
+
+    def test_transport_reset_then_success_is_retried(self):
+        """Correction 2026-11-24: one reset, then the answer: ok, the retry counted."""
+        with self.cluster() as c:
+            c.edit(lambda st: st.update({
+                "raw": {self.QUERY: {"status": "success", "data": {"result": [{"value": [0, "1"]}]}}},
+                "flaky": {"get": {"times": 1, "stderr": self.RESET}}}))
+            sleeps = []
+            r = soak.KubeReader(self.kube, sleep=sleeps.append)
+            self.assertEqual(r.prom("up", NOW), [{"value": [0, "1"]}])
+            self.assertEqual((r.retries, sleeps, self.raw_calls(c)), (1, [1], 2))
+            self.assertIn("connection reset by peer", r.retry_error)
+            # kubectl get and logs retry too; a 5xx from the API proxy is transport.
+            c.edit(lambda st: st.__setitem__("flaky", {
+                "get": {"times": 1, "stderr": "Error from server (ServiceUnavailable): the server is "
+                                              "currently unable to handle the request"},
+                "logs": {"times": 1, "stderr": "Unable to connect to the server: net/http: "
+                                               "TLS handshake timeout"}}))
+            self.assertEqual(r.kget(["pods", "-A"])["items"], [])
+            c.logs({"ztunnel-x": "line\n"})
+            self.assertEqual(r.logs("istio-system", "ztunnel-x", 60), ["line"])
+            self.assertEqual(r.retries, 3)
+            self.assertIn("TLS handshake", r.retry_error)
+
+    def test_transport_reset_on_every_attempt_is_blind(self):
+        with self.cluster() as c:
+            c.edit(lambda st: st.__setitem__("fail", {"get": self.RESET}))
+            sleeps = []
+            r = soak.KubeReader(self.kube, sleep=sleeps.append)
+            with self.assertRaises(guard.ReadError) as cm:
+                r.prom("up", NOW)
+            self.assertIn("connection reset by peer", str(cm.exception))
+            self.assertEqual((r.retries, sleeps, self.raw_calls(c)),
+                             (len(sp.READ_RETRY_BACKOFF_S), list(sp.READ_RETRY_BACKOFF_S), 3))
+            read = guard.window_read(r, guard.GuardConfig(), guard.RollState(), NOW, loaded=False)
+            self.assertTrue(read.blind)
+            rec = read.as_json()
+            self.assertGreater(rec["retries"], 0)
+            self.assertIn("connection reset by peer", rec["retry_error"])
+
+    def test_answers_are_never_retried(self):
+        """An empty Prometheus result stays blind, an error status and a 4xx
+        are failures: none is retried."""
+        with self.cluster() as c:
+            c.edit(lambda st: st.__setitem__("raw", {self.QUERY: {"status": "success", "data": {"result": []}}}))
+            sleeps = []
+            r = soak.KubeReader(self.kube, sleep=sleeps.append)
+            self.assertEqual(r.prom("up", NOW), [])
+            items = guard.floors(r, guard.GuardConfig(), NOW)
+            self.assertEqual({i.state for i in items}, {"blind"})
+            self.assertEqual({i.detail for i in items}, {"no series"})
+            self.assertEqual((r.retries, sleeps, self.raw_calls(c)), (0, [], 4))
+            c.edit(lambda st: st.__setitem__("raw", {"/api": {"status": "error", "error": "bad query"}}))
+            with self.assertRaises(guard.ReadError):
+                r.prom("up", NOW)
+            c.edit(lambda st: st.__setitem__("fail", {"get": "Error from server (BadRequest): bad_data"}))
+            with self.assertRaises(guard.ReadError):
+                r.prom("up", NOW)
+            self.assertEqual((r.retries, self.raw_calls(c)), (0, 6))
+
+    def test_no_retry_past_the_read_deadline(self):
+        with self.cluster() as c:
+            c.edit(lambda st: st.__setitem__("fail", {"get": self.RESET}))
+            sleeps = []
+            r = soak.KubeReader(self.kube, sleep=sleeps.append)
+            self.kube.deadline = time.monotonic() + 0.5  # shorter than the first pause
+            try:
+                with self.assertRaises(guard.ReadError):
+                    r.prom("up", NOW)
+            finally:
+                self.kube.deadline = None
+            self.assertEqual((r.retries, sleeps, self.raw_calls(c)), (0, [], 1))
+            self.assertIsNone(r.time_left())
+            # Review M1: a retry needs its pause plus READ_RETRY_MIN_CALL_S left.
+            self.kube.deadline = time.monotonic() + 1 + sp.READ_RETRY_MIN_CALL_S - 0.5
+            try:
+                with self.assertRaises(guard.ReadError):
+                    r.prom("up", NOW)
+            finally:
+                self.kube.deadline = None
+            self.assertEqual((r.retries, self.raw_calls(c)), (0, 2))
+            # Inside a bounded read a timed-out call is retried like a reset.
+            self.kube.deadline = time.monotonic() + 40
+            c.edit(lambda st: st.update({"fail": {}, "flaky": {"get": {"times": 1,
+                                                                        "stderr": "kubectl timed out after 25s"}},
+                                         "raw": {self.QUERY: {"status": "success", "data": {"result": []}}}}))
+            try:
+                self.assertEqual(r.prom("up", NOW), [])
+            finally:
+                self.kube.deadline = None
+            self.assertEqual(r.retries, 1)
+
+    def test_writes_are_never_retried(self):
+        with self.cluster() as c:
+            c.edit(lambda st: st.__setitem__("flaky", {
+                "apply": {"times": 1, "stderr": self.RESET}, "delete": {"times": 1, "stderr": self.RESET}}))
+            with self.assertRaises(soak.SoakError):
+                self.kube.apply(RUN, [render.k6_job(RUN, "loaded", 9)])
+            with self.assertRaises(soak.SoakError):
+                self.kube.delete_run(RUN)
+            verbs = [a for a in c.verbs() if any(v in a for v in ("apply", "delete"))]
+            self.assertEqual(len(verbs), 2)
 
     def test_guard_config_uses_a_passing_recent_k1_snapshot(self):
         """Review M14."""

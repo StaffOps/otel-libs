@@ -647,12 +647,74 @@ def _num(d: Decimal) -> float:
 
 # ── the reader (cluster I/O, read-only) ──
 
+# A read the API server never answered (connection reset or refused, a timeout, a
+# TLS handshake failure) or answered with a 5xx of its own or of its service proxy
+# is a transport failure: retried inside one read (soak K-loop correction
+# 2026-11-24). Any other answer, an empty result included, is never retried.
+TRANSPORT_MARKERS = ("unable to connect to the server", "connection reset", "connection refused",
+                     "tls handshake", "i/o timeout", "unexpected eof", "kubectl timed out")
+# A permanent TLS failure behind "unable to connect": never retried.
+PERMANENT_MARKERS = ("x509", "certificate")
+# kubectl's "Error from server (<reason>)" for an HTTP 5xx (of the API server, its
+# service proxy or the backend behind it): 500 and any other 5xx without its own
+# reason (InternalError), 503 (ServiceUnavailable), 504 (Timeout).
+SERVER_5XX_RE = re.compile(r"error from server \((internalerror|serviceunavailable|timeout)\)")
+# Pauses (seconds) before the 2nd and 3rd attempt of a read that failed in transport.
+READ_RETRY_BACKOFF_S = (1, 3)
+# A retry is made only when this much time is left after its pause.
+READ_RETRY_MIN_CALL_S = 5
+TIMEOUT_MARKER = "kubectl timed out"
+
+
+def transport_failure(stderr: str) -> bool:
+    """True when kubectl's ``stderr`` is a transport failure (see TRANSPORT_MARKERS)."""
+    low = stderr.lower()
+    if "error from server" in low:  # an HTTP answer: only a 5xx is transport
+        return SERVER_5XX_RE.search(low) is not None
+    if any(marker in low for marker in PERMANENT_MARKERS):
+        return False
+    return any(marker in low for marker in TRANSPORT_MARKERS)
+
 
 class Reader:
-    """Every cluster read the mode makes; tests replace it."""
+    """Every cluster read the mode makes; tests replace it.
 
-    def __init__(self, b: verify.Backends, context: str) -> None:
+    ``retries`` counts the attempts repeated after a transport failure and
+    ``retry_error`` keeps the last such failure, so a caller can record them."""
+
+    def __init__(self, b: verify.Backends, context: str, sleep=time.sleep) -> None:
         self.b, self.context = b, context
+        self.sleep = sleep
+        self.retries = 0
+        self.retry_error = ""
+
+    def time_left(self) -> float | None:
+        """Seconds left for the current read; None when unbounded."""
+        return None
+
+    def retrying(self, call) -> subprocess.CompletedProcess:
+        """``call()`` (a CompletedProcess) again after a transport failure, with
+        READ_RETRY_BACKOFF_S pauses, while the pause plus READ_RETRY_MIN_CALL_S
+        fits in ``time_left()``. A timed-out call is retried only inside a bounded
+        read (an unbounded one would wait up to three call timeouts). The last
+        answer is returned whatever it is: the caller decides on failure.
+
+        Retries are counted whenever they happen; a caller that records them
+        (the soak guard reads) takes the difference over its own read."""
+        for pause in (*READ_RETRY_BACKOFF_S, None):
+            proc = call()
+            err = proc.stderr or ""
+            if proc.returncode == 0 or pause is None or not transport_failure(err):
+                return proc
+            left = self.time_left()
+            if left is None and TIMEOUT_MARKER in err.lower():
+                return proc
+            if left is not None and left <= pause + READ_RETRY_MIN_CALL_S:
+                return proc
+            self.retries += 1
+            self.retry_error = " ".join(strip_text(err).split())[:200]
+            self.sleep(pause)
+        raise AssertionError("unreachable")  # pragma: no cover
 
     def prom(self, q: str, at: float) -> list[dict]:
         return self.b.prom_query(q, int(at))
@@ -677,7 +739,14 @@ class Reader:
         return self._run(["get", "--raw", url])
 
     def kget(self, args: list[str]) -> dict:
-        return verify.kubectl_json(self.context, args)
+        """Read-only ``kubectl get <args> -o json`` (the verb is always ``get``)."""
+        proc = self.retrying(lambda: self._proc(["get", *args, "-o", "json"], 60))
+        if proc.returncode != 0:
+            raise verify.QueryError(f"kubectl get {' '.join(args)}: {proc.stderr.strip() or 'kubectl failed'}")
+        try:
+            return json.loads(proc.stdout)
+        except json.JSONDecodeError as exc:
+            raise verify.QueryError(f"kubectl get {' '.join(args)}: not JSON ({exc})") from exc
 
     def logs(self, namespace: str, pod: str, since_s: int) -> list[str]:
         return self._run(["logs", "-n", namespace, pod, f"--since={since_s}s"]).splitlines()
@@ -685,9 +754,15 @@ class Reader:
     def pid1(self, namespace: str, pod: str, container: str) -> str:
         return self._run(["exec", "-n", namespace, pod, "-c", container, "--", "sh", "-c", PID1_SCRIPT])
 
+    def _proc(self, args: list[str], timeout: int) -> subprocess.CompletedProcess:
+        cmd = ["kubectl", "--context", self.context, *args]
+        try:
+            return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, check=False)
+        except subprocess.TimeoutExpired:  # no answer in time: transport too
+            return subprocess.CompletedProcess(cmd, -1, "", f"kubectl timed out after {timeout}s")
+
     def _run(self, args: list[str]) -> str:
-        proc = subprocess.run(["kubectl", "--context", self.context, *args],
-                              capture_output=True, text=True, timeout=120, check=False)
+        proc = self.retrying(lambda: self._proc(args, 120))
         if proc.returncode != 0:
             raise verify.QueryError(f"kubectl {args[0]}: {proc.stderr.strip()[:200] or 'failed'}")
         return proc.stdout

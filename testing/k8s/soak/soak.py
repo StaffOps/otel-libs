@@ -194,13 +194,6 @@ class Kube:
         except json.JSONDecodeError as exc:
             raise SoakError(f"kubectl get {' '.join(args)}: not JSON ({exc})") from exc
 
-    def get_raw(self, url: str) -> dict:
-        out = self._ok(["get", "--raw", url], namespaced=False)
-        try:
-            return json.loads(out)
-        except json.JSONDecodeError as exc:
-            raise SoakError(f"get --raw {url}: not JSON ({exc})") from exc
-
     def apply(self, run: str, objs: list[dict]) -> str:
         """Server-side apply of soak-run objects of ``run`` only (review M1)."""
         for obj in objs:
@@ -270,12 +263,23 @@ class Kube:
 
 
 class KubeReader(guard.sp.Reader):
-    """K1's read-only reader (``soakplatform.Reader``) with every call made
-    through this loop's ``Kube`` (so ``--kubectl`` and the read deadline apply
-    to the guard reads too): Prometheus through the API server's service proxy,
-    ``kubectl get``, pod logs. Env: BACKENDS_NAMESPACE, PROMETHEUS as verify.py."""
+    """K1's read-only reader (``soakplatform.Reader``) with the guard's calls
+    made through this loop's ``Kube`` (so ``--kubectl`` and the read deadline
+    apply to them): Prometheus instant and range queries through the API
+    server's service proxy, ``kubectl get``, pod logs and exec. ``prom_series``,
+    ``prom_status`` and the Tempo calls stay on ``verify.Backends`` (the guard
+    does not use them). Env: BACKENDS_NAMESPACE, PROMETHEUS as verify.py.
 
-    def __init__(self, kube: Kube):
+    A call that fails in transport (``soakplatform.transport_failure``: reset,
+    refused, timeout, TLS handshake, an API 5xx) is tried again with
+    ``soakplatform.READ_RETRY_BACKOFF_S`` pauses while the pause fits before the
+    guard read's deadline (entry reads have no deadline: the count bounds
+    them); the retries are counted (``retries``,
+    ``retry_error``) and recorded by the guard read in ``guard.jsonl``. An
+    answer — an error status, an empty result — is never retried (correction
+    2026-11-24 to SR15 Orchestration)."""
+
+    def __init__(self, kube: Kube, sleep: Callable[[float], None] = time.sleep):
         b = guard.verify.Backends(
             context=kube.context,
             namespace=os.environ.get("BACKENDS_NAMESPACE", "monitoring"),
@@ -283,16 +287,31 @@ class KubeReader(guard.sp.Reader):
             loki=os.environ.get("LOKI", "loki:3100"),
             prometheus=os.environ.get("PROMETHEUS", "kps-prometheus:9090"),
         )
-        super().__init__(b, kube.context)
+        super().__init__(b, kube.context, sleep=sleep)
         self.kube = kube
+
+    def time_left(self) -> float | None:
+        if self.kube.deadline is None:
+            return None
+        return self.kube.deadline - time.monotonic()
+
+    def _read(self, args: list[str]) -> subprocess.CompletedProcess:
+        return self.retrying(lambda: self.kube._run(args, namespaced=False))
+
+    def _read_ok(self, args: list[str]) -> str:
+        proc = self._read(args)
+        if proc.returncode != 0:
+            raise guard.ReadError(f"kubectl {' '.join(args[:3])}: {proc.stderr.strip() or 'failed'}")
+        return proc.stdout
 
     def _prom_api(self, path: str, params: dict) -> list[dict]:
         url = (f"/api/v1/namespaces/{self.b.namespace}/services/{self.b.prometheus}/proxy{path}?"
                + urllib.parse.urlencode(params))
+        out = self._read_ok(["get", "--raw", url])
         try:
-            data = self.kube.get_raw(url)
-        except SoakError as exc:
-            raise guard.ReadError(str(exc)) from exc
+            data = json.loads(out)
+        except json.JSONDecodeError as exc:
+            raise guard.ReadError(f"get --raw {url}: not JSON ({exc})") from exc
         if data.get("status") != "success":
             raise guard.ReadError(f"prometheus: {data.get('error') or data.get('status')}")
         return (data.get("data") or {}).get("result") or []
@@ -305,13 +324,14 @@ class KubeReader(guard.sp.Reader):
                                                       "step": step})
 
     def kget(self, args: list[str]) -> dict:
+        out = self._read_ok(["get", *args, "-o", "json"])
         try:
-            return self.kube.get(args, namespaced=False)
-        except SoakError as exc:
-            raise guard.ReadError(str(exc)) from exc
+            return json.loads(out)
+        except json.JSONDecodeError as exc:
+            raise guard.ReadError(f"kubectl get {' '.join(args)}: not JSON ({exc})") from exc
 
     def _run(self, args: list[str]) -> str:
-        proc = self.kube._run(args, namespaced=False)
+        proc = self._read(args)
         if proc.returncode != 0:
             raise guard.ReadError(f"kubectl {args[0]}: {proc.stderr.strip()[:200] or 'failed'}")
         return proc.stdout

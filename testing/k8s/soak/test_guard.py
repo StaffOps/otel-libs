@@ -243,6 +243,45 @@ class WindowRead(unittest.TestCase):
         self.assertTrue(any(q.endswith(f"[{width}s]") for q in r.queries), r.queries[:5])
 
 
+class Retried(tp.FakeReader):
+    """K1's fake reader whose first Prometheus look-up needed one transport retry."""
+
+    def __init__(self, base: tp.FakeReader):
+        self.__dict__.update(base.__dict__)
+        self.retries, self.retry_error = 0, ""
+
+    def prom(self, q, at):
+        if not self.retries:
+            self.retries, self.retry_error = 1, "Unable to connect to the server: connection reset by peer"
+        return super().prom(q, at)
+
+
+class TransportRetries(unittest.TestCase):
+    """Correction 2026-11-24: a retried look-up that answered is judged on its
+    answer, and the retries are in guard.jsonl."""
+
+    def test_retried_then_answered_is_ok_and_recorded(self):
+        r = Retried(soak_reader(healthy()))
+        read = guard.window_read(r, guard.GuardConfig(), guard.RollState(), NOW, loaded=True)
+        self.assertFalse(read.blind)
+        self.assertEqual(read.breaches, [], read.as_json())
+        rec = read.as_json()
+        self.assertEqual(rec["retries"], 1)
+        self.assertIn("connection reset", rec["retry_error"])
+        # A second read counts only its own retries.
+        again = guard.window_read(r, guard.GuardConfig(), guard.RollState(), NOW, loaded=True)
+        self.assertEqual(again.as_json()["retries"], 0)
+        self.assertNotIn("retry_error", again.as_json())
+
+    def test_entry_read_records_retries(self):
+        read = guard.entry_read(Retried(healthy()), guard.GuardConfig(), NOW)
+        self.assertEqual(read.retries, 1)
+
+    def test_reader_without_counters_records_zero(self):
+        self.assertEqual(guard.window_read(soak_reader(healthy()), guard.GuardConfig(), guard.RollState(),
+                                           NOW, loaded=True).as_json()["retries"], 0)
+
+
 class AfterTheHook(unittest.TestCase):
     """Review B1 and M7: (g) polled after the roll, (h) as an increase."""
 

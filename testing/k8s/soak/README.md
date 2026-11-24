@@ -75,7 +75,17 @@ the trap runs.
 - **Blind read** (every look-up failed, or the pod list or the guard itself
   failed): the logs are saved and the k6 Job is deleted, retried with backoff
   (5 s … 60 s) until it succeeds or the Job's `activeDeadlineSeconds` has
-  passed. A partly blind read is recorded, not acted on.
+  passed. A partly blind read is recorded, not acted on. A look-up has
+  failed only after its transport retries: a kubectl call that got no answer
+  (connection reset or refused, a timeout, a TLS handshake failure) or a 5xx
+  from the API server, its service proxy or the backend behind it is tried
+  twice more, after 1 s and 3 s, while the pause plus 5 s fits before the
+  window read's deadline (0.8 × the interval); entry reads have no deadline,
+  so the count bounds them and a timed-out call is not retried there.
+  Each read records `retries` in `guard.jsonl`, with `retry_error` (the last
+  transport failure) when it is not 0. An answer is never retried: an empty
+  Prometheus result stays a blind item, an error status in a 200 answer or a 4xx fails at
+  once (correction 2026-11-24, after run `k8a-20261123a` ended on one reset).
 - **k6.** A failed k6 Job makes the window invalid (`k6: Job failed
   (<reason>)`); so does a k6 pod that is not running once the pull allowance
   (300 s) has passed (`ImagePullBackOff` and the like). A succeeded Job ends

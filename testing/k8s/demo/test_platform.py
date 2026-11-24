@@ -11,10 +11,12 @@ import argparse
 import io
 import json
 import re
+import subprocess
 import sys
 import tempfile
 import unittest
 from contextlib import redirect_stdout
+from unittest import mock
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -747,6 +749,78 @@ class ReviewFixes(unittest.TestCase):
         self.assertNotIn("k-1", out)
         self.assertIn("user: u", out)
         self.assertIn("plain: {a: 1}", out)
+
+
+class TransportRetry(unittest.TestCase):
+    """soakplatform.Reader retries a transport failure, never an answer
+    (soak K-loop correction 2026-11-24)."""
+
+    RESET = "Unable to connect to the server: read tcp a->b:6443: read: connection reset by peer"
+
+    def test_classifier(self):
+        for err in (self.RESET, "Unable to connect to the server: dial tcp: connect: connection refused",
+                    "Unable to connect to the server: net/http: TLS handshake timeout",
+                    "kubectl timed out after 60s", "error: unexpected EOF",
+                    "Error from server (InternalError): an error on the server",
+                    "Error from server (ServiceUnavailable): the server is currently unable",
+                    "Error from server (Timeout): the server was unable to return a response"):
+            self.assertTrue(sp.transport_failure(err), err)
+        for err in ("", "Error from server (NotFound): pods \"x\" not found",
+                    "Error from server (BadRequest): connection reset in the body",
+                    "Error from server (Forbidden): forbidden", "the guard read's deadline passed",
+                    "error: the server doesn't have a resource type \"x\"",
+                    "Error from server (BadRequest): query (timeout) in the body",
+                    "Unable to connect to the server: x509: certificate has expired"):
+            self.assertFalse(sp.transport_failure(err), err)
+
+    def reader(self, answers):
+        sleeps = []
+        r = sp.Reader(verify.Backends("k8s01", "monitoring", "tempo:3200", "loki:3100", "p:9090"), "k8s01",
+                      sleep=sleeps.append)
+        calls = []
+
+        def run(cmd, **kw):
+            calls.append(cmd)
+            rc, out, err = answers.pop(0)
+            if rc is None:
+                raise subprocess.TimeoutExpired(cmd, kw["timeout"])
+            return subprocess.CompletedProcess(cmd, rc, out, err)
+        return r, sleeps, calls, run
+
+    def test_reset_then_success(self):
+        r, sleeps, calls, run = self.reader([(1, "", self.RESET), (0, '{"items": []}', "")])
+        with mock.patch.object(sp.subprocess, "run", side_effect=run):
+            self.assertEqual(r.kget(["pods", "-A"]), {"items": []})
+        self.assertEqual((r.retries, sleeps, len(calls)), (1, [1], 2))
+        self.assertEqual(calls[0], ["kubectl", "--context", "k8s01", "get", "pods", "-A", "-o", "json"])
+        self.assertIn("connection reset by peer", r.retry_error)
+
+    def test_reset_every_attempt_fails(self):
+        r, sleeps, calls, run = self.reader([(1, "", self.RESET)] * 3)
+        with mock.patch.object(sp.subprocess, "run", side_effect=run), self.assertRaises(verify.QueryError):
+            r.logs("istio-system", "ztunnel-x", 60)
+        self.assertEqual((r.retries, sleeps, len(calls)), (2, list(sp.READ_RETRY_BACKOFF_S), 3))
+        self.assertIn("connection reset by peer", r.retry_error)
+
+    def test_timeout_is_not_retried_without_a_deadline(self):
+        """Review M2: an unbounded reader would wait up to three call timeouts."""
+        r, sleeps, calls, run = self.reader([(1, "", self.RESET), (None, "", "")])
+        with mock.patch.object(sp.subprocess, "run", side_effect=run), self.assertRaises(verify.QueryError) as cm:
+            r.pid1("ns", "p", "c")
+        self.assertIn("timed out", str(cm.exception))
+        self.assertEqual((r.retries, sleeps, len(calls)), (1, [1], 2))
+
+    def test_answers_and_bad_json_are_not_retried(self):
+        r, sleeps, calls, run = self.reader([(1, "", "Error from server (NotFound): x"), (0, "not json", ""),
+                                             (0, "line\n", "")])
+        with mock.patch.object(sp.subprocess, "run", side_effect=run):
+            with self.assertRaises(verify.QueryError):
+                r.kget(["pods"])
+            with self.assertRaises(verify.QueryError):
+                r.kget(["pods"])
+            self.assertEqual(r.logs("ns", "p", 1), ["line"])
+        self.assertEqual((r.retries, sleeps, len(calls)), (0, [], 3))
+        self.assertIsNone(r.time_left())
 
 
 if __name__ == "__main__":

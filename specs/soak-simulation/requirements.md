@@ -866,6 +866,21 @@ form of SR3–SR7, SR10 and SR12.
   *(r6.2, 2026-11-23: the loop, trap, cleanup and pre-flight are now one
   implementation task (K-loop); the trap rules of "Orchestration (r6.2)"
   below add to this bullet.)*
+  *(Corrected 2026-11-24, after run `k8a-20261123a`: the rule did not say
+  when a look-up has failed, and the loop counted one kubectl call that got
+  `connection reset by peer` from the API server as a failed look-up; that
+  single transient reset made the read blind and ended the passive window
+  after 4 h 33 min of 275 reads. A look-up SHALL count as failed only after
+  its transport retries: a call that got no answer (connection reset or
+  refused, a timeout, a TLS handshake failure) or an HTTP 5xx from the API
+  server, its service proxy or the backend behind it SHALL be tried again, at
+  most twice, after 1 s and 3 s, while the pause plus 5 s fits before the
+  window read's deadline (entry reads have no deadline: the count bounds
+  them, and a timed-out call is not retried there); each read SHALL record
+  the retry count and the last transport error. This does not weaken the
+  guard: a look-up still unanswered after the retries is blind, and an
+  answer — no data, a bad value, an error status in a 200 response, a 4xx —
+  is judged as before, never retried.)*
 - **Evidence.** Each run SHALL produce a committed summary
   `specs/soak-simulation/reports/<run>.md`: run id, commit under test, demo
   image tag and digests, k6 and copy image digests, the K1 snapshot, the k6

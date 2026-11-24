@@ -15,7 +15,12 @@ a one-shot snapshot does not:
   na       not applicable now;
   blind    the look-up failed. A read is blind when every look-up failed or a
            core look-up (the pod list or the guard itself) failed (review M3);
-           a blind read stops the load (SR15 Orchestration).
+           a blind read stops the load (SR15 Orchestration). A look-up failed
+           only after the reader's transport retries (``soakplatform.Reader.
+           retrying``): a reset, refused, timed-out or 5xx call is tried again
+           inside the read, and the retries are recorded (``retries``,
+           ``retry_error``); an answer with no data or a bad value is never
+           retried (correction 2026-11-24).
 
 Reads: ``entry_read`` is K1's entry gate (30 min lookback, K0e B1 + item (e))
 without (h); ``wait_demo_ready`` polls (g) after the hook's roll, skipping
@@ -98,6 +103,8 @@ class Item:
 class GuardRead:
     at: float
     items: list[Item]
+    retries: int = 0        # look-ups repeated after a transport failure in this read
+    retry_error: str = ""   # the last such failure ("" without retries)
 
     @property
     def blind(self) -> bool:
@@ -120,8 +127,23 @@ class GuardRead:
         return f"platform: {kind} ({first.name}: {first.detail})"
 
     def as_json(self) -> dict:
-        return {"at": self.at, "blind": self.blind,
-                "items": [{"name": i.name, "state": i.state, "detail": i.detail} for i in self.items]}
+        out = {"at": self.at, "blind": self.blind, "retries": self.retries,
+               "items": [{"name": i.name, "state": i.state, "detail": i.detail} for i in self.items]}
+        if self.retries:
+            out["retry_error"] = self.retry_error
+        return out
+
+
+def _retry_mark(r: sp.Reader) -> int:
+    return getattr(r, "retries", 0)
+
+
+def _read(r: sp.Reader, mark: int, at: float, items: list[Item]) -> GuardRead:
+    """The GuardRead with the reader's transport retries since ``mark``: a
+    retried look-up that then answered is judged on its answer; one that never
+    answered is blind as before (correction 2026-11-24 to SR15 Orchestration)."""
+    n = _retry_mark(r) - mark
+    return GuardRead(at, items, n, getattr(r, "retry_error", "") if n else "")
 
 
 class QuietReport(sp.PlatformReport):
@@ -284,6 +306,7 @@ def entry_read(r: sp.Reader, cfg: GuardConfig, at: float, *, expect_copy: bool =
     ``wait_copy_counts`` on the run's services, after the hook. With ``sleep``,
     a guard (a) mismatch is read again one interval later (more than one
     scrape) and only a mismatch in both reads counts (re-review HIGH-1)."""
+    mark = _retry_mark(r)
     roll = RollState()
     items, _, _, _ = _platform(r, cfg, at, cfg.lookback_s, expect_copy=expect_copy, roll=roll)
     if sleep is not None and any(i.name == A_ITEM and i.state == "breach" for i in items):
@@ -291,7 +314,7 @@ def entry_read(r: sp.Reader, cfg: GuardConfig, at: float, *, expect_copy: bool =
         at = clock() if clock else at + cfg.interval_s
         items, _, _, _ = _platform(r, cfg, at, cfg.lookback_s, expect_copy=expect_copy, roll=roll)
     items = [i for i in items if not i.name.startswith(("guard (h)", "guard (d) roll list vs previous"))]
-    return GuardRead(at, floors(r, cfg, at) + items)
+    return _read(r, mark, at, floors(r, cfg, at) + items)
 
 
 def _scoped_sentinels(sent: list, loaded: bool) -> list[Item]:
@@ -311,6 +334,7 @@ def _scoped_sentinels(sent: list, loaded: bool) -> list[Item]:
 
 def window_read(r: sp.Reader, cfg: GuardConfig, roll: RollState, at: float, *, loaded: bool) -> GuardRead:
     """The read inside a window, every ``interval_s``."""
+    mark = _retry_mark(r)
     items, out, sent, _ = _platform(r, cfg, at, 2 * cfg.interval_s, expect_copy=False, roll=roll)
     kept = []
     for item in items:
@@ -326,7 +350,7 @@ def window_read(r: sp.Reader, cfg: GuardConfig, roll: RollState, at: float, *, l
         kept.append(item)
     if sent:
         kept += _scoped_sentinels(sent, loaded)
-    return GuardRead(at, floors(r, cfg, at) + kept)
+    return _read(r, mark, at, floors(r, cfg, at) + kept)
 
 
 def _exempt(item: Item, young: list[str], roll: RollState, at: float) -> Item:

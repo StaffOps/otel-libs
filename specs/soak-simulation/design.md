@@ -1103,6 +1103,15 @@ reviewed summary is what D10 can link.
 **Trade-offs**: a 24 h (30 h, K0e-1) passive window on a laptop risks sleep, network loss
 and kube-API outages (windows invalidated, not passed); raw output is not in
 git, so a later reviewer has the summary only.
+*(Corrected 2026-11-24, after run `k8a-20261123a` ended on one API
+connection reset: "fully blind" is judged after the reader's transport
+retries — reset, refused, timeout, TLS handshake or an HTTP 5xx from the
+API server, its proxy or the backend, two more attempts after 1 s and 3 s
+while the pause plus 5 s fits inside the read's deadline, recorded as
+`retries` / `retry_error` in `guard.jsonl`. A look-up still unanswered after
+them is blind as before; an answer is never retried (SR15 Orchestration,
+same date). Implemented in `testing/k8s/soakplatform.py` `Reader.retrying`
+and `testing/k8s/soak/soak.py` `KubeReader`.)*
 **When it would be wrong**: the passive window is invalidated repeatedly by
 laptop gaps.
 **Reversal action**: run the loop as a Job in `dev-otel-libs` with a

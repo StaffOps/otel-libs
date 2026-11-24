@@ -78,6 +78,9 @@ MAX_TRACE_LOOKUPS = 10
 
 # kubectl stderr fragments of a failed connection to the API server: the request never
 # got an answer, so it is retried (an HTTP error answer from a backend never is).
+# The soak loop's reader uses its own, wider rule (soakplatform.transport_failure:
+# also refused and HTTP 5xx), deliberately: a soak read is retried inside a guard
+# read's deadline, a verify.py check fails fast and is re-run by the operator.
 TRANSPORT_ERRORS = ("unable to connect to the server", "connection reset",
                     "tls handshake timeout", "i/o timeout")
 # Pauses (seconds) before the 2nd and 3rd attempt of a request that failed in transport.
@@ -211,7 +214,7 @@ class Backends:
 
 
 def kubectl_json(context: str, args: list[str]) -> dict:
-    """Read-only ``kubectl --context <ctx> get <args> -o json`` (shared with soak K1, K-D3).
+    """Read-only ``kubectl --context <ctx> get <args> -o json`` (soak K-count, K-D3).
 
     The verb is always ``get``: this wrapper cannot write to the cluster.
     """
