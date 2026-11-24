@@ -802,6 +802,7 @@ class Options:
     skip_exec: bool = False
     langs: tuple[str, ...] = tuple(verify.LANGS)
     previous_proxied: frozenset = frozenset()  # guard (a): last read's annotated Running pods
+    skip_a: bool = False  # the soak does not read guard (a) (owner ruling 2026-11-24)
 
 
 # ── the mode ──
@@ -1097,14 +1098,15 @@ def guard(r: Reader, rep: PlatformReport, opts: Options, now: float, pods: list[
     # (a) proxied workloads vs annotated Running pods (one node). A pod that started
     # running or began deleting within PROXY_SETTLE_S may or may not be in the
     # scraped count yet (review H3): the count must lie in [settled, settled + young].
-    settled, young_a, running_a = proxy_counts(pods, now, opts.previous_proxied)
-    prox = cluster_only(r.prom(sel("workload_manager_active_proxy_count", {"job": ZTUNNEL_JOB}), now))
-    count = sum(float(s["value"][1]) for s in prox) if prox else None
-    out["a"] = {"active_proxy_count": count, "annotated_running": settled, "in_transition": young_a,
-                "running_keys": sorted(running_a)}
-    rep.check(count is not None and settled <= int(count) <= settled + young_a, "guard (a) ztunnel proxies",
-              f"workload_manager_active_proxy_count {count} vs {settled} annotated Running pods"
-              + (f" (+ up to {young_a} in transition)" if young_a else ""))
+    if not opts.skip_a:
+        settled, young_a, running_a = proxy_counts(pods, now, opts.previous_proxied)
+        prox = cluster_only(r.prom(sel("workload_manager_active_proxy_count", {"job": ZTUNNEL_JOB}), now))
+        count = sum(float(s["value"][1]) for s in prox) if prox else None
+        out["a"] = {"active_proxy_count": count, "annotated_running": settled, "in_transition": young_a,
+                    "running_keys": sorted(running_a)}
+        rep.check(count is not None and settled <= int(count) <= settled + young_a, "guard (a) ztunnel proxies",
+                  f"workload_manager_active_proxy_count {count} vs {settled} annotated Running pods"
+                  + (f" (+ up to {young_a} in transition)" if young_a else ""))
     # (b) the two telemetry edges over the lookback.
     for v in edges_gate:
         if v.verdict == "UNKNOWN":  # a scrape gap: neither clean nor an increase (re-review M1)

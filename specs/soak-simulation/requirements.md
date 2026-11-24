@@ -903,6 +903,20 @@ stays as dated history.
     SHALL equal the number of Running pods annotated
     `ambient.istio.io/redirection=enabled` on the node (one node; read with
     `kubectl_json`, all namespaces);
+    *(Corrected 2026-11-24, owner ruling after run `k8a-20261124a`: the soak
+    SHALL NOT read (a). The soak judges the run's services in `dev-otel-libs`,
+    which export to their own Collector (`soak-agent`), not the cluster; the
+    metric counts every ambient pod of the node and cannot be scoped to one
+    namespace. The window ended at 11 h 43 min on two consecutive reads that
+    each counted one completed job of another namespace (`velero`
+    `kopia-maintain`, then `argo-workflows` `techdocs-build`): istio-cni drops
+    the redirection annotation as soon as a pod completes, while the scraped
+    count still had it 51 s later (`kopia-maintain` finished 12:31:09Z, the
+    count fell at 12:32:00Z; `techdocs-build` finished 12:32:39Z, the read at
+    12:32:43Z still counted it). The soak loop passes `skip_a`, so the (a)
+    query does not run and cannot make a read blind. (b)–(h) and the floors
+    keep their rules. `verify.py platform` (K1) still prints (a) as a
+    report.)*
   - (b) `increase(istio_tcp_connections_failed_total{reporter="source"}[60s])`
     SHALL be 0 for every series whose source or destination workload
     namespace is `dev-otel-libs`, `opentelemetry` or `monitoring`;

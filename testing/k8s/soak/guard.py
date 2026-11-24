@@ -1,13 +1,14 @@
 """The guard read of the soak run loop (specs/soak-simulation task K-loop): a
 thin adapter over K1's ``testing/k8s/soakplatform.py``, which owns the guard
-logic — the mesh and platform guard (a)-(h) (``soakplatform.guard``), the
+logic — the mesh and platform guard (b)-(h) (``soakplatform.guard``; (a) is
+not read, owner ruling 2026-11-24), the
 scoped sentinels (``read_sentinels``), the telemetry edges (``read_edges``),
 the cluster-safe query builder (``sel``) and the K-D13 floors. This module turns
 those verdicts into the loop's item states and adds what a 60 s read needs and
 a one-shot snapshot does not:
 
   ok       nothing wrong;
-  breach   the window is invalid (``platform: mesh`` for a guard (a)-(h) item,
+  breach   the window is invalid (``platform: mesh`` for a guard (b)-(h) item,
            ``platform: guard`` otherwise) and the load is stopped;
   finding  report-only — a non-telemetry mesh edge, a copy sentinel (it gates
            the copy verdicts, judged by K-count), a shared sentinel in a
@@ -220,8 +221,6 @@ class RollState:
     exempt_until: float = 0.0
     exempted: set[str] = field(default_factory=set)
     previous: dict[str, dict[str, int]] | None = None
-    proxied_prev: frozenset = frozenset()   # guard (a): last read's annotated Running pods
-    a_mismatch_prev: bool = False           # guard (a): the last read already mismatched
 
     def exempt_open(self, at: float) -> bool:
         return self.exempt_copy_rolls > 0 and self.exempt_from <= at <= self.exempt_until
@@ -281,10 +280,8 @@ def _platform(r: sp.Reader, cfg: GuardConfig, at: float, lookback: int, *, expec
         sent = sp.read_sentinels(r, at, (start,), copy_idle=copy_idle)[0]
         edges, others = sp.read_edges(r, at, (start,))
         opts = sp.Options(run="soak", lookback=lookback, ready_settle=cfg.ready_s, expect_copy=expect_copy,
-                          langs=cfg.langs, previous_proxied=roll.proxied_prev if roll else frozenset())
+                          langs=cfg.langs, skip_a=True)
         out = sp.guard(r, rep, opts, at, pods, entries, sent, edges[0])
-        if roll is not None:
-            roll.proxied_prev = frozenset((out.get("a") or {}).get("running_keys") or ())
     except ReadError as exc:
         return items + rep.collected + [Item("guard", "blind", str(exc))], {}, [], []
     if others:
@@ -298,22 +295,30 @@ def _platform(r: sp.Reader, cfg: GuardConfig, at: float, lookback: int, *, expec
 A_ITEM = "guard (a) ztunnel proxies"
 
 
+def scoped(items: list[Item]) -> list[Item]:
+    """Drop guard (a) if one ever reaches here (``_platform`` passes
+    ``skip_a``, so its query does not run; owner ruling 2026-11-24, SR15
+    correction): the soak
+    judges the run's services in dev-otel-libs, not the cluster.
+    ``workload_manager_active_proxy_count`` counts every ambient pod on the
+    node; a completed job of another namespace (istio-cni drops its
+    redirection annotation at once, the scraped count lags it) made two
+    consecutive reads mismatch in run k8a-20261124a."""
+    return [i for i in items if i.name != A_ITEM]
+
+
 def entry_read(r: sp.Reader, cfg: GuardConfig, at: float, *, expect_copy: bool = False,
                clock: Callable[[], float] | None = None, sleep: Callable[[float], None] | None = None) -> GuardRead:
     """Pre-flight and entry gate: K1's gate (every guard and sentinel counter
-    clean over the 30 min lookback, (a)-(g) now) plus the floors. A breach does
+    clean over the 30 min lookback, (b)-(g) now) plus the floors. A breach does
     not start the window and points to the platform session. (h) is judged by
-    ``wait_copy_counts`` on the run's services, after the hook. With ``sleep``,
-    a guard (a) mismatch is read again one interval later (more than one
-    scrape) and only a mismatch in both reads counts (re-review HIGH-1)."""
+    ``wait_copy_counts`` on the run's services, after the hook. Guard (a) is not
+    read (owner ruling 2026-11-24, ``scoped``); ``clock`` and ``sleep`` are kept
+    for the callers and no longer used."""
     mark = _retry_mark(r)
     roll = RollState()
     items, _, _, _ = _platform(r, cfg, at, cfg.lookback_s, expect_copy=expect_copy, roll=roll)
-    if sleep is not None and any(i.name == A_ITEM and i.state == "breach" for i in items):
-        sleep(cfg.interval_s)
-        at = clock() if clock else at + cfg.interval_s
-        items, _, _, _ = _platform(r, cfg, at, cfg.lookback_s, expect_copy=expect_copy, roll=roll)
-    items = [i for i in items if not i.name.startswith(("guard (h)", "guard (d) roll list vs previous"))]
+    items = scoped([i for i in items if not i.name.startswith(("guard (h)", "guard (d) roll list vs previous"))])
     return _read(r, mark, at, floors(r, cfg, at) + items)
 
 
@@ -333,20 +338,15 @@ def _scoped_sentinels(sent: list, loaded: bool) -> list[Item]:
 
 
 def window_read(r: sp.Reader, cfg: GuardConfig, roll: RollState, at: float, *, loaded: bool) -> GuardRead:
-    """The read inside a window, every ``interval_s``."""
+    """The read inside a window, every ``interval_s`` (guard (a) not read)."""
     mark = _retry_mark(r)
     items, out, sent, _ = _platform(r, cfg, at, 2 * cfg.interval_s, expect_copy=False, roll=roll)
     kept = []
-    for item in items:
+    for item in scoped(items):
         if item.name.startswith(("guard (g)", "guard (h)", "gate sentinels")):
             continue
         if item.name == "guard (d,e) roll list unchanged" and item.state == "breach":
             item = _exempt(item, out.get("d") or [], roll, at)
-        if item.name == A_ITEM:
-            first = item.state == "breach" and not roll.a_mismatch_prev
-            roll.a_mismatch_prev = item.state == "breach"
-            if first:  # one read can race the scrape: the next read (60 s later) decides
-                item = Item(item.name, "finding", item.detail + "; first mismatch, the next read decides")
         kept.append(item)
     if sent:
         kept += _scoped_sentinels(sent, loaded)

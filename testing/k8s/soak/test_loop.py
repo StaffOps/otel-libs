@@ -487,18 +487,18 @@ class Window(Base):
 
     def test_breach_stops_k6_and_invalidates(self):
         reader = Switch()
-        clock = Clock(on_sleep=lambda n: reader.pods.append(tp.pod_obj(sp.APP_NS, "new-pod", NOW - tp.DAY)))
+        clock = Clock(on_sleep=lambda n: reader.log_lines.append(
+            "2026 ERROR connection refused 10.0.0.1:15008 ns dev-otel-libs"))
         with self.cluster() as c:
             c.logs({"job/soak-k6-loaded": "partial\n"})
             res = self.loop(reader, clock).window("loaded", 3600, loaded=True, start_load=self.start_k6())
             self.assertTrue(res.started)
             self.assertFalse(res.valid)
-            self.assertTrue(res.reason.startswith("platform: mesh (guard (a) ztunnel proxies"), res.reason)
+            self.assertTrue(res.reason.startswith("platform: mesh (guard (c) ztunnel refused"), res.reason)
             self.assertIn("suspended", res.reason)
             self.assertTrue(self.job(c)["spec"]["suspend"])
             self.assertEqual((self.d / "raw" / "soak-k6-loaded.stop.log").read_text(), "partial\n")
-        self.assertEqual(res.reads, 3)  # the first mismatch is a finding, the second read breaches
-        self.assertTrue(any("first mismatch" in f for f in res.findings))
+        self.assertEqual(res.reads, 2)  # the read after the first sleep breaches
 
     def test_shared_rise_breaches_loaded_but_not_passive(self):
         for loaded, valid in ((True, False), (False, True)):

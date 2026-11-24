@@ -13,7 +13,7 @@ python3 -I testing/k8s/soak/soak.py <mode> --run <id> [...]
 | File | What it holds |
 |---|---|
 | `soak.py` | CLI, the window loop, the trap, `cleanup`, the pre-flight, the dry run |
-| `guard.py` | the guard read: a thin adapter over K1's `testing/k8s/soakplatform.py` (guard (a)–(h), sentinels, edges, `sel`) |
+| `guard.py` | the guard read: a thin adapter over K1's `testing/k8s/soakplatform.py` (guard (b)–(h), sentinels, edges, `sel`; guard (a), the node-wide ztunnel proxy count, is not read — owner ruling 2026-11-24, the soak judges `dev-otel-libs`, not the cluster) |
 | `render.py` | every soak-run object, as JSON |
 | `k6script.py` | the k6 script generator and the summary / reservoir parser |
 | `fakekube.py` | a fake `kubectl` (and `demo.sh`) for the tests and the dry run |
@@ -69,7 +69,7 @@ the trap runs.
   soak passive` judges. A failed exec or an empty listing is recorded as an
   error, never as 0 FDs, and never fatal.
 - **Breach.** The window is invalid with the reason `platform: mesh (<item>)`
-  (an item of (a)–(h)) or `platform: guard (<item>)`; `kubectl logs job/<k6>`
+  (an item of (b)–(h)) or `platform: guard (<item>)`; `kubectl logs job/<k6>`
   is saved to `raw/<job>.stop.log`, then the Job is suspended (its pods go,
   the Job stays for the trap).
 - **Blind read** (every look-up failed, or the pod list or the guard itself

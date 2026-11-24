@@ -4870,6 +4870,24 @@ Unsupported instrumentation versions, task A10 (P18):
 
 ### Internal
 
+- **Soak guard (a) not read (2026-11-24, owner ruling, SR15 correction).**
+  Run `k8a-20261124a` ended invalid at 11 h 43 min on two consecutive
+  guard (a) mismatches: the node-wide ztunnel proxy count still had a
+  completed job of another namespace (`velero` `kopia-maintain`, then
+  `argo-workflows` `techdocs-build`), whose redirection annotation istio-cni
+  had already dropped. The soak judges the run's services in `dev-otel-libs`
+  and their own Collector, not the cluster, so `testing/k8s/soak/guard.py`
+  no longer reads (a) in the entry gate or the window reads (new
+  `soakplatform.Options.skip_a`: the query does not run, so it cannot make a
+  read blind either); (b)–(h) and the floors are unchanged, and
+  `verify.py platform` still reports (a). Tests updated (128 OK).
+- **Soak guard retries transport errors before a blind read (2026-11-24,
+  592526e).** Run `k8a-20261123a` ended on one `connection reset by peer`
+  from the API server. A kubectl or Prometheus read that got no answer
+  (reset, refused, timeout, TLS handshake, EOF) or a 5xx is tried again at
+  most twice (1 s, 3 s) while it fits before the read's deadline; writes are
+  never retried; each guard read records `retries` and the last error.
+
 - **K-copy: the Collector copy accepted on k8s01, with `soak.py run --control`
   (2026-11-23, soak r6.2).** New `run --control` runs the telemetrygen
   positive control through `soak-otlp` (copy) inside the trap, before the

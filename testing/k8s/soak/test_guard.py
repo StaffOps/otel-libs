@@ -54,7 +54,7 @@ class EntryRead(unittest.TestCase):
         self.assertEqual(read.breaches, [], json.dumps(read.as_json(), indent=1))
         self.assertFalse(read.blind)
         self.assertNotIn("guard (h) copy counts", states(read))
-        self.assertIn("guard (a) ztunnel proxies", states(read))
+        self.assertNotIn(guard.A_ITEM, states(read))  # not read: owner ruling 2026-11-24
 
     def test_noisy_shared_sentinel_blocks_the_gate(self):
         r = healthy()
@@ -67,31 +67,54 @@ class EntryRead(unittest.TestCase):
 
     def test_mesh_breach_is_reason_mesh(self):
         r = healthy()
-        r.pods.append(tp.pod_obj(sp.APP_NS, "extra-pod", NOW - 5 * tp.DAY))  # annotated, not proxied
+        r.log_lines = ["2026 ERROR connection refused 10.0.0.1:15008 ns dev-otel-libs"]
         read = guard.entry_read(r, guard.GuardConfig(), NOW)
-        self.assertTrue(read.reason().startswith("platform: mesh (guard (a)"), read.reason())
+        self.assertTrue(read.reason().startswith("platform: mesh (guard (c)"), read.reason())
+
+    def test_guard_a_is_not_read(self):
+        """Owner ruling 2026-11-24: an unproxied annotated pod (or a completed job
+        of another namespace) no longer breaches the gate or a window read."""
+        r = healthy()
+        r.pods.append(tp.pod_obj("velero", "kopia-maintain-job", NOW - tp.DAY))  # annotated, not proxied
+        # positive control: K1's guard, which still runs (a), breaches on this fixture
+        rep = guard.QuietReport()
+        sp.guard(r, rep, sp.Options(run="soak"), NOW, r.kget(["pods", "-A"])["items"],
+                 [sp.roll_entry(r.kget(["pods", "-A"])["items"], ns, rx, role) for ns, rx, role in sp.ROLL_LIST],
+                 [], [])
+        self.assertEqual({i.name: i.state for i in rep.collected}[guard.A_ITEM], "breach")
+        read = guard.entry_read(r, guard.GuardConfig(), NOW)
+        self.assertEqual(read.breaches, [], read.as_json())
+        self.assertNotIn(guard.A_ITEM, states(read))
+        rr = soak_reader(healthy())
+        rr.pods.append(tp.pod_obj("velero", "kopia-maintain-job", NOW - tp.DAY))
+        roll = guard.RollState()
+        for _ in range(3):
+            w = guard.window_read(rr, guard.GuardConfig(), roll, NOW, loaded=True)
+            self.assertEqual(w.breaches, [], w.as_json())
+            self.assertNotIn(guard.A_ITEM, states(w))
+
+    def test_guard_a_query_is_not_run(self):
+        """Review M1: a failing (a) query cannot make a read blind."""
+        class NoA(type(healthy())):
+            def prom(self, q, at):
+                if "workload_manager_active_proxy_count" in q:
+                    raise sp.verify.QueryError("(a) must not be queried")
+                return super().prom(q, at)
+        r = NoA()
+        r.__dict__.update(healthy().__dict__)
+        read = guard.entry_read(r, guard.GuardConfig(), NOW)
+        self.assertFalse(read.blind, read.as_json())
+        self.assertEqual(read.breaches, [], read.as_json())
+        rr = NoA()
+        rr.__dict__.update(soak_reader(healthy()).__dict__)
+        w = guard.window_read(rr, guard.GuardConfig(), guard.RollState(), NOW, loaded=True)
+        self.assertFalse(w.blind, w.as_json())
 
     def test_missing_roll_role(self):
         r = healthy()
         r.pods = [p for p in r.pods if not p["metadata"]["name"].startswith("istiod")]
         read = guard.entry_read(r, guard.GuardConfig(), NOW)
         self.assertIn("guard (d) roll list istiod present", [i.name for i in read.breaches])
-
-    def test_entry_gate_reads_guard_a_twice(self):
-        r = healthy()
-        extra = tp.pod_obj(sp.APP_NS, "settled-unproxied", NOW - tp.DAY)
-        r.pods.append(extra)
-        slept = []
-        persistent = guard.entry_read(r, guard.GuardConfig(), NOW, clock=lambda: NOW + 60, sleep=slept.append)
-        self.assertEqual(slept, [60])
-        self.assertIn(guard.A_ITEM, [i.name for i in persistent.breaches])
-
-        def vanish(s):
-            slept.append(s)
-            r.pods.remove(extra)
-        transient = guard.entry_read(r, guard.GuardConfig(), NOW, clock=lambda: NOW + 60, sleep=vanish)
-        self.assertEqual(transient.breaches, [], transient.as_json())
-        self.assertNotIn("guard (d) roll list vs previous read", states(transient))
 
     def test_blind(self):
         read = guard.entry_read(Blind(), guard.GuardConfig(), NOW)
@@ -209,29 +232,6 @@ class WindowRead(unittest.TestCase):
             copy["metadata"]["name"] = "soak-agent-5f4d7fd6f8-newpd"
             self.assertEqual(states(self.read(rr, roll=roll))["guard (d) roll list vs previous read"], want)
         del r
-
-    def test_guard_a_needs_two_consecutive_mismatches(self):
-        """Re-review HIGH-1: a one-read mismatch passes, a persistent one breaches."""
-        r = soak_reader(healthy())
-        roll = guard.RollState()
-        extra = tp.pod_obj(sp.APP_NS, "settled-unproxied", NOW - tp.DAY)
-        r.pods.append(extra)
-        self.assertEqual(states(self.read(r, roll=roll))[guard.A_ITEM], "finding")
-        r.pods.remove(extra)  # transient: gone at the next read (counted as in transition)
-        self.assertEqual(states(self.read(r, roll=roll))[guard.A_ITEM], "ok")
-        r.pods.append(extra)
-        self.assertEqual(states(self.read(r, roll=roll))[guard.A_ITEM], "finding")
-        read = self.read(r, roll=roll)
-        self.assertEqual(states(read)[guard.A_ITEM], "breach")  # persistent
-        self.assertTrue(read.reason().startswith("platform: mesh (guard (a)"))
-
-    def test_guard_a_counts_a_deleted_pod_of_the_previous_read(self):
-        r = soak_reader(healthy())
-        roll = guard.RollState()
-        self.read(r, roll=roll)
-        gone = [p for p in r.pods if p["metadata"]["name"].startswith("demo-go-api")][0]
-        r.pods.remove(gone)  # deleted; ztunnel's scraped count still has it
-        self.assertEqual(states(self.read(r, roll=roll))[guard.A_ITEM], "ok")
 
     def test_blind_window_read(self):
         self.assertTrue(self.read(Blind()).blind)
