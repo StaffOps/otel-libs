@@ -108,6 +108,10 @@ RUNTIME_RULES = {"go": ("goroutines",), "dotnet": ("threadpool_threads", "thread
 # when it has enough samples; these are the dated fallbacks.
 COPY_SCRAPE_S = 15
 GATEWAY_SCRAPE_S = 30
+# The quiesce after the last traffic before a count boundary (Glossary "Quiesced
+# checkpoint": SDK batch delay + export timeout + agent batch timeout, plus the
+# copy and gateway scrapes); initial value, `unmeasured` (K-cal, K8b).
+QUIESCE_S = 120.0
 
 
 class Counted(float):
@@ -653,7 +657,8 @@ def _integral(x: float) -> bool:
 
 
 def calibrate(repeats: list[dict], *, mix: dict[str, int] | None = None, rate: float | None = None,
-              drain: dict[str, float] | None = None) -> dict:
+              drain: dict[str, float] | None = None, invalid: list[dict] | None = None,
+              planned: list[str] | None = None) -> dict:
     """Per (service, cell): k = copy delta / N over two repeats of N requests of
     one cell (N = the k6 answered count, every request answered as expected);
     integral and equal across the repeats, else the cell, and so the service, is
@@ -663,10 +668,22 @@ def calibrate(repeats: list[dict], *, mix: dict[str, int] | None = None, rate: f
 
     A repeat: {"cell": id, "counts": {expected, unexpected, noanswer},
     "copy": {service: delta}, "gateway": {service: {family: delta}},
-    "unset": [services]}."""
+    "unset": [services]}.
+
+    ``invalid`` (K-cal-d): repeats the driver kept out (an invalid window, an
+    unclean copy gate, an ambiguous count), each with its ``reasons``: their
+    cell is excluded, the reasons named. ``planned``: the plan's cell ids; a
+    planned cell with no repeat is excluded ("0 repeat(s)")."""
     by_cell: dict[str, list[dict]] = {}
     for rep in repeats:
         by_cell.setdefault(rep["cell"], []).append(rep)
+    bad_cells: dict[str, list[str]] = {}
+    for rec in invalid or []:
+        by_cell.setdefault(rec["cell"], [])
+        bad_cells.setdefault(rec["cell"], []).extend(r for r in rec.get("reasons") or ["invalid"]
+                                                     if r not in bad_cells.get(rec["cell"], []))
+    for cell in planned or []:
+        by_cell.setdefault(cell, [])
     services: dict[str, dict] = {}
     families: dict[str, dict[str, dict[str, int]]] = {}
     for cell, reps in by_cell.items():
@@ -676,9 +693,11 @@ def calibrate(repeats: list[dict], *, mix: dict[str, int] | None = None, rate: f
         for svc in svcs:
             st = services.setdefault(svc, {"k": {}, "qualified": True, "causes": []})
             ks, cause = [], None
-            if len(reps) < 2:
+            if bad_cells.get(cell):
+                cause = f"{cell}: invalid repeat(s): {'; '.join(bad_cells[cell])}"
+            elif len(reps) < 2:
                 cause = f"{cell}: {len(reps)} repeat(s), need 2"
-            for r in reps:
+            for r in reps if not bad_cells.get(cell) else []:
                 n = r["counts"]
                 if n.get("noanswer") or n.get("unexpected"):
                     cause = f"{cell}: repeat with {n.get('noanswer', 0)} no answer / {n.get('unexpected', 0)} unexpected"
@@ -707,7 +726,8 @@ def calibrate(repeats: list[dict], *, mix: dict[str, int] | None = None, rate: f
             for fam in sorted({f for r in reps for f in ((r.get("gateway") or {}).get(svc) or {})}):
                 fks = [((r.get("gateway") or {}).get(svc) or {}).get(fam, 0.0) / max(r["counts"]["expected"], 1)
                        for r in reps]
-                if len(fks) >= 2 and all(_integral(k) for k in fks) and len({round(k) for k in fks}) == 1:
+                if not bad_cells.get(cell) and len(fks) >= 2 and all(_integral(k) for k in fks) \
+                        and len({round(k) for k in fks}) == 1:
                     families.setdefault(svc, {}).setdefault(fam, {})[cell] = round(fks[0])
                 else:
                     families.setdefault(svc, {}).setdefault(f"excluded:{fam}", {})[cell] = -1
@@ -718,6 +738,14 @@ def calibrate(repeats: list[dict], *, mix: dict[str, int] | None = None, rate: f
     fam_out = {svc: {f: v for f, v in fs.items() if not f.startswith("excluded:")} for svc, fs in families.items()}
     excluded = {svc: sorted(f[len("excluded:"):] for f in fs if f.startswith("excluded:"))
                 for svc, fs in families.items() if any(f.startswith("excluded:") for f in fs)}
+    # A family ambiguous (lower != upper) in any repeat is excluded and named, even
+    # when the driver left it out of every repeat's ``gateway`` (K-cal-d re-review M3).
+    for rep in repeats:
+        for svc, fams in (rep.get("gateway_ambiguous") or {}).items():
+            for fam in fams:
+                (fam_out.get(svc) or {}).pop(fam, None)
+                if fam not in excluded.setdefault(svc, []):
+                    excluded[svc] = sorted(excluded[svc] + [fam])
     result = {"services": out_services, "families": fam_out, "excluded_families": excluded}
     if rate is not None and drain:
         m = mix or {"ok": 7, "business_error": 1, "db_error": 1, "unhandled": 1}
@@ -1331,7 +1359,8 @@ def main_soak(b: verify.Backends, args, now: float, reader: sp.Reader | None = N
             ok = all(v["verdict"] in ("PASS", "REPORT-ONLY") for v in data["apis"].values())
         elif args.action == "cal":
             inp = _load_json(args.input)
-            data = calibrate(inp["repeats"], mix=inp.get("mix"), rate=args.rate, drain=inp.get("drain"))
+            data = calibrate(inp["repeats"], mix=inp.get("mix"), rate=args.rate, drain=inp.get("drain"),
+                             invalid=inp.get("invalid"), planned=inp.get("planned"))
             ok = all(v["qualified"] for v in data["services"].values())
         else:
             return action_report(args, d)
@@ -1501,7 +1530,7 @@ def add_parser(sub) -> None:
     p.add_argument("--input", type=Path, help="shut / cal: input JSON")
     p.add_argument("--workers", type=Path, default=None,
                    help="count: JSON {lang: {startedAt, first_drive, restartCount}} recorded at the window start")
-    p.add_argument("--quiesce", type=float, default=120.0, help="count: the quiesce after the last traffic (s)")
+    p.add_argument("--quiesce", type=float, default=QUIESCE_S, help="count: the quiesce after the last traffic (s)")
     p.add_argument("--worker-interval", type=float, default=10800.0,
                    help="count: the workers' DEMO_INTERVAL_SECONDS in the window (default 10800)")
     p.add_argument("--rate", type=float, default=None, help="cal: loaded rate per language (req/s)")

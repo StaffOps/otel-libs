@@ -12,7 +12,8 @@ python3 -I testing/k8s/soak/soak.py <mode> --run <id> [...]
 
 | File | What it holds |
 |---|---|
-| `soak.py` | CLI, the window loop, the trap, `cleanup`, the pre-flight, the dry run |
+| `soak.py` | CLI, the window loop, the trap, `cleanup`, the pre-flight, the dry run, the cluster side of `cal` (`CalOps`) |
+| `cal.py` | the K-cal driver (task K-cal-d, design K-D20): the plan, phases A and B, the derivations |
 | `guard.py` | the guard read: a thin adapter over K1's `testing/k8s/soakplatform.py` (guard (b)–(h), sentinels, edges, `sel`; guard (a), the node-wide ztunnel proxy count, is not read — owner ruling 2026-11-24, the soak judges `dev-otel-libs`, not the cluster) |
 | `render.py` | every soak-run object, as JSON |
 | `k6script.py` | the k6 script generator and the summary / reservoir parser |
@@ -25,6 +26,7 @@ python3 -I testing/k8s/soak/soak.py <mode> --run <id> [...]
 |---|---|
 | `preflight --run <id> [--tag <t>]` | Reads only. Refuses while any object labelled `otel-libs/soak-run` exists (of any run id), an object without that label carries a soak name (`soak-otlp`, `soak-k6-*`, …), or the namespace label `istio.io/dataplane-mode` is not `ambient`; records the running demo (one image tag, the replicas per language, from the live Deployments) and refuses when the tag is not `--tag` or `demo-tag.sh`'s; then the entry gate, one line per item. |
 | `run --run <id> --window <name> --duration <s> [--rate <n>] [--langs ...] [--hook] [--control] [--worker-interval <s>] [--tag <t>]` | The pre-flight and the entry gate first, before any write. Then `soak-otlp` (copy variant); with `--control` (task K-copy), the positive control before the hook: the copy's `soak-control` series read, the `soak-control` Job applied and waited for (360 s), the counts polled until they arrive (120 s) and read again two scrapes (30 s) later; PASS only when the delta is exactly `render.control_expected` (`otel_libs_soak_spans_total` +8; `otel_libs_soak_fixed_spans_total` +2 for `<run>-ctl-a`, `<run>-ctl-b` and `unset`, +1 for `<run>-ctl-n`; an absent series counts 0, a decrease is a copy reset); `control.json`, a `windows.jsonl` record and `raw/soak-control.log`; a FAIL ends the run before the hook (the trap runs); with `--hook`, the demo re-applied through `demo.sh`'s `DEMO_ENV_FILE`, guard (g) polled until the rolled pods are Ready for 10 min (Terminating pods skipped; at most 10 + 10 min), and guard (h) as an increase of every service's copy count since the hook; with `--rate`, the k6 ConfigMap and Job; then a guard read every 60 s until the window ends. The trap always runs at the end. |
+| `cal --run <id> [--langs ...] [--n N] [--rate R] [--steps a,b,c] [--step-duration S] [--quiesce Q] [--worker-interval I] [--drain-wait W] [--control] [--dry-run]` | K-cal (below). The same pre-flight, entry gate, hook (always applied), soak-run labels and trap as `run`. `--dry-run` prints the plan (cells, N, repeats, steps, the wall-clock estimate, the objects) and makes no kubectl call and writes nothing. |
 | `cleanup --run <id> [--tag <t>]` | The trap's steps, for a run whose laptop was cut off. It restores the demo from `runs/<id>/state.json`; `--tag` forces a restore with that tag (replicas as recorded, else 1). |
 | `render --run <id> --what <object>` | Prints one soak-run object (offline). Objects: `k6`, `k6-configmap`, `k6-job`, `soak-otlp --variant copy\|refused\|hung\|redirect`, `sink-hung`, `sink-redirect`, `control`, `fallback --langs <lang>`. |
 | `dry-run --run <id>` | Offline, on `fakekube.py`: creates one soak-run object of each kind, runs the trap and checks it deleted exactly those and nothing else (the seed includes a soak-labelled Service in another namespace, which must stay). |
@@ -107,6 +109,80 @@ the trap runs.
   that has a sample in the hour before it only had a scrape gap: its first
   value is not counted and the read item is blind (reset unknown), not an
   increase.
+
+## Calibration (`cal`, task K-cal-d)
+
+The driver of K-cal (design K-D20). Defaults: N = 30 requests per language
+and repeat at 2 req/s (15 s), 2 repeats, quiesce 120 s (`soakcount.QUIESCE_S`),
+steps 2, 5, 10, 20 req/s per language for 300 s each, the hook's worker
+interval 21600 s, a drain wait of at most 900 s.
+
+- **Hook.** As `run --hook` with `*/worker DEMO_INTERVAL_SECONDS` = the
+  worker interval: the copy only sees the hooked demo, and no worker drive
+  may land inside the calibration: refused at plan time against the worst
+  case (every k6 Job to its `activeDeadlineSeconds`; 5.2 h at the defaults),
+  stopped before the first k6 run against the recorded worker starts, and
+  checked again before each window (now + its worst case + the quiesce).
+- **k6 memory.** A pre-flight read, before any write: the top step's k6
+  memory limit (256 MiB + 4 MiB per VU) must fit in the node's MemAvailable
+  minus the K-D13 floor; a blind read refuses. k6's peak RSS is `unmeasured`
+  (the summary carries no process-memory metric).
+- **Worker first drive.** Per non-Go worker: the first step of the copy's
+  `otel_libs_soak_fixed_spans_total` for its api or worker after the hook (an
+  upper bound: the drive precedes it by up to one export interval and one copy
+  scrape), with the delay from the container's `startedAt`. Go drives first at
+  start + interval, so it is `unmeasured` with that reason.
+- **Phase A.** A quiesce, then per cell of the K8b plan (`k6script` default
+  mix × classes, 12 cells) two k6 runs of that one cell, each followed by a
+  quiesce; the four languages share a k6 run (their services are disjoint and
+  both sources carry `service_name`; the cells of one language cannot, no
+  source carries the cell). After a cell's second quiesce: one raw read of the
+  copy and one of the gateway over the cell, cut at the quiesced boundaries
+  with K-count's series rules, and the copy gate (sentinels, queue 0 at both
+  ends). Every k6 run and every quiesce is a guarded window (read as loaded:
+  their spans are in flight); an invalid one, a summary missing, or a gap of
+  more than 3 × the interval between two windows stops the phase. Each k6 Job
+  is deleted after its logs are saved to `raw/soak-k6-<window>.log`.
+- **`kcal-input.json`** (rewritten atomically after every cell):
+  `{"repeats": [...], "invalid": [...], "mix": {...}, "planned": [cell ids],
+  "drain": {lang: msg/s}}`. A repeat is `calibrate()`'s
+  `{"cell", "counts": {expected, unexpected, noanswer}, "copy": {service:
+  delta}, "gateway": {service: {family: delta}}, "unset": [...]}` plus
+  `window`, `t1`, `t2` and, when a service had no copy series at all, `absent`
+  (recorded as 0 only when another service of the language counted in the
+  same repeat; else the repeat is invalid: "absent copy series, no sibling
+  success"). A gateway family whose lower and upper counts differ is left out
+  of `gateway` and named in `gateway_ambiguous`. A repeat with an invalid
+  window, an unclean copy gate or an ambiguous copy count goes to `invalid`
+  with its `reasons`; `calibrate()`
+  then excludes its cell by name, and a planned cell with no repeat as
+  "0 repeat(s)". `verify.py soak cal --input kcal-input.json` reproduces the
+  calibration part.
+- **`soak-cal.json`**: `calibrate()`'s output (`services`, `families`,
+  `excluded_families`, `rate_cap`; what `verify.py soak count --kcal` reads)
+  plus `driver`: the plan, the estimate, `workers`, `phase_a` (cells, copy
+  gates, `aborted`), `steps` (with `dropped_iterations` and `noanswer`),
+  `loaded_rate`, `k8b_rate`, `k8b_rate_per_lang`, `drain`, `drain_wait` (with
+  every read), `k6_peak_rss`. Re-running
+  `verify.py soak cal` overwrites it without `driver`.
+- **Phase B.** One k6 run per step (default mix and classes), each followed
+  by a quiesce. A step is clean when both windows are valid and the summary's
+  `dropped_iterations` is 0; the steps stop at the first unclean one. Loaded
+  rate = the highest clean step minus one step (none with fewer than two clean
+  steps: exit 1). Drain per language from the gateway's `send` / `process
+  demo:<lang>:orders`: a step saturated the worker when `send` − `process`
+  (upper count) > max(10 msgs, 5 % of `send`); then its drain rate is the
+  consumed count over the step's span (`measured`, the lowest such value); a
+  worker that kept up has no measured rate (`unmeasured`, with the rate it
+  reached). Then quiesces until the backlog is at most 10, at most the drain
+  wait. `rate_cap` checks the loaded rate × the `ok` share against the
+  measured drain rates; `k8b_rate` = min(loaded, floor(drain / `ok` share))
+  per language and overall.
+- **Estimate** (defaults, four languages): hook waits 10–21 min, phase A 74
+  min, phase B 32 min, drain wait ≤ 15 min; 1.9–2.4 h (worst case 5.2 h).
+  Exit 0 when both phases ran and a loaded rate exists; 2 when a `rate_cap`
+  is FAIL (logged as `cal: FAIL rate cap ...`, run K8b at `k8b_rate`); 1
+  otherwise.
 
 ## The trap (EXIT, INT, TERM, HUP)
 

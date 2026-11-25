@@ -23,6 +23,15 @@ Modes:
                          hook; with --rate the k6 ConfigMap and Job; a guard read
                          every 60 s under ``caffeinate`` (macOS) with a heartbeat
                          until the window ends. The trap always runs.
+  cal --run <id> [--langs ...] [--n N] [--rate R] [--steps a,b,c]
+      [--step-duration S] [--quiesce Q] [--worker-interval I] [--dry-run]
+                         K-cal (task K-cal-d, design K-D20): run's reads, hook
+                         (always) and trap around cal.py's driver: phase A
+                         (per K8b cell two k6 repeats of N requests, quiesced;
+                         kcal-input.json, soak-cal.json), worker first drives,
+                         phase B (rate steps -> loaded rate, drain rate).
+                         --dry-run prints the plan; no kubectl call, nothing
+                         written.
   cleanup --run <id> [--tag <t>]
                          the trap's steps for a run whose laptop was cut off.
   render --run <id> --what <object> [...]
@@ -58,6 +67,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import re
 import secrets
@@ -76,6 +86,7 @@ from typing import Callable
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
+import cal  # noqa: E402  (K-cal-d: the calibration driver)
 import guard  # noqa: E402
 import k6script  # noqa: E402
 import render  # noqa: E402
@@ -1087,6 +1098,19 @@ def main(argv: list[str] | None = None) -> int:
     sub.choices["run"].add_argument("--worker-interval", type=int)
     sub.choices["run"].add_argument("--control", action="store_true",
                                     help="K-copy: the telemetrygen positive control first, before the hook")
+    cp = sub.add_parser("cal", parents=[common], help="K-cal: the calibration driver (design K-D20)")
+    cp.add_argument("--n", type=int, default=cal.DEFAULT_N, help="requests per language and repeat")
+    cp.add_argument("--rate", type=int, default=cal.DEFAULT_RATE, help="phase A rate, req/s per language")
+    cp.add_argument("--steps", type=_steps, default=list(cal.DEFAULT_STEPS), help="phase B rates, e.g. 2,5,10,20")
+    cp.add_argument("--step-duration", type=int, default=cal.DEFAULT_STEP_S, help="seconds per step")
+    cp.add_argument("--quiesce", type=float, default=soakcount.QUIESCE_S, help="seconds after each k6 run")
+    cp.add_argument("--worker-interval", type=int, default=cal.CAL_WORKER_INTERVAL_S,
+                    help="the hook's */worker DEMO_INTERVAL_SECONDS")
+    cp.add_argument("--drain-wait", type=int, default=cal.DRAIN_WAIT_S, help="max seconds for a backlog to drain")
+    cp.add_argument("--timeout", type=int, default=10)
+    cp.add_argument("--p99", type=float, default=1.0)
+    cp.add_argument("--control", action="store_true", help="K-copy: the positive control first")
+    cp.add_argument("--dry-run", action="store_true", help="print the plan; no kubectl call, nothing written")
     args = p.parse_args(argv)
     try:
         render.check_run(args.run)
@@ -1103,6 +1127,9 @@ def main(argv: list[str] | None = None) -> int:
             if args.what in ("k6", "k6-configmap", "k6-job") and args.rate < 1:
                 p.error("--rate is required for the k6 objects")
             print(json.dumps(render.as_list(build_object(args)), indent=1, sort_keys=True))
+            return 0
+        if args.mode == "cal" and args.dry_run:
+            print("\n".join(cal_plan(args).describe(args.run)))
             return 0
         d = run_dir(args.run)
         if args.mode == "dry-run":
@@ -1131,15 +1158,17 @@ def main(argv: list[str] | None = None) -> int:
                          "langs": state.get("langs") or args.langs}
             res = trap(kube, args.run, d, state=state, demo_sh=[str(DEMO_SH)])
             return 0 if res.ok else 1
+        if args.mode == "cal":
+            return cal_mode(args, kube, d)
         return run_mode(args, kube, d)
     except (SoakError, render.RenderError, k6script.PlanError) as exc:
         print(f"soak: {exc}", file=sys.stderr)
         return 1
 
 
-def run_mode(args: argparse.Namespace, kube: Kube, d: Path) -> int:
-    """Reads first (pre-flight, demo record, entry gate: review M9), then the
-    writes inside the trap."""
+def _start(args: argparse.Namespace, kube: Kube, d: Path):
+    """Reads first (pre-flight, demo record, entry gate: review M9). Returns
+    (record, reader, cfg, loop), or None after printing the refusal."""
     problems = preflight(kube)
     expected = args.tag or demo_tag()
     record, demo_problems = demo_preflight(kube, args.langs, expected)
@@ -1147,7 +1176,7 @@ def run_mode(args: argparse.Namespace, kube: Kube, d: Path) -> int:
     if problems:
         for prob in problems:
             print(f"preflight: REFUSED {prob}")
-        return 1
+        return None
     reader = KubeReader(kube)
     cfg = guard_config(d, time.time(), args.langs)
     loop = Loop(args.run, kube, reader, cfg, d, fd_reader=kube.fd_sweep(args.langs).read)
@@ -1156,59 +1185,90 @@ def run_mode(args: argparse.Namespace, kube: Kube, d: Path) -> int:
     if gate.blind or gate.breaches:
         print("preflight: REFUSED entry gate: " + ("blind read" if gate.blind else gate.reason())
               + " — ask the platform session (nothing written)")
+        return None
+    return record, reader, cfg, loop
+
+
+def _state(args: argparse.Namespace, kube: Kube, record: dict, *, reservoir: bool) -> dict:
+    return {"run": args.run, "tag": record["tag"], "replicas": record["replicas"], "langs": args.langs,
+            "context": kube.context, "namespace": kube.namespace, "window": args.window,
+            "started": time.time(), "hook_applied": False, "reservoir": reservoir}
+
+
+@contextmanager
+def _session(kube: Kube, run: str, d: Path, state: dict):
+    """The state saved, ``caffeinate``, and the trap around the writes."""
+    save_state(d, state)
+    caff = start_caffeinate()
+
+    def on_exit():
+        trap(kube, run, d, state=load_state(d), demo_sh=[str(DEMO_SH)])
+        if caff is not None:
+            caff.terminate()
+
+    with trapped(on_exit):
+        yield
+
+
+def _setup(args: argparse.Namespace, kube: Kube, reader: "KubeReader", cfg: guard.GuardConfig, d: Path,
+           state: dict, record: dict) -> float | None:
+    """Inside the trap: ``soak-otlp``, the positive control, the hook and its
+    waits, the entry gate again. Returns the time just before the hook's
+    apply (None without ``--hook``)."""
+    kube.apply(args.run, [render.soak_otlp(args.run, "copy")])
+    if args.control:
+        ctl = positive_control(kube, reader, args.run, d)
+        if ctl["verdict"] != "PASS":
+            raise SoakError(f"positive control: {ctl['reason']}")
+    if not args.hook:
+        return None
+    try:
+        since = guard.copy_totals(reader, time.time())
+    except guard.ReadError as exc:
+        raise SoakError(f"copy totals before the hook: {exc}") from exc
+    env_path = d / "soak.env"
+    canary = secrets.token_hex(24)
+    write_private(d / "canary", canary + "\n")
+    write_private(env_path, hook_env(secrets.token_hex(4), canary, args.worker_interval))
+    state["hook_applied"] = True  # before the apply: an interrupt mid-apply still restores
+    save_state(d, state)
+    hook_t = time.time()
+    proc = demo_apply([str(DEMO_SH)], kube.context, kube.namespace, record["tag"], args.langs, env_path)
+    if proc.returncode != 0:
+        raise SoakError(f"demo.sh apply with the hook: exit {proc.returncode}")
+    ready = guard.wait_demo_ready(reader, cfg, time.time, time.sleep)
+    if ready.state != "ok":
+        raise SoakError(f"{ready.name}: {ready.detail}")
+    services = [f"demo-{lang}-{app}" for lang in args.langs for app in ("worker", "api", "backend")]
+    h = guard.wait_copy_counts(reader, cfg, services, time.time, time.sleep, since)
+    if h.state != "ok":
+        raise SoakError(f"{h.name}: {h.detail}")
+    # Re-review HIGH-2: the first gate is minutes old after the waits; read it
+    # again right before the window. A breach refuses (the trap restores).
+    gate = guard.entry_read(reader, cfg, time.time(), clock=time.time, sleep=time.sleep)
+    append_jsonl(d / "guard.jsonl", {"window": args.window, "phase": "entry-after-hook", **gate.as_json()})
+    if gate.blind or gate.breaches:
+        raise SoakError("entry gate after the hook: " + ("blind read" if gate.blind else gate.reason())
+                        + " — ask the platform session")
+    return hook_t
+
+
+def run_mode(args: argparse.Namespace, kube: Kube, d: Path) -> int:
+    """Reads first (pre-flight, demo record, entry gate: review M9), then the
+    writes inside the trap."""
+    started = _start(args, kube, d)
+    if started is None:
         return 1
+    record, reader, cfg, loop = started
     plan = None
     if args.rate:
         plan = k6script.K6Plan(langs=tuple(args.langs), rate=args.rate, duration_s=args.duration,
                                timeout_s=args.timeout, p99_s=args.p99)
         plan.validate()
-    state = {"run": args.run, "tag": record["tag"], "replicas": record["replicas"], "langs": args.langs,
-             "context": kube.context, "namespace": kube.namespace, "window": args.window,
-             "started": time.time(), "hook_applied": False, "reservoir": bool(plan and plan.reservoir)}
-    save_state(d, state)
-    caff = start_caffeinate()
-
-    def on_exit():
-        trap(kube, args.run, d, state=load_state(d), demo_sh=[str(DEMO_SH)])
-        if caff is not None:
-            caff.terminate()
-
+    state = _state(args, kube, record, reservoir=bool(plan and plan.reservoir))
     res = None
-    with trapped(on_exit):
-        kube.apply(args.run, [render.soak_otlp(args.run, "copy")])
-        if args.control:
-            ctl = positive_control(kube, reader, args.run, d)
-            if ctl["verdict"] != "PASS":
-                raise SoakError(f"positive control: {ctl['reason']}")
-        services, since = [], None
-        if args.hook:
-            try:
-                since = guard.copy_totals(reader, time.time())
-            except guard.ReadError as exc:
-                raise SoakError(f"copy totals before the hook: {exc}") from exc
-            env_path = d / "soak.env"
-            canary = secrets.token_hex(24)
-            write_private(d / "canary", canary + "\n")
-            write_private(env_path, hook_env(secrets.token_hex(4), canary, args.worker_interval))
-            state["hook_applied"] = True  # before the apply: an interrupt mid-apply still restores
-            save_state(d, state)
-            proc = demo_apply([str(DEMO_SH)], kube.context, kube.namespace, record["tag"], args.langs, env_path)
-            if proc.returncode != 0:
-                raise SoakError(f"demo.sh apply with the hook: exit {proc.returncode}")
-            ready = guard.wait_demo_ready(reader, cfg, time.time, time.sleep)
-            if ready.state != "ok":
-                raise SoakError(f"{ready.name}: {ready.detail}")
-            services = [f"demo-{lang}-{app}" for lang in args.langs for app in ("worker", "api", "backend")]
-            h = guard.wait_copy_counts(reader, cfg, services, time.time, time.sleep, since)
-            if h.state != "ok":
-                raise SoakError(f"{h.name}: {h.detail}")
-            # Re-review HIGH-2: the first gate is minutes old after the waits; read it
-            # again right before the window. A breach refuses (the trap restores).
-            gate = guard.entry_read(reader, cfg, time.time(), clock=time.time, sleep=time.sleep)
-            append_jsonl(d / "guard.jsonl", {"window": args.window, "phase": "entry-after-hook", **gate.as_json()})
-            if gate.blind or gate.breaches:
-                raise SoakError("entry gate after the hook: " + ("blind read" if gate.blind else gate.reason())
-                                + " — ask the platform session")
+    with _session(kube, args.run, d, state):
+        _setup(args, kube, reader, cfg, d, state, record)
         start_load = None
         if plan is not None:
             def start_load():
@@ -1216,6 +1276,109 @@ def run_mode(args: argparse.Namespace, kube: Kube, d: Path) -> int:
                 return Load(render.k6_name(args.window), plan.pull_s, plan.deadline_s)
         res = loop.window(args.window, args.duration, loaded=plan is not None, gate=False, start_load=start_load)
     return 0 if res is not None and res.valid else 1
+
+
+# ── calibration (task K-cal-d, design K-D20) ───────────────────────────────
+
+class CalOps:
+    """The calibration driver's cluster side: k6 and quiesce windows through
+    the loop (guard reads every interval, read as loaded windows), the count
+    reads through K-count's readers. Writes only soak-run objects of the run."""
+
+    def __init__(self, run: str, kube: Kube, loop: Loop, reader: "KubeReader", d: Path):
+        self.run, self.kube, self.loop, self.reader, self.d = run, kube, loop, reader, d
+
+    def now(self) -> float:
+        return self.loop.clock()
+
+    def k6(self, window: str, plan: k6script.K6Plan):
+        name = render.k6_name(window)
+
+        def start():
+            self.kube.apply(self.run, k6_objects(self.run, window, plan))
+            return Load(name, plan.pull_s, plan.deadline_s)
+
+        res = self.loop.window(window, plan.deadline_s, loaded=True, gate=False, start_load=start)
+        if not res.started:
+            return res, None
+        rc, text = self.kube.logs(f"job/{name}")
+        write_evidence(self.d / "raw" / (f"{name}.log" if rc == 0 else f"{name}.log.err"), text)
+        summary = k6script.parse_logs(text)[0] if rc == 0 else None
+        if res.valid:  # a stopped (suspended) Job stays for the trap
+            try:
+                self.kube.stop_job(self.run, name, "delete")
+            except SoakError as exc:
+                res.findings.append(f"k6 Job {name} not deleted ({exc}); the trap removes it")
+        return res, summary
+
+    def quiet(self, window: str, seconds: float):
+        return self.loop.window(window, int(math.ceil(seconds)), loaded=True, gate=False)
+
+    def copy_series(self, t1: float, t2: float) -> list[dict]:
+        return soakcount.raw_read(self.reader, soakcount.FIXED_METRIC,
+                                  {"job": guard.sp.COPY_JOB, "service_name": ("=~", guard.sp.DEMO_SERVICE_RE)},
+                                  t1, t2, soakcount.COPY_EXPIRY_S)[1]
+
+    def gateway_series(self, t1: float, t2: float) -> list[dict]:
+        return soakcount.raw_read(self.reader, soakcount.SPAN_METRIC,
+                                  {"service_name": ("=~", guard.sp.DEMO_SERVICE_RE)},
+                                  t1, t2, soakcount.GATEWAY_EXPIRY_S)[1]
+
+    def copy_gate(self, t1: float, t2: float) -> dict:
+        extra, sent = soakcount._copy_gate(self.reader, t1, t2)
+        return soakcount.scoped_gates(sent, extra)["copy"]
+
+    def pods(self) -> list[dict]:
+        return self.reader.kget(["pods", "-n", guard.sp.APP_NS]).get("items") or []
+
+
+def cal_plan(args: argparse.Namespace) -> cal.CalPlan:
+    plan = cal.CalPlan(langs=tuple(args.langs), n=args.n, rate=args.rate, steps=tuple(args.steps),
+                       step_s=args.step_duration, quiesce_s=args.quiesce, worker_interval_s=args.worker_interval,
+                       drain_wait_s=args.drain_wait, timeout_s=args.timeout, p99_s=args.p99)
+    plan.validate()
+    return plan
+
+
+def k6_memory_check(reader, cfg: guard.GuardConfig, plan: cal.CalPlan, at: float) -> str | None:
+    """Code review L2, a read: the top step's k6 memory limit against the node's
+    MemAvailable (the K-D13 floor query) minus the floor; a blind read refuses."""
+    q = guard.sp.sel("node_memory_MemAvailable_bytes", {"job": "node-exporter"})
+    try:
+        res = guard.sp.cluster_only(reader.prom(q, at))
+    except (guard.ReadError, guard.verify.QueryError) as exc:
+        return f"k6 memory check: MemAvailable unreadable ({exc})"
+    if not res:
+        return "k6 memory check: no MemAvailable series"
+    return plan.memory_problem(min(float(x["value"][1]) for x in res), cfg.floors["mem_available_bytes"])
+
+
+def cal_mode(args: argparse.Namespace, kube: Kube, d: Path) -> int:
+    """``run``'s reads, hook and trap around the calibration driver (the hook is
+    always applied: the copy only sees the hooked demo)."""
+    plan = cal_plan(args)
+    args.hook, args.window = True, "cal"
+    started = _start(args, kube, d)
+    if started is None:
+        return 1
+    record, reader, cfg, loop = started
+    problem = k6_memory_check(reader, cfg, plan, time.time())
+    if problem:
+        print(f"preflight: REFUSED {problem} (nothing written)")
+        return 1
+    rc = 1
+    state = _state(args, kube, record, reservoir=False)
+    with _session(kube, args.run, d, state):
+        hook_t = _setup(args, kube, reader, cfg, d, state, record)
+        rc = cal.Calibrator(CalOps(args.run, kube, loop, reader, d), plan, d).run(hook_t)
+    return rc
+
+
+def _steps(text: str) -> list[int]:
+    try:
+        return [int(x) for x in text.split(",") if x.strip()]
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("--steps: comma-separated integers, e.g. 2,5,10,20") from exc
 
 
 if __name__ == "__main__":

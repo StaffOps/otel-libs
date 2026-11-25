@@ -1343,6 +1343,66 @@ is a finding (D4) and invalidates that service's per-instance verdict.
 Components renamed `k8s_attributes`, `delta_to_cumulative`, behavior
 unchanged.)*
 
+### K-D20 — The calibration driver: one cell at a time, four languages per k6 run (added 2026-11-25, task K-cal-d)
+**Choice**: `soak.py cal` (`testing/k8s/soak/cal.py`) runs inside `run`'s
+pre-flight, entry gate, hook and trap (shared code, not a copy). The hook is
+always applied, with the worker interval at 21600 s. Phase A: a quiesce, then
+for each of the 12 cells of the K8b plan (`k6script` default mix × classes)
+two k6 runs of N = 30 requests per language at 2 req/s, each followed by a
+quiesce of 120 s (`soakcount.QUIESCE_S`); one k6 run drives all four
+languages. A repeat's delta is cut from one raw read per source at the
+quiesced boundaries with K-count's series rules; the repeats are written in
+`calibrate()`'s input shape (`kcal-input.json`), then `soak-cal.json`. Worker
+first drive: the first copy fixed-count step of the api or worker after the
+hook (non-Go); Go `unmeasured` (start + interval). Phase B: steps 2, 5, 10,
+20 req/s per language, 300 s each, a step clean when its windows are valid and
+`dropped_iterations` = 0; loaded rate = highest clean step minus one step;
+drain rate measured only while a backlog is left at a boundary.
+**Justification, strongest first**: (1) isolation — neither count source
+carries the cell, so the cells of one language cannot share a run, while the
+languages can (services `demo-<lang>-*` are disjoint; each api calls its own
+backend, `testing/k8s/demo/demo.sh:584-589`); four languages per run divides
+phase A's wall clock by four. (2) Reuse — the repeats go through
+`calibrate()`, so `verify.py soak cal` on the written input reproduces the
+k values, and the exclusions (invalid repeats, a planned cell never run) are
+named by `calibrate()` itself (`invalid`, `planned`, added here). (3) Low
+rate and N = 30: a fixed family that drops or adds one span in 30 requests
+shows as a non-integral k (1/30); 2 req/s keeps VUs (22 per language) and the
+copy far from any limit, so the k values measure the helper, not load
+effects. (4) Steps 2, 5, 10, 20 bracket the initial drain estimate (about
+5 msg/s, SR15 "Windows and drain"; × the `ok` share 0.7 → about 7 req/s) so
+the drain rate is measured at the upper steps and the loaded rate has at
+least one step below the cap.
+**Trade-offs**: 28 k6 runs and 1.9–2.4 h wall clock (estimate from the guard
+cadence: a window ends at the first 60 s read after its Job; `unmeasured`); the
+first-drive time is an upper bound (one export interval + one copy scrape);
+a worker that keeps up at 20 req/s has no measured drain rate (lower bound
+only); a backlog from a saturated step is drained before the run ends (at
+most 900 s, else recorded).
+**When it would be wrong**: the demo gains a cross-language call (then run
+one language per k6 run); the quiesce proves too short (a k differs between
+repeats with no family varying — raise `--quiesce`); every step is clean (then
+add a higher step, since the loaded rate is only "highest minus one").
+**Reversal action**: `--langs <one>` per run, `--quiesce`, `--steps`; record
+the change dated here.
+**Alternatives**: one cell per language per run (×4 wall clock, no isolation
+gain); per-cell counts from Tempo (paged, eventually consistent, K-D12).
+*(Code review 2026-11-25, APPROVE WITH SUGGESTIONS, applied:)* a step
+saturates a worker only when `send` − `process` (upper) > max(10 msgs, 5 % of
+`send`) — one late CONSUMER span or a lower/upper ambiguity is not a drain
+rate (M1); an absent copy series is 0 only when another service of the
+language counted in the same repeat, else the repeat is invalid ("absent copy
+series, no sibling success", K-D12 sibling rule) (M2); a gateway family whose
+lower and upper counts differ is left out of the calibration input (M3); the
+driver writes `k8b_rate` = min(loaded, floor(drain / `ok` share)) per language
+and overall, and exits 2 on a `rate_cap` FAIL (SR15 "Windows and drain") (M4);
+the worker-interval check uses the worst case (every k6 Job to its
+`activeDeadlineSeconds`; 5.2 h at the defaults) and is repeated before each
+window (L1); the pre-flight refuses when the top step's k6 memory limit
+exceeds MemAvailable minus the K-D13 floor; k6 peak RSS is `unmeasured` (the
+summary has no process-memory metric) (L2); the drain-wait reads and each
+step's `noanswer` are kept (L3, L4).
+
 ## Report format (reference)
 `reports/<UTC>/report.md` + `report.json`: header (rc, commit, image digests,
 `go version -m`, `pip freeze`, parameters, VM resources, neighbour aggregate

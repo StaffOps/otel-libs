@@ -4882,6 +4882,23 @@ Unsupported instrumentation versions, task A10 (P18):
 
 ### Internal
 
+- **Soak K-cal driver `soak.py cal` (2026-11-25, task K-cal-d, design
+  K-D20).** Inside `run`'s pre-flight, entry gate, hook and trap: phase A
+  runs two k6 repeats of N requests (default 30 at 2 req/s) per cell of the
+  K8b plan, four languages per k6 run, each followed by a quiesce, and writes
+  `kcal-input.json` (the `verify.py soak cal` input) and `soak-cal.json`;
+  each non-Go worker's first `demo.drive` from the copy's count step; phase B
+  runs rate steps (default 2, 5, 10, 20 req/s) for the loaded rate (highest
+  clean step minus one), the drain rate (only when a step leaves a backlog
+  above max(10, 5 %)) and `k8b_rate` = min(loaded, floor(drain / ok share));
+  a `rate_cap` FAIL exits 2. An absent copy series counts 0 only with a
+  sibling success, ambiguous gateway families are excluded and named, the
+  worker-drive
+  check uses the worst case before each window, and the pre-flight checks the
+  k6 memory limit against MemAvailable. `--dry-run` prints the plan and the
+  1.9–2.4 h estimate (worst case 5.2 h) without a kubectl call. `calibrate()`
+  now names invalid repeats and planned cells without repeats. Not yet run on
+  k8s01.
 - **Soak K8a run `k8a-20261124b` valid and PASS under the 12 h ruling;
   passive coverage covers the whole judged span (2026-11-25, design S-D5
   corrections).** The 12 h window (90 min warm-up, 10 h 30 min judged) passed
