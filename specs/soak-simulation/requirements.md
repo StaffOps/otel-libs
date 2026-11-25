@@ -563,7 +563,7 @@ For each mode (design S-D12): **refused** (agent stopped, address kept),
 Bullets added 2026-11-19 (r6). They are part of SR15 and carry the cluster
 form of SR3–SR7, SR10 and SR12.
 
-- **Windows.** A run has one passive window (K8a: ≥ 24 h (30 h, K0e-1), no k6, the demo
+- **Windows.** A run has one passive window (K8a: ≥ 24 h (30 h, K0e-1) — *amended 2026-11-25:* 12 h = 90 min warm-up + 10 h 30 min judged, owner rulings 2026-11-24/25, "Soak rules (K8a)" below — no k6, the demo
   worker at its own `DEMO_INTERVAL_SECONDS=5`) and one loaded window (K8b:
   2 h, k6 at the K-cal rate, worker `DEMO_INTERVAL_SECONDS=10800`). During
   both, every demo app SHALL export to `soak-otlp` (a soak-run ExternalName
@@ -824,6 +824,10 @@ form of SR3–SR7, SR10 and SR12.
     step-shaped, non-leaking containers failed the ratio over 78.9 h of
     data, and the steps ran out to 12 h). *(Was 24 h = 6 h + 18 h in the
     first r6.2 draft of the same day.)*
+    *Amended 2026-11-25 (owner rulings 2026-11-24 and 2026-11-25):* K8a is
+    12 h = 90 min warm-up + 10 h 30 min judged, same verdict rules; the
+    reduced sensitivity is accepted (design S-D5, note of 2026-11-25), and the
+    30 h window is its reversal action.
   - *FDs* (owner ruling K0e-2, 2026-11-23): judged in all four languages
     from the named `exec` read of "Checker" (`ls /proc/1/fd | wc -l` — now `ls -1 /proc/1/fd`, no shell, 2026-11-23 — per
     demo container per sweep), with the S-D5 slope rule; Python's

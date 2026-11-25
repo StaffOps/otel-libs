@@ -172,6 +172,19 @@ again — `kubectl exec … sh -c 'ls /proc/1/fd | wc -l'` per demo container
 per sweep, a named read-only soak-run read (SR15 "Checker"), all four
 languages. **Reversal action**: drop the exec read and judge FDs from
 `process_open_file_descriptor_count` (Python) only.)*
+*(Owner rulings 2026-11-24 and 2026-11-25, supersede the 30 h of K0e-1: K8a
+is **12 h = 90 min warm-up + 10 h 30 min judged**, same verdict rules. Run
+`k8a-20261124b` (2026-11-24T15:16:59Z → 2026-11-25T03:16:59Z) passed every
+container, but the "When wrong" above fired: node-worker RSS stepped until
+about 7 h (full-span slope 0.89 of its limit, flat at 58.4 MB after) and
+dotnet-worker until about 8 h, inside the judged span. The owner accepted the
+PASS on 2026-11-25 with the reduced sensitivity: a leak that steps less often
+than every 5 h 15 min (the second half) can pass, and settling steps in the
+judged span narrow the full-span margin. node-worker, dotnet-worker, the
+dotnet-api thread pool and python-backend threads are on the watch list of the
+K11 summary. **Reversal action**: a container fails or ends above 0.9 of a
+limit in a later window, or a release needs the SR4 leak claim → re-run K8a at
+30 h = 12 h + 18 h, record dated here.)*
 *(Owner ruling 2026-11-23, after the K-count code review — integer gauges,
 `unmeasured`: for threads, goroutines, FDs and the .NET thread-pool count and
 queue length, when every sample of the span is an integer, the slope limit
@@ -188,7 +201,17 @@ interval (10 s), cAdvisor at its scrape interval (15 s, 242 samples per hour
 read 2026-11-23), FDs as successful FD samples per guard read that ran in
 that hour (re-review HIGH-2: the loop's period is not exactly 60 s; it now
 keeps a fixed cadence, sleeping the interval minus the read's own time, and
-hours without reads are left to the wall-clock heartbeat rule). The FD read runs without a
+hours without reads are left to the wall-clock heartbeat rule). *(Corrected
+2026-11-25, K8a review of run `k8a-20261124b`: "any hour" counted
+`round(span / 1 h)` whole hours, so a 10 h 30 min judged span left its last
+30 min out of the check; the bins are now the whole hours from the judged
+start plus a partial last bin when 10 min or more remain (read with an
+instant `count_over_time` at the end, its expected count scaled to its
+length); a shorter remainder is read the same way and folded into the last
+hour, whose expected count grows by it; whole-hour range points never fall in
+the tail bin, and a span under 1 h issues no range query. The coverage shares are
+written for every judged rule, PASS included, so the artefact proves the
+95 %.)* The FD read runs without a
 shell (`ls -1 /proc/1/fd`, lines counted). **Reversal action**: set Q from the
 K8a noise floor of the first valid run.)*
 

@@ -4882,6 +4882,19 @@ Unsupported instrumentation versions, task A10 (P18):
 
 ### Internal
 
+- **Soak K8a run `k8a-20261124b` valid and PASS under the 12 h ruling;
+  passive coverage covers the whole judged span (2026-11-25, design S-D5
+  corrections).** The 12 h window (90 min warm-up, 10 h 30 min judged) passed
+  every container and `verify.py demo` passed after it. The observability
+  review found node-worker and dotnet-worker still stepping 7–8 h in, inside
+  the judged span; the owner accepted the PASS with that reduced sensitivity,
+  recorded in S-D5 and SR15 with a 30 h re-run as the reversal action.
+  `testing/k8s/soakcount.py`: the passive coverage bins add a partial last
+  bin (≥ 10 min; a shorter tail is folded into the last hour), read with an
+  instant `count_over_time` at the end, so a span that is not whole hours is
+  checked to its end (it used to drop the last 30 min); the
+  coverage shares are written into `soak-passive.json` for every judged rule,
+  PASS included. Tests added (83 OK in `test_soakcount.py`).
 - **Soak guard (a) not read (2026-11-24, owner ruling, SR15 correction).**
   Run `k8a-20261124a` ended invalid at 11 h 43 min on two consecutive
   guard (a) mismatches: the node-wide ztunnel proxy count still had a

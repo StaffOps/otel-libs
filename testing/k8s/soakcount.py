@@ -28,6 +28,7 @@ every result is filtered to that cluster again (K0e H5).
 from __future__ import annotations
 
 import json
+import math
 import re
 import statistics
 import subprocess
@@ -859,12 +860,32 @@ def fd_reads(guard_jsonl: Path) -> list[float]:
     return out
 
 
+PARTIAL_BIN_MIN_S = 600   # a trailing part of an hour this long or longer is its own coverage bin
+
+
+def coverage_bins(start: float, end: float) -> tuple[int, float, list[float]]:
+    """(whole hours from ``start``, the remainder in s, the seconds each coverage
+    bin covers) for [start, end]. A remainder of at least ``PARTIAL_BIN_MIN_S``
+    (or a span under 1 h) is its own last bin; a shorter one is folded into the
+    last whole hour (K8a review 2026-11-25 LOW-1: a 10 h 30 min span left its
+    last 30 min out)."""
+    span = max(0.0, end - start)
+    full = int(span // 3600)
+    rem = span - full * 3600
+    if rem >= PARTIAL_BIN_MIN_S or full == 0:
+        bins = [3600.0] * full + [rem]
+    else:
+        bins = [3600.0] * full
+        bins[-1] += rem
+    return full, rem, bins
+
+
 def fd_shares(points: list, reads: list[float], start: float, end: float) -> dict:
     """FD coverage per hour: successful FD samples of the container / the guard
     reads that ran in that hour (re-review HIGH-2: the loop's period is not a
     fixed 60 s). An hour with no read is not judged here — missing reads are the
     wall-clock heartbeat rule's (a gap invalidates the window)."""
-    hours = max(1, int(round((end - start) / 3600)))
+    hours = len(coverage_bins(start, end)[2])
     ran = [0] * hours
     ok = [0] * hours
     for t in reads:
@@ -919,18 +940,24 @@ def rule_interval(rule: str, export_interval: float = EXPORT_INTERVAL_S) -> floa
     return export_interval
 
 
-def hourly_shares(counts: list[tuple[float, float]], start: float, end: float, interval: float) -> dict:
-    """Per whole hour of [start, end]: samples / (3600 / interval), and the
-    total; ``counts`` are (hour end, samples in that hour)."""
-    hours = max(1, int(round((end - start) / 3600)))
-    per = [0.0] * hours
+def hourly_shares(counts: list[tuple[float, float]], start: float, end: float, interval: float,
+                  tail: float | None = None) -> dict:
+    """Per bin of [start, end] (``coverage_bins``): samples / (bin seconds /
+    interval), and the total. ``counts`` are the whole-hour range points (hour
+    end, samples in that hour), never routed past the last whole hour; ``tail``
+    is the sample count of the remainder after the last whole hour (an instant
+    read at ``end``), added to the last bin."""
+    full, _rem, bins = coverage_bins(start, end)
+    per = [0.0] * len(bins)
     for t, n in counts:
-        i = int(round((float(t) - start) / 3600)) - 1
-        if 0 <= i < hours:
+        i = int(math.ceil((float(t) - start) / 3600 - 1e-6)) - 1
+        if 0 <= i < full:
             per[i] += float(n)
-    want = 3600 / interval
-    shares = [round(n / want, 4) for n in per]
-    total = round(sum(per) / (want * hours), 4)
+    if tail:
+        per[-1] += float(tail)
+    wants = [b / interval for b in bins]
+    shares = [round(n / w, 4) if w else 0.0 for n, w in zip(per, wants)]
+    total = round(sum(per) / sum(wants), 4) if sum(wants) else 0.0
     low = [i for i, x in enumerate(shares) if x < COVERAGE_MIN]
     return {"hours": shares, "total": total, "ok": not low and total >= COVERAGE_MIN, "low_hours": low}
 
@@ -939,27 +966,40 @@ def passive_coverage(r: sp.Reader, start: float, end: float, fds: dict, langs,
                      export_interval: float = EXPORT_INTERVAL_S,
                      reads: list[float] | None = None) -> tuple[dict, list[str]]:
     """Coverage inside the judged span (review H4): cid -> rule -> hourly shares,
-    from ``count_over_time(<series>[1h])`` per hour (Prometheus) and the guard-read
-    count per hour (FDs)."""
+    from ``count_over_time(<series>[1h])`` per hour (Prometheus), an instant
+    ``count_over_time(<series>[<rem>s])`` at ``end`` for the remainder after the
+    last whole hour, and the guard-read count per hour (FDs)."""
     out: dict[str, dict] = {}
     queries = []
+    full, rem, _bins = coverage_bins(start, end)
     for rule, metric, matchers, rlangs, keys in PASSIVE_METRICS:
         if rlangs is not None and not any(lang in rlangs for lang in langs):
             continue
         q = f"count_over_time({sp.sel(metric, matchers)}[3600s])"
-        queries.append(f"{q} (range {sp.iso(start + 3600)}..{sp.iso(end)}, step 3600s)")
         per: dict[str, list] = {}
-        for srs in sp.cluster_only(r.prom_range(q, start + 3600, end, 3600)):
-            cid = _demo_key((srs.get("metric") or {}).get(keys[0], ""))
-            if cid is not None:
-                per.setdefault(cid, []).extend((float(t), float(v)) for t, v in srs.get("values") or [])
+        tails: dict[str, float] = {}
+        if full:      # a span under 1 h has no whole hour (start + 3600 > end)
+            queries.append(f"{q} (range {sp.iso(start + 3600)}..{sp.iso(start + full * 3600)}, step 3600s)")
+            for srs in sp.cluster_only(r.prom_range(q, start + 3600, start + full * 3600, 3600)):
+                cid = _demo_key((srs.get("metric") or {}).get(keys[0], ""))
+                if cid is not None:
+                    per.setdefault(cid, []).extend((float(t), float(v)) for t, v in srs.get("values") or [])
+        if rem >= 1:
+            q_rem = f"count_over_time({sp.sel(metric, matchers)}[{int(rem)}s])"
+            queries.append(f"{q_rem} (instant {sp.iso(end)})")
+            for srs in sp.cluster_only(r.prom(q_rem, end)):
+                cid = _demo_key((srs.get("metric") or {}).get(keys[0], ""))
+                val = srs.get("value")
+                if cid is not None and val:
+                    tails[cid] = tails.get(cid, 0.0) + float(val[1])
         for lang in langs:
             if rlangs is not None and lang not in rlangs:
                 continue
             for app in verify.DEMO_APPS:
                 cid = container_id(lang, app)
                 out.setdefault(cid, {})[rule] = hourly_shares(per.get(cid, []), start, end,
-                                                              rule_interval(rule, export_interval))
+                                                              rule_interval(rule, export_interval),
+                                                              tail=tails.get(cid))
     for lang in langs:
         for app in verify.DEMO_APPS:
             cid = container_id(lang, app)
@@ -1005,8 +1045,9 @@ def passive_verdicts(series: dict, fds: dict, restart: dict, judged: tuple[float
             judged_rules = [k for k, v in rules.items() if not v.get("report_only") and k != "runtime"]
             gaps = []
             for rule, c in ((cov or {}).get(cid) or {}).items():
-                if rule in judged_rules and not c["ok"]:
+                if rule in rules:      # always recorded (K8a review 2026-11-25 MEDIUM-2)
                     rules[rule]["coverage"] = c
+                if rule in judged_rules and not c["ok"]:
                     gaps.append(f"{rule} total {c['total']}, hours below {COVERAGE_MIN}: {c['low_hours']}")
             if rules["restarts"]["verdict"] == "FAIL":
                 verdict = "FAIL"

@@ -786,6 +786,71 @@ class Passive(unittest.TestCase):
         out = sc.passive_verdicts(series, fds, rest, judged, ["go"], cov)
         self.assertEqual(out["go-worker"]["verdict"], "FAIL")    # a restart is FAIL, not INVALID
 
+    def test_coverage_partial_last_bin(self):
+        # K8a review 2026-11-25 LOW-1: 10 h 30 min judged left its last 30 min out.
+        self.assertEqual(sc.coverage_bins(T0, T0 + 10.5 * H), (10, 1800.0, [3600.0] * 10 + [1800.0]))
+        self.assertEqual(sc.coverage_bins(T0, T0 + 10 * H + 300),
+                         (10, 300.0, [3600.0] * 9 + [3900.0]))              # short tail folded in
+        self.assertEqual(sc.coverage_bins(T0, T0 + 18 * H), (18, 0.0, [3600.0] * 18))
+        self.assertEqual(sc.coverage_bins(T0, T0 + 1200), (0, 1200.0, [1200.0]))
+        judged = (T0, T0 + 10.5 * H)
+        full = [(T0 + (h + 1) * H, 360) for h in range(10)]
+        sh = sc.hourly_shares(full, *judged, 10, tail=180)
+        self.assertTrue(sh["ok"], sh)
+        self.assertEqual(len(sh["hours"]), 11)
+        self.assertEqual(sh["hours"][-1], 1.0)
+        sh = sc.hourly_shares(full, *judged, 10)                    # tail missing
+        self.assertFalse(sh["ok"])
+        self.assertEqual(sh["low_hours"], [10])
+        sh = sc.hourly_shares(full, *judged, 10, tail=90)            # tail at 50 %
+        self.assertEqual(sh["low_hours"], [10])
+        # a range point at the span's end is never routed into the tail bin (review LOW-2)
+        sh = sc.hourly_shares(full + [(judged[1], 180)], *judged, 10, tail=180)
+        self.assertEqual(sh["hours"][-1], 1.0)
+        # a 5 min tail is folded into the last hour, and must be read (review LOW-1)
+        short = (T0, T0 + 10 * H + 300)
+        sh = sc.hourly_shares(full, *short, 10)
+        self.assertEqual(len(sh["hours"]), 10)
+        self.assertEqual(sh["low_hours"], [9])
+        self.assertTrue(sc.hourly_shares(full, *short, 10, tail=30)["ok"])
+        # passive_coverage reads the tail with an instant query at the end
+        r = passive_reader((T0, T0 + 10 * H))
+        tail = [inst({"pod": f"demo-go-{a}-6f7d-x1"}, 1800 / sc.CADVISOR_SCRAPE_S, judged[1])
+                for a in verify.DEMO_APPS]
+        r.instant.append((r"count_over_time\(container_memory_rss.*\[1800s\]", tail))
+        reads = [T0 + i * 60 for i in range(int(10.5 * 60))]
+        fds = {f"go-{a}": [("p1", t, 20.0) for t in reads] for a in verify.DEMO_APPS}
+        cov, q = sc.passive_coverage(r, *judged, fds, ["go"], reads=reads)
+        self.assertTrue(any("[1800s]" in x and "instant" in x for x in q), q)
+        self.assertTrue(cov["go-api"]["rss"]["ok"], cov["go-api"]["rss"])
+        self.assertFalse(cov["go-api"]["goroutines"]["ok"])          # no tail answer
+        self.assertEqual(cov["go-api"]["goroutines"]["low_hours"], [10])
+        self.assertTrue(cov["go-api"]["fds"]["ok"])
+        self.assertEqual(len(cov["go-api"]["fds"]["hours"]), 11)
+        # a span under 1 h issues no range query (start + 3600 > end; review LOW-3)
+        r = passive_reader((T0, T0 + 10 * H))
+        r.instant.append((r"count_over_time\(container_memory_rss.*\[1200s\]", [
+            inst({"pod": f"demo-go-{a}-6f7d-x1"}, 1200 / sc.CADVISOR_SCRAPE_S, T0 + 1200) for a in verify.DEMO_APPS]))
+        cov, q = sc.passive_coverage(r, T0, T0 + 1200, {}, ["go"], reads=[])
+        self.assertFalse(any("range" in x for x in q), q)
+        self.assertTrue(cov["go-api"]["rss"]["ok"], cov["go-api"]["rss"])
+        self.assertEqual(cov["go-api"]["rss"]["hours"], [1.0])
+
+    def test_coverage_recorded_on_pass(self):
+        # K8a review 2026-11-25 MEDIUM-2: a PASS carries its coverage evidence.
+        judged = (T0, T0 + 18 * H)
+        r = passive_reader(judged)
+        series, _ = sc.passive_series(r, *judged)
+        reads = [T0 + i * 60 for i in range(18 * 60)]
+        fds = {f"go-{a}": [("p1", t, 20.0) for t in reads] for a in verify.DEMO_APPS}
+        cov, _ = sc.passive_coverage(r, *judged, fds, ["go"], reads=reads)
+        rest = {f"go-{a}": 0.0 for a in verify.DEMO_APPS}
+        out = sc.passive_verdicts(series, fds, rest, judged, ["go"], cov)
+        self.assertEqual(out["go-api"]["verdict"], "PASS")
+        for rule in ("rss", "working_set", "threads", "goroutines", "fds"):
+            self.assertTrue(out["go-api"]["rules"][rule]["coverage"]["ok"], rule)
+        self.assertNotIn("coverage", out["go-api"]["rules"]["restarts"])
+
     def test_nodata_and_several_pods(self):
         judged = (T0, T0 + 18 * H)
         series = {"rss": {"go-api": [("p1", "api", [(T0 + i * 600, 1.0) for i in range(50)]),
