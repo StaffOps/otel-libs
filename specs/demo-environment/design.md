@@ -1056,6 +1056,17 @@ in a client-side apply annotation.)*
   PostgreSQL container's `restartCount` > 0 or `pg_roles` holds fewer than the
   four `demo_<lang>` roles (count only, no secret), and says to `delete --all`
   and apply again.
+  *Corrected 2026-11-25:* two k8s01 reboots left the PostgreSQL container at
+  `restartCount` 2 after a complete init, and every `apply` (the soak hook and
+  the trap's demo restore) failed. A restart no longer fails by itself: with
+  `restartCount` > 0 the check also needs the initdb script's last effects —
+  the four `demo_<lang>` databases and no `PUBLIC` `CONNECT` on `template1`
+  (`has_database_privilege`, no secret). PGDATA is an `emptyDir`, kept across
+  container restarts, and the script does not run again; the entrypoint runs
+  it with `ON_ERROR_STOP=1` and the `template1` revoke is its last lasting
+  statement, so the markers prove completion. Reversal action: a
+  half-initialized PGDATA that passes these markers → check every statement's
+  effect.
 - **psql echo.** `log_min_error_statement = panic` keeps a failing init
   statement out of the **server** log; psql (the entrypoint's client) may
   still print the failing line — a verifier, never a password — to the

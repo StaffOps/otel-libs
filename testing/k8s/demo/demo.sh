@@ -807,17 +807,34 @@ guard_target() {
 
 # The initdb script runs once, on an empty PGDATA. A container restart during
 # init leaves PGDATA half-initialized, and the entrypoint then skips the script.
+# A restart after a complete init is harmless (PGDATA is an emptyDir, kept across
+# container restarts, and the script does not run again): with a restart the check
+# also needs the script's last effects — the four databases and no PUBLIC CONNECT
+# on template1 (DE-D13 correction 2026-11-25, after two node reboots). The entrypoint
+# runs the script with ON_ERROR_STOP=1 and the template1 REVOKE is its last lasting
+# statement, so seeing it proves every earlier one ran.
 verify_init() {
-  local restarts roles
+  local restarts roles marks
   restarts=$(k get pods -l app.kubernetes.io/name=demo-postgres -o jsonpath='{range .items[*]}{range .status.containerStatuses[*]}{.restartCount}{" "}{end}{end}')
   roles=$(k exec deploy/demo-postgres -- psql -X -q -U postgres -d postgres -tAc \
     "select count(*) from pg_roles where rolname in ('demo_go','demo_python','demo_node','demo_dotnet')" 2>/dev/null || echo error)
   roles=${roles//[[:space:]]/}
-  if [ -z "${restarts// /}" ] || [ -n "$(tr -d '0 ' <<<"$restarts")" ] || [ "$roles" != 4 ]; then
+  if [ -z "${restarts// /}" ] || [ "$roles" != 4 ]; then
     echo "demo: PostgreSQL init check failed (restarts: ${restarts:-none}; demo roles: $roles of 4): PGDATA may be half-initialized; run '$0 delete --all' and apply again" >&2
     exit 1
   fi
-  echo "demo: PostgreSQL init verified (no restart, 4 demo roles)"
+  if [ -z "$(tr -d '0 ' <<<"$restarts")" ]; then
+    echo "demo: PostgreSQL init verified (no restart, 4 demo roles)"
+    return
+  fi
+  marks=$(k exec deploy/demo-postgres -- psql -X -q -U postgres -d postgres -tAc \
+    "select (select count(*) from pg_database where datname in ('demo_go','demo_python','demo_node','demo_dotnet')) || '|' || has_database_privilege('public','template1','CONNECT')" 2>/dev/null || echo error)
+  marks=${marks//[[:space:]]/}
+  if [ "$marks" != "4|false" ]; then
+    echo "demo: PostgreSQL init check failed (restarts: $restarts; demo roles: 4 of 4; databases|template1 PUBLIC CONNECT: $marks, want 4|false): PGDATA may be half-initialized; run '$0 delete --all' and apply again" >&2
+    exit 1
+  fi
+  echo "demo: PostgreSQL init verified (restarts: $restarts after a complete init: 4 demo roles, 4 databases, template1 closed)"
 }
 
 apply_backing() {

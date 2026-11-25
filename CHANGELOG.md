@@ -4899,6 +4899,13 @@ Unsupported instrumentation versions, task A10 (P18):
   1.9–2.4 h estimate (worst case 5.2 h) without a kubectl call. `calibrate()`
   now names invalid repeats and planned cells without repeats. Not yet run on
   k8s01.
+- **Demo PostgreSQL init check accepts restarts after a complete init
+  (2026-11-25, DE-D13 correction).** Two k8s01 reboots left the
+  `demo-postgres` container at `restartCount` 2 with a complete init, and
+  `demo.sh apply` (the soak hook and the trap's demo restore) refused. With
+  a restart, `verify_init` now also checks the initdb script's last effects
+  (the four `demo_<lang>` databases, no `PUBLIC` `CONNECT` on `template1`)
+  and passes when they hold.
 - **Soak guard (c) scoped to the run path (2026-11-25, owner ruling, SR15
   correction).** After two k8s01 reboots that day, istio-cni had not set up
   three `argo-events` pods, and 64 HBONE `:15008` refusals from Prometheus
