@@ -47,6 +47,10 @@ from preflight import node_free  # noqa: E402
 CLUSTER = "k8s01"
 APP_NS = "dev-otel-libs"
 MESH_NAMESPACES = ("dev-otel-libs", "opentelemetry", "monitoring")
+# Guard (c) counts a refused HBONE line only when one side is the run's services or the
+# Collector path (owner ruling 2026-11-25): monitoring alone (Prometheus scraping another
+# namespace's pod) is not the soak's path.
+RUN_PATH_NAMESPACES = ("dev-otel-libs", "opentelemetry")
 COPY_JOB = "dev-otel-libs/soak-agent"
 AGENT_JOB = "otel-agent-collector-monitoring"
 GATEWAY_JOB = "otel-gateway-collector-monitoring"
@@ -443,9 +447,20 @@ def parse_pid1(stdout: str, lang: str, app: str) -> dict:
 # ── ztunnel log lines (guard (c)) ──
 
 
-def ztunnel_refused(lines: list[str], namespaces: tuple[str, ...] = MESH_NAMESPACES) -> list[dict]:
-    """Lines saying ``Connection refused`` to a ``:15008`` address that involve one of
-    the namespaces. JSON access-log lines are read by field; other lines by text.
+def _roll_listed(rec: dict) -> bool:
+    """Either side is a roll-list pod (the path's own Tempo, Loki, Prometheus,
+    kube-state-metrics), by namespace and pod-name regex (guard (c) review M1)."""
+    for side in ("src", "dst"):
+        ns, wl = rec.get(f"{side}.namespace"), rec.get(f"{side}.workload") or ""
+        if any(ns == rns and re.fullmatch(rx, wl) for rns, rx, _role in ROLL_LIST):
+            return True
+    return False
+
+
+def ztunnel_refused(lines: list[str], namespaces: tuple[str, ...] = RUN_PATH_NAMESPACES) -> list[dict]:
+    """Lines saying ``Connection refused`` to a ``:15008`` address whose source or
+    destination is in one of the namespaces (default: the run's services and the
+    Collector path, ``RUN_PATH_NAMESPACES``). JSON access-log lines are read by field; other lines by text.
     Returns sanitized hits (time, src/dst namespace and workload only)."""
     hits = []
     for line in lines:
@@ -457,11 +472,11 @@ def ztunnel_refused(lines: list[str], namespaces: tuple[str, ...] = MESH_NAMESPA
             rec = None
         if isinstance(rec, dict):
             nss = {rec.get("src.namespace"), rec.get("dst.namespace")}
-            if not nss & set(namespaces):
+            if not nss & set(namespaces) and not _roll_listed(rec):
                 continue
             hits.append({k: rec.get(k) for k in ("time", "src.namespace", "src.workload",
                                                  "dst.namespace", "dst.workload")})
-        elif any(re.search(rf"\b{re.escape(ns)}\b", line) for ns in namespaces):
+        elif any(re.search(rf"(?<![\w-]){re.escape(ns)}(?![\w-])", line) for ns in namespaces):
             hits.append({"time": None, "text": "non-JSON line"})
     return hits
 

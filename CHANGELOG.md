@@ -4899,6 +4899,14 @@ Unsupported instrumentation versions, task A10 (P18):
   1.9–2.4 h estimate (worst case 5.2 h) without a kubectl call. `calibrate()`
   now names invalid repeats and planned cells without repeats. Not yet run on
   k8s01.
+- **Soak guard (c) scoped to the run path (2026-11-25, owner ruling, SR15
+  correction).** After two k8s01 reboots that day, istio-cni had not set up
+  three `argo-events` pods, and 64 HBONE `:15008` refusals from Prometheus
+  scraping them refused the K-cal entry gate. `ztunnel_refused` now counts a
+  line only when its source or destination is `dev-otel-libs` or
+  `opentelemetry` (`soakplatform.RUN_PATH_NAMESPACES`) or a roll-list pod
+  (Tempo, Loki, Prometheus, kube-state-metrics); a gateway → backend
+  refusal still counts through its `opentelemetry` source.
 - **Soak K8a run `k8a-20261124b` valid and PASS under the 12 h ruling;
   passive coverage covers the whole judged span (2026-11-25, design S-D5
   corrections).** The 12 h window (90 min warm-up, 10 h 30 min judged) passed

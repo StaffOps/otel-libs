@@ -285,8 +285,33 @@ class Ztunnel(unittest.TestCase):
         self.assertEqual(len(hits), 1)
         self.assertEqual(hits[0]["dst.workload"], "soak-agent")
         self.assertNotIn("src.identity", hits[0])
-        text = "2026 ERROR connection refused 10.0.0.1:15008 ns monitoring"
+        text = "2026 ERROR connection refused 10.0.0.1:15008 ns opentelemetry"
         self.assertEqual(sp.ztunnel_refused([text]), [{"time": None, "text": "non-JSON line"}])
+
+    def test_scoped_to_the_run_path(self):
+        # Owner ruling 2026-11-25: Prometheus (monitoring) scraping an argo-events pod is
+        # not the soak's path; a monitoring line counts only with a run-path side.
+        scrape = (self.LINE.replace('"src.namespace": "dev-otel-libs"', '"src.namespace": "monitoring"')
+                  .replace('"dst.namespace": "dev-otel-libs"', '"dst.namespace": "argo-events"'))
+        self.assertEqual(sp.ztunnel_refused([scrape]), [])
+        self.assertEqual(sp.ztunnel_refused(["2026 ERROR connection refused 10.0.0.1:15008 ns monitoring"]), [])
+        to_gateway = (self.LINE.replace('"dst.namespace": "dev-otel-libs"', '"dst.namespace": "opentelemetry"')
+                      .replace('"src.namespace": "dev-otel-libs"', '"src.namespace": "monitoring"'))
+        self.assertEqual(len(sp.ztunnel_refused([to_gateway])), 1)
+        self.assertEqual(len(sp.ztunnel_refused([scrape], sp.MESH_NAMESPACES)), 1)  # the old scope
+        # the gateway exporting to Tempo: src opentelemetry, dst monitoring
+        export = (self.LINE.replace('"src.namespace": "dev-otel-libs"', '"src.namespace": "opentelemetry"')
+                  .replace('"dst.namespace": "dev-otel-libs"', '"dst.namespace": "monitoring"')
+                  .replace('"dst.workload": "soak-agent"', '"dst.workload": "tempo-0"'))
+        self.assertEqual(len(sp.ztunnel_refused([export])), 1)
+        # two roll-list pods of monitoring (Prometheus scraping kube-state-metrics) still count
+        ksm = (self.LINE.replace('"src.namespace": "dev-otel-libs"', '"src.namespace": "monitoring"')
+               .replace('"src.workload": "demo-go-api"', '"src.workload": "prometheus-kps-0"')
+               .replace('"dst.namespace": "dev-otel-libs"', '"dst.namespace": "monitoring"')
+               .replace('"dst.workload": "soak-agent"', '"dst.workload": "kube-state-metrics-6d9f7c5b8-x2k4p"'))
+        self.assertEqual(len(sp.ztunnel_refused([ksm])), 1)
+        # a text line naming another opentelemetry-* namespace is not the run path
+        self.assertEqual(sp.ztunnel_refused(["2026 connection refused 10.0.0.1:15008 opentelemetry-operator-system"]), [])
 
 
 class Pods(unittest.TestCase):

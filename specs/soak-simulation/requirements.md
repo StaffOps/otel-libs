@@ -924,9 +924,26 @@ stays as dated history.
   - (b) `increase(istio_tcp_connections_failed_total{reporter="source"}[60s])`
     SHALL be 0 for every series whose source or destination workload
     namespace is `dev-otel-libs`, `opentelemetry` or `monitoring`;
+    *Corrected 2026-11-25 (code review of the guard (c) change; records the
+    code as built):* only the two telemetry edges gate (demo → `soak-agent`,
+    `soak-agent` → the shared agent, `soakplatform.TELEMETRY_EDGES`); a
+    failing edge elsewhere in the three namespaces is reported, not gated;
   - (c) the ztunnel logs since the last read SHALL contain no
     `Connection refused` line to a `:15008` address that involves one of
     those namespaces;
+    *Corrected 2026-11-25 (owner ruling, after the k8s01 reboots of that
+    day):* a line counts only when its source or destination is
+    `dev-otel-libs` or `opentelemetry` (the run's services and the
+    Collector path). `monitoring` alone does not: 64 refusals from
+    Prometheus scraping three `argo-events` pods that istio-cni had not set
+    up refused the K-cal entry gate. Reversal action: widen it again if a
+    refusal on a `monitoring` backend (Tempo, Loki, Prometheus as the
+    destination of the gateway) is missed — such a line has `opentelemetry`
+    as its source and still counts. A line between two roll-list pods of
+    `monitoring` (Prometheus scraping kube-state-metrics, Tempo or Loki)
+    also still counts: either side matching a "Windows" roll-list pod is
+    enough (code review of the same day). The non-JSON fallback matches a
+    namespace name only as a whole token, not `opentelemetry-*`.
   - (d) the restart counts and container start times of every pod in the
     path SHALL be unchanged: the roll list of "Windows" (`soak-agent`, the
     shared agent and gateway, Tempo, Loki, Prometheus) plus ztunnel,
