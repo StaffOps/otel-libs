@@ -421,8 +421,9 @@ def noisy(r, metric, job, at):
     r.raw[metric] = [tp.series(tp.k8s(__name__=metric, job=job), [(at - 1900, 0), (at - 10, 3), (at + 10_000, 3)])]
 
 
-def k6_pod(state: dict, waiting: str | None = None) -> dict:
-    cs = {"name": "k6", "state": {"waiting": {"reason": waiting}} if waiting else {"running": {}}}
+def k6_pod(state: dict, waiting: str | None = None, exit_code: int | None = None) -> dict:
+    cs = {"name": "k6", "state": ({"terminated": {"exitCode": exit_code}} if exit_code is not None else
+                                  {"waiting": {"reason": waiting}} if waiting else {"running": {}})}
     return {"kind": "Pod", "apiVersion": "v1",
             "metadata": {"name": "soak-k6-loaded-abcde", "namespace": "dev-otel-libs",
                          "labels": {"job-name": "soak-k6-loaded", **render.labels(RUN, "k6")}},
@@ -638,6 +639,20 @@ class Window(Base):
         self.assertFalse(res.valid)
         self.assertIn("k6: pod not running 120s after the start (ImagePullBackOff)", res.reason)
         self.assertEqual(res.reads, 3)  # reads at 0 and 60 s are inside the allowance
+
+    def test_k6_exited_0_before_the_job_succeeded(self):
+        """kcal-20261125b: the k6 container terminated with exit 0 while the Job had
+        no ``succeeded`` yet; that is not a "pod not running" failure."""
+        with self.cluster() as c:
+            c.edit(lambda st: st["objects"].append(k6_pod({}, exit_code=0)))
+            res = self.loop(Switch(), Clock()).window("loaded", 600, loaded=True,
+                                                      start_load=self.start_k6(pull_s=120))
+        self.assertTrue(res.valid, res.reason)
+        with self.cluster() as c:
+            c.edit(lambda st: st["objects"].append(k6_pod({}, exit_code=1)))
+            res = self.loop(Switch(), Clock()).window("loaded", 600, loaded=True,
+                                                      start_load=self.start_k6(pull_s=120))
+        self.assertIn("pod not running", res.reason)
 
     def test_k6_start_failure_is_recorded(self):
         """Review L6."""

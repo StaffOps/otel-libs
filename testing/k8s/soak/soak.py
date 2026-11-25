@@ -757,7 +757,14 @@ class Loop:
             return None
         for p in pods:
             for c in (p.get("status") or {}).get("containerStatuses") or []:
-                if "running" in (c.get("state") or {}):
+                st = c.get("state") or {}
+                if "running" in st:
+                    return None
+                # k6 exited 0 and the Job controller has not set ``succeeded`` yet
+                # (K-cal run kcal-20261125b, step 2: a 300 s step ended right at the
+                # 300 s pull allowance); the next read sees the Job done. The pod's
+                # restartPolicy is Never (render.k6_job), so the exit is final.
+                if (st.get("terminated") or {}).get("exitCode") == 0:
                     return None
         reasons = sorted({((c.get("state") or {}).get("waiting") or {}).get("reason", "not running")
                           for p in pods for c in (p.get("status") or {}).get("containerStatuses") or []})

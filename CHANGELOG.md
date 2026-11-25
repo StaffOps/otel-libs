@@ -4899,6 +4899,13 @@ Unsupported instrumentation versions, task A10 (P18):
   1.9–2.4 h estimate (worst case 5.2 h) without a kubectl call. `calibrate()`
   now names invalid repeats and planned cells without repeats. Not yet run on
   k8s01.
+- **Soak loop: a k6 container that exited 0 does not invalidate the window
+  (2026-11-25).** In K-cal run `kcal-20261125b` a 300 s rate step ended right
+  at the 300 s pull allowance, before the Job set `succeeded`, and the step
+  was marked "k6: pod not running"; an exit-0 container now waits for the
+  Job's status. Phase A of that run qualified Python, Node.js and .NET
+  (k = 4 / 2 / 1 per request) and excluded the three Go services, whose span
+  count per request varies at the copy and at the gateway.
 - **Demo PostgreSQL init check accepts restarts after a complete init
   (2026-11-25, DE-D13 correction).** Two k8s01 reboots left the
   `demo-postgres` container at `restartCount` 2 with a complete init, and
