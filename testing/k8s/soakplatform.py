@@ -448,13 +448,14 @@ def parse_pid1(stdout: str, lang: str, app: str) -> dict:
 
 
 def _roll_listed(rec: dict) -> bool:
-    """Either side is a roll-list pod (the path's own Tempo, Loki, Prometheus,
-    kube-state-metrics), by namespace and pod-name regex (guard (c) review M1)."""
-    for side in ("src", "dst"):
+    """Both sides are roll-list pods (e.g. Prometheus scraping kube-state-metrics,
+    Tempo or Loki), by namespace and pod-name regex (guard (c) review M1). One
+    side is not enough: Prometheus is on the roll list and scrapes every
+    namespace."""
+    def listed(side: str) -> bool:
         ns, wl = rec.get(f"{side}.namespace"), rec.get(f"{side}.workload") or ""
-        if any(ns == rns and re.fullmatch(rx, wl) for rns, rx, _role in ROLL_LIST):
-            return True
-    return False
+        return any(ns == rns and re.fullmatch(rx, wl) for rns, rx, _role in ROLL_LIST)
+    return listed("src") and listed("dst")
 
 
 def ztunnel_refused(lines: list[str], namespaces: tuple[str, ...] = RUN_PATH_NAMESPACES) -> list[dict]:

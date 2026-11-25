@@ -310,6 +310,11 @@ class Ztunnel(unittest.TestCase):
                .replace('"dst.namespace": "dev-otel-libs"', '"dst.namespace": "monitoring"')
                .replace('"dst.workload": "soak-agent"', '"dst.workload": "kube-state-metrics-6d9f7c5b8-x2k4p"'))
         self.assertEqual(len(sp.ztunnel_refused([ksm])), 1)
+        # the 2026-11-25 case: Prometheus (a roll-list pod) scraping an argo-events pod
+        argo = (ksm.replace('"dst.namespace": "monitoring"', '"dst.namespace": "argo-events"')
+                .replace('"dst.workload": "kube-state-metrics-6d9f7c5b8-x2k4p"',
+                         '"dst.workload": "argocd-eventsource-56j2h-74bf9f6bfd-jzdv2"'))
+        self.assertEqual(sp.ztunnel_refused([argo]), [])
         # a text line naming another opentelemetry-* namespace is not the run path
         self.assertEqual(sp.ztunnel_refused(["2026 connection refused 10.0.0.1:15008 opentelemetry-operator-system"]), [])
 

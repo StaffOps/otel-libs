@@ -941,8 +941,9 @@ stays as dated history.
     destination of the gateway) is missed — such a line has `opentelemetry`
     as its source and still counts. A line between two roll-list pods of
     `monitoring` (Prometheus scraping kube-state-metrics, Tempo or Loki)
-    also still counts: either side matching a "Windows" roll-list pod is
-    enough (code review of the same day). The non-JSON fallback matches a
+    also still counts: both sides matching a "Windows" roll-list pod is
+    enough (code review of the same day); one side is not, since Prometheus
+    is on the roll list and scrapes every namespace. The non-JSON fallback matches a
     namespace name only as a whole token, not `opentelemetry-*`.
   - (d) the restart counts and container start times of every pod in the
     path SHALL be unchanged: the roll list of "Windows" (`soak-agent`, the

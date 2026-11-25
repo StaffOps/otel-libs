@@ -4904,8 +4904,8 @@ Unsupported instrumentation versions, task A10 (P18):
   three `argo-events` pods, and 64 HBONE `:15008` refusals from Prometheus
   scraping them refused the K-cal entry gate. `ztunnel_refused` now counts a
   line only when its source or destination is `dev-otel-libs` or
-  `opentelemetry` (`soakplatform.RUN_PATH_NAMESPACES`) or a roll-list pod
-  (Tempo, Loki, Prometheus, kube-state-metrics); a gateway → backend
+  `opentelemetry` (`soakplatform.RUN_PATH_NAMESPACES`), or both sides are
+  roll-list pods (Tempo, Loki, Prometheus, kube-state-metrics); a gateway → backend
   refusal still counts through its `opentelemetry` source.
 - **Soak K8a run `k8a-20261124b` valid and PASS under the 12 h ruling;
   passive coverage covers the whole judged span (2026-11-25, design S-D5
