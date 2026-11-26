@@ -178,6 +178,106 @@ every language), and the workers were read after the trap had replaced them.
   worker pods (stated in `worker_source`; after the trap's restore they read
   as replaced).
 
+## The K8b extra checks (`verify.py soak extras`)
+
+`count` judges the fixed-family counts; `extras` (`testing/k8s/soakextras.py`,
+design K-D21 draft) runs the other K8b checks, read-only, and writes
+`soak-extras.json` (or `--output`), one line per item as `count` prints, exit 0
+only when every judged verdict is PASS (REPORT-ONLY and N/A allowed):
+
+```bash
+python3 -I testing/k8s/verify.py soak extras --run <id> \
+  --count-window testing/k8s/soak/runs/<id>/count-window.json \
+  --kcal testing/k8s/soak/runs/<kcal-run>/soak-cal.json
+# or --t1 --t2 --k6-log [--k6-end] instead of --count-window (flags win over the file);
+# a count window with valid: false is refused (exit 2); its k6_log is relative to runs/<id>/
+```
+
+- **graph** — per language, `traces_service_graph_request_total` on the
+  api → backend edge (no `connection_type`), raw samples over (t1, t_read]:
+  t_read is the first connector flush (one sample per 60 s push) after k6's end
+  (`--k6-end`, the count window's `k6_end`, else t2) + the SDK
+  BatchSpanProcessor delay (5 s) + the agent `batch.timeout` + the connector's
+  `store.ttl` + 2 × the gateway `batch.timeout` (from the otel-agent and
+  gateway CRs), capped at t2 + `--settle` (no flush before the cap:
+  UNMEASURED); the shared gates then run to t_read; the series expire after 15 min idle (hard-coded
+  in the servicegraph connector, `connector.go:815-849` v0.165.0; it has no
+  `metrics_expiration` field). Judged: only the failed share (r6.2 "Counting
+  in bounds" judges only the fixed span families). Report-only: the exact
+  count (total and failed) against Σ answered × the backend
+  `server:demo.v1.OrderService/PlaceOrder` k;
+  the upper end adds the no-answer requests × k and the demo-<lang>-worker →
+  demo-<lang>-api edge growth over the read (the restored demo's own traffic
+  after the trap, at most one backend call per worker request), the lower end
+  stays exact. The `failed="true"` share against k6's share
+  of gRPC-failing scenarios (`business_error`, `db_error`) within 3 σ,
+  σ = √(p(1−p)/n); the share is UNQUALIFIED when the total is LOSS, n < 1000
+  (S-D5 floor) or a cell has no k. The nominal k (Go) is used only when K-cal
+  recorded `qualified: false` (verdict REPORT-ONLY); a service or family missing
+  from the calibration file is UNQUALIFIED. The connector's expired / total
+  edge counters are report-only (all edges).
+- **Tempo reads** (platform owner's rules, 2026-11-26, after `tempo-0` was
+  OOMKilled by parallel trace-by-ID reads): every Tempo read (by-ID fetches,
+  searches, the SR10 TraceQL metrics) is strictly sequential, at most
+  `--tempo-rate` per minute (default 10); before every batch of 10 reads
+  `tempo-0`'s `container_memory_working_set_bytes` is read from Prometheus — at
+  or above `--tempo-mem-stop` GiB (default 1.5), or unreadable, no further read
+  and the rest is UNMEASURED with the reason; a failed read (ServiceUnavailable,
+  EOF, timeout) is that item's UNMEASURED and never aborts the run; 3
+  consecutive failures stop every further read. At 10/min a full reservoir
+  (48 cells × 50) takes about 4 h: lower `--orphan-sample` for a shorter run.
+- **canary** — `runs/<id>/canary`, read by the module only, never printed,
+  logged, written or put in a query; every error text is redacted
+  (case-insensitive) before it is truncated; hits are named by field, never
+  shown. Sources (each a row: PASS when scanned, UNMEASURED when capped,
+  incomplete — fewer records read than counted — or unreadable): every Loki
+  stream of `dev-otel-libs` and `opentelemetry` over [t1, t2 + `--settle`]
+  (line, labels, structured metadata; a namespace without a stream is
+  unmeasured), demo-service records without `k8s_namespace_name`; the demo
+  container logs the trap saved (step 1b); a hooked run without that record
+  is UNMEASURED; only a run not hooked may fall back to "measured empty via
+  otel-logs file_log" (REPORT-ONLY, so the check stays UNMEASURED), when `file_log` demonstrably
+  collected the namespace in the window (records of other containers without
+  `service_instance_id`) and no `otel-logs` container started after t1;
+  the current Collector containers' logs since t1 when they ran since t1; the
+  span values of the traces the orphan check fetched; the saved k6 log; and
+  `soak-extras.json` itself before it is written.
+- **orphans** (SR9) — the k6 reservoir (`SOAKRES` lines): N = `--orphan-sample`
+  (default 50) traces per cell. s01 by id (one missing parent allowed, the
+  entry span's, equal to k6's `parent_id`; a missing trace is a FAIL), s00 by id
+  (must be absent), class `none` (k6 knows no trace id) and a language without
+  reservoir records by a TraceQL search of api entry spans over ten slices of
+  the window, classified by the entry span. A cell with fewer than N checked is
+  UNQUALIFIED, a fetch error UNMEASURED. When a gateway processor really sets
+  `gateway.id` (an attributes/resource action or an OTTL `set`), every span
+  must carry one value; on `k8s01` none does (one gateway replica, no
+  load-balancing tier): AG2. When Tempo returns no trace of the window (search
+  and five reservoir ids), every language is UNMEASURED.
+- **parity** (SR10) — per app role, the demo jobs' metric names and label keys
+  (`/api/v1/series` over the window, buckets excluded) and span names and kinds
+  (TraceQL metrics plus the fetched traces; span names `demo:go:` … →
+  `demo:<lang>:`). Units are compared by the name's unit suffix only (the
+  metadata API is global per name; its units are recorded report-only). A
+  difference passes on a runtime metric family owned by every language that
+  has it (`go_`, `process_` / `system_` / `cpython_`, `dotnet_`, `nodejs_` /
+  `v8js_`), or on an `accepted` entry of `testing/k8s/soak/sr10-gaps.json`
+  matching kind, role, item (exact or a declared prefix), attribute and
+  covering every missing language. Every entry is `proposed` (or `needs-row`:
+  a real gap, or one that needs a gaps row first — it never passes) until the
+  owner accepts it; `--sr10-accept-proposed` previews the proposed ones: the
+  verdict is then PREVIEW, never PASS, and `extras` never exits 0. Label keys
+  of a role and metric are compared only when every language that has the
+  metric had traffic for it in the window (its counter grew between t1 and t2);
+  otherwise the item is UNMEASURED with the reason. A "Known emitted-telemetry
+  gaps" row that names the item is printed next to a FAIL as a candidate only.
+- **logs** — per `severity_number`, the OTLP records (`service_instance_id`
+  set) per demo service, report-only (AG6); compared with soak-cal.json
+  only if it carries an expectation (it does not today).
+
+graph, orphans and parity are gated by the shared agent and gateway
+sentinels over (t1, t2] (UNQUALIFIED when dirty, the measured verdict kept);
+the canary and the log counts are not.
+
 ## Calibration (`cal`, task K-cal-d)
 
 The driver of K-cal (design K-D20). Defaults: N = 30 requests per language
@@ -292,6 +392,14 @@ and `runs/<id>/trap.jsonl` is written in any case:
    `runs/<id>/raw/<job>.log`, with its size in bytes; a failed read goes to
    `<job>.log.err` and never overwrites a saved log; a log without a
    `SOAKRES` line, when the plan had a reservoir, is an error;
+1b. only when the hook was applied: `kubectl logs --container=<c>
+   --since-time=<hook time>` (stdout and stderr) of every demo container to
+   `runs/<id>/raw/<pod>.<container>.log`, before the restore replaces the pods
+   (`soak extras` scans them for the canary); `trap.jsonl` `demo_logs` records
+   per container the lines, bytes and the number of canary lines (a count,
+   never a line). A log with a canary line is never written: the trap saves a
+   marker with the count instead; every saved log is mode 0600 and error
+   texts are redacted;
 2. delete only the objects labelled `otel-libs/soak-run=<id>` in
    `dev-otel-libs` (Jobs, ConfigMaps, Services, Pods, NetworkPolicies — by that
    selector, never by kind alone); the demo apps, the backing services and the
@@ -345,19 +453,27 @@ own id. A run id is a label value (`soakplatform.RUN_RE`, shared with K1).
 - **Orphan reservoir: the fallback.** `handleSummary` gets only aggregated
   metrics and VUs share no mutable state, so the summary cannot carry
   per-request ids on k6 2.3.0. The script prints one `SOAKRES {json}` line
-  (`trace_id`, `parent_id`, class, status, VU) for the first 50 requests per
-  cell per VU, from VUs 1 and 2 only (`reservoir_vus`), so a cell logs at most
-  100 lines whatever `maxVUs` is (`--log-format=raw`); the trap's `kubectl
-  logs` (without `--timestamps`, which would break the markers) saves them.
+  (`trace_id`, `parent_id`, class, status, VU) for 50 rounds of each
+  language scenario, a round being `len(mix) × len(classes)` consecutive
+  iterations (`exec.scenario.iterationInTest`), one round every `stride` =
+  max(1, floor(planned rounds / 50)) (19 for 4 req/s × 2 h), so the logged
+  rounds spread over the window and every cell of every language
+  logs (50 per cell, 350 for `ok` with the 7/1/1/1 mix) and a 4-language plan
+  logs at most 50 × 30 × 4 lines whatever `maxVUs` is (`--log-format=raw`);
+  the former gate on VUs 1 and 2 (`idInTest`, global across scenarios) left Go
+  and Node.js with no line in `k8b-20261125`. The trap's `kubectl logs`
+  (without `--timestamps`, which would break the markers) saves them.
   `fixtures/k6-2.3.0-run.log` is a recorded run of the pinned image: every
-  per-cell sub-metric came back in the summary as written, the reservoir is
-  bounded per cell per VU and across VUs, and `dropped_iterations` is absent
+  per-cell sub-metric came back in the summary as written, every language
+  logs reservoir lines within the round bound (re-recorded 2026-11-26 with
+  the round gate), and `dropped_iterations` is absent
   when it is 0.
 
 ## Evidence
 
 `runs/<id>/` is git-ignored: `state.json` (tag, languages), `guard.jsonl`
-(every read), `windows.jsonl`, `trap.jsonl`, `heartbeat`, `raw/` (k6 logs),
+(every read), `windows.jsonl`, `trap.jsonl`, `heartbeat`, `raw/` (k6 logs and, with
+`--hook`, the demo container logs of trap step 1b),
 `count-window.json` and, with `--hook`, `workers.json` (`run`, above),
 and, with `--hook`, `soak.env` and `canary` (mode 0600, also when the file
 existed; the canary is never printed; K11 scans the summary for it). Every
@@ -368,6 +484,7 @@ text is replaced by a marker naming the patterns.
 
 ```bash
 python3 -I -m unittest discover -s testing/k8s/soak -p 'test_*.py'
+python3 -I testing/k8s/demo/test_soakextras.py   # verify.py soak extras
 ```
 
 No cluster: the tests run against `fakekube.py` and K1's fake Prometheus

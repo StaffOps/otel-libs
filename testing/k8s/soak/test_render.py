@@ -5,7 +5,7 @@ generator (k6script.py), including a recorded run of the pinned k6.
 (``docker.io/grafana/k6:2.3.0@sha256:2dd4756e…``, 2026-11-23) running the
 script of ``FIXTURE_PLAN`` (targets refused on 127.0.0.1:1, so every request
 is status 0 / ``noanswer``; re-recorded 2026-11-23 after the review M11
-cross-VU reservoir bound):
+cross-VU reservoir bound, and 2026-11-26 twice, for the per-scenario round reservoir and its stride):
 ``k6 run --log-format=raw /scripts/run.js``. It proves on that version that
 the per-cell sub-metrics come back in ``handleSummary`` as written and that the
 bounded reservoir lines are printed. Regenerate it only for a new k6 pin.
@@ -29,7 +29,7 @@ RUN = "r1"
 IMG = "harbor.staffops.space/development/otel-libs-fakeotlp:abc@sha256:" + "a" * 64
 FIXTURE = HERE / "fixtures" / "k6-2.3.0-run.log"
 FIXTURE_PLAN = k6script.K6Plan(langs=("go", "python"), rate=4, duration_s=3, timeout_s=1, p99_s=0.5,
-                               reservoir=2, url="http://127.0.0.1:1/{lang}/orders")
+                               reservoir=1, url="http://127.0.0.1:1/{lang}/orders")
 ALLOWED_LABELS = {render.RUN_LABEL, render.ROLE_LABEL}
 
 
@@ -189,7 +189,7 @@ class K6Plan(unittest.TestCase):
         self.assertEqual(plan.memory_limit_mi, 256 + 4 * 315)  # from the VU count (review H6)
         four = k6script.K6Plan(langs=render.LANGS, rate=20, duration_s=60, timeout_s=15, p99_s=0.75)
         self.assertEqual(four.memory_limit_mi, 256 + 4 * 4 * 315)
-        self.assertEqual(four.reservoir_lines_max, 50 * 2 * 48)  # bounded across VUs (review M11)
+        self.assertEqual(four.reservoir_lines_max, 50 * 10 * 3 * 4)  # rounds x round size x languages
         sc, _ = k6script.scenarios(plan)
         self.assertEqual(sc["go"]["maxVUs"], 315)
         self.assertEqual(sc["go"]["executor"], "constant-arrival-rate")
@@ -212,7 +212,7 @@ class K6Plan(unittest.TestCase):
     def test_validation(self):
         base = dict(langs=("go",), rate=1, duration_s=10)
         bad = [dict(langs=()), dict(langs=("java",)), dict(langs=("go", "go")), dict(rate=0),
-               dict(timeout_s=16), dict(timeout_s=0), dict(p99_s=0), dict(reservoir=-1), dict(reservoir_vus=0),
+               dict(timeout_s=16), dict(timeout_s=0), dict(p99_s=0), dict(reservoir=-1),
                dict(mix={"ok": 0}), dict(mix={"other": 1}), dict(classes={"none": -1}),
                dict(duration_s=0), dict(url="http://x/orders"),
                dict(phases=(k6script.Phase("pre", 0, 1),)),
@@ -235,10 +235,25 @@ class K6Plan(unittest.TestCase):
         self.assertEqual(cfg["classes"], ["none", "s01", "s00"])
         self.assertEqual(cfg["expected"], {"ok": 201, "business_error": 422, "db_error": 409, "unhandled": 500})
         self.assertEqual(cfg["reservoir"], 50)
-        self.assertEqual(cfg["reservoirVus"], 2)
-        self.assertIn("exec.vu.idInTest <= CFG.reservoirVus", script)
+        self.assertNotIn("reservoirVus", cfg)
+        self.assertNotIn("idInTest <=", script)
+        self.assertIn("round % sc.stride === 0 && round / sc.stride < CFG.reservoir", script)
+        meta = json.loads(script.split("const CFG = ", 1)[1].split(";\n", 1)[0])["scenarios"]
+        self.assertEqual(meta["go"]["stride"], 1)   # 3 req/s x 60 s = 6 rounds < 50
+
         self.assertIn("handleSummary", script)
         self.assertIn("'00-' + traceId + '-' + parentId", script)
+
+    def test_reservoir_stride_spreads_over_the_window(self):
+        two_h = k6script.K6Plan(langs=("go",), rate=4, duration_s=7200)
+        self.assertEqual(k6script.reservoir_stride(two_h, 7200), 19)   # 4 x 7200 / 30 = 960 rounds / 50
+        self.assertEqual(k6script.reservoir_stride(two_h, 10), 1)
+        self.assertEqual(k6script.reservoir_stride(k6script.K6Plan(langs=("go",), rate=4, duration_s=1,
+                                                                   reservoir=0), 10), 1)
+        phased = k6script.K6Plan(langs=("go",), rate=4, duration_s=0,
+                                 phases=(k6script.Phase("pre", 0, 3000), k6script.Phase("post", 3000, 600)))
+        _, meta = k6script.scenarios(phased)
+        self.assertEqual((meta["pre_go"]["stride"], meta["post_go"]["stride"]), (8, 1))
 
 
 class PinnedK6Run(unittest.TestCase):
@@ -261,14 +276,15 @@ class PinnedK6Run(unittest.TestCase):
             self.assertEqual(ok_none, 7)  # iterations 0-9 are class none, 7 of them ok
         self.assertNotIn("dropped_iterations", self.summary["metrics"])  # absent = 0
 
-    def test_reservoir_is_bounded_per_cell_per_vu(self):
+    def test_reservoir_is_bounded_per_scenario_round(self):
         self.assertTrue(self.records)
-        per = Counter((r["lang"], r["scen"], r["class"], r["phase"], r["vu"]) for r in self.records)
-        self.assertLessEqual(max(per.values()), FIXTURE_PLAN.reservoir)
-        # Review M11: only VUs 1..reservoir_vus log, so a cell has at most reservoir x reservoir_vus lines.
-        self.assertLessEqual(max(r["vu"] for r in self.records), FIXTURE_PLAN.reservoir_vus)
-        per_cell = Counter((r["lang"], r["scen"], r["class"], r["phase"]) for r in self.records)
-        self.assertLessEqual(max(per_cell.values()), FIXTURE_PLAN.reservoir * FIXTURE_PLAN.reservoir_vus)
+        # Every language logs (no global VU gate) ...
+        self.assertEqual({r["lang"] for r in self.records}, set(FIXTURE_PLAN.langs))
+        per_lang = Counter(r["lang"] for r in self.records)
+        # ... and at most reservoir rounds of one round (mix x classes) each.
+        round_size = sum(FIXTURE_PLAN.mix.values()) * sum(FIXTURE_PLAN.classes.values())
+        self.assertLessEqual(max(per_lang.values()), FIXTURE_PLAN.reservoir * round_size)
+        self.assertLessEqual(len(self.records), FIXTURE_PLAN.reservoir_lines_max)
         traced = [r for r in self.records if r["class"] != "none"]
         for r in traced:
             self.assertRegex(r["trace_id"], "^[0-9a-f]{32}$")

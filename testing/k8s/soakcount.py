@@ -19,6 +19,8 @@ committed ``specs/soak-simulation/reports/<run>.md``):
   shut     K-shut: the old ``service_instance_id``'s fixed count in its bound,
            exit within grace.
   cal      K-cal: per-cell k from repeats (integer, stable), the rate cap.
+  extras   K8b checks count does not cover (soakextras.py): api -> backend
+           service-graph share, secret canary, SR9 orphans, SR10, per-severity logs.
   report   the summary, after the secret scan (canary, fakeotlp token).
 
 Every shared-job query carries ``cluster="k8s01"`` (``soakplatform.sel``) and
@@ -1317,7 +1319,7 @@ def render_report(run: str, meta: dict, sections: dict[str, dict]) -> str:
         lines.append(f"- Image: `{d}`")
     if meta.get("digests"):
         lines.append("")
-    for name in ("passive", "gate", "count", "shut", "cal"):
+    for name in ("passive", "gate", "count", "shut", "cal", "extras"):
         sec = sections.get(name)
         if not sec:
             continue
@@ -1385,6 +1387,8 @@ def rows_for(name: str, data: dict) -> dict:
         for lang, v in sorted((data.get("rate_cap") or {}).items()):
             rows.append((f"rate cap {lang}", v["verdict"],
                          f"enqueue {_fmt(v['enqueue_rate'])}/s vs drain {_fmt(v['drain_rate'])}/s"))
+    elif name == "extras":
+        rows = [tuple(r) for r in data.get("rows") or []]
     return {"rows": rows, "findings": findings, "queries": data.get("queries") or [], "window": data.get("window")}
 
 
@@ -1431,6 +1435,13 @@ def main_soak(b: verify.Backends, args, now: float, reader: sp.Reader | None = N
     r = reader or sp.Reader(b, args.context)
     d = args.out_dir or (sp.RUNS_DIR / args.run)
     langs = tuple(args.langs)
+    if args.action == "extras":
+        output = getattr(args, "output", None)
+        if output is not None and Path(output).exists():
+            print(f"verify soak extras: --output {output} exists; not overwritten", file=sys.stderr)
+            return 1
+        import soakextras
+        return soakextras.main_extras(r, args, d, langs, now)
     missing = {"passive": ("start",), "count": ("t1", "t2", "k6_log", "kcal"),
                "shut": ("input",), "cal": ("input",)}.get(args.action, ())
     absent = [f"--{m.replace('_', '-')}" for m in missing if getattr(args, m, None) is None]
@@ -1582,7 +1593,7 @@ def action_shut(r: sp.Reader, args) -> dict:
 
 def action_report(args, d: Path) -> int:
     sections = {}
-    for name in ("passive", "gate", "count", "shut", "cal"):
+    for name in ("passive", "gate", "count", "shut", "cal", "extras"):
         p = d / f"soak-{name}.json"
         if p.exists():
             sections[name] = rows_for(name, _load_json(p))
@@ -1619,7 +1630,7 @@ def _walk(obj):
 def add_parser(sub) -> None:
     """The ``soak`` sub-command of verify.py."""
     p = sub.add_parser("soak", help="soak K-count: passive, count, shut, cal and report verdicts (read-only)")
-    p.add_argument("action", choices=("passive", "gate", "count", "shut", "cal", "report"))
+    p.add_argument("action", choices=("passive", "gate", "count", "shut", "cal", "extras", "report"))
     p.add_argument("--run", required=True, help="soak run id (directory under testing/k8s/soak/runs/)")
     p.add_argument("--out-dir", type=Path, default=None, help="default testing/k8s/soak/runs/<run>/")
     p.add_argument("--start", type=float, help="passive: window start (epoch s), required")
@@ -1646,3 +1657,5 @@ def add_parser(sub) -> None:
                         "<out-dir>/soak-<action>.json; an existing file is refused (e.g. cal: soak-cal.r2.json)")
     p.add_argument("--tag", default=None, help="report: the soaked commit's tag (default soak/<run>)")
     p.add_argument("--report", type=Path, default=None, help="report: default specs/soak-simulation/reports/<run>.md")
+    import soakextras  # the K8b checks count does not cover (soakextras.py)
+    soakextras.add_arguments(p)

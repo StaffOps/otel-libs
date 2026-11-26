@@ -164,6 +164,59 @@ class Trap(Base):
             logs_call = [a for a in c.verbs() if "logs" in a][0]
             self.assertNotIn("--timestamps", logs_call)  # review H1
 
+    def test_demo_container_logs_saved_before_the_restore(self):
+        """Step 1b: every demo container's log, since the hook, before the restore;
+        canary lines counted, never written to trap.jsonl."""
+        token = "ab" * 24
+        (self.d / "canary").write_text(token + "\n")
+        pod = {"kind": "Pod", "apiVersion": "v1",
+               "metadata": {"name": "demo-go-api-abc12-def34", "namespace": "dev-otel-libs"},
+               "spec": {"containers": [{"name": "api"}]}}
+        other = {"kind": "Pod", "apiVersion": "v1", "metadata": {"name": "demo-postgres-0", "namespace": "dev-otel-libs"},
+                 "spec": {"containers": [{"name": "postgres"}]}}
+        with self.cluster(extra=[pod, other]) as c:
+            c.logs({"pod/demo-go-api-abc12-def34:api": f"line one\nexport failed x-soak-canary={token}\n"})
+            res = self.trap(hooked(hook_at=1_795_000_000.0))
+            calls = [a for a in c.verbs() if a and "logs" in a and "pod/demo-go-api-abc12-def34" in a]
+            verbs = [a[a.index("-n") + 2] for a in c.verbs() if "-n" in a and a[0] != "demo-sh"]
+        self.assertEqual(len(calls), 1)
+        self.assertIn("--container=api", calls[0])
+        self.assertIn("--since-time=2026-11-18T11:06:40Z", calls[0])
+        self.assertLess(verbs.index("logs"), verbs.index("delete"))
+        rec = res.demo_logs["demo-go-api-abc12-def34/api"]
+        self.assertEqual((rec["lines"], rec["canary_lines"]), (2, 1))
+        self.assertEqual(rec["secret_patterns"], ["hex48"])
+        self.assertTrue(rec["marker"])   # a canary line: the marker is saved, never the text
+        path = self.d / "raw" / "demo-go-api-abc12-def34.api.log"
+        saved = path.read_text()
+        self.assertNotIn(token, saved)
+        self.assertEqual(json.loads(saved), {"not_written": "canary", "canary_lines": 1})
+        self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+        self.assertNotIn(token, (self.d / "trap.jsonl").read_text())
+        self.assertNotIn("demo-postgres-0/postgres", res.demo_logs)
+
+    def test_demo_logs_skipped_without_hook_and_errors_recorded(self):
+        pod = {"kind": "Pod", "apiVersion": "v1",
+               "metadata": {"name": "demo-go-api-abc12-def34", "namespace": "dev-otel-libs"},
+               "spec": {"containers": [{"name": "api"}]}}
+        token = "cd" * 24
+        (self.d / "canary").write_text(token + "\n")
+        with self.cluster(extra=[pod]) as c:
+            c.edit(lambda st: st.__setitem__("fail", {"logs": f"error: auth header x-soak-canary={token.upper()}"}))
+            res = self.trap(hooked())
+        self.assertIn("<canary>", res.demo_logs["demo-go-api-abc12-def34/api"]["error"])
+        self.assertTrue(any("logs pod/demo-go-api" in e for e in res.errors))
+        self.assertFalse(any(token in e.lower() for e in res.errors))
+        with self.cluster(extra=[pod]) as c:
+            c.logs({"pod/demo-go-api-abc12-def34:api": "plain line\n"})
+            res = self.trap(hooked())
+        rec = res.demo_logs["demo-go-api-abc12-def34/api"]
+        self.assertEqual((rec["canary_lines"], rec["marker"]), (0, False))
+        self.assertEqual((self.d / "raw" / "demo-go-api-abc12-def34.api.log").read_text(), "plain line\n")
+        with self.cluster(extra=[pod]) as c:
+            res = self.trap({"tag": "abc1234"})
+        self.assertEqual(res.demo_logs, {})
+
     def test_reservoir_missing_from_the_log_is_an_error(self):
         with self.cluster() as c:
             self.kube.apply(RUN, [render.k6_job(RUN, "loaded", 9)])
@@ -1616,7 +1669,10 @@ class Cli(Base):
         self.assertEqual(inp["t2"], k6w["end"] + soakcount.QUIESCE_S)
         self.assertLessEqual(inp["t2"], qw["end"])
         self.assertGreater(inp["k6_completion_time"], k6w["end"])
-        self.assertTrue(-6 < inp["k6_completion_skew_s"] <= -4, inp["k6_completion_skew_s"])
+        # completionTime is whole seconds (sp.iso drops the fraction: up to 1 s) and is
+        # stamped at the read, a few ms before the loop's window end: -6 < skew < -3
+        # (the former upper bound -4 failed about one run in five, L4).
+        self.assertTrue(-6 < inp["k6_completion_skew_s"] < -3, inp["k6_completion_skew_s"])
 
     def test_run_mode_hook_and_rate_need_the_worker_interval(self):
         """Round 2 MEDIUM-B: refused before any read or write."""

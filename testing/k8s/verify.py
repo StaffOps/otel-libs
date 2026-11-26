@@ -37,8 +37,9 @@ Modes:
   soak <action> --run <id> the soak K-count verdicts (soakcount.py): passive (K8a S-D5
                      slope rules per container, FDs from the exec sweep), gate (coverage),
                      count (K8b fixed-family bounds, copy primary, gateway cross-check,
-                     drain), shut (K-shut), cal (K-cal k values), report (the summary
-                     after the secret scan). Writes runs/<run>/soak-<action>.json.
+                     drain), shut (K-shut), cal (K-cal k values), extras (K8b service
+                     graph, canary, SR9 orphans, SR10, severities; soakextras.py), report
+                     (the summary after the secret scan). Writes runs/<run>/soak-<action>.json.
 
 smoke/examples: one PASS/FAIL line per check; exit 1 when any check fails. Every
 mode exits 2 on usage errors.

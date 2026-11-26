@@ -55,7 +55,10 @@ after the pull allowance, invalidates it (``k6: ...``). Each stop saves
 
 The trap (EXIT, INT, TERM, HUP), each step running whatever the earlier ones
 did: (1) save ``kubectl logs job/<k6>`` of every k6 Job of the run to
-``runs/<run>/raw/`` (errors to ``<job>.log.err``); (2) delete only the objects
+``runs/<run>/raw/`` (errors to ``<job>.log.err``); (1b) only when the hook was
+applied, save ``kubectl logs`` (stdout and stderr, since the hook) of every demo
+container to ``raw/<pod>.<container>.log`` before the restore replaces the
+pods, counting canary lines (count only, in ``trap.jsonl``); (2) delete only the objects
 labelled ``otel-libs/soak-run=<run>`` (never by kind alone); (3) re-read the
 namespace label and write ``ambient`` only if it is not (a guarded no-op while
 K4 is deferred); (4) only when the hook was applied: ``demo.sh apply --all``
@@ -239,10 +242,15 @@ class Kube:
         return self._ok(["delete", SOAK_KINDS, "-l", f"{RUN_LABEL}={run}",
                          "--ignore-not-found", "--wait=true", "--timeout=180s"], timeout=240)
 
-    def logs(self, target: str) -> tuple[int, str]:
+    def logs(self, target: str, container: str | None = None,
+             since_time: str | None = None) -> tuple[int, str]:
         """``kubectl logs`` without ``--timestamps`` (review H1: a timestamp
-        prefix breaks the summary markers and k6's long lines)."""
-        proc = self._run(["logs", target, "--all-containers"], timeout=120)
+        prefix breaks the summary markers and k6's long lines); one container
+        and ``--since-time`` when given (the demo containers, trap step 1b)."""
+        args = ["logs", target, f"--container={container}"] if container else ["logs", target, "--all-containers"]
+        if since_time:
+            args.append(f"--since-time={since_time}")
+        proc = self._run(args, timeout=120)
         return proc.returncode, proc.stdout if proc.returncode == 0 else proc.stderr
 
     def stop_job(self, run: str, name: str, how: str) -> None:
@@ -388,6 +396,11 @@ def append_jsonl(path: Path, record: dict) -> None:
     write_evidence(path, json.dumps(record, sort_keys=True) + "\n", mode="a")
 
 
+def _redact_canary(text: str, canary: str) -> str:
+    """``text`` without the canary (case-insensitive)."""
+    return re.sub(re.escape(canary), "<canary>", text, flags=re.IGNORECASE) if canary else text
+
+
 def write_private(path: Path, text: str) -> None:
     """A file only the operator can read (0600, also when it existed, review
     L2); its content is never printed and never scanned out (the canary)."""
@@ -507,6 +520,7 @@ def demo_tag() -> str:
 class TrapResult:
     saved: list[str] = field(default_factory=list)
     log_bytes: dict[str, int] = field(default_factory=dict)
+    demo_logs: dict[str, dict] = field(default_factory=dict)
     deleted: list[str] = field(default_factory=list)
     left: list[str] = field(default_factory=list)
     label_written: bool = False
@@ -549,6 +563,40 @@ def trap(kube: Kube, run: str, d: Path, *, state: dict, demo_sh: list[str],
                 res.errors.append(f"logs job/{name}: no {k6script.RESERVOIR_PREFIX.strip()} line "
                                   f"({len(text.encode())} bytes saved; rotated or not started?)")
 
+    def save_demo_logs():
+        """Step 1b: the demo containers' logs, before the restore replaces the pods
+        (soak extras' canary source; counts only, never a line, in trap.jsonl)."""
+        if not state.get("hook_applied"):
+            return
+        canary_file = d / "canary"
+        canary = canary_file.read_text().strip().lower() if canary_file.exists() else ""
+        since = state.get("hook_at")
+        since_time = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(float(since))) if since else None
+        for pod in kube.get(["pods"]).get("items") or []:
+            name = (pod.get("metadata") or {}).get("name", "")
+            if not guard.verify.POD_RE.fullmatch(name):
+                continue
+            for c in (pod.get("spec") or {}).get("containers") or []:
+                cname = c.get("name", "")
+                key = f"{name}/{cname}"
+                rc, text = kube.logs(f"pod/{name}", cname, since_time)
+                if rc != 0:
+                    err = _redact_canary(" ".join(text.split()), canary)[:200]
+                    res.demo_logs[key] = {"error": err}
+                    res.errors.append(f"logs pod/{key}: {err}")
+                    continue
+                lines = text.splitlines()
+                hits = sum(1 for ln in lines if canary and canary in ln.lower()) if canary else None
+                path = d / "raw" / f"{name}.{cname}.log"
+                # Review M4: a log with a canary line is never written, whatever the
+                # secret scan says; every saved log is private (0600).
+                marker = bool(hits)
+                write_private(path, json.dumps({"not_written": "canary", "canary_lines": hits}) + "\n"
+                              if marker else text)
+                res.demo_logs[key] = {"path": path.name, "lines": len(lines), "bytes": len(text.encode()),
+                                      "since": since_time, "secret_patterns": guard.verify.scan_secret(text),
+                                      "canary_lines": hits, "marker": marker}
+
     def delete():
         before = kube.run_objects(run)
         kube.delete_run(run)
@@ -586,18 +634,21 @@ def trap(kube: Kube, run: str, d: Path, *, state: dict, demo_sh: list[str],
 
     try:
         _step(res, "k6 logs", save_logs)
+        _step(res, "demo logs", save_demo_logs)
         _step(res, "delete", delete)
         _step(res, "namespace label", label)
         _step(res, "demo restore", restore)
     finally:
         try:
             append_jsonl(d / "trap.jsonl", {"at": time.time(), "saved": res.saved, "log_bytes": res.log_bytes,
+                                             "demo_logs": res.demo_logs,
                                              "deleted": res.deleted, "left": res.left,
                                              "label_written": res.label_written,
                                              "demo_restored": res.demo_restored, "errors": res.errors})
         except OSError as exc:
             res.errors.append(f"trap.jsonl: {exc}")
     for line in (f"trap: saved {len(res.saved)} k6 log(s) {res.log_bytes or ''}".rstrip(),
+                 f"trap: saved {len(res.demo_logs)} demo container log(s)" if res.demo_logs else "",
                  f"trap: deleted {len(res.deleted)} soak-run object(s): {', '.join(res.deleted) or '-'}",
                  f"trap: left {', '.join(res.left)}" if res.left else "trap: no soak-run object left",
                  "trap: namespace label set to ambient" if res.label_written
@@ -1256,6 +1307,7 @@ def _setup(args: argparse.Namespace, kube: Kube, reader: "KubeReader", cfg: guar
     write_private(d / "canary", canary + "\n")
     write_private(env_path, hook_env(secrets.token_hex(4), canary, args.worker_interval))
     state["hook_applied"] = True  # before the apply: an interrupt mid-apply still restores
+    state["hook_at"] = time.time()  # the trap's demo logs start here (step 1b)
     save_state(d, state)
     hook_t = time.time()
     proc = demo_apply([str(DEMO_SH)], kube.context, kube.namespace, record["tag"], args.langs, env_path)

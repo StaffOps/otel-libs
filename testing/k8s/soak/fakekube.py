@@ -11,7 +11,7 @@ Every call is appended to ``FAKEKUBE_LOG`` as one JSON line
 Supported: ``get <kinds>[ <name>] [-l <selector>] [-A] -o json``,
 ``get --raw <url>``, ``apply ... -f -`` (a JSON object or List on stdin),
 ``delete <kinds> -l <selector>``, ``label namespace <ns> k=v --overwrite``,
-``logs job/<name>`` and ``logs -l <selector>``, ``patch job <name> -p <json>``.
+``logs job/<name>``, ``logs pod/<name> --container=<c>`` (key ``pod/<name>:<c>``) and ``logs -l <selector>``, ``patch job <name> -p <json>``.
 ``fakekube.py demo-sh <args>`` stands for ``testing/k8s/demo/demo.sh``: it only
 records the call (argv and the TAG / LANGS / RUN / DEMO_ENV_FILE env).
 """
@@ -196,7 +196,9 @@ def main(argv: list[str]) -> int:
         return 0
     if verb == "logs":
         if len(pos) > 1:
-            text = (state.get("logs") or {}).get(pos[1])
+            logs = state.get("logs") or {}
+            key = f"{pos[1]}:{opts['--container']}" if "--container" in opts else pos[1]
+            text = logs.get(key, logs.get(pos[1]))
             if text is None:
                 print(f"error: {pos[1]} not found", file=sys.stderr)
                 return 1

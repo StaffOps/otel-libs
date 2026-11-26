@@ -4924,6 +4924,25 @@ Unsupported instrumentation versions, task A10 (P18):
     a measured cell, when the language's other series are present.
     `verify.py soak cal --output` re-derives a calibration without the
     cluster and never overwrites the target.
+- **Soak `verify.py soak extras` (2026-11-26, task K8b-x, design K-D21).**
+  A new read-only check covers the K8b items that `count` does not:
+  - the api → backend service-graph failed share, read at the first
+    connector flush after the load;
+  - the secret canary, scanned over Loki, the Collector logs, the fetched
+    spans, the k6 log and the tool's output;
+  - SR9 orphans on the k6 reservoir;
+  - SR10 parity across the four languages, against an explicit allowlist
+    (`testing/k8s/soak/sr10-gaps.json`; every entry waits for the owner);
+  - per-severity Loki counts.
+
+  Tempo reads are sequential, rate-limited, and stop at a tempo-0 memory
+  ceiling. The trap now saves the demo container logs before the restore,
+  and the k6 reservoir is spread over the window for every language. On
+  `k8b-20261125`:
+  - the share passed in Python, Node.js and .NET;
+  - no canary hit in 25 sources;
+  - 276 traces had no orphan;
+  - SR10 waits for the allowlist ruling.
 - **Demo PostgreSQL init check accepts restarts after a complete init
   (2026-11-25, DE-D13 correction).** Two k8s01 reboots left the
   `demo-postgres` container at `restartCount` 2 with a complete init, and

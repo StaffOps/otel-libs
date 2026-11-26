@@ -15,10 +15,16 @@ system tag, the k6 scenario's name).
 Orphan reservoir (SR9): ``handleSummary`` only receives aggregated metrics and
 VUs share no mutable state, so the summary cannot carry per-request ids on
 k6 2.3.0. The script uses the named fallback (K0e M5): one bounded stdout line
-``SOAKRES {json}`` per request — the first ``reservoir`` per cell per VU, and
-only from the VUs with ``idInTest <= reservoir_vus`` (review M11), so a cell
-logs at most ``reservoir x reservoir_vus`` lines whatever ``maxVUs`` is — saved
-by the trap's ``kubectl logs``. The summary is printed between
+``SOAKRES {json}`` per request of ``reservoir`` rounds of each language
+scenario, a round being ``len(mix) x len(classes)`` consecutive iterations
+(``exec.scenario.iterationInTest``, unique per scenario across its VUs), one
+round every ``stride`` = max(1, floor(planned rounds / reservoir)) so the
+logged rounds spread over the window (2026-11-26, round 2), so every cell of
+every language logs and the total is bounded whatever
+``maxVUs`` is (2026-11-26: the former gate ``exec.vu.idInTest <= 2`` is global
+across scenarios, so the languages whose scenarios did not get VUs 1 and 2 —
+Go and Node.js in K8b ``k8b-20261125`` — logged nothing) — saved by the trap's
+``kubectl logs``. The summary is printed between
 ``SOAK_SUMMARY_BEGIN`` / ``SOAK_SUMMARY_END`` lines.
 """
 
@@ -63,8 +69,7 @@ class K6Plan:
     p99_s: float = 1.0           # expected p99 latency (from K-cal; initial guess)
     mix: dict[str, int] = field(default_factory=lambda: dict(DEFAULT_MIX))
     classes: dict[str, int] = field(default_factory=lambda: dict(DEFAULT_CLASSES))
-    reservoir: int = 50          # first N per cell per VU (initial, unmeasured)
-    reservoir_vus: int = 2       # only VUs 1..k log it: <= reservoir x k lines per cell
+    reservoir: int = 50          # first N rounds per language scenario (initial, unmeasured)
     phases: tuple[Phase, ...] = ()
     url: str = "http://demo-{lang}-api:8080/orders"
     pull_s: int = 300            # image pull allowance in the deadline
@@ -81,8 +86,8 @@ class K6Plan:
             raise PlanError(f"request timeout {self.timeout_s}s: 1-{MAX_TIMEOUT_S} s (SR15 Load)")
         if self.p99_s <= 0:
             raise PlanError("p99 must be > 0")
-        if self.reservoir < 0 or self.reservoir_vus < 1:
-            raise PlanError("reservoir must be >= 0 and reservoir_vus >= 1")
+        if self.reservoir < 0:
+            raise PlanError("reservoir must be >= 0")
         for name, table, known in (("mix", self.mix, EXPECTED_STATUS), ("classes", self.classes, CLASSES)):
             if not table or any(k not in known or v < 0 for k, v in table.items()) \
                     or sum(table.values()) == 0:
@@ -121,7 +126,9 @@ class K6Plan:
 
     @property
     def reservoir_lines_max(self) -> int:
-        return self.reservoir * self.reservoir_vus * len(self.cells())
+        """reservoir rounds x one round (the expanded mix x classes) per language scenario."""
+        rounds = sum(self.mix.values()) * sum(self.classes.values())
+        return self.reservoir * rounds * len(self.langs) * max(1, len(self.phases))
 
     @property
     def graceful_stop_s(self) -> int:
@@ -173,6 +180,15 @@ def _expand(table: dict[str, int], order) -> list[str]:
     return [k for k in order if k in table for _ in range(table[k])]
 
 
+def reservoir_stride(plan: K6Plan, duration_s: int) -> int:
+    """Rounds between two logged rounds, so the ``reservoir`` logged rounds spread
+    over the planned window: max(1, floor(total rounds / reservoir)), total
+    rounds = rate x duration / (len(mix) x len(classes))."""
+    round_size = sum(plan.mix.values()) * sum(plan.classes.values())
+    total_rounds = (plan.rate * duration_s) // round_size
+    return max(1, total_rounds // plan.reservoir) if plan.reservoir else 1
+
+
 def scenarios(plan: K6Plan) -> tuple[dict, dict]:
     """(k6 options.scenarios, scenario name -> {lang, phase, url})."""
     sc, meta = {}, {}
@@ -191,7 +207,7 @@ def scenarios(plan: K6Plan) -> tuple[dict, dict]:
                 "gracefulStop": f"{plan.graceful_stop_s}s", "tags": tags,
             }
             meta[name] = {"lang": lang, "phase": ph.name or None,
-                          "url": plan.url.format(lang=lang)}
+                          "url": plan.url.format(lang=lang), "stride": reservoir_stride(plan, ph.duration_s)}
     return sc, meta
 
 
@@ -203,8 +219,6 @@ import { Counter } from 'k6/metrics';
 const CFG = __CFG__;
 const requests = new Counter('soak_requests');
 const CUSTOMERS = ['cust-a', 'cust-b', 'cust-c'];
-// Per-VU reservoir counts (the SR9 fallback: VUs share no state).
-const seen = {};
 
 export const options = __OPTIONS__;
 
@@ -240,10 +254,9 @@ export function drive() {
   const res = http.post(sc.url, JSON.stringify(body), { headers: headers, timeout: CFG.timeout, tags: tags });
   const outcome = res.status === 0 ? 'noanswer' : (res.status === CFG.expected[scen] ? 'expected' : 'unexpected');
   requests.add(1, Object.assign({}, tags, { outcome: outcome }));
-  const key = [sc.phase || '', sc.lang, scen, cls].join('|');
-  const count = seen[key] || 0;
-  if (exec.vu.idInTest <= CFG.reservoirVus && count < CFG.reservoir) {
-    seen[key] = count + 1;
+  // The SR9 reservoir: CFG.reservoir rounds of this scenario, one every sc.stride rounds.
+  const round = Math.floor(i / (CFG.mix.length * CFG.classes.length));
+  if (round % sc.stride === 0 && round / sc.stride < CFG.reservoir) {
     console.log(CFG.reservoirPrefix + JSON.stringify({
       lang: sc.lang, route: CFG.route, scen: scen, class: cls, phase: sc.phase,
       trace_id: traceId, parent_id: parentId, status: res.status, vu: exec.vu.idInTest,
@@ -274,7 +287,6 @@ def generate(plan: K6Plan) -> str:
         "route": ROUTE,
         "timeout": f"{plan.timeout_s}s",
         "reservoir": plan.reservoir,
-        "reservoirVus": plan.reservoir_vus,
         "reservoirPrefix": RESERVOIR_PREFIX,
         "summaryBegin": SUMMARY_BEGIN,
         "summaryEnd": SUMMARY_END,

@@ -331,6 +331,14 @@ For each mode (design S-D12): **refused** (agent stopped, address kept),
   language runtime metric families (Go `go.*`, Python `process.*`/system
   metrics) — which SHALL be added to that README list if not already there.
   Any other difference fails the run.
+- *(Corrected 2026-11-26, K8b-x, design K-D21.)* SR10 compares all four
+  languages, in Prometheus (not VictoriaMetrics) and Tempo, per app role
+  (the r6.2 table). A difference passes only on an owner-accepted entry of
+  `testing/k8s/soak/sr10-gaps.json` that cites its gaps row, or as a runtime
+  metric family (Go `go_`, Python `process_` / `system_` / `cpython_`,
+  .NET `dotnet_`, Node.js `nodejs_` / `v8js_`). Those families are listed
+  in the gaps doc in the A13 docs pass. Until then they are declared in the
+  tool and in this note.
 
 ### SR11 — Migration evidence (0.2 → 0.3)
 - The stack SHALL run 0.2 soak-equivalent apps (built from the `go/v0.2.1`
@@ -1035,6 +1043,9 @@ stays as dated history.
   values, `unmeasured`, 2026-11-23: request timeout ≤ 15 s and the
   reservoir of 50 (reversal action: set from K-cal p99 and from the orphan
   check's needed sample size).
+  *(Corrected 2026-11-26, K8b-x:)* the reservoir is N records per cell,
+  spread over the window per language scenario, not the first N requests
+  per VU (design K-D21 and the K-D15 note).
 - **Counting in bounds (r6.2; replaces "Counting (K6)").** Only the fixed span
   families (Glossary) are judged; every other span and every log count is
   report-only. Per `service_name` and family, the expected interval is

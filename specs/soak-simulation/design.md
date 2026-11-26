@@ -1196,6 +1196,15 @@ pinned k6 (fallback: a bounded stdout line per request, first 50 per cell
 per VU, saved by the trap's `kubectl logs`) and the guarded label no-op. The
 FD exec read runs at every 60 s guard read — 12 calls a minute.)*
 
+> **Corrected 2026-11-26 (K8b-x, K-D21).** The `vu.idInTest` reservoir gate
+> was global across the per-language scenarios, so Go and Node.js logged no
+> record in `k8b-20261125`. The reservoir is now chosen per language scenario
+> from `exec.scenario.iterationInTest`. Each scenario logs one round of
+> `len(mix) × len(classes)` iterations every stride = max(1, floor(planned
+> rounds / reservoir)) rounds, `reservoir` rounds in all (stride 19 at
+> 4 req/s for 2 h). The records are spread over the window, with N per cell
+> kept. The fixture was re-recorded on the pinned `grafana/k6:2.3.0`.
+
 ### K-D16 — Artifact under test and durations
 **Choice**: the commit under test is the branch HEAD at run start; the demo
 images are built by `build-demo.sh` from that commit (`git archive HEAD`,
@@ -1460,6 +1469,105 @@ step's `noanswer` are kept (L3, L4).
 > is `soak-cal.r5.json`, with the same k values as the original and the zeros
 > added (r2 to r4 were intermediate rules of the same fix; r5 equals them).
 > `count` takes `--kcal soak-cal.r5.json`.
+
+### K-D21 — The K8b checks `count` does not cover: `verify.py soak extras` (added 2026-11-26, task K8b-x)
+**Choice**: one read-only action, `verify.py soak extras`
+(`testing/k8s/soakextras.py`), runs the five remaining K8b checks over the
+inputs of `count` (`--t1 --t2 --k6-log --kcal [--k6-end]`, or
+`--count-window`; a count window with `valid: false` is refused, exit 2). It
+writes `soak-extras.json`, prints one row per item, and exits 0 only when
+every judged verdict is PASS (REPORT-ONLY allowed; UNMEASURED, UNQUALIFIED,
+FAIL and PREVIEW exit 1). The graph, orphan and parity checks are
+end-to-end checks, gated by the shared agent and gateway sentinels the way
+`count` gates its cross-check (`scoped_gates`). The gates are extended to
+the graph's read time when that read is after t2.
+1. **api → backend service graph** (SR15 "Counting": the `failed` share per
+   edge within the S-D5 binomial tolerance, on the api → backend edge only).
+   - What is read: `traces_service_graph_request_total` (total and failed)
+     for the `demo-<lang>-api` → `demo-<lang>-backend` edge, as raw samples
+     over (t1, t_read].
+   - t_read is the first connector flush after k6's end plus the delays a
+     span crosses before it counts: the SDK batch delay (5 s), the agent
+     batch timeout, the store TTL, and 2 × the gateway batch timeout. It is
+     capped at t2 + settle, and when no flush falls before the cap the
+     check is UNMEASURED.
+   - The connector flushes every 60 s (`connector.go:59`, collector-contrib
+     v0.165.0) and evicts a series after 15 min idle (`connector.go:815-849`;
+     it has no `metrics_expiration` field).
+   - Judged: only the failed share. p comes from the K-cal backend k over
+     the gRPC-failing scenarios; PASS when |p̂ − p| ≤ 3σ. The share is
+     UNQUALIFIED when the total reads LOSS, when n < 1000, or when a cell
+     has no k.
+   - Report-only: the exact total and failed counts, in
+     [Σ answered × k, Σ (answered + no answer) × k + w]. w is the
+     worker → api edge growth over the window. The lower end is exact, so a
+     loss is never hidden. Subtracting w was tried and refuted on the data.
+   - Calibration: the nominal k applies only when K-cal recorded
+     `qualified: false` (Go, REPORT-ONLY, wide band). A service or family
+     absent from the calibration file is UNQUALIFIED.
+2. **Secret canary** (SR15 "Secret canary (A29)"). The run's token is read
+   by the module only. It is never printed, logged, written or put in a
+   query, every error text is redacted before truncation, and the tests use
+   a fake token. Each source is a row: PASS when scanned; UNMEASURED when
+   capped, incomplete or unreadable. The sources:
+   - every Loki stream of `dev-otel-libs` and `opentelemetry` over
+     [t1, t2 + settle] — line, labels and structured metadata — plus demo
+     records without `k8s_namespace_name`; a namespace with no stream is
+     unmeasured;
+   - the demo container logs that the trap saves before the restore (new
+     step 1b, files 0600, a marker in place of any log with a canary line).
+     For a run older than step 1b, the "measured empty via `file_log`"
+     inference is REPORT-ONLY, so the check stays UNMEASURED;
+   - the Collector containers' logs since t1. Collector stdout does reach
+     Loki through `otel-logs` `file_log`;
+   - the span values of the fetched traces, the saved k6 log, and
+     `soak-extras.json` before it is written.
+3. **SR9 orphans** on the k6 reservoir, N = `--orphan-sample` traces per
+   cell, recorded.
+   - s01, fetched by ID: only the entry span's parent may be missing, and
+     it must equal k6's `parent_id`. A missing trace is FAIL, fewer than N
+     checked is UNQUALIFIED, and a fetch error is UNMEASURED.
+   - Class none, found by a TraceQL search: the entry span must be a root.
+   - s00, fetched by ID: the trace must be absent.
+   - `gateway.id`: required on every span only when a gateway processor
+     really sets it. On `k8s01` none does (one gateway replica), so the
+     routing half is AG2.
+   - Tempo safety (platform owner, after `tempo-0` was OOMKilled at
+     2026-11-26T15:53:35Z by trace-by-ID reads over uncompacted blocks):
+     - every Tempo read is strictly sequential, at most `--tempo-rate` per
+       minute (default 10);
+     - before each batch of 10 reads, the tool reads tempo-0's working set.
+       At or above `--tempo-mem-stop` (1.5 GiB), or when that read fails,
+       Tempo reads stop and the rest is UNMEASURED;
+     - a failed read makes that item UNMEASURED and never aborts the run;
+       three consecutive failures stop SR9.
+4. **SR10 parity** across the four languages, per app role.
+   - Metrics: names and label keys from `/api/v1/series` over (t1, t2] for
+     the demo jobs. Units are compared through the name's unit suffix only.
+   - Label keys of a metric are compared only when every language that has
+     it had traffic for it in the window; otherwise the item is UNMEASURED.
+   - Spans: names and kinds from TraceQL metrics, with `demo:<lang>:`
+     normalized.
+   - The gate is an explicit allowlist, `testing/k8s/soak/sr10-gaps.json`.
+     Each entry names an exact item, the missing languages, the reason and
+     the gaps row, plus a status: `proposed`, `needs-row` or `accepted`.
+   - A difference passes only on an `accepted` entry, or as a runtime
+     metric family owned by every language that has it. `needs-row` (a real
+     gap, or one whose gaps row is missing) never passes.
+   - `--sr10-accept-proposed` is a preview: the verdict is PREVIEW, never
+     PASS.
+   - The gaps tables give only a candidate row, printed next to a FAIL.
+5. **Per-`severity_number` Loki counts** per demo service (AG6),
+   report-only.
+**Justification**: these checks need the backends (Tempo, Loki, the service
+graph), not the copy, so they sit apart from `count`. An explicit allowlist
+replaces a token match, which review round 1 showed gave false PASSes.
+**When it would be wrong**: Tempo serves only its live store (about 20 min)
+whenever its blocklist poll fails, as it did from 2026-11-25 16:23Z until
+the platform fix on 2026-11-26. An accepted entry that is too broad hides a
+new difference.
+**Reversal action**: run `extras` within Tempo's horizon, right after the
+run, when the backend reads fail. Keep allowlist entries exact.
 
 ## Report format (reference)
 `reports/<UTC>/report.md` + `report.json`: header (rc, commit, image digests,
