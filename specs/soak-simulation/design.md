@@ -1715,6 +1715,25 @@ beside the watch; a dated note here.
 > K5 on that run: PASS in 12/12. K3, re-read after fix 4: PASS in 12/12,
 > and the shut roll PASS in 4/4 (report-only).
 
+> **Corrected 2026-11-26 (rerun `kshut-20261126b`, refused before its
+> window).**
+> 1. **Guard (h) refused at the hook.** It summed the copy series per
+>    service. The hook came 27 min after the previous run's trap, while the
+>    copy keeps an idle series for 30 min, so the old series was still
+>    live. It went flat and then expired as the new one was born (for
+>    demo-python-worker the sum went 1346 → 6), and every service read "no
+>    increase". The guard now applies the series rules per series: a born
+>    series adds its value, a reset adds v, an expired one adds nothing.
+> 2. **The Go demo worker ignores `DEMO_INTERVAL_SECONDS` above 3600 s.**
+>    It falls back to 5 s (`go/demo/internal/demokit/demokit.go:128`, code
+>    frozen until K11); Python, Node.js and .NET accept any positive value.
+>    So `--worker-interval` 10800 (K8b) and 21600 (K-cal) made Go drive
+>    every 5 s. That is the likely cause of Go's non-integral K-cal totals
+>    and of its K8b api excess (74 319 vs 69 120).
+>
+> `run` and `shut` now refuse a hook interval above 3600 s while `go` is in
+> `--langs`, and `cal` warns. K-shut runs with `--worker-interval 3600`.
+
 ## Report format (reference)
 `reports/<UTC>/report.md` + `report.json`: header (rc, commit, image digests,
 `go version -m`, `pip freeze`, parameters, VM resources, neighbour aggregate

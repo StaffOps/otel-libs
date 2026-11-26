@@ -668,7 +668,7 @@ class Window(Base):
         self.assertTrue(res.valid, res.reason)
         with self.cluster():  # no increase since the hook's totals (review M7)
             res = self.loop(Switch(), Clock()).window("w", 60, services=["demo-go-api"],
-                                                      since={"demo-go-api": 5.0})
+                                                      since=guard.copy_totals(Switch(), NOW))
         self.assertIn("no increase since the hook", res.reason)
 
     def test_k6_success_ends_the_window(self):
@@ -1268,7 +1268,7 @@ class Cli(Base):
         for extra, why in (([other_run_service()], "soak-run objects exist"), ([], "entry gate")):
             with self.subTest(why=why), self.cluster(extra=extra) as c:
                 rc, out, _ = self.main("run", "--run", RUN, "--kubectl", str(kubectl), "--tag", "abc1234",
-                                       "--hook", "--rate", "2", "--worker-interval", "10800")
+                                       "--hook", "--rate", "2", "--worker-interval", "3600")
                 self.assertEqual(rc, 1)
                 self.assertIn(why, out)
                 self.assertFalse(any(v in a for a in c.verbs() for v in ("apply", "delete", "label", "patch")))
@@ -1290,7 +1290,7 @@ class Cli(Base):
             with self.cluster() as c:
                 rc, out, err = self.main("run", "--run", RUN, "--kubectl", str(kubectl), "--tag", "abc1234",
                                          "--hook", "--rate", "2", "--duration", "60", "--langs", "go",
-                                         "--worker-interval", "10800")
+                                         "--worker-interval", "3600")
                 self.assertEqual(rc, 1)
                 self.assertIn("Ready for less than 600s", err)
                 self.assertEqual(c.keys(), c.seeded)
@@ -1308,7 +1308,7 @@ class Cli(Base):
         canary = (self.d / "canary").read_text().strip()
         self.assertRegex(canary, "^[0-9a-f]{48}$")
         self.assertNotIn(canary, out + err)
-        self.assertIn("*/worker DEMO_INTERVAL_SECONDS=10800", (self.d / "soak.env").read_text())
+        self.assertIn("*/worker DEMO_INTERVAL_SECONDS=3600", (self.d / "soak.env").read_text())
         state = soak.load_state(self.d)
         self.assertEqual((state["tag"], state["hook_applied"], state["replicas"]), ("abc1234", True, {"go": 1}))
 
@@ -1334,7 +1334,7 @@ class Cli(Base):
             with self.cluster() as c:
                 rc, out, err = self.main("run", "--run", RUN, "--kubectl", str(kubectl), "--tag", "abc1234",
                                          "--hook", "--rate", "2", "--duration", "60", "--langs", "go",
-                                         "--worker-interval", "10800")
+                                         "--worker-interval", "3600")
                 self.assertEqual(rc, 1)
                 self.assertIn("entry gate after the hook: platform: guard (sentinels shared", err)
                 self.assertEqual(len(reads), 2)
@@ -1450,7 +1450,7 @@ class Cli(Base):
                 holder["c"] = c
                 rc, out, err = self.main("run", "--run", RUN, "--kubectl", str(kubectl), "--tag", "abc1234",
                                          "--hook", "--rate", "2", "--duration", "60", "--langs", "go",
-                                         "--worker-interval", "10800", *extra)
+                                         "--worker-interval", "3600", *extra)
         finally:
             for (obj, name), v in orig.items():
                 setattr(obj, name, v)
@@ -1505,7 +1505,7 @@ class Cli(Base):
         self.assertLessEqual(inp["t2"], seen["at"])  # the restore comes after t2
         self.assertEqual(inp["count_args"], ["--t1", f"{k6w['start']:.3f}", "--t2", f"{inp['t2']:.3f}",
                                              "--k6-log", "raw/soak-k6-loaded.log", "--quiesce", "120",
-                                             "--workers", "workers.json", "--worker-interval", "10800"])
+                                             "--workers", "workers.json", "--worker-interval", "3600"])
         self.assertIn("count window loaded: t1", out)
         self.assertEqual(c.demo_calls()[-1]["env"]["DEMO_RESTORE"], "1")
 
@@ -1619,7 +1619,7 @@ class Cli(Base):
             clock.offset += 600   # the read sees the drive; the window starts later, as after the hook's waits
             return [{"metric": {"service_name": "demo-python-api", "cluster": "k8s01"},
                      "values": [[t1 - 5, "3"], [t1 + 40, "7"]]}]
-        started = float(int(time.time()) - 3600)
+        started = float(int(time.time()) - 600)
         pod_lists = [[worker("demo-go-worker-1a-x", started, 0), worker("demo-python-worker-1a-x", started, 0)],
                      [worker("demo-go-worker-1a-x", started, 1), worker("demo-python-worker-1a-x", started, 0)]]
         rc, out, err, _, _ = self.full_run("--langs", "go,python", copy_series=copy_series,
@@ -1673,6 +1673,19 @@ class Cli(Base):
         # stamped at the read, a few ms before the loop's window end: -6 < skew < -3
         # (the former upper bound -4 failed about one run in five, L4).
         self.assertTrue(-6 < inp["k6_completion_skew_s"] < -3, inp["k6_completion_skew_s"])
+
+    def test_an_interval_the_go_worker_ignores_is_refused(self):
+        """Run kshut-20261126b: the Go demo worker treats DEMO_INTERVAL_SECONDS
+        above 3600 as unset and drives every 5 s (demokit.EnvSeconds)."""
+        self.runs_env()
+        rc, out, err = self.main("run", "--run", RUN, "--hook", "--rate", "2", "--worker-interval", "10800",
+                                 "--langs", "go,python")
+        self.assertEqual(rc, 1)
+        self.assertIn("above 3600 s, which the Go demo worker ignores", err)
+        self.assertIsNone(soak.go_interval_problem(["python"], 10800, refuse=True))
+        self.assertIsNone(soak.go_interval_problem(["go"], 3600, refuse=True))
+        self.assertIsNone(soak.go_interval_problem(["go"], None, refuse=True))
+        self.assertIn("drop go", soak.go_interval_problem(["go"], 21600, refuse=False))
 
     def test_run_mode_hook_and_rate_need_the_worker_interval(self):
         """Round 2 MEDIUM-B: refused before any read or write."""

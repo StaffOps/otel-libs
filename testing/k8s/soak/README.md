@@ -42,6 +42,15 @@ guard read has a deadline of 0.8 × the interval. kubectl and `demo.sh` run in
 their own process session; INT, TERM or HUP ends their process groups before
 the trap runs.
 
+**The Go worker's interval cap** (run `kshut-20261126b`): the Go demo worker
+reads `DEMO_INTERVAL_SECONDS` with `demokit.EnvSeconds`, which falls back to its
+5 s default for any value above 3600 (`go/demo/internal/demokit/demokit.go:128`;
+Python, Node.js and .NET take any positive value). With `--worker-interval
+10800` the Go worker drove every 5 s inside the window. `run` and `shut`
+refuse a hook interval above 3600 while `go` is in `--langs`; `cal` warns.
+Use `--worker-interval 3600` (a window must then end within an hour of the
+workers' start, which the minute-0 worker check enforces).
+
 ## Window rules
 
 - **Heartbeat.** `runs/<id>/heartbeat` is written at every guard read. A

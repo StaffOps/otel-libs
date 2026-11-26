@@ -400,23 +400,49 @@ def wait_demo_ready(r: sp.Reader, cfg: GuardConfig, clock: Callable[[], float],
         sleep(step_s)
 
 
-def copy_totals(r: sp.Reader, at: float) -> dict[str, float]:
-    """``service_name`` -> the copy's cumulative span count now."""
-    q = f"sum by (cluster, service_name) ({sp.sel('otel_libs_soak_spans_total', {'job': sp.COPY_JOB})})"
-    return {(s.get("metric") or {}).get("service_name"): float(s["value"][1])
-            for s in sp.cluster_only(r.prom(q, at))}
+def _series_key(metric: dict) -> str:
+    return json.dumps({k: v for k, v in sorted(metric.items()) if k != "__name__"}, sort_keys=True)
 
 
-def copy_counts(r: sp.Reader, services: list[str], at: float, since: dict[str, float] | None = None) -> Item:
-    """(h) one read: every ``service_name`` counted more spans than at the hook
-    (``since``, the totals read just before it; review M7)."""
+def copy_totals(r: sp.Reader, at: float) -> dict[str, dict[str, float]]:
+    """``service_name`` -> {series: the copy's cumulative span count now}, one
+    entry per series (not summed: run kshut-20261126b, see ``copy_counts``)."""
+    q = sp.sel("otel_libs_soak_spans_total", {"job": sp.COPY_JOB})
+    out: dict[str, dict[str, float]] = {}
+    for s in sp.cluster_only(r.prom(q, at)):
+        m = s.get("metric") or {}
+        out.setdefault(m.get("service_name"), {})[_series_key(m)] = float(s["value"][1])
+    return out
+
+
+def series_increase(now: dict[str, float], base: dict[str, float]) -> float:
+    """The increase over the series of one service since ``base``: a series
+    present then adds v - b (or v when it went down: a reset), a series born
+    since adds its value, and a series gone since adds nothing."""
+    total = 0.0
+    for key, v in now.items():
+        b = base.get(key)
+        total += v if b is None or v < b else v - b
+    return total
+
+
+def copy_counts(r: sp.Reader, services: list[str], at: float,
+                since: dict[str, dict[str, float]] | None = None) -> Item:
+    """(h) one read: every ``service_name`` counted spans since the hook
+    (``since``, the series read just before it; review M7), per series.
+
+    Run kshut-20261126b (2026-11-26): the hook came 27 min after the previous
+    run's trap, so the copy still held that run's series (idle, expiry 30 min);
+    the hooked pods' spans went to a new series, and the old one expired
+    49 s after the hook. Comparing the sum (1346 at the hook, 6 after for
+    demo-python-worker) read "no increase" for all twelve services."""
     name = "guard (h) copy counts"
     try:
         now = copy_totals(r, at)
     except ReadError as exc:
         return Item(name, "blind", str(exc))
     base = since or {}
-    missing = [s for s in services if now.get(s, 0.0) <= base.get(s, 0.0)]
+    missing = [s for s in services if series_increase(now.get(s) or {}, base.get(s) or {}) <= 0]
     return Item(name, "breach" if missing else "ok",
                 ("no increase since the hook: " + ", ".join(missing)) if missing
                 else f"{len(services)} services counted since the hook")

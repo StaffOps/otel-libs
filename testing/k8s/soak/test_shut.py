@@ -1177,7 +1177,7 @@ class Mode(Base):
                     "name": "demo-go-api-new2-x", "namespace": sp.APP_NS,
                     "labels": {"app.kubernetes.io/component": "demo", "app.kubernetes.io/name": "demo-go-api"}}}))
                 rc, out, err = self.main("shut", "--run", RUN, "--kubectl", str(kubectl), "--tag", "abc1234",
-                                         "--langs", "go", "--rate", "2", "--worker-interval", "10800",
+                                         "--langs", "go", "--rate", "2", "--worker-interval", "3600",
                                          "--kcal", str(self.kcal), "--pre", "60", "--post", "120", *extra)
         finally:
             for (obj, name), v in orig.items():

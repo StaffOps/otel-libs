@@ -319,10 +319,28 @@ class AfterTheHook(unittest.TestCase):
     def test_copy_counts_are_an_increase_since_the_hook(self):
         r = soak_reader(healthy(), services=("demo-go-api",))
         since = guard.copy_totals(r, NOW)
-        self.assertEqual(since, {"demo-go-api": 5.0})
+        key = guard._series_key({"cluster": "k8s01", "service_name": "demo-go-api"})
+        self.assertEqual(since, {"demo-go-api": {key: 5.0}})
         self.assertEqual(guard.copy_counts(r, ["demo-go-api"], NOW, since).state, "breach")
-        self.assertEqual(guard.copy_counts(r, ["demo-go-api"], NOW, {"demo-go-api": 4}).state, "ok")
+        self.assertEqual(guard.copy_counts(r, ["demo-go-api"], NOW, {"demo-go-api": {key: 4}}).state, "ok")
         self.assertEqual(guard.copy_counts(r, ["demo-go-api"], NOW).state, "ok")
+
+    def test_an_expired_old_series_and_a_new_one_are_an_increase(self):
+        """Run kshut-20261126b: at the hook the copy still held the previous run's
+        idle series (1346); the hooked pods' spans went to a new series (6) and the
+        old one expired. The summed total went down, so (h) read "no increase"."""
+        old = tp.k8s(service_name="demo-python-worker", deployment_environment_name="dev", otel_scope_name="a")
+        new = tp.k8s(service_name="demo-python-worker", deployment_environment_name="dev", otel_scope_name="b")
+        r = tp.FakeReader()
+        r.instant = [(r"otel_libs_soak_spans_total", [tp.instant(old, 1346)])]
+        since = guard.copy_totals(r, NOW)
+        r.instant = [(r"otel_libs_soak_spans_total", [tp.instant(new, 6)])]
+        self.assertEqual(guard.copy_counts(r, ["demo-python-worker"], NOW, since).state, "ok")
+        r.instant = [(r"otel_libs_soak_spans_total", [tp.instant(old, 1346)])]       # only the idle old one
+        self.assertEqual(guard.copy_counts(r, ["demo-python-worker"], NOW, since).state, "breach")
+        r.instant = [(r"otel_libs_soak_spans_total", [tp.instant(old, 3)])]          # a copy reset
+        self.assertEqual(guard.copy_counts(r, ["demo-python-worker"], NOW, since).state, "ok")
+        self.assertEqual(guard.series_increase({"a": 7.0, "b": 2.0}, {"a": 5.0, "c": 99.0}), 4.0)
 
 
 class Floors(unittest.TestCase):

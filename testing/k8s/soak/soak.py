@@ -131,6 +131,11 @@ READ_TIMEOUT_S = 25        # one kubectl / service-proxy call (review M5)
 READ_BUDGET = 0.8          # a guard read must end within this share of the interval
 STOP_BACKOFF_S = (5, 10, 20, 40, 60)
 TICK_MIN_S = 0.5           # the shortest sleep between two tick calls (K-shut)
+# The Go demo worker reads DEMO_INTERVAL_SECONDS with demokit.EnvSeconds, which
+# returns the 5 s default for any value above 3600 (go/demo/internal/demokit/
+# demokit.go:128, frozen). Python, Node.js and .NET take any positive value.
+# Measured in run kshut-20261126b: with 10800 the Go worker drove every 5 s.
+GO_MAX_WORKER_INTERVAL_S = 3600
 K6_WAITING = ("ImagePullBackOff", "ErrImagePull", "InvalidImageName", "CreateContainerConfigError",
               "CreateContainerError", "CrashLoopBackOff")
 
@@ -1292,7 +1297,8 @@ def main(argv: list[str] | None = None) -> int:
     shp = sub.add_parser("shut", parents=[common], help="K-shut + K3 + K5 (design K-D22 draft)")
     shp.add_argument("--rate", type=int, required=True, help="req/s per language (the K8b rate)")
     shp.add_argument("--worker-interval", type=int, required=True,
-                     help="the hook's */worker DEMO_INTERVAL_SECONDS (10800, as K8b)")
+                     help="the hook's */worker DEMO_INTERVAL_SECONDS (at most 3600 with go: the Go "
+                          "worker ignores a larger value)")
     shp.add_argument("--kcal", type=Path, required=True, help="K-cal's soak-cal.json (recorded in shut-input.json)")
     shp.add_argument("--pre", type=int, default=shut.DEFAULT_PRE_S, help="seconds of the phase=pre scenario")
     shp.add_argument("--post", type=int, default=shut.DEFAULT_POST_S, help="seconds of the phase=post scenario")
@@ -1551,7 +1557,24 @@ def check_quiesce(args: argparse.Namespace) -> None:
     # count's --worker-interval can know.
     if args.hook and args.rate and not args.worker_interval:
         raise SoakError("--hook --rate needs --worker-interval (the workers' DEMO_INTERVAL_SECONDS; "
-                        "10800 for K8b): without it the workers keep the app default")
+                        "at most 3600 when go runs, see GO_MAX_WORKER_INTERVAL_S): without it the workers "
+                        "keep the app default")
+    go_interval_problem(args.langs, args.worker_interval if args.hook else None, refuse=True)
+
+
+def go_interval_problem(langs, interval: float | None, *, refuse: bool) -> str | None:
+    """The Go worker ignores a DEMO_INTERVAL_SECONDS above 3600 and drives every
+    5 s (``GO_MAX_WORKER_INTERVAL_S``): a window that relies on no worker drive
+    would count them. ``refuse`` raises; otherwise the text is returned."""
+    if interval is None or "go" not in langs or interval <= GO_MAX_WORKER_INTERVAL_S:
+        return None
+    why = (f"--worker-interval {interval:g} is above {GO_MAX_WORKER_INTERVAL_S} s, which the Go demo worker "
+           "ignores (demokit.EnvSeconds falls back to 5 s; go/demo/internal/demokit/demokit.go:128): Go would "
+           f"drive every 5 s inside the window. Use --worker-interval {GO_MAX_WORKER_INTERVAL_S} or drop go "
+           "from --langs")
+    if refuse:
+        raise SoakError(why)
+    return why
 
 
 def quiesce_window(args: argparse.Namespace, loop: Loop, res: WindowResult) -> WindowResult | None:
@@ -1711,6 +1734,9 @@ def cal_mode(args: argparse.Namespace, kube: Kube, d: Path) -> int:
     always applied: the copy only sees the hooked demo)."""
     plan = cal_plan(args)
     args.hook, args.window = True, "cal"
+    warn = go_interval_problem(args.langs, args.worker_interval, refuse=False)
+    if warn:  # K-cal keeps Go as a language whose cells the calibration names as excluded
+        print(f"cal: WARNING {warn}; Go's cells will carry the 5 s drives")
     started = _start(args, kube, d)
     if started is None:
         return 1
