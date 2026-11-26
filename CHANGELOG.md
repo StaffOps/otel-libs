@@ -4958,6 +4958,18 @@ Unsupported instrumentation versions, task A10 (P18):
     Loki; the old instance's last sample within one export interval of its
     exit) and `soak labels` (K5: `job`, `instance` and the promoted resource
     labels).
+
+  First valid run, `kshut-20261126c`:
+  - each api pod deleted with k6 running exited within its 15 s grace with
+    code 0, in all four languages;
+  - the old process's span count was in bounds for Python, Node.js and
+    .NET (Go is report-only);
+  - K3 and K5 passed in all 12 services.
+
+  The two earlier attempts found tool bugs, now fixed. They also found
+  that the Go demo worker caps `DEMO_INTERVAL_SECONDS` at 3600 s
+  (`go/demo/internal/demokit/demokit.go`, to fix after the soak code
+  freeze); the soak now refuses a longer interval.
 - **CI runs the soak loop tests (2026-11-26, owner ruling).** The CI spec
   job and `testing/verify.sh demo-tests` now also run
   `testing/k8s/soak/test_*.py` (stdlib, against fakes, no cluster), on

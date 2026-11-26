@@ -542,6 +542,9 @@ class Shut(unittest.TestCase):
         self.assertEqual(sc.exit_verdict(T0, T0 + 29, 30, 0)["verdict"], "FAIL")       # >= grace - 1 s
         self.assertEqual(sc.exit_verdict(T0, T0 + 3, 30, 137)["verdict"], "FAIL")      # SIGKILL
         self.assertEqual(sc.exit_verdict(T0, T0 - 1, 30, 0)["verdict"], "FAIL")
+        # finishedAt is whole seconds: a prompt exit reads just before deleted_at.
+        self.assertEqual(sc.exit_verdict(T0, T0 - 0.04, 30, 0)["verdict"], "PASS")
+        self.assertEqual(sc.exit_verdict(T0, T0 - 0.99, 30, 0)["verdict"], "PASS")
         self.assertEqual(sc.exit_verdict(None, T0, 30, 0)["verdict"], "UNQUALIFIED")
         self.assertEqual(sc.exit_verdict(T0, T0 + 1, None, 0)["verdict"], "UNQUALIFIED")
         # the exit is folded into the verdict

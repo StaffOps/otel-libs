@@ -625,16 +625,19 @@ def count_verdicts(copy: dict[str, CopyCount], fams: dict[str, dict[str, float]]
 # ── K-shut (SR15 "Shutdown (r6.2)", K0e H3) ──
 
 SIGKILL_EXIT = 137
+FINISHED_RESOLUTION_S = 1.0  # a container's finishedAt is truncated to whole seconds
 
 
 def exit_verdict(deleted_at: float | None, finished_at: float | None, grace_s: float | None,
                  exit_code: int | None) -> dict:
     """Exit within grace (review H3): both times and the grace are required; a
-    SIGKILL exit (137) or an exit at grace - 1 s or later is a FAIL."""
+    SIGKILL exit (137) or an exit at grace - 1 s or later is a FAIL. ``finishedAt``
+    has whole-second resolution (truncated), so a prompt exit can read up to just
+    under 1 s before ``deleted_at`` (kshut-20261126c: Go at -0.04 s, code 0)."""
     if deleted_at is None or finished_at is None or grace_s is None:
         return {"verdict": "UNQUALIFIED", "reason": "deleted_at, finished_at and the grace are required"}
     took = finished_at - deleted_at
-    ok = 0 <= took < grace_s - 1 and exit_code != SIGKILL_EXIT
+    ok = -FINISHED_RESOLUTION_S < took < grace_s - 1 and exit_code != SIGKILL_EXIT
     return {"seconds": took, "grace_s": grace_s, "exit_code": exit_code, "verdict": "PASS" if ok else "FAIL"}
 
 
