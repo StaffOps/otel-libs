@@ -4943,6 +4943,10 @@ Unsupported instrumentation versions, task A10 (P18):
   - no canary hit in 25 sources;
   - 276 traces had no orphan;
   - SR10 waits for the allowlist ruling.
+- **CI runs the soak loop tests (2026-11-26, owner ruling).** The CI spec
+  job and `testing/verify.sh demo-tests` now also run
+  `testing/k8s/soak/test_*.py` (stdlib, against fakes, no cluster), on
+  Python 3.10 and 3.12.
 - **Demo PostgreSQL init check accepts restarts after a complete init
   (2026-11-25, DE-D13 correction).** Two k8s01 reboots left the
   `demo-postgres` container at `restartCount` 2 with a complete init, and

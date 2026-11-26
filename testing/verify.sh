@@ -140,7 +140,12 @@ step_tools_tests() {
 # specs/demo-environment DE2, DE5: the SCRAM verifier and K-D2 pre-flight helpers of
 # testing/k8s/demo and `verify.py demo` against recorded fixtures (stdlib unittest,
 # no cluster access).
-step_demo_tests() { tools_run python -m unittest discover -s testing/k8s/demo -p 'test_*.py'; }
+# specs/soak-simulation K-loop, K-cal-d, K-D21: the soak loop, trap, calibration
+# driver and k6 script generator against fakes (stdlib unittest, no cluster access).
+step_demo_tests() {
+  tools_run python -m unittest discover -s testing/k8s/demo -p 'test_*.py' &&
+  tools_run python -m unittest discover -s testing/k8s/soak -p 'test_*.py'
+}
 
 # specs/demo-environment DE1: committed Go stubs match a regeneration; go/demo
 # module tidy, builds and vets (same command as the CI job demo-go-stubs).

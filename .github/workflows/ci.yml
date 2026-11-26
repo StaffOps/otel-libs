@@ -623,6 +623,8 @@ jobs:
         run: python tools/spec_lint.py
       - name: Demo helper and verify.py demo tests (testing/k8s/demo, specs/demo-environment DE2, DE5)
         run: python -m unittest discover -s testing/k8s/demo -p 'test_*.py'
+      - name: Soak loop tests (testing/k8s/soak, specs/soak-simulation K-loop, K-cal-d, K-D21)
+        run: python -m unittest discover -s testing/k8s/soak -p 'test_*.py'
       - name: python/LICENSE matches the root LICENSE
         run: cmp LICENSE python/LICENSE
       - name: Traceability (uncovered SHALL requirements fail)
