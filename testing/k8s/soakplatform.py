@@ -489,9 +489,12 @@ def parse_ts(text: str | None) -> float | None:
     if not text:
         return None
     try:
-        return datetime.fromisoformat(text.replace("Z", "+00:00")).timestamp()
+        ts = datetime.fromisoformat(text.replace("Z", "+00:00"))
     except ValueError:
         return None
+    # A timestamp without an offset is UTC (Kubernetes and Prometheus write
+    # UTC), never the laptop's local time.
+    return (ts if ts.tzinfo is not None else ts.replace(tzinfo=timezone.utc)).timestamp()
 
 
 def iso(ts: float | None) -> str | None:

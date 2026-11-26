@@ -29,10 +29,12 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import re
 import statistics
 import subprocess
 import sys
+import tempfile
 import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
@@ -112,6 +114,8 @@ GATEWAY_SCRAPE_S = 30
 # checkpoint": SDK batch delay + export timeout + agent batch timeout, plus the
 # copy and gateway scrapes); initial value, `unmeasured` (K-cal, K8b).
 QUIESCE_S = 120.0
+# The workers' DEMO_INTERVAL_SECONDS in a K8b window (``count --worker-interval``).
+DEFAULT_WORKER_INTERVAL_S = 10800.0
 
 
 class Counted(float):
@@ -477,11 +481,39 @@ def worker_state(pods: list[dict], langs) -> dict[str, dict]:
     return out
 
 
+def recorded_workers(data: dict | None) -> tuple[dict[str, dict], dict[str, dict] | None, bool, str]:
+    """``--workers`` JSON -> (the window-start workers, the workers at t2 or
+    None, whether the restart check uses a t2 record, its source in words).
+    ``soak.py run --hook`` writes ``{"start": {"at", "workers": {lang: ...}},
+    "t2": {"at", "workers": {lang: {pod, startedAt, restartCount}}}}``; the
+    flat ``{lang: {startedAt, first_drive, restartCount}}`` of a hand-built
+    file is still read. Without a recorded t2 the live worker pods stand in
+    (the fallback: a pod replaced after t2, by the trap's restore for one,
+    reads as a restart). A JSON that is not an object is a ValueError."""
+    if data is None:
+        return {}, None, False, "live worker pods at count time (no --workers)"
+    if not isinstance(data, dict):
+        raise ValueError("--workers: not a JSON object")
+    if "start" not in data and "t2" not in data:
+        return data, None, False, "live worker pods at count time (fallback: no t2 record in --workers)"
+    start = data.get("start") or {}
+    t2 = data.get("t2") or {}
+    if not isinstance(start, dict) or not isinstance(t2, dict):
+        raise ValueError("--workers: start and t2 must be JSON objects")
+    workers = start.get("workers") or {}
+    if not isinstance(t2.get("workers"), dict):
+        return workers, None, False, ("live worker pods at count time (fallback: the t2 record has no workers"
+                                      + (f": {t2['error']}" if t2.get("error") else "") + ")")
+    at = f"{sp.iso(float(t2['at']))}, " if t2.get("at") else ""
+    return workers, t2["workers"], True, f"recorded at t2 ({at}--workers)"
+
+
 def window_problems(workers: dict[str, dict], live: dict[str, dict], t1: float, t2: float, *,
-                    quiesce: float, interval: float, langs) -> dict[str, list[str]]:
+                    quiesce: float, interval: float, langs, when: str = "now") -> dict[str, list[str]]:
     """lang -> what makes its window unusable (review M2): t1 before the t1 rule,
     the next drive before t2 + quiesce, a worker that restarted or was replaced
-    since the inputs were recorded."""
+    since the inputs were recorded. ``live`` is the worker state at t2 (``when``
+    = "at t2", recorded by the run) or now (the fallback)."""
     out: dict[str, list[str]] = {lang: [] for lang in langs}
     for lang in langs:
         w = workers.get(lang)
@@ -498,7 +530,7 @@ def window_problems(workers: dict[str, dict], live: dict[str, dict], t1: float, 
         out[lang] += next_drive_ok({lang: w}, interval, t2, quiesce)
         lw = live.get(lang)
         if lw is None:
-            out[lang].append("no Running worker pod now")
+            out[lang].append(f"no Running worker pod {when}")
         elif (w.get("restartCount") is not None and lw["restartCount"] != w["restartCount"]) or \
                 (w.get("startedAt") is not None and lw["startedAt"] is not None
                  and abs(lw["startedAt"] - float(w["startedAt"])) > 1):
@@ -673,7 +705,15 @@ def calibrate(repeats: list[dict], *, mix: dict[str, int] | None = None, rate: f
     ``invalid`` (K-cal-d): repeats the driver kept out (an invalid window, an
     unclean copy gate, an ambiguous count), each with its ``reasons``: their
     cell is excluded, the reasons named. ``planned``: the plan's cell ids; a
-    planned cell with no repeat is excluded ("0 repeat(s)")."""
+    planned cell with no repeat is excluded ("0 repeat(s)").
+
+    A gateway family of a service gets k = 0 in a cell where it was measured
+    absent: every repeat of a valid cell (no invalid repeat, two or more
+    repeats, each with N > 0 requests all answered as expected and a
+    ``gateway`` read with sibling evidence) counted none of it while another cell of the service
+    counted it (K8b k8b-20261125: ``producer:send`` has no span in the error
+    scenarios). An invalid or unmeasured cell gets no k (``bounds`` names it
+    missing)."""
     by_cell: dict[str, list[dict]] = {}
     for rep in repeats:
         by_cell.setdefault(rep["cell"], []).append(rep)
@@ -686,6 +726,10 @@ def calibrate(repeats: list[dict], *, mix: dict[str, int] | None = None, rate: f
         by_cell.setdefault(cell, [])
     services: dict[str, dict] = {}
     families: dict[str, dict[str, dict[str, int]]] = {}
+    known: dict[str, set[str]] = {}   # service -> every family counted in any repeat
+    for rep in repeats:
+        for svc, fams in (rep.get("gateway") or {}).items():
+            known.setdefault(svc, set()).update(fams)
     for cell, reps in by_cell.items():
         lang = cell_tags(cell).get("lang")
         svcs = sorted({s for r in reps for s in list(r.get("copy") or {}) + list(r.get("gateway") or {})}
@@ -731,6 +775,11 @@ def calibrate(repeats: list[dict], *, mix: dict[str, int] | None = None, rate: f
                     families.setdefault(svc, {}).setdefault(fam, {})[cell] = round(fks[0])
                 else:
                     families.setdefault(svc, {}).setdefault(f"excluded:{fam}", {})[cell] = -1
+            if _measured_cell(reps, bad_cells.get(cell), lang, cell_tags(cell).get("class") == "s00"):
+                seen = {f for r in reps for f in ((r.get("gateway") or {}).get(svc) or {})} | \
+                    {f for r in reps for f in ((r.get("gateway_ambiguous") or {}).get(svc) or [])}
+                for fam in sorted(known.get(svc, set()) - seen):
+                    families.setdefault(svc, {}).setdefault(fam, {})[cell] = 0
     out_services = {}
     for svc, st in services.items():
         out_services[svc] = {"qualified": st["qualified"], "k": st["k"],
@@ -754,6 +803,37 @@ def calibrate(repeats: list[dict], *, mix: dict[str, int] | None = None, rate: f
                                      "verdict": "PASS" if rate * share <= d else "FAIL"}
                               for lang, d in drain.items()}
     return result
+
+
+def _measured_cell(reps: list[dict], bad: list[str] | None, lang: str | None, unsampled: bool = False) -> bool:
+    """A cell whose repeats measured the gateway: no invalid repeat, two or
+    more repeats, each with N > 0, every request answered as expected, and a
+    ``gateway`` read with sibling evidence — in a sampled cell some family of
+    a ``demo-<lang>-*`` service counted above 0 in that repeat; in an
+    unsampled ``class:s00`` cell (every family counts 0) some family series of
+    the language present in the read, even at 0. The driver always writes
+    ``gateway``, ``{}`` included: an empty read, or one with no series of the
+    language, is not a measured absence. A service whose own series are
+    missing while a sibling's are present counts: the read is one query over
+    every demo service, a counter series exists from its first span, and it
+    is the copy's sibling rule (design K-D12)."""
+    if bad or len(reps) < 2 or not lang:
+        return False
+    prefix = f"demo-{lang}-"
+    for r in reps:
+        n = r.get("counts") or {}
+        if n.get("noanswer") or n.get("unexpected") or (n.get("expected") or 0) <= 0:
+            return False
+        gw = r.get("gateway")
+        if not isinstance(gw, dict):
+            return False
+        mine = [fams for svc, fams in gw.items() if svc.startswith(prefix)]
+        if unsampled:  # s00: every family counts 0; present series are the evidence
+            if not any(mine):
+                return False
+        elif not any(float(v) > 0 for fams in mine for v in (fams or {}).values()):
+            return False
+    return True
 
 
 def _family_cause(reps: list[dict], svc: str) -> str:
@@ -1319,13 +1399,27 @@ def write_report(path: Path, text: str, canary: str | None) -> None:
 # ── the CLI ──
 
 
-def _write_json(d: Path, name: str, data: dict) -> Path:
+def _write_json(d: Path, name: str, data: dict, output: Path | None = None) -> Path:
+    """``<d>/soak-<name>.json``, or ``output`` when given: then atomic, mode
+    0600 (a temp file in the same directory, ``os.link`` to the target, which
+    fails when it exists) and never overwriting (a re-run keeps the original)."""
     text = json.dumps(data, indent=1, sort_keys=True, default=str) + "\n"
     if verify.scan_secret(text):
         raise ScanError(f"{name}: secret scan hit, not written")
-    d.mkdir(parents=True, exist_ok=True)
-    p = d / f"soak-{name}.json"
-    p.write_text(text)
+    if output is None:
+        d.mkdir(parents=True, exist_ok=True)
+        p = d / f"soak-{name}.json"
+        p.write_text(text)
+        return p
+    p = Path(output)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(prefix=f".{p.name}.", dir=p.parent)   # mode 0600
+    try:
+        with os.fdopen(fd, "w") as fh:
+            fh.write(text)
+        os.link(tmp, p)   # FileExistsError (an OSError) when the target exists
+    finally:
+        os.unlink(tmp)
     return p
 
 
@@ -1340,6 +1434,10 @@ def main_soak(b: verify.Backends, args, now: float, reader: sp.Reader | None = N
     missing = {"passive": ("start",), "count": ("t1", "t2", "k6_log", "kcal"),
                "shut": ("input",), "cal": ("input",)}.get(args.action, ())
     absent = [f"--{m.replace('_', '-')}" for m in missing if getattr(args, m, None) is None]
+    output = getattr(args, "output", None)
+    if output is not None and Path(output).exists():   # before any read
+        print(f"verify soak {args.action}: --output {output} exists; not overwritten", file=sys.stderr)
+        return 1
     if absent:  # review L6
         print(f"verify soak {args.action}: required {' '.join(absent)}", file=sys.stderr)
         return 2
@@ -1367,7 +1465,11 @@ def main_soak(b: verify.Backends, args, now: float, reader: sp.Reader | None = N
     except (verify.QueryError, ValueError, KeyError, OSError, subprocess.TimeoutExpired) as exc:
         print(f"verify soak {args.action}: ERROR {exc}", file=sys.stderr)
         return 1
-    path = _write_json(d, args.action, data)
+    try:
+        path = _write_json(d, args.action, data, getattr(args, "output", None))
+    except FileExistsError:
+        print(f"verify soak {args.action}: --output {args.output} exists; not overwritten", file=sys.stderr)
+        return 1
     for item, verdict, values in rows_for(args.action, data)["rows"]:
         print(f"{verdict:<12} {item}: {values}", flush=True)
     print(f"verify soak {args.action}: {'PASS' if ok else 'FAIL'} ({path})", flush=True)
@@ -1407,7 +1509,7 @@ def action_count(r: sp.Reader, args, langs) -> dict:
     t1, t2 = float(args.t1), float(args.t2)
     cells = _read_cells(args.k6_log)
     kcal = _load_json(args.kcal)
-    workers = _load_json(args.workers) if args.workers else {}
+    workers, live_rec, at_t2, worker_source = recorded_workers(_load_json(args.workers) if args.workers else None)
     services = sp.demo_services(langs)
     qc, copy_series = raw_read(r, FIXED_METRIC, {"job": sp.COPY_JOB, "service_name": ("=~", sp.DEMO_SERVICE_RE)},
                                t1, t2, COPY_EXPIRY_S)
@@ -1427,8 +1529,11 @@ def action_count(r: sp.Reader, args, langs) -> dict:
         "shared:gateway restart": gateway_restart(pods, upt, t1, t2),
     })
     gates = scoped_gates(sent, extra)
-    window = window_problems(workers, worker_state(demo, langs), t1, t2, quiesce=args.quiesce,
-                             interval=args.worker_interval, langs=langs)
+    if live_rec is None:
+        live_rec = worker_state(demo, langs)
+    window = window_problems(workers, live_rec, t1, t2, quiesce=args.quiesce,
+                             interval=args.worker_interval, langs=langs,
+                             when="at t2" if at_t2 else "now")
     verdicts = count_verdicts(copy, fams, cells, kcal, gates, services, window)
     drain = drain_check(fams, langs, cells)
     for lang, v in drain.items():
@@ -1439,7 +1544,7 @@ def action_count(r: sp.Reader, args, langs) -> dict:
                  if c.unset_outside and not c.unset]
     findings += [f"window {lang}: {'; '.join(p)}" for lang, p in window.items() if p]
     return {"window": f"({sp.iso(t1)}, {sp.iso(t2)}]", "services": verdicts, "drain": drain, "gates": gates,
-            "worker_window": window, "copy_source": FIXED_METRIC, "gateway_source": SPAN_METRIC,
+            "worker_window": window, "worker_source": worker_source, "copy_source": FIXED_METRIC, "gateway_source": SPAN_METRIC,
             "findings": findings, "queries": [qc, qg]}
 
 
@@ -1529,10 +1634,15 @@ def add_parser(sub) -> None:
     p.add_argument("--kcal", type=Path, help="count: soak-cal.json")
     p.add_argument("--input", type=Path, help="shut / cal: input JSON")
     p.add_argument("--workers", type=Path, default=None,
-                   help="count: JSON {lang: {startedAt, first_drive, restartCount}} recorded at the window start")
+                   help="count: soak.py run's workers.json ({start: {workers}, t2: {workers}}: the t2 record is "
+                        "the restart check) or a flat {lang: {startedAt, first_drive, restartCount}} (live pods "
+                        "are the restart check)")
     p.add_argument("--quiesce", type=float, default=QUIESCE_S, help="count: the quiesce after the last traffic (s)")
-    p.add_argument("--worker-interval", type=float, default=10800.0,
+    p.add_argument("--worker-interval", type=float, default=DEFAULT_WORKER_INTERVAL_S,
                    help="count: the workers' DEMO_INTERVAL_SECONDS in the window (default 10800)")
     p.add_argument("--rate", type=float, default=None, help="cal: loaded rate per language (req/s)")
+    p.add_argument("--output", type=Path, default=None,
+                   help="passive / gate / count / shut / cal: write the JSON to this path instead of "
+                        "<out-dir>/soak-<action>.json; an existing file is refused (e.g. cal: soak-cal.r2.json)")
     p.add_argument("--tag", default=None, help="report: the soaked commit's tag (default soak/<run>)")
     p.add_argument("--report", type=Path, default=None, help="report: default specs/soak-simulation/reports/<run>.md")

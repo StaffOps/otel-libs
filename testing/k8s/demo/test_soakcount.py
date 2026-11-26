@@ -429,6 +429,39 @@ class Drain(unittest.TestCase):
         p = sc.window_problems({"python": {"first_drive": T0}}, {}, T0 + 10, T0 + 20, quiesce=0, interval=10800,
                                langs=["python"])
         self.assertIn("no Running worker", p["python"][0])
+        p = sc.window_problems({"python": {"first_drive": T0}}, {}, T0 + 10, T0 + 20, quiesce=0, interval=10800,
+                               langs=["python"], when="at t2")
+        self.assertEqual(p["python"], ["no Running worker pod at t2"])
+
+    def test_parse_ts_without_an_offset_is_utc(self):
+        self.assertEqual(sp.parse_ts("2026-11-26T12:00:00"), sp.parse_ts("2026-11-26T12:00:00Z"))
+        self.assertEqual(sp.parse_ts("2026-11-26T12:00:00+01:00"), sp.parse_ts("2026-11-26T11:00:00Z"))
+        self.assertIsNone(sp.parse_ts("not a time"))
+        self.assertIsNone(sp.parse_ts(None))
+
+    def test_recorded_workers(self):
+        """Defect 2: soak.py run's workers.json (start + t2); the flat legacy
+        format and a missing or failed t2 record fall back to the live pods."""
+        start = {"go": {"startedAt": T0, "restartCount": 0}}
+        t2 = {"go": {"pod": "p", "startedAt": T0, "restartCount": 0}}
+        w, live, at_t2, src = sc.recorded_workers({"start": {"at": T0, "workers": start},
+                                                   "t2": {"at": T0 + 9, "workers": t2}})
+        self.assertEqual((w, live, at_t2), (start, t2, True))
+        self.assertTrue(src.startswith("recorded at t2 (2026-"), src)
+        self.assertEqual(sc.recorded_workers({"start": {"workers": start}, "t2": {"workers": t2}})[3],
+                         "recorded at t2 (--workers)")
+        w, live, at_t2, src = sc.recorded_workers(start)
+        self.assertEqual((w, live, at_t2), (start, None, False))
+        self.assertIn("fallback: no t2 record", src)
+        w, live, at_t2, src = sc.recorded_workers({"start": {"at": T0, "workers": start},
+                                                   "t2": {"at": T0, "error": "boom"}})
+        self.assertEqual((w, live, at_t2), (start, None, False))
+        self.assertIn("t2 record has no workers: boom", src)
+        self.assertEqual(sc.recorded_workers({"start": {"at": T0, "error": "boom"}})[:3], ({}, None, False))
+        self.assertEqual(sc.recorded_workers(None), ({}, None, False, "live worker pods at count time (no --workers)"))
+        for bad in ([1], {"start": [1]}, "x"):
+            with self.assertRaises(ValueError):
+                sc.recorded_workers(bad)
 
 
 # ── sentinels ──
@@ -579,6 +612,74 @@ class Calibration(unittest.TestCase):
         self.assertIn("unset", out["services"]["demo-go-api"]["cause"])
         out = sc.calibrate([rep(CELL_OK, 0, {}), rep(CELL_OK, 0, {})])
         self.assertIn("N = 0", out["services"]["demo-go-api"]["cause"])
+
+    def test_absent_family_is_k0_in_a_measured_cell(self):
+        """Defect 3 (K8b k8b-20261125): a family counted in one cell and absent
+        from both repeats of another valid cell gets k = 0 there; an invalid,
+        single-repeat, unanswered or unmeasured cell gets none."""
+        send = "producer:send demo:go:orders"
+        ok_gw = {"demo-go-api": {"server:POST /orders": 10, send: 10}, "demo-go-worker": {"consumer:x": 10}}
+        be_gw = {"demo-go-api": {"server:POST /orders": 10}}
+        copy = {"demo-go-api": 20, "demo-go-backend": 0, "demo-go-worker": 10}
+        cells = {k: f"lang:go,route:orders,scen:{k},class:none" for k in ("db_error", "unhandled", "x1", "x2")}
+        reps = [rep(CELL_OK, 10, copy, ok_gw), rep(CELL_OK, 10, copy, ok_gw),
+                rep(CELL_BE, 10, copy, be_gw), rep(CELL_BE, 10, copy, be_gw),
+                rep(cells["db_error"], 10, copy, be_gw),                                       # one repeat
+                rep(cells["unhandled"], 10, copy, be_gw), rep(cells["unhandled"], 10, copy, be_gw, noanswer=1),
+                rep(cells["x2"], 10, copy, be_gw), rep(cells["x2"], 10, copy, be_gw)]
+        del reps[-1]["gateway"]                                                             # not measured
+        reps.append({**rep(cells["x2"], 10, copy), "gateway": None})
+        out = sc.calibrate(reps, invalid=[{"cell": cells["x1"], "reasons": ["window invalid"]}],
+                           planned=[CELL_OK, CELL_BE, *cells.values()])
+        api = out["families"]["demo-go-api"]
+        self.assertEqual(api[send], {CELL_OK: 1, CELL_BE: 0})
+        self.assertNotIn(cells["unhandled"], api[send])   # a repeat with a no-answer request: not measured
+        self.assertEqual(out["families"]["demo-go-worker"], {"consumer:x": {CELL_OK: 1, CELL_BE: 0}})
+        # the cross-check with k = 0: exact 0 passes, a span in the error cell is DUPLICATES
+        table = sc.cell_table(k6_counts({CELL_OK: (7, 0, 0), CELL_BE: (3, 0, 0)}))
+        b = sc.bounds(table, api[send], "go")
+        self.assertEqual((b.lo, b.hi, b.missing), (7, 7, []))
+        self.assertEqual(sc.judge_bound(7.0, b), "PASS")
+        self.assertEqual(sc.judge_bound(8.0, b), "DUPLICATES")
+        # review M1: empty gateway reads (the driver writes "gateway": {}) are not a measured absence
+        empty = [rep(CELL_OK, 10, copy, ok_gw), rep(CELL_OK, 10, copy, ok_gw),
+                 rep(CELL_BE, 10, copy, {}), rep(CELL_BE, 10, copy, {"demo-go-api": {"server:POST /orders": 0}})]
+        out = sc.calibrate(empty)
+        self.assertEqual(out["families"]["demo-go-api"][send], {CELL_OK: 1})
+        # s00 (unsampled inbound): the series are present with a delta of 0 -> k = 0 is recorded
+        s00 = "lang:go,route:orders,scen:business_error,class:s00"
+        zero = {"demo-go-api": {"server:POST /orders": 0}, "demo-go-backend": {"server:a.B/C": 0}}
+        out = sc.calibrate([rep(CELL_OK, 10, copy, ok_gw), rep(CELL_OK, 10, copy, ok_gw),
+                            rep(s00, 10, copy, zero), rep(s00, 10, copy, zero)])
+        self.assertEqual(out["families"]["demo-go-api"][send], {CELL_OK: 1, s00: 0})
+        self.assertEqual(out["families"]["demo-go-api"]["server:POST /orders"], {CELL_OK: 1, s00: 0})
+        # round 2: series present at 0 are evidence only in a class:s00 cell; a sampled cell needs a count > 0
+        out = sc.calibrate([rep(CELL_OK, 10, copy, ok_gw), rep(CELL_OK, 10, copy, ok_gw),
+                            rep(CELL_BE, 10, copy, zero), rep(CELL_BE, 10, copy, zero)])
+        self.assertEqual(out["families"]["demo-go-api"][send], {CELL_OK: 1})
+        self.assertEqual(out["families"]["demo-go-api"]["server:POST /orders"], {CELL_OK: 1, CELL_BE: 0})
+        # the service's own series missing, a sibling of the same language present: counts (K-D12 sibling rule)
+        sib = {"demo-go-backend": {"server:a.B/C": 10}}
+        out = sc.calibrate([rep(CELL_OK, 10, copy, ok_gw), rep(CELL_OK, 10, copy, ok_gw),
+                            rep(CELL_BE, 10, copy, sib), rep(CELL_BE, 10, copy, sib)])
+        self.assertEqual(out["families"]["demo-go-api"][send], {CELL_OK: 1, CELL_BE: 0})
+        self.assertEqual(out["families"]["demo-go-worker"]["consumer:x"], {CELL_OK: 1, CELL_BE: 0})
+        other = [rep(CELL_OK, 10, copy, ok_gw), rep(CELL_OK, 10, copy, ok_gw),   # another language's evidence
+                 rep(CELL_BE, 10, copy, {"demo-node-api": {"x": 5}}), rep(CELL_BE, 10, copy, be_gw)]
+        self.assertNotIn(CELL_BE, sc.calibrate(other)["families"]["demo-go-api"][send])
+        # a family ambiguous in a cell is not "absent" there, and is excluded anyway
+        amb = [rep(CELL_OK, 10, copy, ok_gw), rep(CELL_OK, 10, copy, ok_gw),
+               {**rep(CELL_BE, 10, copy, be_gw), "gateway_ambiguous": {"demo-go-api": [send]}},
+               rep(CELL_BE, 10, copy, be_gw)]
+        out = sc.calibrate(amb)
+        self.assertNotIn(send, out["families"]["demo-go-api"])
+        self.assertIn(send, out["excluded_families"]["demo-go-api"])
+        # present in one repeat only: the existing rule (0 vs 1 differ: excluded for that cell)
+        one = [rep(CELL_OK, 10, copy, ok_gw), rep(CELL_OK, 10, copy, ok_gw),
+               rep(CELL_BE, 10, copy, ok_gw), rep(CELL_BE, 10, copy, be_gw)]
+        out = sc.calibrate(one)
+        self.assertEqual(out["families"]["demo-go-api"][send], {CELL_OK: 1})
+        self.assertIn(send, out["excluded_families"]["demo-go-api"])
 
     def test_rate_cap(self):
         out = sc.calibrate([rep(CELL_OK, 10, {"demo-go-api": 50}), rep(CELL_OK, 10, {"demo-go-api": 50})],
@@ -1114,6 +1215,32 @@ class Cli(unittest.TestCase):
         self.assertEqual(rc, 1)   # backend and worker are not PASS
         self.assertIn("demo-go-backend: unset service_instance_id in the window", data["findings"])
         self.assertEqual(data["worker_window"], {"go": []})
+        self.assertTrue(data["worker_source"].startswith("live worker pods"), data["worker_source"])
+        # Defect 2: the workers recorded at the window start and at t2; the live
+        # worker (replaced after t2, by the trap's restore) is not the check.
+        moved = {"startedAt": t1 - 900, "restartCount": 0}
+        workers.write_text(json.dumps({"start": {"at": t1, "workers": {"go": {**moved, "first_drive": None}}},
+                                       "t2": {"at": t2, "workers": {"go": {"pod": "demo-go-worker-0-y", **moved}}}}))
+        with mock.patch.object(sp, "read_sentinels", return_value=[[sp.CounterVerdict("c", "copy", "CLEAN")]]), \
+                mock.patch.object(verify, "kubectl_json", side_effect=kubectl):
+            self.run_soak(count_argv, reader=r)
+            rec = json.loads((self.d / "soak-count.json").read_text())
+            self.assertEqual(rec["worker_window"], {"go": []})
+            self.assertTrue(rec["worker_source"].startswith("recorded at t2"), rec["worker_source"])
+            workers.write_text(json.dumps({"go": moved}))   # the flat format: the live pod was replaced
+            self.run_soak(count_argv, reader=r)
+            rec = json.loads((self.d / "soak-count.json").read_text())
+            self.assertIn("restarted or replaced", rec["worker_window"]["go"][0])
+            # review M5: the t2 record itself shows a restart, or no Go worker at t2
+            for t2w, why in (({"go": {"pod": "demo-go-worker-0-y", **moved, "restartCount": 1}},
+                              "restarted or replaced"), ({}, "no Running worker pod at t2")):
+                workers.write_text(json.dumps({"start": {"at": t1, "workers": {"go": {**moved}}},
+                                               "t2": {"at": t2, "workers": t2w}}))
+                self.run_soak(count_argv, reader=r)
+                rec = json.loads((self.d / "soak-count.json").read_text())
+                self.assertTrue(rec["worker_source"].startswith("recorded at t2"))
+                self.assertIn(why, rec["worker_window"]["go"][0])
+                self.assertEqual(rec["services"]["demo-go-api"]["verdict"], "UNQUALIFIED")
         # K-shut on the old instance
         shut_in = self.d / "shut.json"
         cells = {f"soak_requests{{lang:go,route:orders,scen:ok,class:none,phase:{ph},outcome:{o}}}": n
@@ -1156,6 +1283,32 @@ class Cli(unittest.TestCase):
         self.assertEqual(rc, 1)
         self.assertIn("canary", out)
         self.assertFalse((self.d / "r2.md").exists())
+
+    def test_cal_output_is_never_overwritten(self):
+        """Defect 3: re-run the calibration on a recorded kcal-input.json into a
+        new file; the original soak-cal.json and an existing --output stay."""
+        cal_in = self.d / "kcal-input.json"
+        deltas = {"demo-go-api": 50, "demo-go-backend": 20, "demo-go-worker": 10}
+        gw = {"demo-go-api": {"producer:send demo:go:orders": 10}}
+        be = {"demo-go-api": {"server:POST /orders": 10}}
+        cal_in.write_text(json.dumps({"repeats": [rep(CELL_OK, 10, deltas, gw), rep(CELL_OK, 10, deltas, gw),
+                                                  rep(CELL_BE, 10, deltas, be), rep(CELL_BE, 10, deltas, be)]}))
+        (self.d / "soak-cal.json").write_text('{"original": true}')
+        r2 = self.d / "soak-cal.r2.json"
+        argv = ["--langs", "go", "soak", "cal", "--run", "r1", "--input", str(cal_in), "--output", str(r2)]
+        rc, out = self.run_soak(argv)
+        self.assertEqual(rc, 0, out)
+        self.assertIn(str(r2), out)
+        self.assertEqual(json.loads((self.d / "soak-cal.json").read_text()), {"original": True})
+        fams = json.loads(r2.read_text())["families"]["demo-go-api"]["producer:send demo:go:orders"]
+        self.assertEqual(fams, {CELL_OK: 1, CELL_BE: 0})
+        self.assertEqual(r2.stat().st_mode & 0o777, 0o600)
+        self.assertEqual(sorted(x.name for x in self.d.iterdir() if x.name.startswith(".")), [])  # no temp left
+        before = r2.read_text()
+        rc, out = self.run_soak(argv)
+        self.assertEqual(rc, 1)
+        self.assertIn("exists; not overwritten", out)
+        self.assertEqual(r2.read_text(), before)
 
     def test_count_without_summary_is_an_error(self):
         log = self.d / "k6.log"

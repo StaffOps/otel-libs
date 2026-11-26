@@ -26,6 +26,8 @@ import guard  # noqa: E402
 import k6script  # noqa: E402
 import render  # noqa: E402
 import soak  # noqa: E402
+import soakcount  # noqa: E402
+from soak import Loop  # noqa: E402
 from guard import sp  # noqa: E402
 from test_guard import NOW, Blind, healthy, soak_reader, tp  # noqa: E402
 
@@ -396,6 +398,19 @@ class Clock:
         self.t += s + self.jumps.get(self.sleeps, 0)
         if self.on_sleep:
             self.on_sleep(self.sleeps)
+
+
+class RealClock:
+    """The real clock plus every fake sleep (the loop never sleeps for real)."""
+
+    def __init__(self):
+        self.offset = 0.0
+
+    def __call__(self) -> float:
+        return time.time() + self.offset
+
+    def sleep(self, s: float) -> None:
+        self.offset += max(0.0, s)
 
 
 class Switch(tp.FakeReader):
@@ -1200,7 +1215,7 @@ class Cli(Base):
         for extra, why in (([other_run_service()], "soak-run objects exist"), ([], "entry gate")):
             with self.subTest(why=why), self.cluster(extra=extra) as c:
                 rc, out, _ = self.main("run", "--run", RUN, "--kubectl", str(kubectl), "--tag", "abc1234",
-                                       "--hook", "--rate", "2")
+                                       "--hook", "--rate", "2", "--worker-interval", "10800")
                 self.assertEqual(rc, 1)
                 self.assertIn(why, out)
                 self.assertFalse(any(v in a for a in c.verbs() for v in ("apply", "delete", "label", "patch")))
@@ -1265,7 +1280,8 @@ class Cli(Base):
         try:
             with self.cluster() as c:
                 rc, out, err = self.main("run", "--run", RUN, "--kubectl", str(kubectl), "--tag", "abc1234",
-                                         "--hook", "--rate", "2", "--duration", "60", "--langs", "go")
+                                         "--hook", "--rate", "2", "--duration", "60", "--langs", "go",
+                                         "--worker-interval", "10800")
                 self.assertEqual(rc, 1)
                 self.assertIn("entry gate after the hook: platform: guard (sentinels shared", err)
                 self.assertEqual(len(reads), 2)
@@ -1325,42 +1341,359 @@ class Cli(Base):
         self.assertEqual(rc, 1)
         self.assertEqual(err.strip(), "soak: copy totals before the hook: prometheus unreachable")
 
-    def test_run_mode_full_window_on_fakes(self):
-        """A passing gate, hook and load: the window runs to the k6 Job's end."""
+    def full_run(self, *extra, window_read=None, on_trap=None, copy_series=None, pods=None, done_at=2,
+                 job_status=None, objects=(), worker_started=None, clock=None, completion_offset=-5.0):
+        """A passing gate, hook and load on the fakes, on a clock that follows
+        the real one plus every fake sleep (so the loop never sleeps for real
+        and stays after the entry gate's real-time records). The k6 Job
+        succeeds at the ``done_at``-th window read (``completionTime`` = that
+        read's time), or gets ``job_status`` then; None: never. ``objects`` are
+        added at the first window read.
+        Returns (rc, out, err, cluster, clock)."""
         self.runs_env()
         kubectl = self.fake_kubectl()
         demo = self.script("demo.sh", f"#!/bin/sh\nexec {sys.executable} -I {HERE / 'fakekube.py'} demo-sh \"$@\"\n")
-        orig = (soak.DEMO_SH, soak.start_caffeinate, guard.entry_read, guard.wait_demo_ready,
-                guard.wait_copy_counts, guard.copy_totals, guard.window_read)
+        clock = clock or RealClock()
         ok = guard.Item("x", "ok")
-        soak.DEMO_SH, soak.start_caffeinate = demo, lambda: None
-        guard.entry_read = lambda r, cfg, at, **kw: guard.GuardRead(at, [ok])
-        guard.wait_demo_ready = guard.wait_copy_counts = lambda *a, **kw: ok
-        guard.copy_totals = lambda r, at: {}
-        guard.window_read = lambda *a, **kw: guard.GuardRead(NOW, [ok])
+        reads = []
+        holder = {}
+
+        def read(r, cfg, roll, at, **kw):
+            reads.append(at)
+            if len(reads) == 1 and objects:   # the k6 pod, once the Job exists
+                holder["c"].edit(lambda st: st["objects"].extend(objects))
+            if done_at is not None and len(reads) == done_at:
+                status = job_status or {"succeeded": 1, "completionTime": sp.iso(at + completion_offset)}
+                holder["c"].edit(lambda st: [o.__setitem__("status", status) for o in st["objects"]
+                                             if o["kind"] == "Job"])
+            return (window_read or (lambda r, cfg, roll, at, **kw: guard.GuardRead(at, [ok])))(r, cfg, roll, at, **kw)
+        started = time.time() - 900 if worker_started is None else worker_started
+        default_pods = [{"metadata": {"name": f"demo-{lang}-worker-1a-x", "namespace": sp.APP_NS},
+                         "status": {"containerStatuses": [{"name": "worker", "restartCount": 0,
+                                                           "state": {"running": {"startedAt": sp.iso(started)}}}]}}
+                        for lang in render.LANGS]
+        patched = {
+            (soak, "DEMO_SH"): demo, (soak, "start_caffeinate"): lambda: None,
+            (guard, "entry_read"): lambda r, cfg, at, **kw: guard.GuardRead(at, [ok]),
+            (guard, "wait_demo_ready"): lambda *a, **kw: ok, (guard, "wait_copy_counts"): lambda *a, **kw: ok,
+            (guard, "copy_totals"): lambda r, at: {},
+            (guard, "window_read"): read,
+            (soak, "Loop"): lambda *a, **kw: Loop(*a, **{**kw, "clock": clock, "sleep": clock.sleep}),
+            (soak.CalOps, "copy_series"): lambda self_, t1, t2: (copy_series or (lambda a, b: []))(t1, t2),
+            (soak.CalOps, "pods"): lambda self_: (pods or (lambda: default_pods))(),
+        }
+        if on_trap is not None:
+            real_trap = soak.trap
+
+            def trap(*a, **kw):
+                on_trap(clock)
+                return real_trap(*a, **kw)
+            patched[(soak, "trap")] = trap
+        orig = {k: getattr(*k) for k in patched}
+        for (obj, name), v in patched.items():
+            setattr(obj, name, v)
         try:
             with self.cluster() as c:
-                orig_apply = soak.Kube.apply
-
-                def apply_and_finish(self_, run, objs):
-                    out = orig_apply(self_, run, objs)
-                    if any(o["kind"] == "Job" for o in objs):
-                        c.edit(lambda st: [o.__setitem__("status", {"succeeded": 1}) for o in st["objects"]
-                                           if o["kind"] == "Job"])
-                    return out
-                soak.Kube.apply = apply_and_finish
-                try:
-                    rc, out, err = self.main("run", "--run", RUN, "--kubectl", str(kubectl), "--tag", "abc1234",
-                                             "--hook", "--rate", "2", "--duration", "60", "--langs", "go")
-                finally:
-                    soak.Kube.apply = orig_apply
-                self.assertEqual(rc, 0, out + err)
-                self.assertIn("window loaded: started, valid", out)
-                self.assertEqual(c.keys(), c.seeded)  # the trap removed the k6 objects and soak-otlp
+                holder["c"] = c
+                rc, out, err = self.main("run", "--run", RUN, "--kubectl", str(kubectl), "--tag", "abc1234",
+                                         "--hook", "--rate", "2", "--duration", "60", "--langs", "go",
+                                         "--worker-interval", "10800", *extra)
         finally:
-            (soak.DEMO_SH, soak.start_caffeinate, guard.entry_read, guard.wait_demo_ready,
-             guard.wait_copy_counts, guard.copy_totals, guard.window_read) = orig
+            for (obj, name), v in orig.items():
+                setattr(obj, name, v)
+        return rc, out, err, c, clock
 
+    def windows(self) -> list[dict]:
+        return [json.loads(x) for x in (self.d / "windows.jsonl").read_text().splitlines()]
+
+    def inputs(self) -> dict:
+        return json.loads((self.d / "count-window.json").read_text())
+
+    def test_run_mode_full_window_on_fakes(self):
+        """A passing gate, hook and load: the window runs to the k6 Job's end."""
+        rc, out, err, c, _ = self.full_run()
+        self.assertEqual(rc, 0, out + err)
+        self.assertIn("window loaded: started, valid", out)
+        self.assertEqual(c.keys(), c.seeded)  # the trap removed the k6 objects and soak-otlp
+
+    def test_run_mode_window_follows_k6_not_the_duration(self):
+        """Review HIGH-1: k6 runs pull + duration + graceful stop; the window
+        lasts until the Job succeeds (at most its activeDeadlineSeconds), not
+        --duration. Here the Job succeeds at the 3rd read (120 s > --duration 60 s);
+        k6_end is its completionTime and t2 = the window end + the quiesce."""
+        seen = {}
+
+        def on_trap(clock):
+            seen["at"] = clock()
+            seen["windows"] = [w["name"] for w in self.windows()]
+            seen["inputs"] = self.inputs()
+        loaded = []
+
+        def read(r, cfg, roll, at, **kw):
+            loaded.append(kw.get("loaded"))
+            return guard.GuardRead(at, [guard.Item("x", "ok")])
+        rc, out, err, c, clock = self.full_run(window_read=read, on_trap=on_trap, done_at=3)
+        self.assertEqual(rc, 0, out + err)
+        self.assertEqual(seen["windows"], ["loaded", "loaded-q"])
+        k6w, qw = self.windows()
+        self.assertEqual((k6w["ended"], k6w["reads"]), ("load done", 3))
+        self.assertGreaterEqual(k6w["end"] - k6w["start"], 120)
+        self.assertTrue(qw["valid"])
+        self.assertEqual(qw["reads"], 3)          # at 0, 60 and 120 s
+        self.assertEqual(loaded, [True] * 6)       # the k6 window's three reads and the quiesce's three
+        inp = seen["inputs"]
+        self.assertTrue(inp["valid"], inp)
+        self.assertEqual(inp["k6_end_source"], "loop window end (laptop clock)")
+        self.assertEqual(inp["k6_end"], k6w["end"])
+        self.assertGreaterEqual(inp["k6_completion_skew_s"], 5)   # completionTime = the read - 5 s, truncated
+        self.assertEqual(inp["t1"], k6w["start"])
+        self.assertEqual(inp["t2"], k6w["end"] + soakcount.QUIESCE_S)
+        self.assertGreaterEqual(qw["end"], inp["t2"])
+        self.assertLessEqual(inp["t2"], seen["at"])  # the restore comes after t2
+        self.assertEqual(inp["count_args"], ["--t1", f"{k6w['start']:.3f}", "--t2", f"{inp['t2']:.3f}",
+                                             "--k6-log", "raw/soak-k6-loaded.log", "--quiesce", "120",
+                                             "--workers", "workers.json", "--worker-interval", "10800"])
+        self.assertIn("count window loaded: t1", out)
+        self.assertEqual(c.demo_calls()[-1]["env"]["DEMO_RESTORE"], "1")
+
+    def test_run_mode_k6_not_done_at_the_deadline(self):
+        """The Job never succeeds while its pod runs: the window ends at the
+        Job's deadline ("duration"); no quiesce; the count inputs are invalid."""
+        running = k6_pod({"phase": "Running"})
+        rc, out, err, _, _ = self.full_run(done_at=None, objects=[running])
+        self.assertEqual(rc, 1, out + err)
+        k6w, = self.windows()
+        self.assertEqual(k6w["ended"], "duration")
+        plan = k6script.K6Plan(langs=("go",), rate=2, duration_s=60, timeout_s=10, p99_s=1.0)
+        self.assertGreaterEqual(k6w["end"] - k6w["start"], plan.deadline_s)
+        inp = self.inputs()
+        self.assertFalse(inp["valid"])
+        self.assertIn("k6 not done at window end (ended: duration)", inp["reasons"])
+        self.assertIsNone(inp["count_args"])
+        self.assertEqual((inp["quiesce_window"], inp["k6_completion_time"]), (None, None))
+
+    def test_run_mode_failed_k6_job(self):
+        rc, out, err, c, _ = self.full_run(job_status={"failed": 1, "conditions": [
+            {"type": "Failed", "reason": "BackoffLimitExceeded", "message": "pod failed"}]})
+        self.assertEqual(rc, 1)
+        k6w, = self.windows()
+        self.assertEqual(k6w["ended"], "invalid")
+        inp = self.inputs()
+        self.assertFalse(inp["valid"])
+        self.assertIn("k6: Job failed (BackoffLimitExceeded: pod failed)", inp["reasons"][0])
+        self.assertIsNone(inp["count_args"])
+        self.assertEqual(c.keys(), c.seeded)
+
+    def test_run_mode_quiesce_option(self):
+        rc, _, err, c, _ = self.full_run("--quiesce", "30")
+        self.assertEqual(rc, 1)
+        self.assertIn("below 120s", err)
+        self.assertEqual(c.demo_calls(), [])      # refused before any write
+        rc, out, err, _, _ = self.full_run("--quiesce", "30", "--allow-short-quiesce")
+        self.assertEqual(rc, 0, out + err)
+        k6w, qw = self.windows()[-2:]
+        self.assertEqual(qw["reads"], 1 + 1)   # 0 s, then 60 s >= 30 s
+        inp = self.inputs()
+        self.assertEqual((inp["t2"], inp["short_quiesce"]), (k6w["end"] + 30, True))
+        self.assertEqual(inp["count_args"][inp["count_args"].index("--quiesce") + 1], "30")
+        rc, out, err, _, _ = self.full_run("--quiesce", "0", "--allow-short-quiesce")
+        self.assertEqual(rc, 0, out + err)
+        inp = self.inputs()
+        self.assertEqual((inp["t2"], inp["quiesce_window"], inp["quiesce_s"]), (inp["window_end"], None, 0.0))
+        for bad in ("-1", "nan", "inf"):
+            rc, _, err, _, _ = self.full_run("--quiesce", bad, "--allow-short-quiesce")
+            self.assertEqual(rc, 1, bad)
+            self.assertIn("a finite number of seconds", err)
+
+    def test_run_mode_breach_in_the_quiesce_invalidates_the_count(self):
+        reads = []
+
+        def read(r, cfg, roll, at, **kw):
+            reads.append(at)
+            state = "breach" if len(reads) == 4 else "ok"
+            return guard.GuardRead(at, [guard.Item("sentinels shared", state, "otel-gateway +3")])
+        rc, out, err, c, _ = self.full_run(window_read=read)
+        self.assertEqual(rc, 1, out + err)
+        inp = self.inputs()
+        self.assertFalse(inp["valid"])
+        self.assertIn("sentinels shared", inp["reasons"][0])
+        self.assertIsNone(inp["count_args"])
+        self.assertEqual(c.keys(), c.seeded)
+
+    def test_run_mode_no_quiesce_after_an_invalid_window(self):
+        def read(r, cfg, roll, at, **kw):
+            return guard.GuardRead(at, [guard.Item("sentinels shared", "breach", "otel-gateway +3")])
+        rc, out, err, _, _ = self.full_run(window_read=read)
+        self.assertEqual(rc, 1)
+        self.assertEqual([w["name"] for w in self.windows()], ["loaded"])
+        inp = self.inputs()
+        self.assertFalse(inp["valid"])
+        self.assertIsNone(inp["quiesce_window"])
+
+    def test_run_mode_signal_in_the_quiesce_runs_the_trap_at_once(self):
+        """An INT or TERM during the quiesce: the trap runs at once, before the
+        quiesce's end; no t2 record and no count-window.json are written."""
+        reads, trap_at = [], []
+
+        def read(r, cfg, roll, at, **kw):
+            reads.append(at)
+            if len(reads) == 3:   # the quiesce's first read
+                os.kill(os.getpid(), signal.SIGTERM)
+            return guard.GuardRead(at, [guard.Item("x", "ok")])
+        rc, out, err, c, clock = self.full_run(window_read=read, on_trap=lambda ck: trap_at.append(ck()))
+        self.assertEqual(rc, 128 + signal.SIGTERM)
+        self.assertEqual(len(trap_at), 1)
+        self.assertEqual([w["name"] for w in self.windows()], ["loaded"])   # the quiesce never finished
+        self.assertEqual(c.keys(), c.seeded)
+        self.assertEqual(c.demo_calls()[-1]["env"]["DEMO_RESTORE"], "1")
+        self.assertFalse((self.d / "count-window.json").exists())
+        self.assertNotIn("t2", json.loads((self.d / "workers.json").read_text()))
+
+    def test_run_mode_records_the_workers(self):
+        """Defect 2: workers.json at the window start (first drives over the copy
+        series since the hook) and at t2, before the trap replaces the pods."""
+        calls = []
+
+        def worker(name, started, restarts):
+            return {"metadata": {"name": name, "namespace": sp.APP_NS},
+                    "status": {"containerStatuses": [{"name": "worker", "restartCount": restarts,
+                                                      "state": {"running": {"startedAt": sp.iso(started)}}}]}}
+
+        clock = RealClock()
+
+        def copy_series(t1, t2):
+            calls.append((t1, t2))
+            clock.offset += 600   # the read sees the drive; the window starts later, as after the hook's waits
+            return [{"metric": {"service_name": "demo-python-api", "cluster": "k8s01"},
+                     "values": [[t1 - 5, "3"], [t1 + 40, "7"]]}]
+        started = float(int(time.time()) - 3600)
+        pod_lists = [[worker("demo-go-worker-1a-x", started, 0), worker("demo-python-worker-1a-x", started, 0)],
+                     [worker("demo-go-worker-1a-x", started, 1), worker("demo-python-worker-1a-x", started, 0)]]
+        rc, out, err, _, _ = self.full_run("--langs", "go,python", copy_series=copy_series,
+                                           pods=lambda: pod_lists.pop(0), clock=clock)
+        self.assertEqual(rc, 0, out + err)
+        w = json.loads((self.d / "workers.json").read_text())
+        start, t2 = w["start"]["workers"], w["t2"]["workers"]
+        self.assertEqual(start["go"]["startedAt"], started)
+        self.assertIsNone(start["go"]["first_drive"])          # Go: startedAt rule, unmeasured
+        self.assertEqual(start["python"]["first_drive"], calls[0][0] + 40)
+        self.assertEqual(t2["go"], {"pod": "demo-go-worker-1a-x", "startedAt": started, "restartCount": 1})
+        self.assertGreaterEqual(w["t2"]["at"], self.inputs()["t2"])
+        self.assertLessEqual(w["start"]["at"], self.windows()[0]["start"])
+        entry = [json.loads(x) for x in (self.d / "guard.jsonl").read_text().splitlines()
+                 if json.loads(x).get("phase") == "entry-after-hook"]
+        self.assertGreaterEqual(w["start"]["at"], entry[-1]["at"])   # after the last entry gate
+
+    def test_run_mode_refuses_a_window_count_could_not_qualify(self):
+        """Review M2: checked at minute 0, before k6 starts (the trap runs): a
+        failed start record, a non-Go worker without a first drive, a Go worker
+        whose next drive falls before the planned t2 + quiesce."""
+        def boom(t1, t2):
+            raise sp.verify.QueryError("prometheus unreachable")
+        cases = (({"copy_series": boom}, "workers at the window start: QueryError: prometheus unreachable"),
+                 ({"pods": lambda: []}, "go: no startedAt for t1"),
+                 ({"worker_started": time.time() - 10800 + 300}, "go: next demo.drive at"))
+        for kw, why in cases:
+            with self.subTest(why=why):
+                rc, out, err, c, _ = self.full_run(**kw)
+                self.assertEqual(rc, 1)
+                self.assertIn("worker window: " + why, err)
+                self.assertIn("not started", err)
+                self.assertNotIn("window loaded", out)
+                self.assertEqual(c.keys(), c.seeded)
+                self.assertEqual(c.demo_calls()[-1]["env"]["DEMO_RESTORE"], "1")
+        rc, out, err, _, _ = self.full_run("--langs", "go,python", copy_series=lambda a, b: [])
+        self.assertIn("python: no first demo.drive for t1", err)
+
+    def test_run_mode_cluster_clock_ahead(self):
+        """Round 2 MEDIUM-C: the cluster clock 5 s ahead of the laptop: t2 is the
+        laptop's window end + the quiesce, the window stays valid, the skew is recorded."""
+        rc, out, err, _, _ = self.full_run(completion_offset=5.0)
+        self.assertEqual(rc, 0, out + err)
+        k6w, qw = self.windows()
+        inp = self.inputs()
+        self.assertTrue(inp["valid"], inp)
+        self.assertEqual(inp["t2"], k6w["end"] + soakcount.QUIESCE_S)
+        self.assertLessEqual(inp["t2"], qw["end"])
+        self.assertGreater(inp["k6_completion_time"], k6w["end"])
+        self.assertTrue(-6 < inp["k6_completion_skew_s"] <= -4, inp["k6_completion_skew_s"])
+
+    def test_run_mode_hook_and_rate_need_the_worker_interval(self):
+        """Round 2 MEDIUM-B: refused before any read or write."""
+        self.runs_env()
+        kubectl = self.fake_kubectl()
+        with self.cluster() as c:
+            rc, _, err = self.main("run", "--run", RUN, "--kubectl", str(kubectl), "--tag", "abc1234",
+                                   "--hook", "--rate", "2", "--duration", "60", "--langs", "go")
+            self.assertEqual(rc, 1)
+            self.assertIn("--hook --rate needs --worker-interval", err)
+            self.assertEqual(c.calls(), [])
+
+    def test_run_mode_planned_t2_covers_the_last_read(self):
+        """Round 2 MEDIUM-A: the loop ends at the first read after the Job's
+        deadline; a Go drive just after the naive planned t2 (now + deadline +
+        quiesce, + quiesce) is refused."""
+        plan = k6script.K6Plan(langs=("go",), rate=2, duration_s=60, timeout_s=10, p99_s=1.0)
+        naive = plan.deadline_s + 2 * soakcount.QUIESCE_S
+        rc, out, err, c, _ = self.full_run(worker_started=time.time() - 10800 + naive + 30)
+        self.assertEqual(rc, 1, out + err)
+        self.assertIn("worker window: go: next demo.drive at", err)
+        self.assertEqual(c.demo_calls()[-1]["env"]["DEMO_RESTORE"], "1")
+
+    def test_count_inputs_unit(self):
+        import argparse
+        args = argparse.Namespace(window="loaded", quiesce=120.0)
+        res = soak.WindowResult("loaded", True, True, start=NOW, end=NOW + 7200, ended="load done")
+        q = soak.WindowResult("loaded-q", True, True, start=NOW + 7200, end=NOW + 7300)   # ended early
+        inp = soak.count_inputs(args, res, q, hooked=False, k6_completion=None, interval=10800.0)
+        self.assertFalse(inp["valid"])
+        self.assertIn("no --hook", inp["reasons"][0])
+        self.assertIn("before t2", inp["reasons"][1])
+        self.assertIsNone(inp["count_args"])
+        self.assertIsNone(inp["workers"])
+        # round 2 MEDIUM-C: t2 stays on the laptop clock; completionTime is information with its skew
+        inp = soak.count_inputs(args, res, None, hooked=True, k6_completion=NOW + 7300, interval=10800.0)
+        self.assertEqual((inp["t2"], inp["k6_completion_time"], inp["k6_completion_skew_s"]),
+                         (NOW + 7200, NOW + 7300, -100.0))
+
+    def test_run_mode_gap_before_the_quiesce_invalidates_it(self):
+        """A laptop stall between the k6 window and its quiesce (> interval + slack)."""
+        real = soak.Loop.window
+
+        def window(self_, name, *a, **kw):
+            if name.endswith("-q"):
+                self_.clock.offset += soak.GUARD_INTERVAL_S + soak.QUIESCE_GAP_SLACK_S + 1
+            return real(self_, name, *a, **kw)
+        soak.Loop.window = window
+        try:
+            rc, out, err, _, _ = self.full_run()
+        finally:
+            soak.Loop.window = real
+        self.assertEqual(rc, 1, out + err)
+        self.assertIn("between the window and its quiesce (> 90s)", self.inputs()["reasons"][0])
+
+    def test_worker_record_failure_is_an_error_not_workers(self):
+        class Ops:
+            def now(self):
+                return NOW
+
+            def pods(self):
+                raise soak.SoakError("api unreachable")
+        rec = soak.worker_record(Ops(), NOW - 100, ["go"], start=False)
+        self.assertEqual(rec, {"at": NOW, "error": "SoakError: api unreachable"})
+
+    def test_job_completion(self):
+        class K:
+            def __init__(self, job):
+                self.job = job
+
+            def get(self, args):
+                if self.job is None:
+                    raise soak.SoakError("gone")
+                return self.job
+        self.assertEqual(soak.job_completion(K({"status": {"completionTime": sp.iso(NOW)}}), "j"), NOW)
+        self.assertIsNone(soak.job_completion(K({"status": {}}), "j"))
+        self.assertIsNone(soak.job_completion(K(None), "j"))
 
 if __name__ == "__main__":
     unittest.main()

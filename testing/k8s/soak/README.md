@@ -25,7 +25,7 @@ python3 -I testing/k8s/soak/soak.py <mode> --run <id> [...]
 | Mode | Does |
 |---|---|
 | `preflight --run <id> [--tag <t>]` | Reads only. Refuses while any object labelled `otel-libs/soak-run` exists (of any run id), an object without that label carries a soak name (`soak-otlp`, `soak-k6-*`, …), or the namespace label `istio.io/dataplane-mode` is not `ambient`; records the running demo (one image tag, the replicas per language, from the live Deployments) and refuses when the tag is not `--tag` or `demo-tag.sh`'s; then the entry gate, one line per item. |
-| `run --run <id> --window <name> --duration <s> [--rate <n>] [--langs ...] [--hook] [--control] [--worker-interval <s>] [--tag <t>]` | The pre-flight and the entry gate first, before any write. Then `soak-otlp` (copy variant); with `--control` (task K-copy), the positive control before the hook: the copy's `soak-control` series read, the `soak-control` Job applied and waited for (360 s), the counts polled until they arrive (120 s) and read again two scrapes (30 s) later; PASS only when the delta is exactly `render.control_expected` (`otel_libs_soak_spans_total` +8; `otel_libs_soak_fixed_spans_total` +2 for `<run>-ctl-a`, `<run>-ctl-b` and `unset`, +1 for `<run>-ctl-n`; an absent series counts 0, a decrease is a copy reset); `control.json`, a `windows.jsonl` record and `raw/soak-control.log`; a FAIL ends the run before the hook (the trap runs); with `--hook`, the demo re-applied through `demo.sh`'s `DEMO_ENV_FILE`, guard (g) polled until the rolled pods are Ready for 10 min (Terminating pods skipped; at most 10 + 10 min), and guard (h) as an increase of every service's copy count since the hook; with `--rate`, the k6 ConfigMap and Job; then a guard read every 60 s until the window ends. The trap always runs at the end. |
+| `run --run <id> --window <name> --duration <s> [--rate <n>] [--langs ...] [--hook] [--control] [--worker-interval <s>] [--quiesce <s> [--allow-short-quiesce]] [--tag <t>]` | The pre-flight and the entry gate first, before any write. Then `soak-otlp` (copy variant); with `--control` (task K-copy), the positive control before the hook: the copy's `soak-control` series read, the `soak-control` Job applied and waited for (360 s), the counts polled until they arrive (120 s) and read again two scrapes (30 s) later; PASS only when the delta is exactly `render.control_expected` (`otel_libs_soak_spans_total` +8; `otel_libs_soak_fixed_spans_total` +2 for `<run>-ctl-a`, `<run>-ctl-b` and `unset`, +1 for `<run>-ctl-n`; an absent series counts 0, a decrease is a copy reset); `control.json`, a `windows.jsonl` record and `raw/soak-control.log`; a FAIL ends the run before the hook (the trap runs); with `--hook`, the demo re-applied through `demo.sh`'s `DEMO_ENV_FILE`, guard (g) polled until the rolled pods are Ready for 10 min (Terminating pods skipped; at most 10 + 10 min), and guard (h) as an increase of every service's copy count since the hook; with `--rate`, the worker window checked (below), the k6 ConfigMap and Job; then a guard read every 60 s until the window ends: with k6, when its Job succeeds (at most its `activeDeadlineSeconds`; `--duration` is k6's own duration), else after `--duration`. A loaded window whose k6 Job succeeded is followed by the quiesce (below). The trap always runs at the end. |
 | `cal --run <id> [--langs ...] [--n N] [--rate R] [--steps a,b,c] [--step-duration S] [--quiesce Q] [--worker-interval I] [--drain-wait W] [--control] [--dry-run]` | K-cal (below). The same pre-flight, entry gate, hook (always applied), soak-run labels and trap as `run`. `--dry-run` prints the plan (cells, N, repeats, steps, the wall-clock estimate, the objects) and makes no kubectl call and writes nothing. |
 | `cleanup --run <id> [--tag <t>]` | The trap's steps, for a run whose laptop was cut off. It restores the demo from `runs/<id>/state.json`; `--tag` forces a restore with that tag (replicas as recorded, else 1). |
 | `render --run <id> --what <object>` | Prints one soak-run object (offline). Objects: `k6`, `k6-configmap`, `k6-job`, `soak-otlp --variant copy\|refused\|hung\|redirect`, `sink-hung`, `sink-redirect`, `control`, `fallback --langs <lang>`. |
@@ -110,6 +110,74 @@ the trap runs.
   value is not counted and the read item is blind (reset unknown), not an
   increase.
 
+## The quiesce and the count inputs (`run`)
+
+Correction 2026-11-26, after K8b run `k8b-20261125`: the trap restored the
+demo 9 s after k6 ended, so the restored pods' own demo traffic reached the
+gateway inside (t1, t2] (the cross-check read DUPLICATES of +14 / +10 in
+every language), and the workers were read after the trap had replaced them.
+
+- **The k6 window.** It runs until the k6 Job succeeds, at most the Job's
+  `activeDeadlineSeconds` (pull + `--duration` + graceful stop + summary), as
+  K-cal's k6 windows; `--duration` is k6's own duration, not the window's. Each
+  window record carries `ended`: `load done` (the Job succeeded), `duration`
+  (the window's time ran out first) or `invalid` (a breach, a gap, a blind read
+  or a k6 failure).
+- **Quiesce.** After a loaded window whose k6 Job succeeded (`ended` = `load
+  done`), `run` keeps the demo as the window left it (hooked) for `--quiesce`
+  seconds (default `soakcount.QUIESCE_S`, 120 s), as the window
+  `<window>-q`: a guarded window read as loaded (spans are in flight), the
+  same as K-cal's quiet windows, with its own `windows.jsonl` record. A
+  separate window keeps the k6 window's start and end as they are. A breach
+  there, or more than one guard interval + 30 s between the k6 window and the
+  quiesce, makes the run exit 1 and the count inputs invalid. No quiesce
+  follows an invalid window or one that did not end with `load done`. Only
+  then the trap runs. An INT, TERM or HUP during the quiesce still runs the
+  trap at once; then neither `count-window.json` nor the t2 workers record is
+  written. A `--quiesce` below 120 s needs `--allow-short-quiesce` (`0` = no
+  quiesce): `count_args` passes the same value to `count`, which also loosens
+  count's t1 rule; `short_quiesce` records it. A non-finite or negative value
+  is refused before any read.
+- **Worker window, at minute 0** (with `--hook` and `--rate`): before k6
+  starts, `soakcount.window_problems` over the start record against the
+  planned t2 (now + the Job's deadline + one guard interval + the read
+  budget, 0.8 × the interval, since the loop ends at the first read after the
+  deadline, + the quiesce), with t1 = now (the window starts a moment later,
+  so the t1 rule is checked on the conservative side): a failed start read, a
+  Go worker without `startedAt`, another without a first `demo.drive`, t1
+  before the t1 rule, or a next drive before t2 + quiesce refuses the run
+  (`worker window: ...; not started`) and the trap restores. `--hook
+  --rate` requires `--worker-interval` (refused before any read): without it
+  the hooked workers keep the app's own `DEMO_INTERVAL_SECONDS`, which
+  neither this check nor `count` can know. The
+  next-drive rule is `count`'s: next drive > t2 + quiesce, and t2 already
+  includes the quiesce, so the window keeps two quiesces clear of the next
+  drive (the conservative side; unchanged).
+- **`count-window.json`** (when the k6 window started): `t1` (the window
+  start, right after the k6 apply), `k6_end` = `window_end` (the loop saw
+  the Job done; the laptop clock, as t1), `window_ended`, `t2` = `window_end`
+  + `quiesce_s` (laptop clock), `k6_completion_time` (the Job's
+  `status.completionTime`, the cluster's clock: information only) and
+  `k6_completion_skew_s` (window end − completionTime), `quiesce_window`, `quiesce_end` (≥ `t2`), `short_quiesce`,
+  `valid` and `reasons`, `k6_log` (`raw/soak-k6-<window>.log`, saved by the
+  trap), `workers`, `worker_interval_s`, and `count_args`, the arguments of
+  `verify.py soak count` (paths relative to `runs/<id>/`; add `--kcal`), or
+  null when `reasons` is not empty. Reasons: no `--hook` (no `workers.json`),
+  an invalid window, `k6 not done at window end`, an invalid quiesce, a
+  quiesce that ended before t2. The run exits 1 when the count inputs are
+  invalid.
+- **`workers.json`** (with `--hook`): `start` = `{at, workers}` written right
+  before the window, from `cal.first_drives` over the copy series since the
+  hook (pod, `startedAt`, `restartCount`, the first `demo.drive`; Go's is
+  `unmeasured`, its t1 rule stays `startedAt` + quiesce); `t2` = `{at,
+  workers}` read after the quiesce, before the trap (pod, `startedAt`,
+  `restartCount`). A failed read is recorded as `error`, never as workers.
+  `verify.py soak count --workers runs/<id>/workers.json` uses `start` for the
+  t1 and next-drive rules and `t2` for the restart / replacement check; a flat
+  `{lang: {...}}` file, or one without a `t2` record, falls back to the live
+  worker pods (stated in `worker_source`; after the trap's restore they read
+  as replaced).
+
 ## Calibration (`cal`, task K-cal-d)
 
 The driver of K-cal (design K-D20). Defaults: N = 30 requests per language
@@ -164,7 +232,37 @@ interval 21600 s, a drain wait of at most 900 s.
   gates, `aborted`), `steps` (with `dropped_iterations` and `noanswer`),
   `loaded_rate`, `k8b_rate`, `k8b_rate_per_lang`, `drain`, `drain_wait` (with
   every read), `k6_peak_rss`. Re-running
-  `verify.py soak cal` overwrites it without `driver`.
+  `verify.py soak cal` overwrites it without `driver`; `--output <path>`
+  writes elsewhere and refuses an existing file.
+- **Family k = 0** (correction 2026-11-26): a gateway family of a service has
+  k = 0 in a cell where it was measured absent — a valid cell (no invalid
+  repeat, two repeats, each with N > 0 answered as expected and a `gateway`
+  read with sibling evidence: in a sampled cell some family of a
+  `demo-<lang>-*` service counted above 0 in that repeat; in a `class:s00`
+  cell, which counts 0 everywhere (unsampled inbound), some family series of
+  the language present in the read, even at 0; the driver always writes
+  `gateway`, `{}` included, so an empty read or one with no series of the
+  language gives no k; a service
+  whose own series are missing while a sibling's are present counts, as the
+  copy's sibling rule, K-D12) whose repeats counted none of a family another cell of the service
+  counted (`send` / `process` in the error scenarios, the rpc-client span for
+  `unhandled`). An invalid or unmeasured cell gets no k (`missing`, so
+  UNQUALIFIED). To apply it to a calibration that ran before the correction,
+  without the cluster:
+
+  ```bash
+  R=testing/k8s/soak/runs/kcal-20261125d
+  python3 -I testing/k8s/verify.py soak cal --run kcal-20261125d --out-dir "$R" \
+    --input "$R/kcal-input.json" --rate 10 --output "$R/soak-cal.r5.json"
+  ```
+
+  (`--rate` = the run's `loaded_rate`, for the same `rate_cap`; exit 1 while a
+  `rate_cap` is FAIL). `--output` is written atomically, mode 0600, and an
+  existing file is refused before any read. `soak-cal.json` stays as
+  written; pass `--kcal "$R/soak-cal.r5.json"` to `count` (r2: no
+  sibling-evidence rule; r3: a count above 0 everywhere, which dropped the
+  `s00` zeros; r4: a present series anywhere; r5 = the current rule, equal
+  to r4 and r2 on this run).
 - **Phase B.** One k6 run per step (default mix and classes), each followed
   by a quiesce. A step is clean when both windows are valid and the summary's
   `dropped_iterations` is 0; the steps stop at the first unclean one. Loaded
@@ -260,6 +358,7 @@ own id. A run id is a label value (`soakplatform.RUN_RE`, shared with K1).
 
 `runs/<id>/` is git-ignored: `state.json` (tag, languages), `guard.jsonl`
 (every read), `windows.jsonl`, `trap.jsonl`, `heartbeat`, `raw/` (k6 logs),
+`count-window.json` and, with `--hook`, `workers.json` (`run`, above),
 and, with `--hook`, `soak.env` and `canary` (mode 0600, also when the file
 existed; the canary is never printed; K11 scans the summary for it). Every
 other file the loop writes goes through `verify.scan_secret` first: a flagged

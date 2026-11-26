@@ -1012,6 +1012,36 @@ only after a clean 30 min lookback. Every shared-job query carries
 `cluster="k8s01"`. **Reversal action**: if the shared sentinels are clean
 on every window, gate the copy verdicts on them too.)*
 
+> **Corrected 2026-11-26 (K8b `k8b-20261125`, owner ruling "accept and fix").**
+> In `soak.py run`, t1 is the k6 window start, right after the k6 apply. The
+> k6 window now lasts until the Job is done (bounded by its deadline), not
+> until `--duration`. t2 = the window end (the first guard read after the
+> Job succeeded) + `--quiesce`, both on the laptop's clock (default
+> `QUIESCE_S`, 120 s; shorter only with `--allow-short-quiesce`). The Job's
+> `completionTime` and its skew from the window end are recorded only as
+> information, because they come from the cluster's clock. `--hook --rate`
+> requires `--worker-interval`; without it the workers keep their 5 s app
+> default. Through the quiesce the demo stays hooked, read as
+> a guarded loaded window `<window>-q`; a breach or a gap there invalidates
+> the count inputs. The trap restores the demo only after t2. The run writes
+> `count-window.json` (t1, t2, `k6_end` and its source, `valid`, `reasons`,
+> and `count_args`, which is null when there are reasons). With `--hook` it
+> also writes `workers.json`: the worker record at the window start, taken
+> after guard (g), and again at t2. `verify.py soak count --workers` uses the
+> t2 record for the restart and replacement check; the live-pod fallback is
+> named in `worker_source`. The worker rules (t1 rule, next drive) are also
+> checked at minute 0, with t1 = now (the conservative side) and the planned
+> t2 = now + the Job deadline + one loop interval + the read budget +
+> quiesce. A problem refuses the window before k6 starts. The next-drive rule keeps t2 + quiesce with t2 already
+> holding a quiesce, which is conservative. Cause: in `k8b-20261125` the trap
+> restored the demo 9 s after k6 ended. The restored pods' normal traffic
+> reached the gateway inside (t1, t2], and the cross-check read DUPLICATES
+> (+14 `POST /orders`, +10 send / process in every language). A diagnostic
+> re-read with t2 = k6 end + 16 s matched every family exactly. The copy
+> verdicts were not affected, because the restored pods do not export to the
+> copy. The worker inputs had been built after the trap, from the replaced
+> pods.
+
 ### K-D13 — Platform guards with dated initial floors
 **Choice**: every 60 s the run loop reads the guard set of SR15 "Platform
 guards" (shared agent and gateway refused / failed / send-failed /
@@ -1402,6 +1432,34 @@ window (L1); the pre-flight refuses when the top step's k6 memory limit
 exceeds MemAvailable minus the K-D13 floor; k6 peak RSS is `unmeasured` (the
 summary has no process-memory metric) (L2); the drain-wait reads and each
 step's `noanswer` are kept (L3, L4).
+
+> **Corrected 2026-11-26 (K8b `k8b-20261125`).** `calibrate()` records a
+> gateway family's k = 0 for a measured cell in which the family was absent
+> in every repeat. A measured cell has no invalid repeat, at least two
+> repeats, and in each repeat N > 0 and every request answered as expected.
+> Each repeat also needs sibling evidence from the gateway read. In a sampled
+> cell, some `demo-<lang>-*` family must count above 0. In a class `s00` cell,
+> where the unsampled inbound traceparent makes every family read 0, a series
+> of that language present at 0 is enough. An empty read (`{}`), or a read
+> without that language, gives no k, because it could come from a gateway or
+> expiry gap and a k = 0 would then hide a loss. This differs from the copy,
+> where an absent series stays ambiguous: for a family, the language's other
+> gateway series are the sibling evidence. A residual risk predates this
+> rule. The read reaches back the expiry plus margins before t1, so in an
+> `s00` cell a series left over from the previous cell reads "present at 0"
+> even if the gateway dropped spans. The same holds for the families
+> themselves, which got k = 0 before this rule through the equal-integral
+> path. The shared sentinels, read in every window, bound it. An invalid, single or
+> unmeasured cell gets no k and stays `missing`, so the check is
+> UNQUALIFIED. Cases in `kcal-20261125d`: `producer:send` and
+> `consumer:process` in the error scenarios; `rpc-client` and the backend
+> families for `unhandled`. `verify.py soak cal --input kcal-input.json
+> --output <new>` re-derives a calibration without the cluster. It never
+> overwrites the target and writes it atomically with mode 0600. The driver's
+> `soak-cal.json` stays as written. For `kcal-20261125d` the re-derived file
+> is `soak-cal.r5.json`, with the same k values as the original and the zeros
+> added (r2 to r4 were intermediate rules of the same fix; r5 equals them).
+> `count` takes `--kcal soak-cal.r5.json`.
 
 ## Report format (reference)
 `reports/<UTC>/report.md` + `report.json`: header (rc, commit, image digests,

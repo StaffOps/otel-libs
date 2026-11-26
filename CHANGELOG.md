@@ -4906,6 +4906,24 @@ Unsupported instrumentation versions, task A10 (P18):
   Job's status. Phase A of that run qualified Python, Node.js and .NET
   (k = 4 / 2 / 1 per request) and excluded the three Go services, whose span
   count per request varies at the copy and at the gateway.
+- **Soak K8b `k8b-20261125`, and three soak tooling fixes (2026-11-26,
+  design K-D12 and K-D20 corrections).** The 2 h loaded window at 4 req/s
+  per language was valid. The copy count matched exactly for the 9 qualified
+  Python, Node.js and .NET services, and the drain passed. Go is
+  report-only. The owner accepted K8b on the copy verdicts. Fixes:
+  - `soak.py run` now waits for the k6 Job to finish, then a guarded quiesce
+    (`--quiesce`, 120 s), before the trap restores the demo. In the run the
+    restore came 9 s after k6 ended, and the restored pods' traffic showed up
+    as false gateway DUPLICATES.
+  - The run records t1, t2 and the `count` arguments in `count-window.json`,
+    and the worker state at the window start and at t2 in `workers.json`.
+    `verify.py soak count` uses that record instead of the live pods. A
+    worker problem refuses the window before k6 starts, and `--hook --rate`
+    requires `--worker-interval`.
+  - The calibration records k = 0 for a gateway family that was absent in
+    a measured cell, when the language's other series are present.
+    `verify.py soak cal --output` re-derives a calibration without the
+    cluster and never overwrites the target.
 - **Demo PostgreSQL init check accepts restarts after a complete init
   (2026-11-25, DE-D13 correction).** Two k8s01 reboots left the
   `demo-postgres` container at `restartCount` 2 with a complete init, and

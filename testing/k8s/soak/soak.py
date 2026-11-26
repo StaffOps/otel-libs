@@ -13,7 +13,7 @@ Modes:
                          one; then the entry gate (every guard and sentinel clean
                          over 30 min). Reads only.
   run --run <id> --window <name> --duration <s> [--rate <n>] [--langs ...]
-                         [--hook] [--worker-interval <s>] [--tag <t>]
+                         [--hook] [--worker-interval <s>] [--quiesce <s>] [--allow-short-quiesce] [--tag <t>]
                          the pre-flight and the entry gate (both before any
                          write); ``soak-otlp`` (copy); with --hook the demo
                          re-applied through demo.sh's DEMO_ENV_FILE (endpoint
@@ -22,7 +22,12 @@ Modes:
                          rolled pods are Ready and (h) as an increase since the
                          hook; with --rate the k6 ConfigMap and Job; a guard read
                          every 60 s under ``caffeinate`` (macOS) with a heartbeat
-                         until the window ends. The trap always runs.
+                         until the window ends (with k6: when its Job succeeds,
+                         at most its activeDeadlineSeconds); then a guarded
+                         quiesce (--quiesce, 120 s) with the demo as is;
+                         workers.json (with --hook; the worker window checked
+                         before k6 starts) and count-window.json (t1, t2). The
+                         trap always runs.
   cal --run <id> [--langs ...] [--n N] [--rate R] [--steps a,b,c]
       [--step-duration S] [--quiesce Q] [--worker-interval I] [--dry-run]
                          K-cal (task K-cal-d, design K-D20): run's reads, hook
@@ -677,6 +682,9 @@ class WindowResult:
     start: float | None = None
     end: float | None = None
     findings: list[str] = field(default_factory=list)
+    # Why the loop ended: "load done" (the k6 Job succeeded), "duration" (the
+    # window's time ran out first) or "invalid" (a breach, gap, blind read or k6 failure).
+    ended: str = ""
 
     def as_json(self) -> dict:
         return self.__dict__.copy()
@@ -807,6 +815,7 @@ class Loop:
             gap = self.heartbeat()
             if gap:
                 res.valid, res.reason = False, gap + "; " + self.stop_load(load, "suspend", res.start)
+                res.ended = "invalid"
                 break
             read = self._read(roll, loaded)
             record = {"window": name, "phase": "window", **read.as_json()}
@@ -817,18 +826,22 @@ class Loop:
             res.findings += [f"{i.name}: {i.detail}" for i in read.findings]
             if read.blind:
                 res.valid, res.reason = False, "guard: blind read; " + self.stop_load(load, "delete", res.start)
+                res.ended = "invalid"
                 break
             if read.breaches:
                 res.valid, res.reason = False, read.reason() + "; " + self.stop_load(load, "suspend", res.start)
+                res.ended = "invalid"
                 break
             if load:
                 st = self.load_state(load, res.start)
                 if st == "done":
+                    res.ended = "load done"
                     break
                 if st:
-                    res.valid, res.reason = False, st
+                    res.valid, res.reason, res.ended = False, st, "invalid"
                     break
             if self.clock() - res.start >= duration_s:
+                res.ended = "duration"
                 break
             # A fixed cadence (K-count re-review HIGH-2): the read's own time is
             # taken off the sleep, so a read starts every interval, not every
@@ -1103,6 +1116,11 @@ def main(argv: list[str] | None = None) -> int:
         sp.add_argument("--fakeotlp-image", default=render.FAKEOTLP_IMAGE)
     sub.choices["run"].add_argument("--hook", action="store_true")
     sub.choices["run"].add_argument("--worker-interval", type=int)
+    sub.choices["run"].add_argument("--quiesce", type=float, default=soakcount.QUIESCE_S,
+                                    help="seconds after a loaded window's k6 end, demo kept as is, "
+                                         "before the trap (0 = none)")
+    sub.choices["run"].add_argument("--allow-short-quiesce", action="store_true",
+                                    help=f"accept a --quiesce below {soakcount.QUIESCE_S:g}s")
     sub.choices["run"].add_argument("--control", action="store_true",
                                     help="K-copy: the telemetrygen positive control first, before the hook")
     cp = sub.add_parser("cal", parents=[common], help="K-cal: the calibration driver (design K-D20)")
@@ -1260,9 +1278,124 @@ def _setup(args: argparse.Namespace, kube: Kube, reader: "KubeReader", cfg: guar
     return hook_t
 
 
+# The quiesce follows the k6 window at once; a longer pause than one guard
+# interval plus this slack between the two is a laptop stall.
+QUIESCE_GAP_SLACK_S = 30
+
+
+def worker_record(ops: "CalOps", hook_t: float, langs, *, start: bool) -> dict:
+    """The workers of the window (defect 2 of K8b run k8b-20261125). At the
+    window start: ``cal.first_drives`` over the copy series since the hook
+    (pod, ``startedAt``, ``restartCount``, the first ``demo.drive`` — Go's is
+    ``unmeasured``, its t1 rule uses ``startedAt``); at t2: the Running
+    workers' pod, ``startedAt`` and ``restartCount``, so ``verify.py soak
+    count`` checks for a restart or a replacement against t2 and not against
+    the pods the trap's restore made. A failed read is recorded as ``error``,
+    never as workers."""
+    at = ops.now()
+    try:
+        if start:
+            workers = cal.first_drives(ops.copy_series(hook_t, at), ops.pods(), hook_t, langs)
+        else:
+            workers = soakcount.worker_state(ops.pods(), langs)
+    except Exception as exc:  # noqa: BLE001 — the caller decides (refused at the start, recorded at t2)
+        return {"at": at, "error": f"{exc.__class__.__name__}: {exc}"}
+    return {"at": at, "workers": workers}
+
+
+def worker_start_problems(rec: dict, langs, t1: float, t2: float, *, quiesce: float,
+                          interval: float) -> list[str]:
+    """What would make ``verify.py soak count`` reject the worker window, read
+    at minute 0 against the planned t2: the start record failed, a language
+    has no ``startedAt`` (Go) or first ``demo.drive`` (the others), t1 is
+    before the t1 rule, or a next drive falls before t2 + quiesce (the same
+    rule as ``count``)."""
+    if "workers" not in rec:
+        return [f"workers at the window start: {rec.get('error', 'not recorded')}"]
+    workers = rec["workers"]
+    live = {lang: w for lang, w in workers.items() if w.get("pod")}
+    probs = soakcount.window_problems(workers, live, t1, t2, quiesce=quiesce, interval=interval, langs=langs,
+                                      when="at the window start")
+    return [x if x.startswith(f"{lang}:") else f"{lang}: {x}" for lang, ps in probs.items() for x in ps]
+
+
+def job_completion(kube: Kube, name: str) -> float | None:
+    """The k6 Job's ``status.completionTime`` (None when unreadable)."""
+    try:
+        job = kube.get(["jobs", name])
+    except SoakError:
+        return None
+    return guard.sp.parse_ts((job.get("status") or {}).get("completionTime"))
+
+
+def count_inputs(args: argparse.Namespace, res: WindowResult, q: WindowResult | None, *, hooked: bool,
+                 k6_completion: float | None, interval: float) -> dict:
+    """``count-window.json``: the inputs of ``verify.py soak count`` for this
+    window and why ``count`` could not qualify it (``reasons``; then
+    ``count_args`` is null). t1 = the window start, right after the k6 apply;
+    t2 = max(the Job's ``completionTime``, the loop's window end) + the
+    quiesce."""
+    reasons = []
+    if not hooked:
+        reasons.append("no --hook: no workers.json, count cannot check the worker window")
+    if not res.valid:
+        reasons.append(res.reason or "window invalid")
+    elif res.ended != "load done":
+        reasons.append(f"k6 not done at window end (ended: {res.ended or 'unknown'})")
+    if q is not None and not q.valid:
+        reasons.append(q.reason or "quiesce invalid")
+    quiesce = args.quiesce if q is not None else 0.0
+    # Round 2 MEDIUM-C: t2 stays on the laptop clock (the loop's window end);
+    # completionTime is the cluster's clock, recorded with the skew only.
+    t2 = res.end + quiesce
+    if q is not None and q.valid and q.end is not None and q.end < t2:
+        reasons.append(f"quiesce ended at {guard.sp.iso(q.end)}, before t2 {guard.sp.iso(t2)}")
+    k6_log = f"raw/{render.k6_name(args.window)}.log"
+    argv = None
+    if not reasons:
+        argv = ["--t1", f"{res.start:.3f}", "--t2", f"{t2:.3f}", "--k6-log", k6_log, "--quiesce", f"{quiesce:g}",
+                "--workers", "workers.json", "--worker-interval", f"{interval:g}"]
+    return {"window": args.window, "t1": res.start, "t2": t2, "t1_iso": guard.sp.iso(res.start),
+            "t2_iso": guard.sp.iso(t2), "k6_end": res.end, "k6_end_source": "loop window end (laptop clock)",
+            "k6_completion_time": k6_completion,
+            "k6_completion_skew_s": None if k6_completion is None else round(res.end - k6_completion, 3),
+            "window_end": res.end, "window_ended": res.ended, "quiesce_s": quiesce,
+            "short_quiesce": quiesce < soakcount.QUIESCE_S,
+            "quiesce_window": q.name if q is not None else None, "quiesce_end": q.end if q is not None else None,
+            "valid": not reasons, "reasons": reasons, "k6_log": k6_log,
+            "workers": "workers.json" if hooked else None, "worker_interval_s": interval,
+            "count_args": argv, "note": "paths relative to runs/<run>/; add --kcal <soak-cal.json>"}
+
+
+def check_quiesce(args: argparse.Namespace) -> None:
+    """``--quiesce``: finite, >= 0, and not below ``soakcount.QUIESCE_S``
+    without ``--allow-short-quiesce`` (a shorter one also loosens count's t1
+    rule, which takes the same value)."""
+    if not math.isfinite(args.quiesce) or args.quiesce < 0:
+        raise SoakError(f"--quiesce {args.quiesce}: a finite number of seconds, 0 or more")
+    if args.quiesce < soakcount.QUIESCE_S and not args.allow_short_quiesce:
+        raise SoakError(f"--quiesce {args.quiesce:g} is below {soakcount.QUIESCE_S:g}s (soakcount.QUIESCE_S); "
+                        "pass --allow-short-quiesce to accept it")
+    # Round 2 MEDIUM-B: without --worker-interval the hooked workers keep the
+    # app's own DEMO_INTERVAL_SECONDS, which neither the minute-0 check nor
+    # count's --worker-interval can know.
+    if args.hook and args.rate and not args.worker_interval:
+        raise SoakError("--hook --rate needs --worker-interval (the workers' DEMO_INTERVAL_SECONDS; "
+                        "10800 for K8b): without it the workers keep the app default")
+
+
 def run_mode(args: argparse.Namespace, kube: Kube, d: Path) -> int:
     """Reads first (pre-flight, demo record, entry gate: review M9), then the
-    writes inside the trap."""
+    writes inside the trap. A loaded window runs until the k6 Job succeeds (at
+    most its ``activeDeadlineSeconds``, as K-cal's k6 windows); then a quiesce
+    (``--quiesce``, ``soakcount.QUIESCE_S`` by default) with the demo as the
+    window left it: a guarded window read as loaded, as K-cal's quiet windows,
+    so the spans in flight land before t2 and the trap's restore after it
+    (defect 1 of K8b run k8b-20261125). With ``--hook`` the worker window is
+    checked at minute 0 against the planned t2; a window ``count`` could not
+    qualify is refused before k6 starts (the trap runs). An INT or TERM still
+    runs the trap at once."""
+    check_quiesce(args)
     started = _start(args, kube, d)
     if started is None:
         return 1
@@ -1272,17 +1405,52 @@ def run_mode(args: argparse.Namespace, kube: Kube, d: Path) -> int:
         plan = k6script.K6Plan(langs=tuple(args.langs), rate=args.rate, duration_s=args.duration,
                                timeout_s=args.timeout, p99_s=args.p99)
         plan.validate()
+    interval = float(args.worker_interval or soakcount.DEFAULT_WORKER_INTERVAL_S)
     state = _state(args, kube, record, reservoir=bool(plan and plan.reservoir))
-    res = None
+    res = q = inputs = None
     with _session(kube, args.run, d, state):
-        _setup(args, kube, reader, cfg, d, state, record)
+        hook_t = _setup(args, kube, reader, cfg, d, state, record)
+        ops = CalOps(args.run, kube, loop, reader, d)
+        workers = None
+        if hook_t is not None:
+            workers = {"start": worker_record(ops, hook_t, args.langs, start=True)}
+            cal.write_json(d / "workers.json", workers)
+            if plan is not None:
+                now = ops.now()
+                # Round 2 MEDIUM-A: the loop ends at the first read after the
+                # deadline (up to one interval later, plus that read's budget).
+                t2_plan = now + plan.deadline_s + loop.interval + READ_BUDGET * loop.interval + args.quiesce
+                bad = worker_start_problems(workers["start"], args.langs, now, t2_plan,
+                                            quiesce=args.quiesce, interval=interval)
+                if bad:
+                    raise SoakError("worker window: " + "; ".join(bad) + " (count could not qualify it; not started)")
         start_load = None
         if plan is not None:
             def start_load():
                 kube.apply(args.run, k6_objects(args.run, args.window, plan))
                 return Load(render.k6_name(args.window), plan.pull_s, plan.deadline_s)
-        res = loop.window(args.window, args.duration, loaded=plan is not None, gate=False, start_load=start_load)
-    return 0 if res is not None and res.valid else 1
+        duration = plan.deadline_s if plan is not None else args.duration
+        res = loop.window(args.window, duration, loaded=plan is not None, gate=False, start_load=start_load)
+        if plan is not None and res.started:
+            done = res.valid and res.ended == "load done"
+            if done and args.quiesce > 0:
+                q = loop.window(f"{args.window}-q", int(math.ceil(args.quiesce)), loaded=True, gate=False)
+                limit = loop.interval + QUIESCE_GAP_SLACK_S
+                if q.valid and q.start is not None and res.end is not None and q.start - res.end > limit:
+                    q.valid, q.reason = False, (f"laptop: {q.start - res.end:.0f}s between the window and its "
+                                                f"quiesce (> {limit}s)")
+            completion = job_completion(kube, render.k6_name(args.window)) if done else None
+            if workers is not None:
+                workers["t2"] = worker_record(ops, hook_t, args.langs, start=False)
+                cal.write_json(d / "workers.json", workers)
+            inputs = count_inputs(args, res, q, hooked=workers is not None, k6_completion=completion,
+                                  interval=interval)
+            cal.write_json(d / "count-window.json", inputs)
+            loop.log(f"count window {args.window}: t1 {inputs['t1_iso']}, t2 {inputs['t2_iso']}"
+                     f" ({'valid' if inputs['valid'] else 'INVALID: ' + '; '.join(inputs['reasons'])});"
+                     f" count-window.json")
+    ok = res is not None and res.valid and (q is None or q.valid) and (inputs is None or inputs["valid"])
+    return 0 if ok else 1
 
 
 # ── calibration (task K-cal-d, design K-D20) ───────────────────────────────
