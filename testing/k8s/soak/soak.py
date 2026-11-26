@@ -553,6 +553,41 @@ def demo_tag() -> str:
     return tag
 
 
+# ── the k6 log (run kshut-20261126) ────────────────────────────────────────
+
+K6_MARKERS = (k6script.SUMMARY_BEGIN, k6script.RESERVOIR_PREFIX, "execution: local")
+
+
+def k6_log_usable(text: str | None) -> bool:
+    """A k6 log, not an error: it carries k6's banner, a reservoir line or the
+    summary. ``kubectl logs`` of a suspended Job's deleted pod can exit 0 with
+    "unable to retrieve container logs for containerd://..." (115 bytes)."""
+    return bool(text) and any(m in text for m in K6_MARKERS)
+
+
+def save_k6_log(kube: "Kube", d: Path, name: str) -> tuple[str | None, str]:
+    """``raw/<name>.log`` from ``kubectl logs job/<name>`` when that answer is a k6
+    log; otherwise the answer goes to ``<name>.log.err`` and the evidence already
+    saved is kept: the stop-time save ``<name>.stop.log`` (written before the
+    Job is suspended or deleted) is copied to ``<name>.log``, else an earlier
+    usable ``<name>.log`` stays. Returns (the k6 log or None, its source)."""
+    raw = d / "raw"
+    rc, text = kube.logs(f"job/{name}")
+    if rc == 0 and k6_log_usable(text):
+        write_evidence(raw / f"{name}.log", text)
+        return text, "kubectl logs job (now)"
+    write_evidence(raw / f"{name}.log.err", text)
+    why = " ".join(text.split())[:120] or f"exit {rc}"
+    for path, source in ((raw / f"{name}.stop.log", "stop-time save"), (raw / f"{name}.log", "earlier save")):
+        if path.exists():
+            kept = path.read_text()
+            if k6_log_usable(kept):
+                if path.name != f"{name}.log":
+                    write_evidence(raw / f"{name}.log", kept)
+                return kept, f"{source} ({path.name}); the read now failed: {why}"
+    return None, f"no usable k6 log (the read now: {why})"
+
+
 # ── the trap ───────────────────────────────────────────────────────────────
 
 @dataclass
@@ -560,6 +595,7 @@ class TrapResult:
     saved: list[str] = field(default_factory=list)
     log_bytes: dict[str, int] = field(default_factory=dict)
     demo_logs: dict[str, dict] = field(default_factory=dict)
+    log_source: dict[str, str] = field(default_factory=dict)
     deleted: list[str] = field(default_factory=list)
     left: list[str] = field(default_factory=list)
     label_written: bool = False
@@ -589,13 +625,14 @@ def trap(kube: Kube, run: str, d: Path, *, state: dict, demo_sh: list[str],
         jobs = kube.get(["jobs", "-l", f"{RUN_LABEL}={run},{ROLE_LABEL}=k6"]).get("items") or []
         for job in jobs:
             name = job["metadata"]["name"]
-            rc, text = kube.logs(f"job/{name}")
-            if rc != 0:  # review M12: an error never overwrites a saved log
-                write_evidence(d / "raw" / f"{name}.log.err", text)
-                res.errors.append(f"logs job/{name}: {text.strip()[:200]}")
+            # Review M12 and run kshut-20261126: an error, even one with exit 0, never
+            # overwrites a saved log; the stop-time save stands in for it.
+            text, source = save_k6_log(kube, d, name)
+            res.log_source[name] = source
+            if text is None:
+                res.errors.append(f"logs job/{name}: {source}")
                 continue
             path = d / "raw" / f"{name}.log"
-            write_evidence(path, text)
             res.saved.append(str(path))
             res.log_bytes[name] = len(text.encode())
             if state.get("reservoir") and k6script.RESERVOIR_PREFIX not in text:
@@ -680,6 +717,7 @@ def trap(kube: Kube, run: str, d: Path, *, state: dict, demo_sh: list[str],
     finally:
         try:
             append_jsonl(d / "trap.jsonl", {"at": time.time(), "saved": res.saved, "log_bytes": res.log_bytes,
+                                             "k6_log_source": res.log_source,
                                              "demo_logs": res.demo_logs,
                                              "deleted": res.deleted, "left": res.left,
                                              "label_written": res.label_written,
@@ -1617,9 +1655,8 @@ class CalOps:
         res = self.loop.window(window, plan.deadline_s, loaded=True, gate=False, start_load=start)
         if not res.started:
             return res, None
-        rc, text = self.kube.logs(f"job/{name}")
-        write_evidence(self.d / "raw" / (f"{name}.log" if rc == 0 else f"{name}.log.err"), text)
-        summary = k6script.parse_logs(text)[0] if rc == 0 else None
+        text, _ = save_k6_log(self.kube, self.d, name)
+        summary = k6script.parse_logs(text)[0] if text is not None else None
         if res.valid:  # a stopped (suspended) Job stays for the trap
             try:
                 self.kube.stop_job(self.run, name, "delete")
@@ -1751,9 +1788,8 @@ class ShutOps(CalOps):
         return self.kube.logs(f"pod/{pod}", container, since, timestamps=timestamps)
 
     def save_k6_log(self, job: str) -> str | None:
-        rc, text = self.kube.logs(f"job/{job}")
-        write_evidence(self.d / "raw" / (f"{job}.log" if rc == 0 else f"{job}.log.err"), text)
-        return text if rc == 0 else None
+        text, self.k6_log_source = save_k6_log(self.kube, self.d, job)
+        return text
 
 
 def spawn_watch(cmd: list[str]) -> subprocess.Popen:
@@ -1823,7 +1859,7 @@ def shut_mode(args: argparse.Namespace, kube: Kube, d: Path) -> int:
                 after = loop.clock()
                 sh.start_window(after, (before, after))
                 return Load(render.k6_name(args.window), k6plan.pull_s, k6plan.deadline_s)
-            loop.read_filter = lambda read, at: sh.exempt.filter(read, reader, at, guard.window_lookback(cfg))
+            loop.read_filter = lambda read, at: sh.read_filter(read, reader, at, guard.window_lookback(cfg))
             try:
                 res = loop.window(args.window, k6plan.deadline_s, loaded=True, gate=False, start_load=start_load,
                                   tick=sh.tick)
@@ -1858,11 +1894,13 @@ def shut_mode(args: argparse.Namespace, kube: Kube, d: Path) -> int:
                                                                 inputs["reasons"]))
             cal.write_json(d / "identity-input.json", sh.identity_input(inputs["t1"], inputs["t2"], new_api))
             window = {k: v for k, v in inputs.items() if k not in ("count_args", "note")}
+            window.update(k6_log_source=getattr(ops, "k6_log_source", None))
             window.update(commands=shut.commands(args.run, inputs["valid"]), deletions=sh.deletions,
                           k6_started_at=sh.k6_started, planned_delete_at=sh.planned, skew_s=sh.skew,
                           skew_error_s=sh.skew_error_s, phase=sh.phase, deleted_logs=sh.deleted_logs,
                           edge_exemptions=sh.exempt.records,
-                          edge_flags_seen=sorted(sh.exempt.flags_seen))
+                          edge_flags_seen=sorted(sh.exempt.flags_seen),
+                          ztunnel_exemptions=sh.zt_exempt.records)
             cal.write_json(d / "shut-window.json", window)
             loop.log(f"shut window: t1 {inputs['t1_iso']}, t2 {inputs['t2_iso']} "
                      f"({'valid' if inputs['valid'] else 'INVALID: ' + '; '.join(inputs['reasons'])}); "

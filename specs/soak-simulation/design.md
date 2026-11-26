@@ -1683,6 +1683,38 @@ putting `k8s_pod_name` on app series, so K3 is UNMEASURED.
 **Reversal action**: K3 on a second nonce roll after K-shut; a 1 s poll
 beside the watch; a dated note here.
 
+> **Corrected 2026-11-26 (first run `kshut-20261126`, invalid).** The first
+> run deleted the four api pods 9 s late and ended invalid. Causes and
+> fixes:
+> 1. **Guard (c).** ztunnel logged 3 `Connection refused :15008` lines, from
+>    k6 to the dying api pods, 0.3–0.6 s after the deletes. Guard (c) gets a
+>    shut-only exemption like guard (b)'s. It covers only JSON lines whose
+>    source is this window's k6 pod and whose destination is a deleted api
+>    pod, both in `dev-otel-libs`, inside [deleted_at, finishedAt + one
+>    interval] on the cluster clock, at most 20 lines, each recorded. It
+>    downgrades only when every line is exempt.
+> 2. **No post line found.** The k6 log timestamps came with the node's
+>    offset (`-03:00`), and the parser accepted only `Z`. It now accepts any
+>    offset.
+> 3. **k6 log.** After the Job was suspended, `kubectl logs` exited 0 with
+>    "unable to retrieve container logs", and that text overwrote the
+>    usable log. Now an answer without the k6 banner, a reservoir line or
+>    the summary goes to `.log.err`, the stop-time save is kept, and the
+>    source is recorded.
+> 4. **K3 query.** `timestamp()` over an instance's series drops `__name__`,
+>    and Prometheus answered 422 ("same labelset"). K3 now reads the raw
+>    range `{job, instance}[900s]`, with a `target_info` fallback.
+> 5. **Uncaught error.** `__main__.QueryError` escaped `main_soak` as a
+>    traceback; a final handler now prints ERROR and exits 1.
+> 6. **Deletion time.** The kubelet's final grace-0 delete rewrites
+>    `deletionTimestamp`. The request time is now the first value seen
+>    minus `deletionGracePeriodSeconds`.
+> 7. **Late deletes.** The 9 s came from four 2 s follower waits in a row.
+>    They now share one 2 s deadline.
+>
+> K5 on that run: PASS in 12/12. K3, re-read after fix 4: PASS in 12/12,
+> and the shut roll PASS in 4/4 (report-only).
+
 ## Report format (reference)
 `reports/<UTC>/report.md` + `report.json`: header (rc, commit, image digests,
 `go version -m`, `pip freeze`, parameters, VM resources, neighbour aggregate

@@ -138,7 +138,8 @@ def pod_summary(obj: dict) -> dict | None:
     grace = (obj.get("spec") or {}).get("terminationGracePeriodSeconds")
     return {"pod": meta["name"], "uid": meta.get("uid"), "lang": m.group(1), "app": m.group(2),
             "service": f"demo-{m.group(1)}-{m.group(2)}", "phase": status.get("phase"),
-            "deletion": sp.parse_ts(meta.get("deletionTimestamp")), "grace_s": grace, "containers": containers}
+            "deletion": sp.parse_ts(meta.get("deletionTimestamp")),
+            "deletion_grace_s": meta.get("deletionGracePeriodSeconds"), "grace_s": grace, "containers": containers}
 
 
 def live(summary: dict) -> bool:
@@ -201,6 +202,11 @@ class PodWatch:
             for name, c in s["containers"].items():
                 if c.get("finished_at") is not None and name not in cur["terminated"]:
                     cur["terminated"][name] = {k: c.get(k) for k in ("started_at", "finished_at", "exit_code", "reason")}
+            # deletionTimestamp is the request time + the grace, and the kubelet's final
+            # grace-0 delete rewrites it to about finishedAt + 2 s (run kshut-20261126):
+            # the first value seen, less its grace, is the request.
+            if s["deletion"] is not None and "deletion_requested" not in cur:
+                cur["deletion_requested"] = s["deletion"] - float(s.get("deletion_grace_s") or 0)
             if event.get("type") == "DELETED":
                 cur["deleted_seen"] = self.clock()
 
@@ -335,17 +341,21 @@ def post_totals(cells: dict[str, dict[str, int]] | None) -> dict[str, int]:
 
 # ── k6 times, deleted-pod logs, the edge exemption ────────────────────────
 
-_TS_RE = re.compile(r"(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d)(?:\.(\d+))?Z ")
+# kubectl logs --timestamps writes the kubelet's CRI timestamp, RFC 3339 with
+# nanoseconds and the NODE's offset: on k8s01 "2026-11-25T13:24:13.836207290-03:00",
+# not "...Z" (run kshut-20261126: a Z-only pattern matched no line, so the tick
+# saw no phase line at all).
+_TS_RE = re.compile(r"(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d)(?:\.(\d+))?(Z|[+-]\d\d:\d\d) ")
 
 
 def line_time(line: str) -> float | None:
-    """The leading RFC 3339 timestamp of a ``kubectl logs --timestamps`` line
-    (nanoseconds cut to microseconds)."""
+    """The leading RFC 3339 timestamp of a ``kubectl logs --timestamps`` line, any
+    UTC offset (nanoseconds cut to microseconds)."""
     m = _TS_RE.match(line)
     if not m:
         return None
     frac = (m.group(2) or "")[:6]
-    t = sp.parse_ts(m.group(1) + "Z")
+    t = sp.parse_ts(m.group(1) + m.group(3))
     return None if t is None else t + (float("0." + frac) if frac else 0.0)
 
 
@@ -582,6 +592,97 @@ class EdgeExempt:
         return [r for r in self.records if r.get("source_workload") == api]
 
 
+ZT_NAME = "guard (c) ztunnel refused :15008"
+ZT_CAP = 20                     # refused lines over the whole window (4 apis, a few k6 connections each)
+ZT_SLACK_S = 10                 # the re-read reaches this much further back than the guard's range
+
+
+class ZtunnelExempt:
+    """The guard (c) exemption of the shut path (run kshut-20261126): ztunnel's
+    ``Connection refused`` access lines from k6 to an api pod that K-shut just
+    deleted. Only lines whose ``src.workload`` is a pod of this window's k6 Job
+    and ``dst.workload`` a deleted api pod, with the line's time in [deleted_at,
+    finishedAt + one guard read] (cluster clock; finishedAt unknown: deleted_at +
+    grace), at most 20 lines, each recorded (sanitized by
+    ``soakplatform.ztunnel_refused``: time, namespaces and workloads only). The
+    ztunnel logs are re-read from the guard's ``at`` (``--since`` = now − at +
+    the guard's range + 10 s), and the lines at or after ``at`` − the range
+    (cluster clock) are judged: the breach becomes a finding only when every
+    one of them is exempt and their number equals the guard's count. Non-JSON
+    lines and every other line stay strict. Never used by ``run`` or ``cal``."""
+
+    def __init__(self, sh: "Shutter", cap: int = ZT_CAP):
+        self.sh, self.cap = sh, cap
+        self.seen: set[tuple] = set()
+        self.records: list[dict] = []
+
+    def windows(self) -> dict[str, tuple[float, float]]:
+        sh, out, skew = self.sh, {}, self.sh.skew or 0.0
+        for lang, rec in sh.deletions.items():
+            if rec.get("deleted_at") is None:
+                continue
+            pod = sh.api[lang]
+            fin = (sh._terminated(pod) or {}).get("finished_at")
+            grace = float(pod.get("grace_s") or 30)
+            lo = rec["deleted_at"] + skew - FINISH_RESOLUTION_S
+            hi = (fin if fin is not None else rec["deleted_at"] + skew + grace) + sh.interval_s + FINISH_RESOLUTION_S
+            out[pod["pod"]] = (lo, hi)
+        return out
+
+    def filter(self, read, reader, at: float, lookback: float):
+        items = [i for i in read.items if i.name == ZT_NAME and i.state == "breach"]
+        if not items:
+            return read
+        item = items[0]
+        m = re.match(r"(\d+) lines", item.detail)
+        counted = int(m.group(1)) if m else None
+        try:
+            pods = reader.kget(["pods", "-n", "istio-system"]).get("items") or []
+            hits = []
+            # Review: --since counts from now, the guard counted from ``at`` (taken
+            # before its read, which may last 0.8 x the interval): reach back to at.
+            since = math.ceil(max(0.0, self.sh.ops.now() - at)) + int(lookback) + ZT_SLACK_S
+            for p in sp.match_pods(pods, "istio-system", r"ztunnel-[a-z0-9]+"):
+                hits += sp.ztunnel_refused(reader.logs("istio-system", p["metadata"]["name"], since))
+        except Exception as exc:  # noqa: BLE001 — not read: the breach stays
+            item.detail += f"; shut exemption not read ({exc.__class__.__name__})"
+            return read
+        wins = self.windows()
+        k6 = re.compile(rf"{re.escape(self.sh.job)}-[a-z0-9]+")
+        # The guard's range on the cluster clock: lines older than it are not the
+        # guard's; a line without a time (non-JSON) cannot be placed and is strict.
+        lower = at + (self.sh.skew or 0.0) - lookback
+        strict, exempt, new = 0, 0, []
+        for h in hits:
+            t = sp.parse_ts(h.get("time"))
+            if t is not None and t < lower:
+                continue
+            key = (h.get("time"), h.get("src.workload"), h.get("dst.workload"), h.get("text"))
+            if key in self.seen:
+                exempt += 1
+                continue
+            win = wins.get(h.get("dst.workload") or "")
+            ok = (t is not None and win is not None and win[0] <= t <= win[1]
+                  and h.get("src.namespace") == sp.APP_NS and h.get("dst.namespace") == sp.APP_NS
+                  and k6.fullmatch(h.get("src.workload") or ""))
+            if not ok or len(self.seen) + len(new) >= self.cap:
+                strict += 1
+                continue
+            exempt += 1
+            new.append((key, {**h, "read_at": at, "window": "k6 -> a deleted api pod, deletion to finishedAt + one read"}))
+        if counted is not None and strict == 0 and exempt == counted and exempt > 0:
+            for key, rec in new:
+                self.seen.add(key)
+                self.records.append(rec)
+            item.state = "finding"
+            item.detail = (f"shut exemption: {exempt} refused line(s) from k6 to a deleted api pod "
+                           f"({len(self.records)} so far, cap {self.cap}); was: {item.detail}")
+        else:
+            item.detail += (f"; shut exemption: exempt {exempt}, outside {strict}, guard counted {counted}: "
+                            "not downgraded")
+        return read
+
+
 # ── the driver ─────────────────────────────────────────────────────────────
 
 class Shutter:
@@ -615,6 +716,11 @@ class Shutter:
         self.deleted_logs: dict[str, dict] = {}
         self.problems: list[str] = []
         self.exempt = EdgeExempt(self)
+        self.zt_exempt = ZtunnelExempt(self)
+
+    def read_filter(self, read, reader, at: float, lookback: float):
+        """The shut path's two guard exemptions (guard (b) edge, guard (c) ztunnel)."""
+        return self.zt_exempt.filter(self.exempt.filter(read, reader, at, lookback), reader, at, lookback)
 
     def before_hook(self) -> None:
         """The nonce roll's old pods and the promoted list (reads)."""
@@ -738,8 +844,12 @@ class Shutter:
                 self.follows[lang] = LogFollow(self.ops.follow_command(pod["pod"], pod["app"], since),
                                                self.log_spawn, bound,
                                                lambda p=pod: self.ops.read_logs(p["pod"], p["app"], since)).start()
+            # One shared deadline (run kshut-20261126: four empty logs waited 2 s each,
+            # 8 s in all, before the first delete).
+            until = time.monotonic() + FOLLOW_START_S
             for lang, f in self.follows.items():
-                self.snapshots[lang]["follow_running_before_delete"] = f.wait_started(FOLLOW_START_S)
+                self.snapshots[lang]["follow_first_line_before_delete"] = f.wait_started(
+                    max(0.0, until - time.monotonic()))
         for lang in self.plan.langs:
             pod = self.api[lang]
             api = f"demo-{lang}-api"
@@ -800,7 +910,7 @@ class Shutter:
             rec = {"path": path.name, "lines": len(lines), "bytes": len(text.encode()), "canary_lines": hits,
                    "snapshot_lines": len(snap.get("lines") or []), "follow_lines": len(f.lines),
                    "snapshot_error": snap.get("error"), "follow_error": follow_error,
-                   "follow_running_before_delete": snap.get("follow_running_before_delete"),
+                   "follow_first_line_before_delete": snap.get("follow_first_line_before_delete"),
                    "marker": marker, "bounded": f.bounded, "since": getattr(self, "log_since", None), "cross_check": f.cross,
                    "secret_patterns": soakcount.verify.scan_secret(text)}
             if follow_error:
@@ -818,7 +928,7 @@ class Shutter:
     def _deletion(self, pod: dict) -> float | None:
         if self.watch is None:
             return None
-        return (self.watch.snapshot().get(pod["pod"]) or {}).get("deletion")
+        return (self.watch.snapshot().get(pod["pod"]) or {}).get("deletion_requested")
 
     def shut_input(self, t1: float, t2: float, cells: dict | None, new_api: dict[str, list[dict]],
                    reasons: list[str] | None = None) -> dict:
@@ -868,13 +978,15 @@ class Shutter:
                 term = self._terminated(p)
                 out.append({"pod": p["pod"], "uid": p.get("uid"), "started_at": (p["containers"].get(p["app"]) or {}).get(
                     "started_at"), "finished_at": term.get("finished_at"), "exit_code": term.get("exit_code"),
-                    "deletion": self._deletion(p)})
-                if out[-1]["deletion"] is None:   # the K-shut pod: deleted_at on the cluster clock
-                    rec = next((r for lang, r in self.deletions.items() if self.api.get(lang, {}).get("pod") == p["pod"]),
-                               None)
-                    if rec and rec.get("deleted_at") is not None and self.skew is not None:
-                        out[-1]["deletion"] = round(rec["deleted_at"] + self.skew, 3)
-                        out[-1]["deletion_source"] = "deleted_at + skew (no deletionTimestamp from the watch)"
+                    "deletion": self._deletion(p), "deletion_source": "watch: first deletionTimestamp - its grace"})
+                # The K-shut pod: our own delete request, on the cluster clock, comes first.
+                rec = next((r for lang, r in self.deletions.items() if self.api.get(lang, {}).get("pod") == p["pod"]),
+                           None)
+                if rec and rec.get("deleted_at") is not None and self.skew is not None:
+                    out[-1]["deletion"] = round(rec["deleted_at"] + self.skew, 3)
+                    out[-1]["deletion_source"] = "deleted_at + skew (the K-shut delete request)"
+                elif out[-1]["deletion"] is None:
+                    out[-1]["deletion_source"] = None
             return out
 
         nonce = {}

@@ -430,7 +430,9 @@ checks afterwards: `verify.py soak shut`, `soak identity`, `soak labels`.
   |skew| > δ − graceful stop − 5 s, or unmeasured; no post line before the
   delete, or the first post line after it (k6 init longer than δ); a delete
   more than one loop interval late, or more than post − 60 s after the post
-  start. `deleted_at` in `shut-input.json` is on the cluster clock.
+  start. `deleted_at` in `shut-input.json` is on the cluster clock. The
+  `--timestamps` prefix is the node's CRI time with its own UTC offset (on
+  k8s01 `-03:00`, not `Z`; run `kshut-20261126`), parsed with any offset.
 - **The deleted pods' logs.** Before the deletes, per api pod: one
   synchronous `kubectl logs --timestamps` snapshot, then a child `kubectl logs
   <pod> -c api --timestamps -f --since-time=<hook − 60 s>`, bounded at grace
@@ -456,6 +458,24 @@ checks afterwards: `verify.py soak shut`, `soak identity`, `soak labels`.
   `shut-input.json`: an api whose count is report-only (Go) and that had a
   deletion-window exemption is UNQUALIFIED in `verify.py soak shut` ("final
   flush unverifiable"). Every other edge stays strict.
+- **The guard (c) exemption** (shut only, run `kshut-20261126`): the
+  deletion makes k6's next connections to the dying pod refused at ztunnel
+  (`connection failed: Connection refused` access lines, `dst.addr <ip>:15008`).
+  A guard (c) breach becomes a finding only when the ztunnel logs, re-read
+  from the guard's own read time (`--since` = now − at + the guard's range +
+  10 s), hold, at or after at − the range, only lines with `src.workload` a
+  pod of this window's k6 Job and `dst.workload` a deleted api pod, timed in
+  [deleted_at, finishedAt + one guard interval] (cluster clock), exactly as
+  many as the guard counted, at most 20 over the window; each line recorded
+  sanitized (time, namespaces, workloads: `ztunnel_exemptions`). Non-JSON and
+  every other line stay strict.
+- **The k6 log** (all modes): `kubectl logs` of a suspended Job's deleted pod
+  can exit 0 with "unable to retrieve container logs for containerd://..."
+  (run `kshut-20261126`). A read without k6's banner, a reservoir line or the
+  summary is not a k6 log: it goes to `<job>.log.err`, and `<job>.log` keeps
+  the evidence — the stop-time save `<job>.stop.log` (copied), else an
+  earlier usable `<job>.log`. The trap records the source per Job
+  (`k6_log_source` in `trap.jsonl`), `shut` in `shut-window.json`.
 - **Outputs.** `shut-input.json` (`verify.py soak shut --input`): t1, t2,
   `raw/soak-k6-shut.log`, the K-cal path (both relative to the file), per api
   `old_instance`, `pod`, `deleted_at`, `finished_at`, `exit_code`, `grace_s`
@@ -477,11 +497,18 @@ checks afterwards: `verify.py soak shut`, `soak identity`, `soak labels`.
   instance, not an old one and not `unset`; it is the copy's
   `service_instance_id` (= `exported_instance`) and, when the service logged
   in (hook, t2], a Loki `service_instance_id`; each old instance's last
-  sample (`max(max_over_time(timestamp({job, instance})[R:S]))`, R from the
-  pod's start to `finishedAt` + 10 min, 15 min to 24 h, S = ceil(R / 2000) ≤
-  240 s) is ≤ `finishedAt` + 10 s + 1 s. Report-only: the final flush (last
-  sample ≥ the pod's deletion, on the cluster clock: the watch's
-  `deletionTimestamp`, else `deleted_at` + skew), Loki ids of no recorded pod, and one Tempo
+  sample is ≤ `finishedAt` + 10 s + 1 s: a raw range read
+  `{job, instance}[900s]` at `finishedAt` + 10 min (each value keeps its own
+  time), else, for an instance quiet by then, `max_over_time(timestamp(
+  target_info{job, instance})[R:S])` (R from the pod's start, 15 min to 24 h,
+  S = ceil(R / 2000) ≤ 240 s). `timestamp()` over all of an instance's metrics
+  fails in Prometheus ("vector cannot contain metrics with the same labelset"
+  once `__name__` is dropped; HTTP 422, run `kshut-20261126`). Any read error
+  is an `ERROR` line and exit 1. Report-only: the final flush (last
+  sample ≥ the delete request, on the cluster clock: K-shut's `deleted_at` +
+  skew, else the watch's first `deletionTimestamp` − its
+  `deletionGracePeriodSeconds`; the latest `deletionTimestamp` is the
+  kubelet's final grace-0 delete, about finishedAt + 2 s), Loki ids of no recorded pod, and one Tempo
   search per new instance through `soakextras.TempoGuard`
   (`--no-identity-tempo` skips it). Exit 0 when every judged (nonce-roll)
   service is PASS. `verify.py soak shut` refuses `valid: false` with exit 2.

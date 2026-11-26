@@ -1491,6 +1491,10 @@ def main_soak(b: verify.Backends, args, now: float, reader: sp.Reader | None = N
     except (verify.QueryError, ValueError, KeyError, OSError, subprocess.TimeoutExpired) as exc:
         print(f"verify soak {args.action}: ERROR {exc}", file=sys.stderr)
         return 1
+    except Exception as exc:  # noqa: BLE001 — run as a script, verify.py's QueryError is __main__.QueryError,
+        # not this module's verify.QueryError, so it never matched the clause above (kshut-20261126)
+        print(f"verify soak {args.action}: ERROR {exc.__class__.__name__}: {exc}", file=sys.stderr)
+        return 1
     try:
         path = _write_json(d, args.action, data, getattr(args, "output", None))
     except FileExistsError:

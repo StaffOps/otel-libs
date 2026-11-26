@@ -24,7 +24,7 @@ import shut  # noqa: E402
 import soak  # noqa: E402
 import soakcount  # noqa: E402
 from guard import sp  # noqa: E402
-from test_loop import RUN, Base, Clock, RealClock  # noqa: E402
+from test_loop import RUN, Base, Clock, RealClock, hooked  # noqa: E402
 
 T0 = 1_795_000_000.0
 
@@ -480,7 +480,7 @@ class Driver(unittest.TestCase):
         nonce = ident["rolls"]["nonce"]["services"]["demo-go-api"]
         self.assertEqual(nonce["old"][0], {"pod": "demo-go-api-old1-x", "uid": "uid-demo-go-api-old1-x",
                                            "started_at": T0 - 900, "finished_at": T0 - 610, "exit_code": 0,
-                                           "deletion": None})
+                                           "deletion": None, "deletion_source": None})
         self.assertIn("not a pure restart", ident["rolls"]["nonce"]["what"])
         self.assertEqual([p["pod"] for p in nonce["new"]], ["demo-go-api-new2-x"])
         s = ident["rolls"]["shut"]
@@ -843,7 +843,7 @@ class SnapshotMerge(Driver):
         self.assertIn("snapshot before the delete only", go["finding"])
         self.assertIsNone(go["canary_lines"])                 # no canary file: not counted
         self.assertIn("snapshot", rec["demo-python-api-new2-x/api"]["error"])
-        self.assertTrue(sh.snapshots["go"]["follow_running_before_delete"])   # ended: not waited 2 s
+        self.assertTrue(sh.snapshots["go"]["follow_first_line_before_delete"])   # ended: not waited 2 s
 
     def test_follow_waited_for_before_the_delete(self):
         ops = FakeOps(("go",))
@@ -864,7 +864,7 @@ class SnapshotMerge(Driver):
         sh.tick(T0 + 160)
         self.assertEqual(order, [("delete", True)])
         rec = sh.save_deleted_logs("c", lambda p, t: None)["demo-go-api-new2-x/api"]
-        self.assertEqual((rec["lines"], rec["follow_running_before_delete"]), (2, True))
+        self.assertEqual((rec["lines"], rec["follow_first_line_before_delete"]), (2, True))
 
 
 class Clocks(Driver):
@@ -878,9 +878,178 @@ class Clocks(Driver):
         old = ident["rolls"]["shut"]["services"]["demo-go-api"]["old"][0]
         self.assertEqual((old["deletion"], ident["rolls"]["shut"]["at"]), (T0 + 104, T0 + 104))
         self.assertIn("skew", old["deletion_source"])
-        sh.watch = FakeWatch(pods={"demo-go-api-new2-x": {"deletion": T0 + 103}})
+        sh.watch = FakeWatch(pods={"demo-go-api-new2-x": {"deletion_requested": T0 + 103},
+                                   "demo-go-api-old1-x": {"deletion_requested": T0 - 620}})
+        ident = sh.identity_input(T0, T0 + 600, {})
+        old = ident["rolls"]["shut"]["services"]["demo-go-api"]["old"][0]
+        self.assertEqual(old["deletion"], T0 + 104)          # K-shut's own request wins over the watch
+        nonce = ident["rolls"]["nonce"]["services"]["demo-go-api"]["old"][0]
+        self.assertEqual((nonce["deletion"], nonce["deletion_source"]),
+                         (T0 - 620, "watch: first deletionTimestamp - its grace"))
+        sh.skew = None
         old = sh.identity_input(T0, T0 + 600, {})["rolls"]["shut"]["services"]["demo-go-api"]["old"][0]
-        self.assertEqual(old["deletion"], T0 + 103)          # the watch's deletionTimestamp wins
+        self.assertEqual(old["deletion"], T0 + 103)          # no skew: the watch's request time
+
+    def test_watch_keeps_the_delete_request_time(self):
+        w = shut.PodWatch([], spawn=None, clock=lambda: T0)
+        first = pod("demo-go-api-1a-x", deleting=T0 + 15)
+        first["metadata"]["deletionGracePeriodSeconds"] = 15
+        last = pod("demo-go-api-1a-x", deleting=T0 + 4, finished=T0 + 2, exit_code=0)
+        last["metadata"]["deletionGracePeriodSeconds"] = 0     # the kubelet's final grace-0 delete
+        w.handle({"type": "MODIFIED", "object": first})
+        w.handle({"type": "DELETED", "object": last})
+        self.assertEqual(w.snapshot()["demo-go-api-1a-x"]["deletion_requested"], T0)
+
+
+# kubectl logs --timestamps of the k6 Job as the node writes it (k8s01, 2026-11-26:
+# the CRI timestamp with the node's -03:00 offset), lines from
+# runs/kshut-20261126/raw/soak-k6-shut.stop.log.
+K6_TS_EXCERPT = (
+    "2026-11-26T16:49:33.912000123-03:00 \n"
+    "2026-11-26T16:49:33.912000456-03:00          /\\      Grafana   /‾‾/  \n"
+    "2026-11-26T16:49:34.101000000-03:00      execution: local\n"
+    '2026-11-26T16:49:35.230477120-03:00 SOAKRES {"lang":"go","route":"orders","scen":"ok","class":"none",'
+    '"phase":"pre","trace_id":null,"parent_id":null,"status":201,"vu":3}\n'
+    '2026-11-26T16:49:35.231000001-03:00 SOAKRES {"lang":"python","route":"orders","scen":"ok","class":"none",'
+    '"phase":"pre","trace_id":null,"parent_id":null,"status":201,"vu":9}\n'
+    '2026-11-26T16:54:35.240112233-03:00 SOAKRES {"lang":"dotnet","route":"orders","scen":"ok","class":"none",'
+    '"phase":"post","trace_id":null,"parent_id":null,"status":201,"vu":201}\n')
+
+
+class RealLogFormat(unittest.TestCase):
+    def test_node_offset_timestamps(self):
+        """Run kshut-20261126: a Z-only pattern matched no line of the real log."""
+        t = shut.phase_times(K6_TS_EXCERPT)
+        self.assertAlmostEqual(t["pre"], sp.parse_ts("2026-11-26T19:49:35.230477Z"), places=5)
+        self.assertAlmostEqual(t["post"], sp.parse_ts("2026-11-26T19:54:35.240112Z"), places=5)
+        self.assertEqual(shut.line_time("2026-11-26T19:54:35Z x"), sp.parse_ts("2026-11-26T19:54:35Z"))
+        self.assertAlmostEqual(shut.line_time("2026-11-26T22:54:35.5+03:00 x"), sp.parse_ts("2026-11-26T19:54:35Z") + 0.5)
+
+
+def zt_hit(src="soak-k6-shut-vktn4", dst="demo-go-api-new2-x", t="2026-11-18T11:08:31.455517Z", src_ns="dev-otel-libs"):
+    return json.dumps({"level": "error", "time": t, "scope": "access", "message": "connection complete",
+                       "src.workload": src, "src.namespace": src_ns, "dst.addr": "10.244.73.138:15008",
+                       "dst.workload": dst, "dst.namespace": "dev-otel-libs", "direction": "inbound",
+                       "error": "connection failed: Connection refused (os error 111)"})
+
+
+class ZtunnelExemption(Driver):
+    def deleted(self):
+        ops = FakeOps(("go",))
+        sh = self.shutter(ops, langs=("go",), watch=FakeWatch({"demo-go-api-new2-x": {"finished_at": T0 + 112}}))
+        self.hooked(ops, sh)
+        sh.skew = 0.0
+        sh.deletions = {"go": {"deleted_at": T0 + 110}}      # 11:08:30Z
+        return sh
+
+    def run_filter(self, sh, lines, detail=None, fail=False):
+        item = guard.Item(shut.ZT_NAME, "breach", detail or f"{len(lines)} lines in 120s across 1 ztunnel pods")
+        read = guard.GuardRead(T0 + 200, [item, guard.Item("guard (b) other edges", "finding", "x")])
+        sh.ops.clock.t = T0 + 240.3          # the guard's read took 40 s: the filter runs after it
+        self.since = None
+
+        def logs(ns, pod_name, since_s):
+            if fail:
+                raise guard.ReadError("down")
+            self.since = since_s
+            return lines
+        reader = SimpleNamespace(kget=lambda a: {"items": [{"metadata": {"name": "ztunnel-qfmq4",
+                                                                       "namespace": "istio-system"}}]}, logs=logs)
+        return sh.zt_exempt.filter(read, reader, T0 + 200, 120)
+
+    def test_k6_to_a_deleted_pod_inside_the_window_is_exempt(self):
+        sh = self.deleted()
+        read = self.run_filter(sh, [zt_hit(), zt_hit(t="2026-11-18T11:08:40Z"), "unrelated line"],
+                               detail="2 lines in 120s across 1 ztunnel pods")
+        self.assertEqual(read.items[0].state, "finding", read.items[0].detail)
+        self.assertEqual(self.since, 41 + 120 + shut.ZT_SLACK_S)   # reaches back to the guard's at
+        self.assertEqual(len(sh.zt_exempt.records), 2)
+        self.assertEqual(sorted(sh.zt_exempt.records[0]), sorted(["time", "src.namespace", "src.workload",
+                                                                 "dst.namespace", "dst.workload", "read_at", "window"]))
+        again = self.run_filter(sh, [zt_hit()], detail="1 lines in 120s across 1 ztunnel pods")
+        self.assertEqual((again.items[0].state, len(sh.zt_exempt.records)), ("finding", 2))   # not recounted
+
+    def test_everything_else_stays_strict(self):
+        for name, lines, detail in (
+                ("another source", [zt_hit(src="demo-go-worker-a-b")], None),
+                ("another destination", [zt_hit(dst="demo-go-backend-a-b")], None),
+                ("before the delete", [zt_hit(t="2026-11-18T11:08:20Z")], None),
+                ("after finishedAt + one read", [zt_hit(t="2026-11-18T11:09:40Z")], None),
+                ("k6 of another window", [zt_hit(src="soak-k6-loaded-abcde")], None),
+                ("fewer lines than the guard counted", [zt_hit()], "2 lines in 120s across 1 ztunnel pods"),
+                ("more lines than the guard counted", [zt_hit(), zt_hit(t="2026-11-18T11:08:41Z")],
+                 "1 lines in 120s across 1 ztunnel pods"),
+                ("no count in the detail", [zt_hit()], "query error")):
+            with self.subTest(name):
+                sh = self.deleted()
+                read = self.run_filter(sh, lines, detail)
+                self.assertEqual(read.items[0].state, "breach")
+                self.assertEqual(sh.zt_exempt.records, [])
+        sh = self.deleted()
+        non_json = "2026-11-18T11:08:31Z error dev-otel-libs connection refused 10.0.0.1:15008"
+        self.assertEqual(self.run_filter(sh, [zt_hit(), non_json]).items[0].state, "breach")
+        sh.zt_exempt.cap = 1
+        self.assertEqual(self.run_filter(sh, [zt_hit(), zt_hit(t="2026-11-18T11:08:41Z")]).items[0].state, "breach")
+        self.assertIn("not read", self.run_filter(sh, [], fail=True).items[0].detail)
+        clean = guard.GuardRead(T0, [guard.Item(shut.ZT_NAME, "ok", "")])
+        self.assertIs(sh.zt_exempt.filter(clean, None, T0, 120), clean)
+
+    def test_a_strict_line_at_the_edge_of_the_guards_range_stays_a_breach(self):
+        """Review: a worker -> api refusal at the start of the guard's range, then
+        k6 -> deleted-pod refusals; a re-read counted from the filter's own clock
+        would miss the first line and downgrade the breach."""
+        sh = self.deleted()
+        sh.deletions = {"go": {"deleted_at": T0 + 85}}       # a window that reaches the range start too
+        edge = "2026-11-18T11:08:00.5Z"                      # at - lookback + 0.5 s (at = T0 + 200)
+        lines = [zt_hit(src="demo-go-worker-a-b", t=edge), zt_hit(), zt_hit(t="2026-11-18T11:08:40Z")]
+        read = self.run_filter(sh, lines, detail="3 lines in 120s across 1 ztunnel pods")
+        self.assertEqual(read.items[0].state, "breach")
+        self.assertIn("outside 1", read.items[0].detail)
+        self.assertEqual(sh.zt_exempt.records, [])
+        # the same lines without the strict one, plus one older than the range: judged on the range only
+        sh = self.deleted()
+        older = zt_hit(src="demo-go-worker-a-b", t="2026-11-18T11:07:59Z")   # before at - lookback
+        read = self.run_filter(sh, [older, zt_hit(), zt_hit(t="2026-11-18T11:08:40Z")],
+                               detail="2 lines in 120s across 1 ztunnel pods")
+        self.assertEqual(read.items[0].state, "finding", read.items[0].detail)
+
+    def test_read_filter_runs_both(self):
+        sh = self.deleted()
+        read = guard.GuardRead(T0, [guard.Item("x", "ok", "")])
+        self.assertIs(sh.read_filter(read, None, T0, 120), read)
+
+
+class K6LogFallback(Base):
+    def test_a_failed_read_keeps_the_stop_time_save(self):
+        (self.d / "raw" / "soak-k6-shut.stop.log").write_text("     execution: local\nSOAKRES {}\n")
+        err = "unable to retrieve container logs for containerd://abc"
+        with self.cluster() as c:
+            c.logs({"job/soak-k6-shut": err})
+            text, source = soak.save_k6_log(self.kube, self.d, "soak-k6-shut")
+            self.assertIn("SOAKRES", text)
+            self.assertIn("stop-time save (soak-k6-shut.stop.log)", source)
+            self.assertIn("SOAKRES", (self.d / "raw" / "soak-k6-shut.log").read_text())
+            self.assertIn("unable to retrieve", (self.d / "raw" / "soak-k6-shut.log.err").read_text())
+            (self.d / "raw" / "soak-k6-shut.stop.log").unlink()
+            text, source = soak.save_k6_log(self.kube, self.d, "soak-k6-shut")   # the copied .log stays
+            self.assertIn("earlier save", source)
+            (self.d / "raw" / "soak-k6-shut.log").unlink()
+            text, source = soak.save_k6_log(self.kube, self.d, "soak-k6-shut")
+            self.assertIsNone(text)
+            self.assertIn("no usable k6 log", source)
+            c.logs({"job/soak-k6-shut": "     execution: local\nSOAKRES {}\n"})
+            self.assertEqual(soak.save_k6_log(self.kube, self.d, "soak-k6-shut")[1], "kubectl logs job (now)")
+
+    def test_the_trap_records_which_log_it_used(self):
+        (self.d / "raw" / "soak-k6-shut.stop.log").write_text("     execution: local\nSOAKRES {}\n")
+        job = render.k6_job(RUN, "shut", 999)
+        with self.cluster(extra=[job]) as c:
+            c.logs({"job/soak-k6-shut": "unable to retrieve container logs for containerd://abc"})
+            res = self.trap(state=hooked(reservoir=True))
+        rec = json.loads((self.d / "trap.jsonl").read_text().splitlines()[-1])
+        self.assertIn("stop-time save", rec["k6_log_source"]["soak-k6-shut"])
+        self.assertFalse([e for e in res.errors if "soak-k6-shut" in e])
+        self.assertFalse(soak.k6_log_usable(""))
 
 
 class WatchRace(unittest.TestCase):

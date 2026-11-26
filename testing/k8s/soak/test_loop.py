@@ -136,7 +136,7 @@ class Trap(Base):
         with self.cluster(extra=[other_run_service()]) as c:
             objs = render.every_kind(RUN, IMG, "// s", 100) + [render.fallback_service(RUN, "dotnet")]
             self.kube.apply(RUN, objs)
-            c.logs({"job/soak-k6-dry": "k6 output\n"})
+            c.logs({"job/soak-k6-dry": "     execution: local\nk6 output\n"})
             res = self.trap()
             created = sorted(f"{o['kind']}/{o['metadata']['name']}" for o in objs)
             self.assertEqual(res.deleted, created)

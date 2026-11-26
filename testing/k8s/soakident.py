@@ -114,22 +114,41 @@ def pod_instances(inst: dict[str, dict]) -> dict[str, set[str]]:
     return out
 
 
+RAW_S = 900                      # the raw read: [finishedAt - 300 s, finishedAt + 600 s]
+
+
 def last_sample(src: Sources, svc: str, iid: str, finished_at: float, now: float,
                 queries: list[str], started_at: float | None = None) -> float | None:
-    """The instance's last sample time. ``timestamp()`` returns each selected
-    sample's own time, so the max over a subquery is the last sample as long as
-    the step is at most the 5 min lookback; the range runs from the pod's start
-    (at most 24 h back, at least 15 min) to finishedAt + 10 min, so an instance
-    that went quiet early is still read (review round 1 M6)."""
+    """The instance's last sample time (SR15 Identity (K3)).
+
+    First a raw range read of every series of the instance, ``{job, instance}[900s]``
+    at finishedAt + 600 s (no function: each value keeps its own timestamp). Only
+    when that window is empty (an instance that went quiet early), the last
+    ``target_info`` sample over the pod's life: ``max_over_time(timestamp(
+    target_info{job, instance})[R:S])`` (R from startedAt, 15 min to 24 h, S =
+    ceil(R / 2000) <= 240 s); Prometheus writes ``target_info`` with every OTLP
+    request at its points' time.
+
+    Run kshut-20261126 (2026-11-26, read-only): ``timestamp({job, instance})``
+    over several metric names drops ``__name__``, and the subquery failed with
+    "vector cannot contain metrics with the same labelset" (HTTP 422, shown by
+    ``kubectl get --raw`` as "The request is invalid"); wrapping it in
+    ``label_replace`` avoids that but returns the evaluation time (+300 s
+    measured), so neither is used."""
     inner = sp.sel("", {"job": job_of(svc), "instance": iid})
-    at = min(now, finished_at + LAST_SAMPLE_AFTER_S)
+    at = int(min(now, finished_at + LAST_SAMPLE_AFTER_S))
+    q = f"{inner}[{RAW_S}s]"
+    queries.append(f"{q} @ {sp.iso(at)}")
+    pts = [float(t) for s in src.prom(q, at) for t, _ in s.get("values") or []]
+    if pts:
+        return max(pts)
     first = started_at if started_at is not None else at - LAST_SAMPLE_MIN_S
     rng = int(min(LAST_SAMPLE_MAX_S, max(LAST_SAMPLE_MIN_S, at - first + LOOKBACK_S)))
     step = int(min(LOOKBACK_S - 60, max(5, math.ceil(rng / LAST_SAMPLE_STEPS))))
-    q = f"max(max_over_time(timestamp({inner})[{rng}s:{step}s]))"
+    q = f"max_over_time(timestamp({sp.sel('target_info', {'job': job_of(svc), 'instance': iid})})[{rng}s:{step}s])"
     queries.append(f"{q} @ {sp.iso(at)}")
     res = src.prom(q, at)
-    return float(res[0]["value"][1]) if res else None
+    return max(float(r["value"][1]) for r in res) if res else None
 
 
 def copy_ids(src: Sources, svc: str, start: float, end: float, queries: list[str]) -> dict:

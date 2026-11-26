@@ -71,6 +71,8 @@ class Src:
         self.copy = {SVC: [{"cluster": "k8s01", "service_name": SVC, "service_instance_id": i, "exported_instance": i}
                            for i in (NEW, NEWER)]}
         self.last = {OLD: T0 + 12, NEW: T0 + 400}
+        self.raw: dict[str, list[float]] = {}
+        self.ti: dict[str, float] = {}
         self.loki: dict | Exception = {SVC: {NEW: 30, NEWER: 9, "": 4}}
         self.queries: list[str] = []
 
@@ -83,7 +85,10 @@ class Src:
     def prom(self, q, at):
         self.queries.append(q)
         iid = re.search(r'instance="([^"]+)"', q).group(1)
-        return [{"metric": {}, "value": [at, str(self.last[iid])]}] if iid in self.last else []
+        if q.endswith("[900s]"):     # the raw range read: a matrix, each value with its own time
+            got = self.raw.get(iid, [self.last[iid]] if iid in self.last else [])
+            return [{"metric": {"__name__": "m"}, "values": [[t, "1"] for t in got]}] if got else []
+        return [{"metric": {}, "value": [at, str(self.ti[iid])]}] if iid in self.ti else []
 
     def loki_query(self, q, at):
         if isinstance(self.loki, Exception):
@@ -121,10 +126,8 @@ class Identity(unittest.TestCase):
         self.assertEqual((v["old_instances"], v["new_instances"]), ([OLD], [NEW]))
         s = data["rolls"]["shut"][SVC]
         self.assertEqual((s["verdict"], s["result"]), ("REPORT-ONLY", "PASS"))
-        q = [x for x in src.queries if x.startswith("max(")][0]
-        self.assertIn("timestamp({cluster=\"k8s01\", job=\"dev-otel-libs/demo-go-api\", instance=", q)
-        self.assertIn("[1200s:5s]", q)        # 15 min + the 5 min lookback when the start is unknown
-        self.assertNotIn("last_over_time", q)
+        q = [x for x in src.queries if x.startswith("{") and OLD in x][0]
+        self.assertEqual(q.split(" @ ")[0], f'{{cluster="k8s01", job="dev-otel-libs/demo-go-api", instance="{OLD}"}}[900s]')
         self.assertIn("finishedAt + 10 s", data["bound"])
 
     def test_failures(self):
@@ -184,17 +187,12 @@ class Identity(unittest.TestCase):
         old = inp["rolls"]["nonce"]["services"][SVC]["old"][0]
         old.update(started_at=T0 - 3 * 3600, deletion=T0 + 2)
         data = si.action_identity(src, inp, T0 + 900)
-        q = [x for x in src.queries if x.startswith("max(") and OLD in x][0]
-        self.assertIn(f"[{3 * 3600 + 605 + 300}s:6s]", q)    # from the pod's start, step <= the lookback
         ro = {c["check"]: c for c in nonce(data)["report_only"]}
         self.assertTrue(ro[f"final flush {OLD}"]["seen"])
         self.assertIn("99999999-zzzz", ro["loki extra ids"]["detail"])
         self.assertEqual(nonce(data)["verdict"], "PASS")       # report-only parts never change it
         old.update(started_at=T0 - 5 * 86400, deletion=T0 + 20)
-        src.queries.clear()
         data = si.action_identity(src, inp, T0 + 900)
-        q = [x for x in src.queries if x.startswith("max(") and OLD in x][0]
-        self.assertIn("[86400s:44s]", q)
         self.assertFalse({c["check"]: c for c in nonce(data)["report_only"]}[f"final flush {OLD}"]["seen"])
         self.assertIn("final flush", si.rows("identity", data)[0][2])
 
@@ -222,6 +220,33 @@ class Identity(unittest.TestCase):
         self.assertIn('resource.service.instance.id = "22222222-bbbb"', g.calls[0])
         self.assertEqual(data["tempo"], {"reads": 2})
         self.assertEqual(nonce(data)["verdict"], "PASS")
+
+    def test_last_sample_query_syntax(self):
+        """Run kshut-20261126: timestamp() over several metric names failed in
+        Prometheus (same labelset after __name__ is dropped, HTTP 422). The raw
+        read has no function; the fallback applies timestamp() to target_info
+        only; every duration is whole seconds; the query survives URL encoding."""
+        import urllib.parse
+        src = Src()
+        self.assertEqual(si.last_sample(src, SVC, OLD, T0 + 5, T0 + 900, [], T0 - 3 * 3600), T0 + 12)
+        src.raw = {OLD: [T0 + 1, T0 + 11.5, T0 + 3]}
+        self.assertEqual(si.last_sample(src, SVC, OLD, T0 + 5, T0 + 900, [], None), T0 + 11.5)
+        src.last, src.raw = {}, {}
+        src.ti = {OLD: T0 + 3}
+        for started, rng, step in ((T0 - 3 * 3600, 3 * 3600 + 605 + 300, 6), (None, 1200, 5),
+                                   (T0 - 5 * 86400, 86400, 44)):
+            q: list[str] = []
+            self.assertEqual(si.last_sample(src, SVC, OLD, T0 + 5.6, T0 + 900.4, q, started), T0 + 3)
+            raw, fb = q[0].split(" @ ")[0], q[1].split(" @ ")[0]
+            self.assertTrue(raw.endswith("[900s]"))
+            self.assertEqual(fb, f'max_over_time(timestamp(target_info{{cluster="k8s01", job="dev-otel-libs/{SVC}", '
+                                 f'instance="{OLD}"}})[{rng}s:{step}s])')
+            for text in (raw, fb):
+                self.assertIsNone(re.search(r"\d+\.\d+s", text))                  # integer durations only
+                self.assertNotRegex(text, r"timestamp\(\{")                       # never on a name-less selector
+                self.assertEqual(urllib.parse.unquote(urllib.parse.quote(text, safe="")), text)
+        src.ti = {}
+        self.assertIsNone(si.last_sample(src, SVC, OLD, T0 + 5, T0 + 900, [], None))
 
     def test_rows(self):
         src = Src()
@@ -356,6 +381,21 @@ class Cli(unittest.TestCase):
         self.assertIn("## identity", text)
         self.assertIn("## labels", text)
 
+    def test_a_foreign_query_error_is_an_error_line(self):
+        """Run kshut-20261126: run as a script, verify.py's QueryError is
+        __main__.QueryError, which the verify.QueryError clause never caught."""
+        QueryError = type("QueryError", (Exception,), {})
+        inp = self.d / "identity-input.json"
+        inp.write_text(json.dumps(ident_input()))
+        src = Src()
+
+        def prom(q, at):
+            raise QueryError("kps-prometheus:9090/api/v1/query: The request is invalid: : unknown")
+        src.prom = prom
+        rc, out = self.run_soak(["soak", "identity", "--run", "r1", "--input", str(inp)], src)
+        self.assertEqual(rc, 1)
+        self.assertIn("verify soak identity: ERROR QueryError: kps-prometheus", out)
+
     def test_nothing_judged_is_not_a_pass(self):
         inp = self.d / "identity-input.json"
         empty = ident_input()
@@ -465,6 +505,17 @@ class DeletedLogsCanarySource(unittest.TestCase):
             dn = by["deleted api pod log demo-dotnet-api-a-b/api (shut)"]
             self.assertEqual((dn["status"], dn["hits"]), ("unmeasured", ["2 line(s)"]))
             self.assertIn("demo container log demo-go-api-c-d/api (trap)", by)
+            # Run kshut-20261126: under OTLP the demo apps write nothing to stdout (Loki's
+            # file_log held no demo record in the window), so a 0-line saved log is a scan: PASS.
+            (run / "raw" / "demo-go-api-a-b.api.deleted.log").write_text("")
+            (run / "shut-window.json").write_text(json.dumps({"deleted_logs": {
+                "demo-go-api-a-b/api": {"path": "demo-go-api-a-b.api.deleted.log", "lines": 0, "canary_lines": 0}}}))
+            (run / "trap.jsonl").write_text(json.dumps({"demo_logs": {
+                "demo-go-api-c-d/api": {"path": "demo-go-api-a-b.api.deleted.log", "lines": 0, "canary_lines": 0}}})
+                + "\n")
+            rows = sx.canary_demo(run, "tok", None, T0, T0 + 1, {"ok": True, "why": []})
+            self.assertEqual([r["status"] for r in rows], ["scanned", "scanned"])
+            self.assertEqual(sx.canary_verdict(rows), "PASS")
             (run / "shut-window.json").write_text(json.dumps({"deleted_logs": {}}))
             rows = sx.canary_demo(run, "tok", None, T0, T0 + 1, {"ok": True, "why": []})
             self.assertEqual(rows[-1]["status"], "unmeasured")
