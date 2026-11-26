@@ -14,6 +14,7 @@ python3 -I testing/k8s/soak/soak.py <mode> --run <id> [...]
 |---|---|
 | `soak.py` | CLI, the window loop, the trap, `cleanup`, the pre-flight, the dry run, the cluster side of `cal` (`CalOps`) |
 | `cal.py` | the K-cal driver (task K-cal-d, design K-D20): the plan, phases A and B, the derivations |
+| `shut.py` | the K-shut + K3 + K5 driver (design K-D22 draft): the plan, the pod watch, the deletion tick, the inputs of `verify.py soak shut`, `identity` and `labels` |
 | `guard.py` | the guard read: a thin adapter over K1's `testing/k8s/soakplatform.py` (guard (b)–(h), sentinels, edges, `sel`; guard (a), the node-wide ztunnel proxy count, is not read — owner ruling 2026-11-24, the soak judges `dev-otel-libs`, not the cluster) |
 | `render.py` | every soak-run object, as JSON |
 | `k6script.py` | the k6 script generator and the summary / reservoir parser |
@@ -27,6 +28,7 @@ python3 -I testing/k8s/soak/soak.py <mode> --run <id> [...]
 | `preflight --run <id> [--tag <t>]` | Reads only. Refuses while any object labelled `otel-libs/soak-run` exists (of any run id), an object without that label carries a soak name (`soak-otlp`, `soak-k6-*`, …), or the namespace label `istio.io/dataplane-mode` is not `ambient`; records the running demo (one image tag, the replicas per language, from the live Deployments) and refuses when the tag is not `--tag` or `demo-tag.sh`'s; then the entry gate, one line per item. |
 | `run --run <id> --window <name> --duration <s> [--rate <n>] [--langs ...] [--hook] [--control] [--worker-interval <s>] [--quiesce <s> [--allow-short-quiesce]] [--tag <t>]` | The pre-flight and the entry gate first, before any write. Then `soak-otlp` (copy variant); with `--control` (task K-copy), the positive control before the hook: the copy's `soak-control` series read, the `soak-control` Job applied and waited for (360 s), the counts polled until they arrive (120 s) and read again two scrapes (30 s) later; PASS only when the delta is exactly `render.control_expected` (`otel_libs_soak_spans_total` +8; `otel_libs_soak_fixed_spans_total` +2 for `<run>-ctl-a`, `<run>-ctl-b` and `unset`, +1 for `<run>-ctl-n`; an absent series counts 0, a decrease is a copy reset); `control.json`, a `windows.jsonl` record and `raw/soak-control.log`; a FAIL ends the run before the hook (the trap runs); with `--hook`, the demo re-applied through `demo.sh`'s `DEMO_ENV_FILE`, guard (g) polled until the rolled pods are Ready for 10 min (Terminating pods skipped; at most 10 + 10 min), and guard (h) as an increase of every service's copy count since the hook; with `--rate`, the worker window checked (below), the k6 ConfigMap and Job; then a guard read every 60 s until the window ends: with k6, when its Job succeeds (at most its `activeDeadlineSeconds`; `--duration` is k6's own duration), else after `--duration`. A loaded window whose k6 Job succeeded is followed by the quiesce (below). The trap always runs at the end. |
 | `cal --run <id> [--langs ...] [--n N] [--rate R] [--steps a,b,c] [--step-duration S] [--quiesce Q] [--worker-interval I] [--drain-wait W] [--control] [--dry-run]` | K-cal (below). The same pre-flight, entry gate, hook (always applied), soak-run labels and trap as `run`. `--dry-run` prints the plan (cells, N, repeats, steps, the wall-clock estimate, the objects) and makes no kubectl call and writes nothing. |
+| `shut --run <id> --rate R --worker-interval I --kcal <soak-cal.json> [--langs ...] [--pre S] [--post S] [--delta S] [--quiesce Q] [--control]` | K-shut + K3 + K5 (below). The same pre-flight, entry gate, hook (always applied: the nonce roll), soak-run labels, guarded loop and trap as `run`; one k6 Job with `phase=pre` and `phase=post`; each api pod deleted by name at the boundary + δ. |
 | `cleanup --run <id> [--tag <t>]` | The trap's steps, for a run whose laptop was cut off. It restores the demo from `runs/<id>/state.json`; `--tag` forces a restore with that tag (replicas as recorded, else 1). |
 | `render --run <id> --what <object>` | Prints one soak-run object (offline). Objects: `k6`, `k6-configmap`, `k6-job`, `soak-otlp --variant copy\|refused\|hung\|redirect`, `sink-hung`, `sink-redirect`, `control`, `fallback --langs <lang>`. |
 | `dry-run --run <id>` | Offline, on `fakekube.py`: creates one soak-run object of each kind, runs the trap and checks it deleted exactly those and nothing else (the seed includes a soak-labelled Service in another namespace, which must stay). |
@@ -382,6 +384,125 @@ interval 21600 s, a drain wait of at most 900 s.
   is FAIL (logged as `cal: FAIL rate cap ...`, run K8b at `k8b_rate`); 1
   otherwise.
 
+## Shutdown, identity and labels (`shut`, task K-shut + K3 + K5)
+
+SR15 "Shutdown (r6.2)", "Restart mechanics (r6.2)", "Identity (K3)",
+"Labels (K5)"; SR7, SR12; design K-D22 (draft, 2026-11-26). Read-only
+checks afterwards: `verify.py soak shut`, `soak identity`, `soak labels`.
+
+- **Preconditions** (refused before any write): `run`'s pre-flight and entry
+  gate; every api Deployment at replicas 1 (the lower bound assumes every
+  pre request reached the one old process); `--kcal` a file; δ ≥ the pre
+  scenario's graceful stop + 5 s (20 s), δ ≤ post − 60 s; pre and post ≥ 60
+  s; deletion to t2 at most 25 min (the old instance's copy series expires
+  after 30 min idle).
+- **Pod watch.** Before the hook a child runs `kubectl get pods -l <demo
+  selector> --watch --output-watch-events -o json` (its own session, ended
+  with the other children; restarted when the API server ends it, each
+  restart a recorded gap). The events are parsed in memory; only name, uid,
+  phase, deletion time, start, `finishedAt`, exit code and reason are kept
+  (`pods.jsonl`). The pod objects are never written: the hooked pods' env
+  carries the canary header.
+- **The nonce roll.** The hook's apply (its file carries a new
+  `DEMO_RESTART_NONCE`) is the K3 roll: its old pods are the demo pods before
+  the hook (on the shared agent), its new pods the hooked ones (through the
+  copy). It is not a pure restart: it also moves the export from the shared
+  agent to the copy. The promoted list is read from `prometheus/kps`
+  `spec.otlp` (else the newest passing K1 snapshot, named).
+- **The window.** As `run`'s loaded window, with a `tick` between guard
+  reads: it reads the k6 container's `state.running.startedAt` (every 5 s
+  until it has one); at `startedAt` + `--pre` + `--delta` (default 300 + 30
+  s) it reads the copy's `otel_libs_soak_fixed_spans_total` per api over
+  (t1, now] — the old `service_instance_id` is the one that grew (none or
+  several: that api is UNQUALIFIED, named) — then deletes each api pod with
+  `kubectl delete pods -l app.kubernetes.io/component=demo,app.kubernetes.io/name=demo-<lang>-api
+  --field-selector metadata.name=<pod> --wait=false` (kubectl must print
+  `pod "<pod>" deleted`). `deleted_at` is the time before the call; a guard
+  read in progress delays it (`delete_delay_s`). Then the guarded quiesce and
+  t2, as `run`.
+- **Clocks and the post start.** `startedAt` is on the cluster clock: skew =
+  the k6 Job's `creationTimestamp` − the apply's midpoint on the laptop
+  (`clock` in `shut-input.json`); the planned delete is `startedAt` − skew +
+  pre + δ. At the delete the tick reads `kubectl logs --timestamps` of the
+  k6 Job: post start ≥ max(`startedAt` + pre, the first `phase=post`
+  reservoir line − timeout, the first `phase=pre` line − timeout + pre), used
+  for the post-request bound (`phase`). Reasons (the window is invalid):
+  |skew| > δ − graceful stop − 5 s, or unmeasured; no post line before the
+  delete, or the first post line after it (k6 init longer than δ); a delete
+  more than one loop interval late, or more than post − 60 s after the post
+  start. `deleted_at` in `shut-input.json` is on the cluster clock.
+- **The deleted pods' logs.** Before the deletes, per api pod: one
+  synchronous `kubectl logs --timestamps` snapshot, then a child `kubectl logs
+  <pod> -c api --timestamps -f --since-time=<hook − 60 s>`, bounded at grace
+  + 15 s; the deletes wait until each follower has emitted its first line, at
+  most 2 s. The saved log is the snapshot plus the follow's lines after the
+  snapshot's last timestamp; when the follow ends, one non-follow read if the
+  pod is still there (a line-count cross-check). A failed follow keeps the
+  snapshot (a finding); both failing make the source UNMEASURED. Saved as trap step 1b saves the demo logs (a canary line →
+  the marker, 0600, counts only) in `raw/<pod>.api.deleted.log`, recorded in
+  `shut-window.json` `deleted_logs`; `verify.py soak extras` scans each as its
+  own source (a failed save is UNMEASURED).
+- **The one guard exemption** (shut only; `run` and `cal` never set it): a
+  guard (b) breach on the `demo->soak-agent` edge becomes a finding only when
+  the guard's own verdict for that edge, re-read over the guard's own range
+  (`guard.window_lookback`, 2 × the interval), is NOISY (UNKNOWN and ABSENT
+  stay breaches), every increment of `istio_tcp_connections_failed_total` in
+  that range comes from `demo-<lang>-api` of a deleted language, and the
+  exempted steps equal the guard's counted increase. Windows: [deleted_at,
+  finishedAt + 30 s] for non-`CONNECT` `response_flags` (the dying pod's
+  connections), the replacement pod's first 30 s + 30 s for `CONNECT` ones; at
+  most 3 increments over the window. Each exemption is recorded with its
+  flags (`edge_exemptions`, `edge_flags_seen`) and attached to its api in
+  `shut-input.json`: an api whose count is report-only (Go) and that had a
+  deletion-window exemption is UNQUALIFIED in `verify.py soak shut` ("final
+  flush unverifiable"). Every other edge stays strict.
+- **Outputs.** `shut-input.json` (`verify.py soak shut --input`): t1, t2,
+  `raw/soak-k6-shut.log`, the K-cal path (both relative to the file), per api
+  `old_instance`, `pod`, `deleted_at`, `finished_at`, `exit_code`, `grace_s`
+  (the pod's; `action_shut` uses it before a live Deployment read),
+  `post_before_finish` (ceil(R × (`finishedAt` + 1 s − (`startedAt` + pre)))
+  + 1, at most the post requests: the post requests issued before
+  `finishedAt`, an upper bound), `new_pods`, `findings` (an exit code other
+  than 0 or 137), and `unqualified` with a reason when the old instance or
+  the deletion is unknown; `valid` and `reasons` of the window (`verify.py
+  soak shut` refuses `valid: false`). `identity-input.json` (`verify.py soak identity`
+  and `soak labels`): the hook time, t1, t2, the export interval (10 s), the
+  promoted list, the rolls `nonce` (judged) and `shut` (report-only) with
+  each old and new pod and the old pods' `finishedAt`. `shut-window.json`:
+  t1, t2, `valid`, `reasons`, the deletions and the three verify commands.
+  `workers.json` as `run`.
+- **K3** (`verify.py soak identity`, `testing/k8s/soakident.py`): per roll
+  and service, from Prometheus `/api/v1/series` of `job="dev-otel-libs/<svc>"`
+  (app series carry `instance` and `k8s_pod_name`), each new pod has one
+  instance, not an old one and not `unset`; it is the copy's
+  `service_instance_id` (= `exported_instance`) and, when the service logged
+  in (hook, t2], a Loki `service_instance_id`; each old instance's last
+  sample (`max(max_over_time(timestamp({job, instance})[R:S]))`, R from the
+  pod's start to `finishedAt` + 10 min, 15 min to 24 h, S = ceil(R / 2000) ≤
+  240 s) is ≤ `finishedAt` + 10 s + 1 s. Report-only: the final flush (last
+  sample ≥ the pod's deletion, on the cluster clock: the watch's
+  `deletionTimestamp`, else `deleted_at` + skew), Loki ids of no recorded pod, and one Tempo
+  search per new instance through `soakextras.TempoGuard`
+  (`--no-identity-tempo` skips it). Exit 0 when every judged (nonce-roll)
+  service is PASS. `verify.py soak shut` refuses `valid: false` with exit 2.
+- **K5** (`verify.py soak labels`): per service and instance, on the app
+  series: `job` = `service_namespace/service_name` = `dev-otel-libs/<svc>`,
+  `instance` = `target_info`'s `service_instance_id`, every promoted
+  attribute present on `target_info` on every series with the same value, no
+  other resource label on a data series (the metrics that carry one are
+  named); the series count per metric before
+  (old instances) and after (new instances) of each roll. A restart or a
+  rebuild makes new series (the `instance` label changes). The gateway's
+  span-metrics series of the same `job` carry no `instance` and are counted
+  apart (`other_series`), not judged.
+- **Language scope.** The K-shut count is REPORT-ONLY for an api whose copy
+  total K-cal did not qualify (Go in `kcal-20261125d`); exit within grace, K3
+  and K5 are judged in every language.
+- **Estimate** (defaults, four languages, `unmeasured`): pre-flight and entry
+  gate 1–2 min, hook and its waits 5–21 min, k6 window 11–16 min (pull,
+  600 s, graceful stop, summary, up to one read), quiesce 2 min, trap with the
+  demo restore 3–6 min: about 25–45 min.
+
 ## The trap (EXIT, INT, TERM, HUP)
 
 In order; each step runs whatever the earlier ones did (any exception is
@@ -475,6 +596,8 @@ own id. A run id is a label value (`soakplatform.RUN_RE`, shared with K1).
 (every read), `windows.jsonl`, `trap.jsonl`, `heartbeat`, `raw/` (k6 logs and, with
 `--hook`, the demo container logs of trap step 1b),
 `count-window.json` and, with `--hook`, `workers.json` (`run`, above),
+`shut-input.json`, `identity-input.json`, `shut-window.json` and `pods.jsonl`
+(`shut`, above),
 and, with `--hook`, `soak.env` and `canary` (mode 0600, also when the file
 existed; the canary is never printed; K11 scans the summary for it). Every
 other file the loop writes goes through `verify.scan_secret` first: a flagged
@@ -485,6 +608,7 @@ text is replaced by a marker naming the patterns.
 ```bash
 python3 -I -m unittest discover -s testing/k8s/soak -p 'test_*.py'
 python3 -I testing/k8s/demo/test_soakextras.py   # verify.py soak extras
+python3 -I testing/k8s/demo/test_soakident.py    # verify.py soak identity and labels
 ```
 
 No cluster: the tests run against `fakekube.py` and K1's fake Prometheus

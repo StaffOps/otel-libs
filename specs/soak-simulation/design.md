@@ -1573,6 +1573,116 @@ new difference.
 **Reversal action**: run `extras` within Tempo's horizon, right after the
 run, when the backend reads fail. Keep allowlist entries exact.
 
+### K-D22 — K-shut, K3 and K5: `soak.py shut`, one deletion inside a hooked window, a pod watch, `verify.py soak identity` and `labels` (added 2026-11-26, task K-shut + K3 + K5)
+**Choice**: a separate mode, `soak.py shut --run <id> --rate R
+--worker-interval I --kcal <soak-cal.json> [--pre S] [--post P] [--delta δ]`
+(`testing/k8s/soak/shut.py`). It shares `run`'s pre-flight, entry gate, hook,
+session, trap, loop and quiesce, as K-D20 does. Every api Deployment must
+have one replica, or the mode refuses before any write. One k6 Job runs
+`phase=pre` (0..S) and `phase=post` (S..S+P) per language.
+
+**The deletion.**
+- The loop's `tick`, between guard reads, deletes each api pod once.
+- When: at the k6 container's `startedAt` + S + δ, corrected by the
+  measured laptop–cluster clock skew (the k6 Job's `creationTimestamp`
+  against the midpoint of the apply).
+- How: by label and name; kubectl must print `pod "<name>" deleted`.
+- The window is invalid when |skew| > δ − graceful stop − 5 s, when the
+  delete landed before the post phase started (taken from the k6 log
+  timestamps), or when the delete was late by more than one loop interval
+  or by more than post − 60 s.
+- The old `service_instance_id` is the api instance whose copy count grew
+  in (t1, now].
+- `deleted_at` is recorded on the cluster clock.
+
+**Logs and pod state.**
+- A pod watch child records `finishedAt`, exit code and the deletion time.
+  It keeps only state fields, in memory and in `raw/pods.jsonl`, never the
+  pod objects, because their env carries the canary header.
+- Right before each delete, one `kubectl logs --timestamps` snapshot is
+  taken, then a bounded `kubectl logs -f` (grace + 15 s), awaited up to 2 s
+  before the delete. The two are merged, and the result saves the dying api
+  container's log through the trap step-1b path
+  (marker on a canary line, mode 0600, counts only). `verify.py soak
+  extras` scans it as its own canary source; a failed save is UNMEASURED.
+
+**Guard (b) at the deletion.** In the shut path only, the `demo->soak-agent`
+edge exempts at most 3 `istio_tcp_connections_failed_total` increments,
+recorded with their `response_flags`, when all of these hold:
+- the increment's `source_workload` is the deleted api;
+- its sample time is in [deleted_at, finishedAt + 30 s], or in the
+  replacement pod's first 30 s plus one ztunnel scrape.
+
+Every other edge, and `run` and `cal`, stay strict. The exemption also
+narrows by `response_flags`: in the deletion window only increments that
+are not a `CONNECT` failure, and in the replacement window only `CONNECT`
+failures. Every observed flag value is recorded.
+
+It downgrades a breach to a finding only when all of these hold (review
+round 2):
+- re-running the guard's own judge gives NOISY (UNKNOWN and ABSENT stay
+  breaches);
+- the re-read covers the guard's own window range (`guard.window_lookback`);
+- no increment falls outside the exemption windows;
+- the exempted steps equal the counted increase.
+
+The exemptions are recorded per api. When an api's count is REPORT-ONLY
+(Go), an exemption in its deletion window makes its shut verdict
+UNQUALIFIED ("final flush unverifiable").
+
+**Outputs.**
+- `shut-input.json` (`verify.py soak shut`): per api the old instance,
+  `deleted_at`, `finishedAt`, exit code, the pod's grace, and an upper
+  bound on the post requests issued before `finishedAt`, computed from the
+  rate and the measured post start.
+- `identity-input.json`, `shut-window.json` and `workers.json`.
+
+**Verdicts.**
+- **Exit within grace:** judged in all four languages. Exit 137 is a FAIL:
+  a deliberate rule, stricter than "exit code recorded", because SIGKILL
+  means the grace ran out. Exit 143 is a finding, shown next to the count
+  verdict.
+- **The count:** judged for the K-cal-qualified apis (Python, Node.js,
+  .NET); Go's is REPORT-ONLY.
+- **K3** (`verify.py soak identity`, `testing/k8s/soakident.py`):
+  - The hook's own apply is the `DEMO_RESTART_NONCE` roll (SR15 "Restart
+    mechanics (r6.2)"). It is not a pure restart: the old pods export to
+    the shared agent and the new ones through the copy.
+  - Per service, each new pod has exactly one new instance. That instance
+    is not an old one, not `unset`, and the same in Prometheus `instance`,
+    the copy's `service_instance_id` and Loki `service_instance_id`.
+  - Each old instance's last sample, read from its pod's start to
+    `finishedAt` + 10 min, is ≤ `finishedAt` + the export interval + 1 s.
+    `finishedAt` has one-second resolution, hence the 1 s.
+  - Report-only: the last sample ≥ the deletion time, on the cluster clock
+    (the watch's `deletionTimestamp`, else `deleted_at` + skew), as the
+    shutdown flush signal (SR7); a Loki id that belongs to no recorded pod, and the Tempo
+    `resource.service.instance.id` read through `TempoGuard`.
+  - The K-shut replacement pods are REPORT-ONLY.
+- **K5** (`verify.py soak labels`): on the app-pushed series (those with
+  `instance`):
+  - `job` = `<service_namespace>/<service_name>`, where `service.namespace`
+    is added by the platform's `k8s_attributes`;
+  - `instance` = `target_info`'s `service_instance_id`;
+  - every promoted attribute, read from `prometheus/kps`
+    `promoteResourceAttributes`, is on every series with the same value;
+  - no other resource label is on a data series. A leak names its metrics.
+  - The series count per metric before and after each roll is recorded. A
+    restart makes new series. The gateway span-metrics series (no
+    `instance`) are counted apart, not judged.
+
+**Justification**: a `run` flag that deletes pods would let a K8b
+invocation do it by mistake. Using the hook's roll avoids a second rollout
+inside the count window. A watch catches the terminated status that a poll
+can miss. A single-thread tick never races a guard read.
+
+**When it would be wrong**: the watch misses the terminated status, so the
+exit check is UNQUALIFIED; a second api pod answers k6; Prometheus stops
+putting `k8s_pod_name` on app series, so K3 is UNMEASURED.
+
+**Reversal action**: K3 on a second nonce roll after K-shut; a 1 s poll
+beside the watch; a dated note here.
+
 ## Report format (reference)
 `reports/<UTC>/report.md` + `report.json`: header (rc, commit, image digests,
 `go version -m`, `pip freeze`, parameters, VM resources, neighbour aggregate

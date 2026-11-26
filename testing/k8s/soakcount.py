@@ -17,7 +17,12 @@ committed ``specs/soak-simulation/reports/<run>.md``):
            gateway ``traces_span_metrics_calls_total`` per family (cross-check,
            shared sentinels), against the k6 cells x the K-cal k; the drain check.
   shut     K-shut: the old ``service_instance_id``'s fixed count in its bound,
-           exit within grace.
+           exit within grace (``--input``: ``soak.py shut``'s shut-input.json).
+  identity K3 on the nonce roll (judged) and the K-shut roll (report-only):
+           new instance per process, the same id in Prometheus, the copy and
+           Loki, the old instance's last sample (soakident.py).
+  labels   K5: job, instance and the promoted labels on the app series, the
+           series count before and after each roll (soakident.py).
   cal      K-cal: per-cell k from repeats (integer, stable), the rate cap.
   extras   K8b checks count does not cover (soakextras.py): api -> backend
            service-graph share, secret canary, SR9 orphans, SR10, per-severity logs.
@@ -1319,7 +1324,7 @@ def render_report(run: str, meta: dict, sections: dict[str, dict]) -> str:
         lines.append(f"- Image: `{d}`")
     if meta.get("digests"):
         lines.append("")
-    for name in ("passive", "gate", "count", "shut", "cal", "extras"):
+    for name in ("passive", "gate", "count", "shut", "identity", "labels", "cal", "extras"):
         sec = sections.get(name)
         if not sec:
             continue
@@ -1389,6 +1394,9 @@ def rows_for(name: str, data: dict) -> dict:
                          f"enqueue {_fmt(v['enqueue_rate'])}/s vs drain {_fmt(v['drain_rate'])}/s"))
     elif name == "extras":
         rows = [tuple(r) for r in data.get("rows") or []]
+    elif name in ("identity", "labels"):
+        import soakident
+        rows = soakident.rows(name, data)
     return {"rows": rows, "findings": findings, "queries": data.get("queries") or [], "window": data.get("window")}
 
 
@@ -1443,7 +1451,8 @@ def main_soak(b: verify.Backends, args, now: float, reader: sp.Reader | None = N
         import soakextras
         return soakextras.main_extras(r, args, d, langs, now)
     missing = {"passive": ("start",), "count": ("t1", "t2", "k6_log", "kcal"),
-               "shut": ("input",), "cal": ("input",)}.get(args.action, ())
+               "shut": ("input",), "cal": ("input",), "identity": ("input",),
+               "labels": ("input",)}.get(args.action, ())
     absent = [f"--{m.replace('_', '-')}" for m in missing if getattr(args, m, None) is None]
     output = getattr(args, "output", None)
     if output is not None and Path(output).exists():   # before any read
@@ -1466,6 +1475,9 @@ def main_soak(b: verify.Backends, args, now: float, reader: sp.Reader | None = N
         elif args.action == "shut":
             data = action_shut(r, args)
             ok = all(v["verdict"] in ("PASS", "REPORT-ONLY") for v in data["apis"].values())
+        elif args.action in ("identity", "labels"):
+            import soakident  # K3 / K5 (design K-D22 draft)
+            data, ok = soakident.main_ident(r, args, d, now)
         elif args.action == "cal":
             inp = _load_json(args.input)
             data = calibrate(inp["repeats"], mix=inp.get("mix"), rate=args.rate, drain=inp.get("drain"),
@@ -1473,6 +1485,9 @@ def main_soak(b: verify.Backends, args, now: float, reader: sp.Reader | None = N
             ok = all(v["qualified"] for v in data["services"].values())
         else:
             return action_report(args, d)
+    except InvalidInput as exc:
+        print(f"verify soak {args.action}: REFUSED {exc}", file=sys.stderr)
+        return 2
     except (verify.QueryError, ValueError, KeyError, OSError, subprocess.TimeoutExpired) as exc:
         print(f"verify soak {args.action}: ERROR {exc}", file=sys.stderr)
         return 1
@@ -1569,11 +1584,30 @@ def api_grace(r: sp.Reader, api: str) -> float | None:
     return float(g) if g is not None else None
 
 
+class InvalidInput(ValueError):
+    """An input the run itself marked invalid (``valid: false``): refused, exit 2."""
+
+
+def input_path(inp_file: Path, value: str) -> Path:
+    """A path named in an input JSON: absolute as is, relative to that file's
+    directory (``soak.py shut`` writes ``raw/<k6>.log`` and the K-cal path so)."""
+    p = Path(value)
+    return p if p.is_absolute() else Path(inp_file).parent / p
+
+
 def action_shut(r: sp.Reader, args) -> dict:
+    """``--input`` (``soak.py shut``'s ``shut-input.json``): t1, t2, k6_log, kcal
+    and per api ``old_instance``, ``deleted_at``, ``finished_at``, ``exit_code``,
+    optional ``grace_s`` (the pod's, recorded; else the Deployment's, read now),
+    ``post_before_finish`` and ``unqualified`` (a reason: the api is not
+    judged, e.g. its old instance or the deletion is unknown)."""
     inp = _load_json(args.input)
+    if inp.get("valid") is False:
+        raise InvalidInput(f"{args.input}: the shut window is invalid ({'; '.join(inp.get('reasons') or [])}); "
+                         "not judged")
     t1, t2 = float(inp["t1"]), float(inp["t2"])
-    cells = _read_cells(inp["k6_log"])
-    kcal = _load_json(inp["kcal"])
+    cells = _read_cells(input_path(args.input, inp["k6_log"]))
+    kcal = _load_json(input_path(args.input, inp["kcal"]))
     q, series = raw_read(r, FIXED_METRIC, {"job": sp.COPY_JOB, "service_name": ("=~", sp.DEMO_SERVICE_RE)},
                          t1, t2, COPY_EXPIRY_S)
     copy = copy_counts(series, t1, t2)
@@ -1581,19 +1615,39 @@ def action_shut(r: sp.Reader, args) -> dict:
     gate = scoped_gates([v for v in sent if v.scope == "copy"], extra)["copy"]
     apis = {}
     for api, a in inp["apis"].items():
+        if a.get("unqualified"):
+            apis[api] = {"service_instance_id": a.get("old_instance") or "", "counted": 0.0, "count_verdict": None,
+                         "verdict": "UNQUALIFIED", "reason": str(a["unqualified"]),
+                         "exit": exit_verdict(a.get("deleted_at"), a.get("finished_at"), a.get("grace_s"),
+                                              a.get("exit_code"))}
+            continue
         cal = (kcal.get("services") or {}).get(api) or {}
         c = copy.get(api) or CopyCount(api)
         counted = Counted(c.instances.get(a["old_instance"], 0.0), c.instances_hi.get(a["old_instance"], 0.0))
+        grace = a.get("grace_s")
         apis[api] = shut_verdict(a["old_instance"], counted, cells, cal.get("k") if cal.get("qualified") else None,
                                  service_lang(api), post_before_finish=a.get("post_before_finish"),
                                  deleted_at=a.get("deleted_at"), finished_at=a.get("finished_at"),
-                                 grace_s=api_grace(r, api), exit_code=a.get("exit_code"), copy_gate=gate)
+                                 grace_s=float(grace) if grace is not None else api_grace(r, api),
+                                 exit_code=a.get("exit_code"), copy_gate=gate)
+        apis[api]["grace_source"] = "recorded (pod spec)" if grace is not None else "Deployment, read now"
+        # Review round 2 M1: a guard (b) exemption in the deletion window may hide a
+        # lost shutdown flush; an api whose count is not judged cannot rule that out.
+        hidden = [e for e in a.get("edge_exemptions") or [] if str(e.get("window", "")).startswith("deletion")]
+        if hidden:
+            apis[api]["edge_exemptions"] = hidden
+            if apis[api]["count_verdict"] == "REPORT-ONLY" and apis[api]["verdict"] != "FAIL":
+                apis[api]["verdict"] = "UNQUALIFIED"
+                apis[api]["reason"] = (f"final flush unverifiable: {len(hidden)} guard (b) increment(s) exempted in "
+                                       "the deletion window and the count is report-only")
+        if a.get("findings"):
+            apis[api]["findings"] = list(a["findings"])
     return {"window": f"({sp.iso(t1)}, {sp.iso(t2)}]", "apis": apis, "copy_gate": gate, "queries": [q]}
 
 
 def action_report(args, d: Path) -> int:
     sections = {}
-    for name in ("passive", "gate", "count", "shut", "cal", "extras"):
+    for name in ("passive", "gate", "count", "shut", "identity", "labels", "cal", "extras"):
         p = d / f"soak-{name}.json"
         if p.exists():
             sections[name] = rows_for(name, _load_json(p))
@@ -1630,7 +1684,8 @@ def _walk(obj):
 def add_parser(sub) -> None:
     """The ``soak`` sub-command of verify.py."""
     p = sub.add_parser("soak", help="soak K-count: passive, count, shut, cal and report verdicts (read-only)")
-    p.add_argument("action", choices=("passive", "gate", "count", "shut", "cal", "extras", "report"))
+    p.add_argument("action", choices=("passive", "gate", "count", "shut", "identity", "labels", "cal", "extras",
+                                      "report"))
     p.add_argument("--run", required=True, help="soak run id (directory under testing/k8s/soak/runs/)")
     p.add_argument("--out-dir", type=Path, default=None, help="default testing/k8s/soak/runs/<run>/")
     p.add_argument("--start", type=float, help="passive: window start (epoch s), required")
@@ -1643,7 +1698,8 @@ def add_parser(sub) -> None:
     p.add_argument("--t2", type=float, help="count: window end (epoch s)")
     p.add_argument("--k6-log", type=Path, help="count: the saved kubectl logs of the k6 Job")
     p.add_argument("--kcal", type=Path, help="count: soak-cal.json")
-    p.add_argument("--input", type=Path, help="shut / cal: input JSON")
+    p.add_argument("--input", type=Path, help="shut / identity / labels / cal: input JSON (soak.py shut writes "
+                                              "shut-input.json and identity-input.json)")
     p.add_argument("--workers", type=Path, default=None,
                    help="count: soak.py run's workers.json ({start: {workers}, t2: {workers}}: the t2 record is "
                         "the restart check) or a flat {lang: {startedAt, first_drive, restartCount}} (live pods "
@@ -1657,5 +1713,7 @@ def add_parser(sub) -> None:
                         "<out-dir>/soak-<action>.json; an existing file is refused (e.g. cal: soak-cal.r2.json)")
     p.add_argument("--tag", default=None, help="report: the soaked commit's tag (default soak/<run>)")
     p.add_argument("--report", type=Path, default=None, help="report: default specs/soak-simulation/reports/<run>.md")
+    p.add_argument("--no-identity-tempo", action="store_true",
+                   help="identity: skip the report-only Tempo search per new instance (TempoGuard otherwise)")
     import soakextras  # the K8b checks count does not cover (soakextras.py)
     soakextras.add_arguments(p)

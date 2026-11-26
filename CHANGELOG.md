@@ -4943,6 +4943,21 @@ Unsupported instrumentation versions, task A10 (P18):
   - no canary hit in 25 sources;
   - 276 traces had no orphan;
   - SR10 waits for the allowlist ruling.
+- **Soak K-shut, K3 and K5 tooling (2026-11-26, design K-D22).** A new mode,
+  `soak.py shut`, runs one hooked window with `phase=pre` and `phase=post` k6
+  scenarios. At the phase boundary plus δ it deletes each language's api pod
+  by name, with a correction for the clock skew between laptop and cluster.
+  - A pod watch records `finishedAt` and the exit codes, never the pod
+    objects, since their env carries the canary header.
+  - The dying container's log is saved, from a snapshot plus a follow, and
+    scanned for the canary.
+  - A narrow guard (b) exemption covers only the deleted api's connections,
+    and only around the deletion.
+  - Two new read-only checks: `verify.py soak identity` (K3: a new
+    `service.instance.id` per pod, the same in Prometheus, the copy and
+    Loki; the old instance's last sample within one export interval of its
+    exit) and `soak labels` (K5: `job`, `instance` and the promoted resource
+    labels).
 - **CI runs the soak loop tests (2026-11-26, owner ruling).** The CI spec
   job and `testing/verify.sh demo-tests` now also run
   `testing/k8s/soak/test_*.py` (stdlib, against fakes, no cluster), on

@@ -706,7 +706,55 @@ def run_hooked(run_dir: Path) -> bool | None:
         return None
 
 
+def shut_deleted_logs(run_dir: Path) -> dict | None:
+    """``deleted_logs`` of ``soak.py shut``'s shut-window.json: the logs of the
+    api pods K-shut deleted, followed until their exit (the trap cannot read
+    them). None for a run that is not a shut run."""
+    p = run_dir / "shut-window.json"
+    if not p.exists():
+        return None
+    try:
+        return json.loads(p.read_text()).get("deleted_logs") or {}
+    except (OSError, json.JSONDecodeError):
+        return {"shut-window.json": {"error": "unreadable"}}
+
+
+def _saved_log_rows(run_dir: Path, rec: dict, canary: str, label: str) -> list[dict]:
+    rows = []
+    for key, r in sorted(rec.items()):
+        name = label.format(key=key)
+        if r.get("error"):
+            rows.append({"source": name, "status": "unmeasured", "reason": redact(r["error"]), "lines": 0,
+                         "hits": []})
+            continue
+        path = run_dir / "raw" / r.get("path", "")
+        text = path.read_text() if path.is_file() else ""
+        hits = (r.get("canary_lines") or 0) + sum(1 for ln in text.splitlines() if contains(ln, canary))
+        status = "scanned" if path.is_file() and r.get("canary_lines") is not None else "unmeasured"
+        row = {"source": name, "status": status, "lines": r.get("lines", 0),
+               "hits": [f"{hits} line(s)"] if hits else []}
+        if r.get("marker"):
+            row["note"] = "saved as the marker instead of the text (canary lines); count from the record"
+        if status == "unmeasured":
+            row["reason"] = "no saved file or no canary count"
+        rows.append(row)
+    return rows
+
+
 def canary_demo(run_dir: Path, canary: str, src: Sources, t1: float, t2: float, otel_logs: dict) -> list[dict]:
+    """The demo container logs of the trap (``canary_demo_trap``) plus, for a
+    K-shut run, the deleted api pods' followed logs, each its own source."""
+    rows = canary_demo_trap(run_dir, canary, src, t1, t2, otel_logs)
+    deleted = shut_deleted_logs(run_dir)
+    if deleted is not None:
+        if not deleted:
+            rows.append({"source": "deleted api pod logs (shut)", "status": "unmeasured", "lines": 0, "hits": [],
+                         "reason": "shut-window.json records no deleted pod log"})
+        rows += _saved_log_rows(run_dir, deleted, canary, "deleted api pod log {key} (shut)")
+    return rows
+
+
+def canary_demo_trap(run_dir: Path, canary: str, src: Sources, t1: float, t2: float, otel_logs: dict) -> list[dict]:
     """The window's demo container logs: the files the trap saved (step 1b). A
     hooked run without that record is UNMEASURED. Only a run not hooked (or with
     no state) may fall back to "measured empty via otel-logs file_log"
@@ -714,25 +762,7 @@ def canary_demo(run_dir: Path, canary: str, src: Sources, t1: float, t2: float, 
     window and otel-logs did not restart in it."""
     rec = trap_demo_logs(run_dir)
     if rec:
-        rows = []
-        for key, r in sorted(rec.items()):
-            name = f"demo container log {key} (trap)"
-            if r.get("error"):
-                rows.append({"source": name, "status": "unmeasured", "reason": redact(r["error"]), "lines": 0,
-                             "hits": []})
-                continue
-            path = run_dir / "raw" / r.get("path", "")
-            text = path.read_text() if path.is_file() else ""
-            hits = (r.get("canary_lines") or 0) + sum(1 for ln in text.splitlines() if contains(ln, canary))
-            status = "scanned" if path.is_file() and r.get("canary_lines") is not None else "unmeasured"
-            row = {"source": name, "status": status, "lines": r.get("lines", 0),
-                   "hits": [f"{hits} line(s)"] if hits else []}
-            if r.get("marker"):
-                row["note"] = "the trap saved the marker instead of the text (canary lines); count from the trap"
-            if status == "unmeasured":
-                row["reason"] = "no saved file or no canary count"
-            rows.append(row)
-        return rows
+        return _saved_log_rows(run_dir, rec, canary, "demo container log {key} (trap)")
     name = "demo container logs (window pods, replaced by the trap)"
     if run_hooked(run_dir):
         return [{"source": name, "status": "unmeasured", "lines": 0, "hits": [],

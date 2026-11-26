@@ -37,6 +37,14 @@ Modes:
                          phase B (rate steps -> loaded rate, drain rate).
                          --dry-run prints the plan; no kubectl call, nothing
                          written.
+  shut --run <id> --rate R --worker-interval I --kcal <soak-cal.json>
+       [--pre S] [--post S] [--delta S] [--quiesce Q] [--langs ...] [--control]
+                         K-shut + K3 + K5 (shut.py, design K-D22 draft): run's
+                         reads, hook (always: the nonce roll) and trap around
+                         one k6 Job with phase=pre|post; a pod watch; each api
+                         pod deleted by name at the k6 container's startedAt +
+                         pre + delta (a tick of the loop); the guarded quiesce;
+                         shut-input.json, identity-input.json, shut-window.json.
   cleanup --run <id> [--tag <t>]
                          the trap's steps for a run whose laptop was cut off.
   render --run <id> --what <object> [...]
@@ -98,6 +106,7 @@ import cal  # noqa: E402  (K-cal-d: the calibration driver)
 import guard  # noqa: E402
 import k6script  # noqa: E402
 import render  # noqa: E402
+import shut  # noqa: E402  (K-shut + K3 + K5, design K-D22 draft)
 import soakcount  # noqa: E402  (K-count: the FD exec sweep, testing/k8s/soakcount.py)
 from render import NAMESPACE, ROLE_LABEL, RUN_LABEL  # noqa: E402
 
@@ -121,6 +130,7 @@ GAP_FACTOR = 3
 READ_TIMEOUT_S = 25        # one kubectl / service-proxy call (review M5)
 READ_BUDGET = 0.8          # a guard read must end within this share of the interval
 STOP_BACKOFF_S = (5, 10, 20, 40, 60)
+TICK_MIN_S = 0.5           # the shortest sleep between two tick calls (K-shut)
 K6_WAITING = ("ImagePullBackOff", "ErrImagePull", "InvalidImageName", "CreateContainerConfigError",
               "CreateContainerError", "CrashLoopBackOff")
 
@@ -173,8 +183,9 @@ class Kube:
 
     Writes go only to ``namespace`` (soak-run objects of the run), plus the
     guarded namespace-label restore. No method deletes without a label
-    selector. ``deadline`` (a ``time.monotonic`` value) caps every call while a
-    guard read runs.
+    selector. K-shut's ``delete_api_pod`` is the one write outside the run's
+    objects: one demo api pod, by its labels and name. ``deadline`` (a
+    ``time.monotonic`` value) caps every call while a guard read runs.
     """
 
     def __init__(self, context: str, namespace: str = NAMESPACE,
@@ -243,13 +254,15 @@ class Kube:
                          "--ignore-not-found", "--wait=true", "--timeout=180s"], timeout=240)
 
     def logs(self, target: str, container: str | None = None,
-             since_time: str | None = None) -> tuple[int, str]:
+             since_time: str | None = None, timestamps: bool = False) -> tuple[int, str]:
         """``kubectl logs`` without ``--timestamps`` (review H1: a timestamp
         prefix breaks the summary markers and k6's long lines); one container
         and ``--since-time`` when given (the demo containers, trap step 1b)."""
         args = ["logs", target, f"--container={container}"] if container else ["logs", target, "--all-containers"]
         if since_time:
             args.append(f"--since-time={since_time}")
+        if timestamps:   # K-shut's phase times only (never a log that is saved)
+            args.append("--timestamps")
         proc = self._run(args, timeout=120)
         return proc.returncode, proc.stdout if proc.returncode == 0 else proc.stderr
 
@@ -261,6 +274,32 @@ class Kube:
         else:
             self._ok(["delete", "jobs", "-l", f"{RUN_LABEL}={render.check_run(run)},{ROLE_LABEL}=k6",
                       "--field-selector", f"metadata.name={name}", "--ignore-not-found"], timeout=60)
+
+    def delete_api_pod(self, lang: str, pod: str) -> None:
+        """K-shut's one write outside the run's objects (SR15 "Shutdown (r6.2)",
+        design K-D22): one demo api pod, by its Deployment's labels and its
+        name (no delete without a label selector), not waiting for the exit."""
+        if lang not in render.LANGS or not re.fullmatch(rf"demo-{lang}-api-[a-z0-9]+-[a-z0-9]+", pod):
+            raise SoakError(f"refusing to delete {pod}: not a demo api pod of {lang}")
+        out = self._ok(["delete", "pods", "-l",
+                        f"app.kubernetes.io/component=demo,app.kubernetes.io/name=demo-{lang}-api",
+                        "--field-selector", f"metadata.name={pod}", "--wait=false"], timeout=30)
+        if f'pod "{pod}" deleted' not in out:   # a selector that matched nothing exits 0 too
+            raise SoakError(f"delete {pod}: not deleted ({' '.join(out.split())[:120] or 'no output'})")
+
+    def follow_command(self, pod: str, container: str, since_time: str) -> list[str]:
+        """``kubectl logs -f --timestamps`` of one demo container (K-shut: a deleted
+        api pod's log until its exit, review round 1 HIGH-1)."""
+        if not guard.verify.POD_RE.fullmatch(pod) or not DNS1123_LABEL_RE.fullmatch(container):
+            raise SoakError(f"refusing logs of {pod}/{container}: not a demo pod and container")
+        return [*self.kubectl, "--context", self.context, "-n", self.namespace, "logs", pod, "-c", container,
+                "--timestamps", "-f", f"--since-time={since_time}"]
+
+    def watch_command(self, selector: str = DEMO_SELECTOR) -> list[str]:
+        """The read-only pod watch of K-shut: every update of the demo pods as
+        one ``{"type", "object"}`` JSON document."""
+        return [*self.kubectl, "--context", self.context, "-n", self.namespace, "get", "pods", "-l", selector,
+                "--watch", "--output-watch-events", "-o", "json"]
 
     def exec_fd(self, pod: str, container: str) -> str:
         """The one named exec of SR15 "Checker" (owner ruling K0e-2): the fixed,
@@ -758,6 +797,9 @@ class Loop:
         self.clock, self.sleep, self.interval = clock, sleep, interval
         self.fd_reader, self.log = fd_reader, log
         self.cfg.interval_s = interval
+        # K-shut only (design K-D22): turns the deletion's own guard (b) increase
+        # on the demo -> soak-agent edge into a finding (shut.EdgeExempt).
+        self.read_filter: Callable[[guard.GuardRead, float], guard.GuardRead] | None = None
         self.last_beat: float | None = None
 
     def heartbeat(self) -> str | None:
@@ -832,14 +874,33 @@ class Loop:
     def _read(self, roll: guard.RollState, loaded: bool) -> guard.GuardRead:
         self.kube.deadline = time.monotonic() + READ_BUDGET * self.interval
         try:
-            return guard.window_read(self.reader, self.cfg, roll, self.clock(), loaded=loaded)
+            at = self.clock()
+            read = guard.window_read(self.reader, self.cfg, roll, at, loaded=loaded)
+            return self.read_filter(read, at) if self.read_filter is not None else read
         finally:
             self.kube.deadline = None
+
+    def _wait(self, until: float, tick: Callable[[float], float | None] | None) -> None:
+        """Sleeps until ``until``; with a ``tick`` (K-shut, design K-D22) it is
+        called first and again at each wake time it returns (a time after now,
+        or None for no further wake before ``until``), from this thread, never
+        during a guard read."""
+        while True:
+            now = self.clock()
+            wake = tick(now) if tick is not None else None
+            now = self.clock()
+            if now >= until:
+                return
+            target = until if wake is None else min(until, max(wake, now + TICK_MIN_S))
+            self.sleep(target - now)
+            if target >= until:
+                return
 
     def window(self, name: str, duration_s: int, *, loaded: bool = False, gate: bool = True,
                start_load: Callable[[], Load | None] | None = None,
                services: list[str] | None = None, since: dict[str, float] | None = None,
-               exempt_copy_rolls: int = 0, exempt_window: tuple[float, float] = (0.0, 0.0)) -> WindowResult:
+               exempt_copy_rolls: int = 0, exempt_window: tuple[float, float] = (0.0, 0.0),
+               tick: Callable[[float], float | None] | None = None) -> WindowResult:
         res = WindowResult(name, started=False, valid=False)
         if gate:
             read = guard.entry_read(self.reader, self.cfg, self.clock(), clock=self.clock, sleep=self.sleep)
@@ -897,7 +958,10 @@ class Loop:
             # A fixed cadence (K-count re-review HIGH-2): the read's own time is
             # taken off the sleep, so a read starts every interval, not every
             # interval + read time; a read longer than the interval sleeps 0.
-            self.sleep(max(0.0, self.interval - (self.clock() - iteration_start)))
+            if tick is None:
+                self.sleep(max(0.0, self.interval - (self.clock() - iteration_start)))
+            else:
+                self._wait(iteration_start + self.interval, tick)
         return self._finish(res)
 
     def _finish(self, res: WindowResult) -> WindowResult:
@@ -1187,6 +1251,20 @@ def main(argv: list[str] | None = None) -> int:
     cp.add_argument("--p99", type=float, default=1.0)
     cp.add_argument("--control", action="store_true", help="K-copy: the positive control first")
     cp.add_argument("--dry-run", action="store_true", help="print the plan; no kubectl call, nothing written")
+    shp = sub.add_parser("shut", parents=[common], help="K-shut + K3 + K5 (design K-D22 draft)")
+    shp.add_argument("--rate", type=int, required=True, help="req/s per language (the K8b rate)")
+    shp.add_argument("--worker-interval", type=int, required=True,
+                     help="the hook's */worker DEMO_INTERVAL_SECONDS (10800, as K8b)")
+    shp.add_argument("--kcal", type=Path, required=True, help="K-cal's soak-cal.json (recorded in shut-input.json)")
+    shp.add_argument("--pre", type=int, default=shut.DEFAULT_PRE_S, help="seconds of the phase=pre scenario")
+    shp.add_argument("--post", type=int, default=shut.DEFAULT_POST_S, help="seconds of the phase=post scenario")
+    shp.add_argument("--delta", type=int, default=shut.DEFAULT_DELTA_S,
+                     help="seconds after the pre/post boundary (k6 container startedAt + pre) to delete the api pods")
+    shp.add_argument("--quiesce", type=float, default=soakcount.QUIESCE_S, help="seconds after k6 ends, before t2")
+    shp.add_argument("--allow-short-quiesce", action="store_true")
+    shp.add_argument("--timeout", type=int, default=10)
+    shp.add_argument("--p99", type=float, default=1.0)
+    shp.add_argument("--control", action="store_true", help="K-copy: the positive control first")
     args = p.parse_args(argv)
     try:
         render.check_run(args.run)
@@ -1236,6 +1314,8 @@ def main(argv: list[str] | None = None) -> int:
             return 0 if res.ok else 1
         if args.mode == "cal":
             return cal_mode(args, kube, d)
+        if args.mode == "shut":
+            return shut_mode(args, kube, d)
         return run_mode(args, kube, d)
     except (SoakError, render.RenderError, k6script.PlanError) as exc:
         print(f"soak: {exc}", file=sys.stderr)
@@ -1436,6 +1516,20 @@ def check_quiesce(args: argparse.Namespace) -> None:
                         "10800 for K8b): without it the workers keep the app default")
 
 
+def quiesce_window(args: argparse.Namespace, loop: Loop, res: WindowResult) -> WindowResult | None:
+    """The guarded quiesce after a loaded window whose k6 Job succeeded (K-D12
+    correction 2026-11-26), demo as the window left it; a laptop stall between
+    the two invalidates it. None without one."""
+    if not (res.valid and res.ended == "load done") or args.quiesce <= 0:
+        return None
+    q = loop.window(f"{args.window}-q", int(math.ceil(args.quiesce)), loaded=True, gate=False)
+    limit = loop.interval + QUIESCE_GAP_SLACK_S
+    if q.valid and q.start is not None and res.end is not None and q.start - res.end > limit:
+        q.valid, q.reason = False, (f"laptop: {q.start - res.end:.0f}s between the window and its "
+                                    f"quiesce (> {limit}s)")
+    return q
+
+
 def run_mode(args: argparse.Namespace, kube: Kube, d: Path) -> int:
     """Reads first (pre-flight, demo record, entry gate: review M9), then the
     writes inside the trap. A loaded window runs until the k6 Job succeeds (at
@@ -1485,12 +1579,7 @@ def run_mode(args: argparse.Namespace, kube: Kube, d: Path) -> int:
         res = loop.window(args.window, duration, loaded=plan is not None, gate=False, start_load=start_load)
         if plan is not None and res.started:
             done = res.valid and res.ended == "load done"
-            if done and args.quiesce > 0:
-                q = loop.window(f"{args.window}-q", int(math.ceil(args.quiesce)), loaded=True, gate=False)
-                limit = loop.interval + QUIESCE_GAP_SLACK_S
-                if q.valid and q.start is not None and res.end is not None and q.start - res.end > limit:
-                    q.valid, q.reason = False, (f"laptop: {q.start - res.end:.0f}s between the window and its "
-                                                f"quiesce (> {limit}s)")
+            q = quiesce_window(args, loop, res)
             completion = job_completion(kube, render.k6_name(args.window)) if done else None
             if workers is not None:
                 workers["t2"] = worker_record(ops, hook_t, args.langs, start=False)
@@ -1599,6 +1688,192 @@ def cal_mode(args: argparse.Namespace, kube: Kube, d: Path) -> int:
         hook_t = _setup(args, kube, reader, cfg, d, state, record)
         rc = cal.Calibrator(CalOps(args.run, kube, loop, reader, d), plan, d).run(hook_t)
     return rc
+
+
+# ── K-shut + K3 + K5 (design K-D22 draft) ──────────────────────────────────
+
+class ShutOps(CalOps):
+    """K-shut's cluster side: CalOps' reads plus the k6 container start, the
+    demo Deployments, the promoted list, and the one named api pod delete."""
+
+    def deployments(self) -> list[dict]:
+        return self.reader.kget(["deployments", "-n", guard.sp.APP_NS, "-l", DEMO_SELECTOR]).get("items") or []
+
+    def k6_started(self, job: str) -> float | None:
+        pods = self.reader.kget(["pods", "-n", guard.sp.APP_NS, "-l", f"job-name={job}"]).get("items") or []
+        for p in pods:
+            for c in (p.get("status") or {}).get("containerStatuses") or []:
+                st = c.get("state") or {}
+                ts = (st.get("running") or st.get("terminated") or {}).get("startedAt")
+                if ts:
+                    return guard.sp.parse_ts(ts)
+        return None
+
+    def promoted(self) -> dict:
+        """``promoteResourceAttributes`` of the Prometheus CR (K1 reads it on every
+        run; K5 asserts against the list read); else the newest passing K1
+        snapshot's, named."""
+        try:
+            otlp = ((self.reader.kget(["prometheus", "-n", "monitoring", "kps"]).get("spec") or {}).get("otlp") or {})
+            if otlp.get("promoteResourceAttributes"):
+                return {"list": list(otlp["promoteResourceAttributes"]), "source": "prometheus/kps spec.otlp (live)",
+                        "translation": otlp.get("translationStrategy")}
+            why = "prometheus/kps spec.otlp has no promoteResourceAttributes"
+        except guard.ReadError as exc:
+            why = f"prometheus/kps unreadable ({exc})"
+        snaps = sorted(self.d.parent.glob("*/snapshot.json"), key=lambda p: p.stat().st_mtime, reverse=True)
+        for snap in snaps:
+            try:
+                data = json.loads(snap.read_text())
+            except (OSError, json.JSONDecodeError):
+                continue
+            lst = (data.get("prometheus") or {}).get("promoteResourceAttributes")
+            if lst and data.get("verdict") == "PASS":
+                return {"list": list(lst), "source": f"K1 snapshot {snap.parent.name} ({why})",
+                        "translation": (data.get("prometheus") or {}).get("translationStrategy")}
+        return {"list": None, "source": f"none ({why}; no passing K1 snapshot)"}
+
+    def delete(self, lang: str, pod: str) -> None:
+        self.kube.delete_api_pod(lang, pod)
+
+    def k6_job_created(self, job: str) -> float | None:
+        meta = self.reader.kget(["jobs", "-n", guard.sp.APP_NS, job]).get("metadata") or {}
+        return guard.sp.parse_ts(meta.get("creationTimestamp"))
+
+    def k6_log_timestamps(self, job: str) -> str | None:
+        rc, text = self.kube.logs(f"job/{job}", timestamps=True)
+        return text if rc == 0 else None
+
+    def follow_command(self, pod: str, container: str, since: str) -> list[str]:
+        return self.kube.follow_command(pod, container, since)
+
+    def read_logs(self, pod: str, container: str, since: str, timestamps: bool = False) -> tuple[int, str]:
+        return self.kube.logs(f"pod/{pod}", container, since, timestamps=timestamps)
+
+    def save_k6_log(self, job: str) -> str | None:
+        rc, text = self.kube.logs(f"job/{job}")
+        write_evidence(self.d / "raw" / (f"{job}.log" if rc == 0 else f"{job}.log.err"), text)
+        return text if rc == 0 else None
+
+
+def spawn_watch(cmd: list[str]) -> subprocess.Popen:
+    """The pod watch child in its own session, ended with the other children on
+    a signal (kill_children); stderr is dropped (it could echo a request)."""
+    proc = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                            text=True, start_new_session=True)
+    _children.add(proc)
+    return proc
+
+
+def spawn_logs(cmd: list[str]) -> subprocess.Popen:
+    """The deleted api pod's ``kubectl logs -f`` child (as the watch child)."""
+    return spawn_watch(cmd)
+
+
+def shut_plan(args: argparse.Namespace) -> shut.ShutPlan:
+    plan = shut.ShutPlan(langs=tuple(args.langs), rate=args.rate, pre_s=args.pre, post_s=args.post,
+                         delta_s=args.delta, quiesce_s=args.quiesce, worker_interval_s=args.worker_interval or 0,
+                         timeout_s=args.timeout, p99_s=args.p99)
+    plan.validate()
+    return plan
+
+
+def shut_mode(args: argparse.Namespace, kube: Kube, d: Path) -> int:
+    """K-shut + K3 + K5 (design K-D22 draft): ``run``'s reads, hook (always: the
+    nonce roll) and trap around one k6 window with ``phase=pre|post``, the api
+    pods deleted by name at the boundary + delta, the guarded quiesce, then the
+    inputs of ``verify.py soak shut``, ``identity`` and ``labels``."""
+    args.hook, args.window = True, shut.WINDOW
+    check_quiesce(args)
+    plan = shut_plan(args)
+    if not args.kcal.is_file():
+        raise SoakError(f"--kcal {args.kcal}: not a file")
+    started = _start(args, kube, d)
+    if started is None:
+        return 1
+    record, reader, cfg, loop = started
+    not_one = {lang: n for lang, n in (record.get("replicas") or {}).items() if n != 1}
+    if not_one:
+        print(f"preflight: REFUSED api replicas must be 1 for K-shut: {not_one} (nothing written)")
+        return 1
+    k6plan = plan.k6()
+    state = _state(args, kube, record, reservoir=bool(k6plan.reservoir))
+    res = q = inputs = None
+    with _session(kube, args.run, d, state):
+        ops = ShutOps(args.run, kube, loop, reader, d)
+        watch = shut.PodWatch(kube.watch_command(), spawn_watch).start()
+        try:
+            sh = shut.Shutter(ops, plan, d, kcal=args.kcal, watch=watch, log=loop.log, interval_s=loop.interval,
+                              log_spawn=spawn_logs)
+            sh.before_hook()
+            hook_t = _setup(args, kube, reader, cfg, d, state, record)
+            sh.after_hook(hook_t)
+            workers = {"start": worker_record(ops, hook_t, args.langs, start=True)}
+            cal.write_json(d / "workers.json", workers)
+            now = ops.now()
+            t2_plan = now + k6plan.deadline_s + loop.interval + READ_BUDGET * loop.interval + args.quiesce
+            bad = worker_start_problems(workers["start"], args.langs, now, t2_plan, quiesce=args.quiesce,
+                                        interval=float(args.worker_interval))
+            if bad:
+                raise SoakError("worker window: " + "; ".join(bad) + " (shut could not qualify it; not started)")
+
+            def start_load():
+                before = loop.clock()
+                kube.apply(args.run, k6_objects(args.run, args.window, k6plan))
+                after = loop.clock()
+                sh.start_window(after, (before, after))
+                return Load(render.k6_name(args.window), k6plan.pull_s, k6plan.deadline_s)
+            loop.read_filter = lambda read, at: sh.exempt.filter(read, reader, at, guard.window_lookback(cfg))
+            try:
+                res = loop.window(args.window, k6plan.deadline_s, loaded=True, gate=False, start_load=start_load,
+                                  tick=sh.tick)
+                if not res.started:
+                    return 1
+                q = quiesce_window(args, loop, res)
+            finally:
+                loop.read_filter = None
+            done = res.valid and res.ended == "load done"
+            completion = job_completion(kube, render.k6_name(args.window)) if done else None
+            workers["t2"] = worker_record(ops, hook_t, args.langs, start=False)
+            cal.write_json(d / "workers.json", workers)
+            inputs = count_inputs(args, res, q, hooked=True, k6_completion=completion,
+                                  interval=float(args.worker_interval))
+            if not sh.done:
+                inputs["reasons"].append("the api pods were not deleted inside the window")
+            not_deleted = [lang for lang, r in sh.deletions.items() if r.get("deleted_at") is None]
+            if not_deleted:
+                inputs["reasons"].append(f"api pod delete failed: {', '.join(not_deleted)}")
+            inputs["reasons"] += sh.problems
+            inputs["valid"] = not inputs["reasons"]
+            canary_file = d / "canary"
+            canary = canary_file.read_text().strip() if canary_file.exists() else ""
+            sh.save_deleted_logs(canary, write_private)
+            text = ops.save_k6_log(render.k6_name(args.window))
+            cells = None
+            if text is not None:
+                summary, _ = k6script.parse_logs(text)
+                cells = soakcount.cell_table(k6script.cell_counts(summary)) if summary else None
+            new_api = sh.new_api_pods()
+            cal.write_json(d / "shut-input.json", sh.shut_input(inputs["t1"], inputs["t2"], cells, new_api,
+                                                                inputs["reasons"]))
+            cal.write_json(d / "identity-input.json", sh.identity_input(inputs["t1"], inputs["t2"], new_api))
+            window = {k: v for k, v in inputs.items() if k not in ("count_args", "note")}
+            window.update(commands=shut.commands(args.run, inputs["valid"]), deletions=sh.deletions,
+                          k6_started_at=sh.k6_started, planned_delete_at=sh.planned, skew_s=sh.skew,
+                          skew_error_s=sh.skew_error_s, phase=sh.phase, deleted_logs=sh.deleted_logs,
+                          edge_exemptions=sh.exempt.records,
+                          edge_flags_seen=sorted(sh.exempt.flags_seen))
+            cal.write_json(d / "shut-window.json", window)
+            loop.log(f"shut window: t1 {inputs['t1_iso']}, t2 {inputs['t2_iso']} "
+                     f"({'valid' if inputs['valid'] else 'INVALID: ' + '; '.join(inputs['reasons'])}); "
+                     "shut-input.json, identity-input.json")
+            for cmd in window["commands"]:
+                loop.log(f"next: {cmd}")
+        finally:
+            watch.stop()
+            write_evidence(d / "pods.jsonl", watch.lines())
+    ok = res is not None and res.valid and (q is None or q.valid) and inputs is not None and inputs["valid"]
+    return 0 if ok else 1
 
 
 def _steps(text: str) -> list[int]:

@@ -337,10 +337,16 @@ def _scoped_sentinels(sent: list, loaded: bool) -> list[Item]:
     return out
 
 
+def window_lookback(cfg: GuardConfig) -> int:
+    """The range a window read judges: twice the interval (a start between two
+    reads is never missed). K-shut's edge exemption re-reads exactly this range."""
+    return 2 * cfg.interval_s
+
+
 def window_read(r: sp.Reader, cfg: GuardConfig, roll: RollState, at: float, *, loaded: bool) -> GuardRead:
     """The read inside a window, every ``interval_s`` (guard (a) not read)."""
     mark = _retry_mark(r)
-    items, out, sent, _ = _platform(r, cfg, at, 2 * cfg.interval_s, expect_copy=False, roll=roll)
+    items, out, sent, _ = _platform(r, cfg, at, window_lookback(cfg), expect_copy=False, roll=roll)
     kept = []
     for item in scoped(items):
         if item.name.startswith(("guard (g)", "guard (h)", "gate sentinels")):
