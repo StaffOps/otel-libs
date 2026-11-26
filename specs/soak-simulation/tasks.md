@@ -270,7 +270,7 @@ SR15 "Evidence (r6.2)").
 | K8b-sev Per-`severity_number` log counts as verdicts (r6.1) | AG6 | Deferred 2026-11-23 (counts recorded report-only in K8b) | a log-loss report, or the report-only counts in K8b show a loss pattern |
 | K10-blackhole NetworkPolicy black hole (r6.1 mode) | AG11 | Dropped 2026-11-23 | ambient enforcement of namespaced egress NetworkPolicies is measured on the cluster |
 | K9 OBI vs SDK | — | Deferred 2026-11-19 | the owner creates the `staffops*` namespace |
-| K10 + K10b Failure modes and SR6 cases (r6.2 row) | AG13 (added 2026-11-25, owner ruling "Enxuto"): the 0.3.0 failure-mode and misconfiguration behaviour is covered by the Compose e2e and unit suites, not by a cluster soak | Deferred 2026-11-25, to after 0.3.0 final | an export-failure report from a user, a change to the exporter retry or queue settings in any language, or the owner asks for it before 1.0 |
+| K10 + K10b Failure modes and SR6 cases (r6.2 row) | AG13 (added 2026-11-25, owner ruling "Enxuto"): the 0.3.0 failure-mode and misconfiguration behaviour is covered by the Compose e2e and unit suites, not by a cluster soak | Deferred 2026-11-25, to after 0.3.0 final. *Owner ruling 2026-11-26:* the open question of guard (f) (`up == 1` on the soak-agent, agent and gateway) during the K10 back-pressure flip is deferred with AG13; it returns only if K10 returns | an export-failure report from a user, a change to the exporter retry or queue settings in any language, or the owner asks for it before 1.0 |
 
 ## Owner rulings 2026-11-23 on the r6.2 open questions (K0e decisions)
 
