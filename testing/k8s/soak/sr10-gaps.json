@@ -13,7 +13,7 @@
    ],
    "status": "needs-row",
    "reason": "aspnetcore memory_pool meter: the C11 '.NET framework metrics' row must list it first (round-2 refuter)",
-   "gaps_ref": "overview.md#known-emitted-telemetry-gaps \u2014 .NET framework metrics (branch, task C11)",
+   "gaps_ref": "overview.md#known-emitted-telemetry-gaps — .NET framework metrics (branch, task C11)",
    "source": "refuter classification of the k8b-20261125 FAIL items (review round 1)"
   },
   {
@@ -27,7 +27,7 @@
    ],
    "status": "needs-row",
    "reason": "aspnetcore memory_pool meter: the C11 '.NET framework metrics' row must list it first (round-2 refuter)",
-   "gaps_ref": "overview.md#known-emitted-telemetry-gaps \u2014 .NET framework metrics (branch, task C11)",
+   "gaps_ref": "overview.md#known-emitted-telemetry-gaps — .NET framework metrics (branch, task C11)",
    "source": "refuter classification of the k8b-20261125 FAIL items (review round 1)"
   },
   {
@@ -41,7 +41,7 @@
    ],
    "status": "needs-row",
    "reason": "aspnetcore memory_pool meter: the C11 '.NET framework metrics' row must list it first (round-2 refuter)",
-   "gaps_ref": "overview.md#known-emitted-telemetry-gaps \u2014 .NET framework metrics (branch, task C11)",
+   "gaps_ref": "overview.md#known-emitted-telemetry-gaps — .NET framework metrics (branch, task C11)",
    "source": "refuter classification of the k8b-20261125 FAIL items (review round 1)"
   },
   {
@@ -55,7 +55,7 @@
    ],
    "status": "needs-row",
    "reason": "aspnetcore memory_pool meter: the C11 '.NET framework metrics' row must list it first (round-2 refuter)",
-   "gaps_ref": "overview.md#known-emitted-telemetry-gaps \u2014 .NET framework metrics (branch, task C11)",
+   "gaps_ref": "overview.md#known-emitted-telemetry-gaps — .NET framework metrics (branch, task C11)",
    "source": "refuter classification of the k8b-20261125 FAIL items (review round 1)"
   },
   {
@@ -67,10 +67,11 @@
     "python",
     "node"
    ],
-   "status": "proposed",
+   "status": "accepted",
    "reason": "matched by the round-1 token heuristic; needs review",
    "gaps_ref": "overview.md: .NET framework metrics (branch, task C11)",
-   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)"
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)",
+   "ruling": "owner 2026-11-26: accepted (gaps row exists)"
   },
   {
    "kind": "metric",
@@ -81,10 +82,11 @@
     "node",
     "dotnet"
    ],
-   "status": "proposed",
+   "status": "accepted",
    "reason": "matched by the round-1 token heuristic; needs review",
    "gaps_ref": "overview.md: Node.js Redis metrics",
-   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)"
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)",
+   "ruling": "owner 2026-11-26: accepted (gaps row exists)"
   },
   {
    "kind": "metric",
@@ -95,10 +97,11 @@
     "node",
     "dotnet"
    ],
-   "status": "proposed",
+   "status": "accepted",
    "reason": "matched by the round-1 token heuristic; needs review",
    "gaps_ref": "overview.md: Node.js Redis metrics",
-   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)"
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)",
+   "ruling": "owner 2026-11-26: accepted (gaps row exists)"
   },
   {
    "kind": "metric",
@@ -109,10 +112,11 @@
     "node",
     "dotnet"
    ],
-   "status": "proposed",
+   "status": "accepted",
    "reason": "matched by the round-1 token heuristic; needs review",
    "gaps_ref": "overview.md: Node.js Redis metrics",
-   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)"
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)",
+   "ruling": "owner 2026-11-26: accepted (gaps row exists)"
   },
   {
    "kind": "metric",
@@ -123,10 +127,11 @@
     "node",
     "dotnet"
    ],
-   "status": "proposed",
+   "status": "accepted",
    "reason": "matched by the round-1 token heuristic; needs review",
    "gaps_ref": "overview.md: Node.js Redis metrics",
-   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)"
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)",
+   "ruling": "owner 2026-11-26: accepted (gaps row exists)"
   },
   {
    "kind": "metric",
@@ -137,10 +142,11 @@
     "node",
     "dotnet"
    ],
-   "status": "proposed",
+   "status": "accepted",
    "reason": "matched by the round-1 token heuristic; needs review",
    "gaps_ref": "overview.md: Node.js Redis metrics",
-   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)"
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)",
+   "ruling": "owner 2026-11-26: accepted (gaps row exists)"
   },
   {
    "kind": "metric",
@@ -151,10 +157,11 @@
     "node",
     "dotnet"
    ],
-   "status": "proposed",
+   "status": "accepted",
    "reason": "matched by the round-1 token heuristic; needs review",
    "gaps_ref": "overview.md: Node.js Redis metrics",
-   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)"
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)",
+   "ruling": "owner 2026-11-26: accepted (gaps row exists)"
   },
   {
    "kind": "metric",
@@ -165,10 +172,11 @@
     "node",
     "dotnet"
    ],
-   "status": "proposed",
+   "status": "accepted",
    "reason": "matched by the round-1 token heuristic; needs review",
    "gaps_ref": "overview.md: Node.js Redis metrics",
-   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)"
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)",
+   "ruling": "owner 2026-11-26: accepted (gaps row exists)"
   },
   {
    "kind": "metric",
@@ -179,10 +187,11 @@
     "node",
     "dotnet"
    ],
-   "status": "proposed",
+   "status": "accepted",
    "reason": "matched by the round-1 token heuristic; needs review",
    "gaps_ref": "overview.md: Node.js Redis metrics",
-   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)"
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)",
+   "ruling": "owner 2026-11-26: accepted (gaps row exists)"
   },
   {
    "kind": "metric",
@@ -193,10 +202,11 @@
     "node",
     "dotnet"
    ],
-   "status": "proposed",
+   "status": "accepted",
    "reason": "matched by the round-1 token heuristic; needs review",
    "gaps_ref": "overview.md: Node.js Redis metrics",
-   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)"
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)",
+   "ruling": "owner 2026-11-26: accepted (gaps row exists)"
   },
   {
    "kind": "metric",
@@ -207,10 +217,11 @@
     "node",
     "dotnet"
    ],
-   "status": "proposed",
+   "status": "accepted",
    "reason": "matched by the round-1 token heuristic; needs review",
    "gaps_ref": "overview.md: Node.js Redis metrics",
-   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)"
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)",
+   "ruling": "owner 2026-11-26: accepted (gaps row exists)"
   },
   {
    "kind": "metric",
@@ -221,10 +232,11 @@
     "node",
     "dotnet"
    ],
-   "status": "proposed",
+   "status": "accepted",
    "reason": "matched by the round-1 token heuristic; needs review",
    "gaps_ref": "overview.md: Node.js Redis metrics",
-   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)"
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)",
+   "ruling": "owner 2026-11-26: accepted (gaps row exists)"
   },
   {
    "kind": "metric",
@@ -235,10 +247,11 @@
     "node",
     "dotnet"
    ],
-   "status": "proposed",
+   "status": "accepted",
    "reason": "matched by the round-1 token heuristic; needs review",
    "gaps_ref": "overview.md: Node.js Redis metrics",
-   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)"
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)",
+   "ruling": "owner 2026-11-26: accepted (gaps row exists)"
   },
   {
    "kind": "metric",
@@ -249,10 +262,11 @@
     "node",
     "dotnet"
    ],
-   "status": "proposed",
+   "status": "accepted",
    "reason": "matched by the round-1 token heuristic; needs review",
    "gaps_ref": "overview.md: Node.js Redis metrics",
-   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)"
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)",
+   "ruling": "owner 2026-11-26: accepted (gaps row exists)"
   },
   {
    "kind": "metric",
@@ -263,10 +277,11 @@
     "python",
     "node"
    ],
-   "status": "proposed",
+   "status": "accepted",
    "reason": "matched by the round-1 token heuristic; needs review",
    "gaps_ref": "overview.md: .NET framework metrics (branch, task C11)",
-   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)"
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)",
+   "ruling": "owner 2026-11-26: accepted (gaps row exists)"
   },
   {
    "kind": "metric",
@@ -277,10 +292,11 @@
     "python",
     "node"
    ],
-   "status": "proposed",
+   "status": "accepted",
    "reason": "matched by the round-1 token heuristic; needs review",
    "gaps_ref": "overview.md: .NET framework metrics (branch, task C11)",
-   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)"
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)",
+   "ruling": "owner 2026-11-26: accepted (gaps row exists)"
   },
   {
    "kind": "metric",
@@ -291,10 +307,11 @@
     "python",
     "node"
    ],
-   "status": "proposed",
+   "status": "accepted",
    "reason": "matched by the round-1 token heuristic; needs review",
    "gaps_ref": "overview.md: .NET gRPC metrics",
-   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)"
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)",
+   "ruling": "owner 2026-11-26: accepted (gaps row exists)"
   },
   {
    "kind": "metric",
@@ -305,10 +322,11 @@
     "python",
     "node"
    ],
-   "status": "proposed",
+   "status": "accepted",
    "reason": "matched by the round-1 token heuristic; needs review",
    "gaps_ref": "overview.md: .NET gRPC metrics",
-   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)"
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)",
+   "ruling": "owner 2026-11-26: accepted (gaps row exists)"
   },
   {
    "kind": "metric attr",
@@ -322,7 +340,7 @@
    "status": "proposed",
    "attribute": "network_protocol_name",
    "reason": "Go HTTP server instrumentation records server.address, server.port, network.protocol.name on http.server.request.duration",
-   "gaps_ref": "overview.md#known-emitted-telemetry-gaps \u2014 (no row yet)",
+   "gaps_ref": "overview.md#known-emitted-telemetry-gaps — (no row yet)",
    "source": "refuter classification of the k8b-20261125 FAIL items (review round 1)"
   },
   {
@@ -337,7 +355,7 @@
    "status": "proposed",
    "attribute": "server_address",
    "reason": "Go HTTP server instrumentation records server.address, server.port, network.protocol.name on http.server.request.duration",
-   "gaps_ref": "overview.md#known-emitted-telemetry-gaps \u2014 (no row yet)",
+   "gaps_ref": "overview.md#known-emitted-telemetry-gaps — (no row yet)",
    "source": "refuter classification of the k8b-20261125 FAIL items (review round 1)"
   },
   {
@@ -352,7 +370,7 @@
    "status": "proposed",
    "attribute": "server_port",
    "reason": "Go HTTP server instrumentation records server.address, server.port, network.protocol.name on http.server.request.duration",
-   "gaps_ref": "overview.md#known-emitted-telemetry-gaps \u2014 (no row yet)",
+   "gaps_ref": "overview.md#known-emitted-telemetry-gaps — (no row yet)",
    "source": "refuter classification of the k8b-20261125 FAIL items (review round 1)"
   },
   {
@@ -367,7 +385,7 @@
    "status": "proposed",
    "attribute": "network_protocol_name",
    "reason": "Go HTTP server instrumentation records server.address, server.port, network.protocol.name on http.server.request.duration",
-   "gaps_ref": "overview.md#known-emitted-telemetry-gaps \u2014 (no row yet)",
+   "gaps_ref": "overview.md#known-emitted-telemetry-gaps — (no row yet)",
    "source": "refuter classification of the k8b-20261125 FAIL items (review round 1)"
   },
   {
@@ -382,7 +400,7 @@
    "status": "proposed",
    "attribute": "server_address",
    "reason": "Go HTTP server instrumentation records server.address, server.port, network.protocol.name on http.server.request.duration",
-   "gaps_ref": "overview.md#known-emitted-telemetry-gaps \u2014 (no row yet)",
+   "gaps_ref": "overview.md#known-emitted-telemetry-gaps — (no row yet)",
    "source": "refuter classification of the k8b-20261125 FAIL items (review round 1)"
   },
   {
@@ -397,7 +415,7 @@
    "status": "proposed",
    "attribute": "server_port",
    "reason": "Go HTTP server instrumentation records server.address, server.port, network.protocol.name on http.server.request.duration",
-   "gaps_ref": "overview.md#known-emitted-telemetry-gaps \u2014 (no row yet)",
+   "gaps_ref": "overview.md#known-emitted-telemetry-gaps — (no row yet)",
    "source": "refuter classification of the k8b-20261125 FAIL items (review round 1)"
   },
   {
@@ -409,10 +427,11 @@
     "python",
     "node"
    ],
-   "status": "proposed",
+   "status": "accepted",
    "reason": "matched by the round-1 token heuristic; needs review",
    "gaps_ref": "overview.md: .NET framework metrics (branch, task C11)",
-   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)"
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)",
+   "ruling": "owner 2026-11-26: accepted (gaps row exists)"
   },
   {
    "kind": "metric",
@@ -423,10 +442,11 @@
     "python",
     "node"
    ],
-   "status": "proposed",
+   "status": "accepted",
    "reason": "matched by the round-1 token heuristic; needs review",
    "gaps_ref": "overview.md: .NET framework metrics (branch, task C11)",
-   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)"
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)",
+   "ruling": "owner 2026-11-26: accepted (gaps row exists)"
   },
   {
    "kind": "metric",
@@ -437,10 +457,11 @@
     "python",
     "node"
    ],
-   "status": "proposed",
+   "status": "accepted",
    "reason": "matched by the round-1 token heuristic; needs review",
    "gaps_ref": "overview.md: .NET framework metrics (branch, task C11)",
-   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)"
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)",
+   "ruling": "owner 2026-11-26: accepted (gaps row exists)"
   },
   {
    "kind": "metric",
@@ -451,10 +472,11 @@
     "python",
     "node"
    ],
-   "status": "proposed",
+   "status": "accepted",
    "reason": "matched by the round-1 token heuristic; needs review",
    "gaps_ref": "overview.md: .NET framework metrics (branch, task C11)",
-   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)"
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)",
+   "ruling": "owner 2026-11-26: accepted (gaps row exists)"
   },
   {
    "kind": "metric",
@@ -465,10 +487,11 @@
     "node",
     "dotnet"
    ],
-   "status": "proposed",
+   "status": "accepted",
    "reason": "matched by the round-1 token heuristic; needs review",
    "gaps_ref": "overview.md: Python and Node.js gRPC",
-   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)"
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)",
+   "ruling": "owner 2026-11-26: accepted (gaps row exists)"
   },
   {
    "kind": "metric",
@@ -479,10 +502,11 @@
     "node",
     "dotnet"
    ],
-   "status": "proposed",
+   "status": "accepted",
    "reason": "matched by the round-1 token heuristic; needs review",
    "gaps_ref": "overview.md: Python and Node.js gRPC",
-   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)"
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)",
+   "ruling": "owner 2026-11-26: accepted (gaps row exists)"
   },
   {
    "kind": "metric attr",
@@ -492,11 +516,12 @@
     "go",
     "dotnet"
    ],
-   "status": "proposed",
+   "status": "accepted",
    "attribute": "rpc_grpc_status_code",
    "reason": "matched by the round-1 token heuristic; needs review",
    "gaps_ref": "overview.md: Python and Node.js gRPC",
-   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)"
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)",
+   "ruling": "owner 2026-11-26: accepted (gaps row exists)"
   },
   {
    "kind": "metric attr",
@@ -506,11 +531,12 @@
     "python",
     "node"
    ],
-   "status": "proposed",
+   "status": "accepted",
    "attribute": "rpc_response_status_code",
    "reason": "Python and Node.js gRPC spans carry the legacy rpc.grpc.status_code (round-2 refuter)",
-   "gaps_ref": "overview.md#known-emitted-telemetry-gaps \u2014 Python and Node.js gRPC (legacy rpc.grpc.status_code instead of rpc.response.status_code)",
-   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)"
+   "gaps_ref": "overview.md#known-emitted-telemetry-gaps — Python and Node.js gRPC (legacy rpc.grpc.status_code instead of rpc.response.status_code)",
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)",
+   "ruling": "owner 2026-11-26: accepted (gaps row exists)"
   },
   {
    "kind": "metric attr",
@@ -520,11 +546,12 @@
     "go",
     "dotnet"
    ],
-   "status": "proposed",
+   "status": "accepted",
    "attribute": "rpc_service",
    "reason": "matched by the round-1 token heuristic; needs review",
    "gaps_ref": "overview.md: Python and Node.js gRPC",
-   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)"
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)",
+   "ruling": "owner 2026-11-26: accepted (gaps row exists)"
   },
   {
    "kind": "metric attr",
@@ -534,11 +561,12 @@
     "go",
     "dotnet"
    ],
-   "status": "proposed",
+   "status": "accepted",
    "attribute": "rpc_grpc_status_code",
    "reason": "matched by the round-1 token heuristic; needs review",
    "gaps_ref": "overview.md: Python and Node.js gRPC",
-   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)"
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)",
+   "ruling": "owner 2026-11-26: accepted (gaps row exists)"
   },
   {
    "kind": "metric attr",
@@ -548,11 +576,12 @@
     "python",
     "node"
    ],
-   "status": "proposed",
+   "status": "accepted",
    "attribute": "rpc_response_status_code",
    "reason": "Python and Node.js gRPC spans carry the legacy rpc.grpc.status_code (round-2 refuter)",
-   "gaps_ref": "overview.md#known-emitted-telemetry-gaps \u2014 Python and Node.js gRPC (legacy rpc.grpc.status_code instead of rpc.response.status_code)",
-   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)"
+   "gaps_ref": "overview.md#known-emitted-telemetry-gaps — Python and Node.js gRPC (legacy rpc.grpc.status_code instead of rpc.response.status_code)",
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)",
+   "ruling": "owner 2026-11-26: accepted (gaps row exists)"
   },
   {
    "kind": "metric attr",
@@ -562,11 +591,12 @@
     "go",
     "dotnet"
    ],
-   "status": "proposed",
+   "status": "accepted",
    "attribute": "rpc_service",
    "reason": "matched by the round-1 token heuristic; needs review",
    "gaps_ref": "overview.md: Python and Node.js gRPC",
-   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)"
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)",
+   "ruling": "owner 2026-11-26: accepted (gaps row exists)"
   },
   {
    "kind": "metric attr",
@@ -576,11 +606,12 @@
     "go",
     "dotnet"
    ],
-   "status": "proposed",
+   "status": "accepted",
    "attribute": "rpc_grpc_status_code",
    "reason": "matched by the round-1 token heuristic; needs review",
    "gaps_ref": "overview.md: Python and Node.js gRPC",
-   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)"
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)",
+   "ruling": "owner 2026-11-26: accepted (gaps row exists)"
   },
   {
    "kind": "metric attr",
@@ -590,11 +621,12 @@
     "python",
     "node"
    ],
-   "status": "proposed",
+   "status": "accepted",
    "attribute": "rpc_response_status_code",
    "reason": "Python and Node.js gRPC spans carry the legacy rpc.grpc.status_code (round-2 refuter)",
-   "gaps_ref": "overview.md#known-emitted-telemetry-gaps \u2014 Python and Node.js gRPC (legacy rpc.grpc.status_code instead of rpc.response.status_code)",
-   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)"
+   "gaps_ref": "overview.md#known-emitted-telemetry-gaps — Python and Node.js gRPC (legacy rpc.grpc.status_code instead of rpc.response.status_code)",
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)",
+   "ruling": "owner 2026-11-26: accepted (gaps row exists)"
   },
   {
    "kind": "metric attr",
@@ -604,11 +636,12 @@
     "go",
     "dotnet"
    ],
-   "status": "proposed",
+   "status": "accepted",
    "attribute": "rpc_service",
    "reason": "matched by the round-1 token heuristic; needs review",
    "gaps_ref": "overview.md: Python and Node.js gRPC",
-   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)"
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)",
+   "ruling": "owner 2026-11-26: accepted (gaps row exists)"
   },
   {
    "kind": "metric",
@@ -621,7 +654,7 @@
    ],
    "status": "needs-row",
    "reason": "aspnetcore memory_pool meter: the C11 '.NET framework metrics' row must list it first (round-2 refuter)",
-   "gaps_ref": "overview.md#known-emitted-telemetry-gaps \u2014 .NET framework metrics (branch, task C11)",
+   "gaps_ref": "overview.md#known-emitted-telemetry-gaps — .NET framework metrics (branch, task C11)",
    "source": "refuter classification of the k8b-20261125 FAIL items (review round 1)"
   },
   {
@@ -635,7 +668,7 @@
    ],
    "status": "needs-row",
    "reason": "aspnetcore memory_pool meter: the C11 '.NET framework metrics' row must list it first (round-2 refuter)",
-   "gaps_ref": "overview.md#known-emitted-telemetry-gaps \u2014 .NET framework metrics (branch, task C11)",
+   "gaps_ref": "overview.md#known-emitted-telemetry-gaps — .NET framework metrics (branch, task C11)",
    "source": "refuter classification of the k8b-20261125 FAIL items (review round 1)"
   },
   {
@@ -649,7 +682,7 @@
    ],
    "status": "needs-row",
    "reason": "aspnetcore memory_pool meter: the C11 '.NET framework metrics' row must list it first (round-2 refuter)",
-   "gaps_ref": "overview.md#known-emitted-telemetry-gaps \u2014 .NET framework metrics (branch, task C11)",
+   "gaps_ref": "overview.md#known-emitted-telemetry-gaps — .NET framework metrics (branch, task C11)",
    "source": "refuter classification of the k8b-20261125 FAIL items (review round 1)"
   },
   {
@@ -663,7 +696,7 @@
    ],
    "status": "needs-row",
    "reason": "aspnetcore memory_pool meter: the C11 '.NET framework metrics' row must list it first (round-2 refuter)",
-   "gaps_ref": "overview.md#known-emitted-telemetry-gaps \u2014 .NET framework metrics (branch, task C11)",
+   "gaps_ref": "overview.md#known-emitted-telemetry-gaps — .NET framework metrics (branch, task C11)",
    "source": "refuter classification of the k8b-20261125 FAIL items (review round 1)"
   },
   {
@@ -675,10 +708,11 @@
     "python",
     "node"
    ],
-   "status": "proposed",
+   "status": "accepted",
    "reason": "matched by the round-1 token heuristic; needs review",
    "gaps_ref": "overview.md: .NET framework metrics (branch, task C11)",
-   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)"
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)",
+   "ruling": "owner 2026-11-26: accepted (gaps row exists)"
   },
   {
    "kind": "metric",
@@ -690,7 +724,7 @@
    ],
    "status": "proposed",
    "reason": "database connection-pool metrics differ per language (Node.js/.NET db.client.connection.*, Python db.client.connections.usage, Go db.sql.connection.*)",
-   "gaps_ref": "overview.md#known-emitted-telemetry-gaps \u2014 (no row yet)",
+   "gaps_ref": "overview.md#known-emitted-telemetry-gaps — (no row yet)",
    "source": "refuter classification of the k8b-20261125 FAIL items (review round 1)"
   },
   {
@@ -700,11 +734,12 @@
    "langs_missing": [
     "dotnet"
    ],
-   "status": "proposed",
+   "status": "accepted",
    "attribute": "db_client_connection_pool_name",
    "reason": "matched by the round-1 token heuristic; needs review",
    "gaps_ref": "overview.md: .NET database query text and connection attributes (branch, task C14a)",
-   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)"
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)",
+   "ruling": "owner 2026-11-26: accepted (gaps row exists)"
   },
   {
    "kind": "metric",
@@ -716,7 +751,7 @@
    ],
    "status": "proposed",
    "reason": "database connection-pool metrics differ per language (Node.js/.NET db.client.connection.*, Python db.client.connections.usage, Go db.sql.connection.*)",
-   "gaps_ref": "overview.md#known-emitted-telemetry-gaps \u2014 (no row yet)",
+   "gaps_ref": "overview.md#known-emitted-telemetry-gaps — (no row yet)",
    "source": "refuter classification of the k8b-20261125 FAIL items (review round 1)"
   },
   {
@@ -726,11 +761,12 @@
    "langs_missing": [
     "dotnet"
    ],
-   "status": "proposed",
+   "status": "accepted",
    "attribute": "db_client_connection_pool_name",
    "reason": "matched by the round-1 token heuristic; needs review",
    "gaps_ref": "overview.md: .NET database query text and connection attributes (branch, task C14a)",
-   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)"
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)",
+   "ruling": "owner 2026-11-26: accepted (gaps row exists)"
   },
   {
    "kind": "metric",
@@ -743,7 +779,7 @@
    ],
    "status": "proposed",
    "reason": "Npgsql driver metrics (.NET only)",
-   "gaps_ref": "overview.md#known-emitted-telemetry-gaps \u2014 (no row yet)",
+   "gaps_ref": "overview.md#known-emitted-telemetry-gaps — (no row yet)",
    "source": "refuter classification of the k8b-20261125 FAIL items (review round 1)"
   },
   {
@@ -757,7 +793,7 @@
    ],
    "status": "proposed",
    "reason": "Npgsql driver metrics (.NET only)",
-   "gaps_ref": "overview.md#known-emitted-telemetry-gaps \u2014 (no row yet)",
+   "gaps_ref": "overview.md#known-emitted-telemetry-gaps — (no row yet)",
    "source": "refuter classification of the k8b-20261125 FAIL items (review round 1)"
   },
   {
@@ -771,7 +807,7 @@
    ],
    "status": "proposed",
    "reason": "database connection-pool metrics differ per language (Node.js/.NET db.client.connection.*, Python db.client.connections.usage, Go db.sql.connection.*)",
-   "gaps_ref": "overview.md#known-emitted-telemetry-gaps \u2014 (no row yet)",
+   "gaps_ref": "overview.md#known-emitted-telemetry-gaps — (no row yet)",
    "source": "refuter classification of the k8b-20261125 FAIL items (review round 1)"
   },
   {
@@ -827,7 +863,7 @@
    ],
    "status": "proposed",
    "reason": "Npgsql driver metrics (.NET only)",
-   "gaps_ref": "overview.md#known-emitted-telemetry-gaps \u2014 (no row yet)",
+   "gaps_ref": "overview.md#known-emitted-telemetry-gaps — (no row yet)",
    "source": "refuter classification of the k8b-20261125 FAIL items (review round 1)"
   },
   {
@@ -841,7 +877,7 @@
    ],
    "status": "proposed",
    "reason": "Npgsql driver metrics (.NET only)",
-   "gaps_ref": "overview.md#known-emitted-telemetry-gaps \u2014 (no row yet)",
+   "gaps_ref": "overview.md#known-emitted-telemetry-gaps — (no row yet)",
    "source": "refuter classification of the k8b-20261125 FAIL items (review round 1)"
   },
   {
@@ -855,7 +891,7 @@
    ],
    "status": "proposed",
    "reason": "Npgsql driver metrics (.NET only)",
-   "gaps_ref": "overview.md#known-emitted-telemetry-gaps \u2014 (no row yet)",
+   "gaps_ref": "overview.md#known-emitted-telemetry-gaps — (no row yet)",
    "source": "refuter classification of the k8b-20261125 FAIL items (review round 1)"
   },
   {
@@ -869,7 +905,7 @@
    ],
    "status": "proposed",
    "reason": "Npgsql driver metrics (.NET only)",
-   "gaps_ref": "overview.md#known-emitted-telemetry-gaps \u2014 (no row yet)",
+   "gaps_ref": "overview.md#known-emitted-telemetry-gaps — (no row yet)",
    "source": "refuter classification of the k8b-20261125 FAIL items (review round 1)"
   },
   {
@@ -883,7 +919,7 @@
    ],
    "status": "proposed",
    "reason": "Npgsql driver metrics (.NET only)",
-   "gaps_ref": "overview.md#known-emitted-telemetry-gaps \u2014 (no row yet)",
+   "gaps_ref": "overview.md#known-emitted-telemetry-gaps — (no row yet)",
    "source": "refuter classification of the k8b-20261125 FAIL items (review round 1)"
   },
   {
@@ -897,7 +933,7 @@
    ],
    "status": "proposed",
    "reason": "database connection-pool metrics differ per language (Node.js/.NET db.client.connection.*, Python db.client.connections.usage, Go db.sql.connection.*)",
-   "gaps_ref": "overview.md#known-emitted-telemetry-gaps \u2014 (no row yet)",
+   "gaps_ref": "overview.md#known-emitted-telemetry-gaps — (no row yet)",
    "source": "refuter classification of the k8b-20261125 FAIL items (review round 1)"
   },
   {
@@ -911,7 +947,7 @@
    ],
    "status": "proposed",
    "reason": "database connection-pool metrics differ per language (Node.js/.NET db.client.connection.*, Python db.client.connections.usage, Go db.sql.connection.*)",
-   "gaps_ref": "overview.md#known-emitted-telemetry-gaps \u2014 (no row yet)",
+   "gaps_ref": "overview.md#known-emitted-telemetry-gaps — (no row yet)",
    "source": "refuter classification of the k8b-20261125 FAIL items (review round 1)"
   },
   {
@@ -925,7 +961,7 @@
    ],
    "status": "proposed",
    "reason": "database connection-pool metrics differ per language (Node.js/.NET db.client.connection.*, Python db.client.connections.usage, Go db.sql.connection.*)",
-   "gaps_ref": "overview.md#known-emitted-telemetry-gaps \u2014 (no row yet)",
+   "gaps_ref": "overview.md#known-emitted-telemetry-gaps — (no row yet)",
    "source": "refuter classification of the k8b-20261125 FAIL items (review round 1)"
   },
   {
@@ -939,7 +975,7 @@
    ],
    "status": "proposed",
    "reason": "database connection-pool metrics differ per language (Node.js/.NET db.client.connection.*, Python db.client.connections.usage, Go db.sql.connection.*)",
-   "gaps_ref": "overview.md#known-emitted-telemetry-gaps \u2014 (no row yet)",
+   "gaps_ref": "overview.md#known-emitted-telemetry-gaps — (no row yet)",
    "source": "refuter classification of the k8b-20261125 FAIL items (review round 1)"
   },
   {
@@ -953,7 +989,7 @@
    ],
    "status": "proposed",
    "reason": "database connection-pool metrics differ per language (Node.js/.NET db.client.connection.*, Python db.client.connections.usage, Go db.sql.connection.*)",
-   "gaps_ref": "overview.md#known-emitted-telemetry-gaps \u2014 (no row yet)",
+   "gaps_ref": "overview.md#known-emitted-telemetry-gaps — (no row yet)",
    "source": "refuter classification of the k8b-20261125 FAIL items (review round 1)"
   },
   {
@@ -967,7 +1003,7 @@
    ],
    "status": "proposed",
    "reason": "database connection-pool metrics differ per language (Node.js/.NET db.client.connection.*, Python db.client.connections.usage, Go db.sql.connection.*)",
-   "gaps_ref": "overview.md#known-emitted-telemetry-gaps \u2014 (no row yet)",
+   "gaps_ref": "overview.md#known-emitted-telemetry-gaps — (no row yet)",
    "source": "refuter classification of the k8b-20261125 FAIL items (review round 1)"
   },
   {
@@ -981,7 +1017,7 @@
    ],
    "status": "proposed",
    "reason": "database connection-pool metrics differ per language (Node.js/.NET db.client.connection.*, Python db.client.connections.usage, Go db.sql.connection.*)",
-   "gaps_ref": "overview.md#known-emitted-telemetry-gaps \u2014 (no row yet)",
+   "gaps_ref": "overview.md#known-emitted-telemetry-gaps — (no row yet)",
    "source": "refuter classification of the k8b-20261125 FAIL items (review round 1)"
   },
   {
@@ -993,10 +1029,11 @@
     "python",
     "node"
    ],
-   "status": "proposed",
+   "status": "accepted",
    "reason": "matched by the round-1 token heuristic; needs review",
    "gaps_ref": "overview.md: .NET framework metrics (branch, task C11)",
-   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)"
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)",
+   "ruling": "owner 2026-11-26: accepted (gaps row exists)"
   },
   {
    "kind": "metric",
@@ -1007,10 +1044,11 @@
     "python",
     "node"
    ],
-   "status": "proposed",
+   "status": "accepted",
    "reason": "matched by the round-1 token heuristic; needs review",
    "gaps_ref": "overview.md: .NET framework metrics (branch, task C11)",
-   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)"
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)",
+   "ruling": "owner 2026-11-26: accepted (gaps row exists)"
   },
   {
    "kind": "metric",
@@ -1021,10 +1059,11 @@
     "python",
     "node"
    ],
-   "status": "proposed",
+   "status": "accepted",
    "reason": "matched by the round-1 token heuristic; needs review",
    "gaps_ref": "overview.md: .NET gRPC metrics",
-   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)"
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)",
+   "ruling": "owner 2026-11-26: accepted (gaps row exists)"
   },
   {
    "kind": "metric",
@@ -1035,10 +1074,11 @@
     "python",
     "node"
    ],
-   "status": "proposed",
+   "status": "accepted",
    "reason": "matched by the round-1 token heuristic; needs review",
    "gaps_ref": "overview.md: .NET gRPC metrics",
-   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)"
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)",
+   "ruling": "owner 2026-11-26: accepted (gaps row exists)"
   },
   {
    "kind": "metric",
@@ -1049,10 +1089,11 @@
     "python",
     "node"
    ],
-   "status": "proposed",
+   "status": "accepted",
    "reason": "matched by the round-1 token heuristic; needs review",
    "gaps_ref": "overview.md: .NET framework metrics (branch, task C11)",
-   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)"
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)",
+   "ruling": "owner 2026-11-26: accepted (gaps row exists)"
   },
   {
    "kind": "metric",
@@ -1063,10 +1104,11 @@
     "python",
     "node"
    ],
-   "status": "proposed",
+   "status": "accepted",
    "reason": "matched by the round-1 token heuristic; needs review",
    "gaps_ref": "overview.md: .NET framework metrics (branch, task C11)",
-   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)"
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)",
+   "ruling": "owner 2026-11-26: accepted (gaps row exists)"
   },
   {
    "kind": "metric",
@@ -1077,10 +1119,11 @@
     "python",
     "node"
    ],
-   "status": "proposed",
+   "status": "accepted",
    "reason": "matched by the round-1 token heuristic; needs review",
    "gaps_ref": "overview.md: .NET framework metrics (branch, task C11)",
-   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)"
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)",
+   "ruling": "owner 2026-11-26: accepted (gaps row exists)"
   },
   {
    "kind": "metric",
@@ -1091,10 +1134,11 @@
     "python",
     "node"
    ],
-   "status": "proposed",
+   "status": "accepted",
    "reason": "matched by the round-1 token heuristic; needs review",
    "gaps_ref": "overview.md: .NET framework metrics (branch, task C11)",
-   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)"
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)",
+   "ruling": "owner 2026-11-26: accepted (gaps row exists)"
   },
   {
    "kind": "metric",
@@ -1105,10 +1149,11 @@
     "python",
     "node"
    ],
-   "status": "proposed",
+   "status": "accepted",
    "reason": "matched by the round-1 token heuristic; needs review",
    "gaps_ref": "overview.md: .NET framework metrics (branch, task C11)",
-   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)"
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)",
+   "ruling": "owner 2026-11-26: accepted (gaps row exists)"
   },
   {
    "kind": "metric",
@@ -1119,10 +1164,11 @@
     "node",
     "dotnet"
    ],
-   "status": "proposed",
+   "status": "accepted",
    "reason": "matched by the round-1 token heuristic; needs review",
    "gaps_ref": "overview.md: Python and Node.js gRPC",
-   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)"
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)",
+   "ruling": "owner 2026-11-26: accepted (gaps row exists)"
   },
   {
    "kind": "metric",
@@ -1133,10 +1179,11 @@
     "node",
     "dotnet"
    ],
-   "status": "proposed",
+   "status": "accepted",
    "reason": "matched by the round-1 token heuristic; needs review",
    "gaps_ref": "overview.md: Python and Node.js gRPC",
-   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)"
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)",
+   "ruling": "owner 2026-11-26: accepted (gaps row exists)"
   },
   {
    "kind": "metric attr",
@@ -1206,11 +1253,12 @@
     "go",
     "dotnet"
    ],
-   "status": "proposed",
+   "status": "accepted",
    "attribute": "rpc_grpc_status_code",
    "reason": "matched by the round-1 token heuristic; needs review",
    "gaps_ref": "overview.md: Python and Node.js gRPC",
-   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)"
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)",
+   "ruling": "owner 2026-11-26: accepted (gaps row exists)"
   },
   {
    "kind": "metric attr",
@@ -1220,11 +1268,12 @@
     "python",
     "node"
    ],
-   "status": "proposed",
+   "status": "accepted",
    "attribute": "rpc_response_status_code",
    "reason": "Python and Node.js gRPC spans carry the legacy rpc.grpc.status_code (round-2 refuter)",
-   "gaps_ref": "overview.md#known-emitted-telemetry-gaps \u2014 Python and Node.js gRPC (legacy rpc.grpc.status_code instead of rpc.response.status_code)",
-   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)"
+   "gaps_ref": "overview.md#known-emitted-telemetry-gaps — Python and Node.js gRPC (legacy rpc.grpc.status_code instead of rpc.response.status_code)",
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)",
+   "ruling": "owner 2026-11-26: accepted (gaps row exists)"
   },
   {
    "kind": "metric attr",
@@ -1234,11 +1283,12 @@
     "go",
     "dotnet"
    ],
-   "status": "proposed",
+   "status": "accepted",
    "attribute": "rpc_service",
    "reason": "matched by the round-1 token heuristic; needs review",
    "gaps_ref": "overview.md: Python and Node.js gRPC",
-   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)"
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)",
+   "ruling": "owner 2026-11-26: accepted (gaps row exists)"
   },
   {
    "kind": "metric attr",
@@ -1308,11 +1358,12 @@
     "go",
     "dotnet"
    ],
-   "status": "proposed",
+   "status": "accepted",
    "attribute": "rpc_grpc_status_code",
    "reason": "matched by the round-1 token heuristic; needs review",
    "gaps_ref": "overview.md: Python and Node.js gRPC",
-   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)"
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)",
+   "ruling": "owner 2026-11-26: accepted (gaps row exists)"
   },
   {
    "kind": "metric attr",
@@ -1322,11 +1373,12 @@
     "python",
     "node"
    ],
-   "status": "proposed",
+   "status": "accepted",
    "attribute": "rpc_response_status_code",
    "reason": "Python and Node.js gRPC spans carry the legacy rpc.grpc.status_code (round-2 refuter)",
-   "gaps_ref": "overview.md#known-emitted-telemetry-gaps \u2014 Python and Node.js gRPC (legacy rpc.grpc.status_code instead of rpc.response.status_code)",
-   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)"
+   "gaps_ref": "overview.md#known-emitted-telemetry-gaps — Python and Node.js gRPC (legacy rpc.grpc.status_code instead of rpc.response.status_code)",
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)",
+   "ruling": "owner 2026-11-26: accepted (gaps row exists)"
   },
   {
    "kind": "metric attr",
@@ -1336,11 +1388,12 @@
     "go",
     "dotnet"
    ],
-   "status": "proposed",
+   "status": "accepted",
    "attribute": "rpc_service",
    "reason": "matched by the round-1 token heuristic; needs review",
    "gaps_ref": "overview.md: Python and Node.js gRPC",
-   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)"
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)",
+   "ruling": "owner 2026-11-26: accepted (gaps row exists)"
   },
   {
    "kind": "metric attr",
@@ -1410,11 +1463,12 @@
     "go",
     "dotnet"
    ],
-   "status": "proposed",
+   "status": "accepted",
    "attribute": "rpc_grpc_status_code",
    "reason": "matched by the round-1 token heuristic; needs review",
    "gaps_ref": "overview.md: Python and Node.js gRPC",
-   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)"
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)",
+   "ruling": "owner 2026-11-26: accepted (gaps row exists)"
   },
   {
    "kind": "metric attr",
@@ -1424,11 +1478,12 @@
     "python",
     "node"
    ],
-   "status": "proposed",
+   "status": "accepted",
    "attribute": "rpc_response_status_code",
    "reason": "Python and Node.js gRPC spans carry the legacy rpc.grpc.status_code (round-2 refuter)",
-   "gaps_ref": "overview.md#known-emitted-telemetry-gaps \u2014 Python and Node.js gRPC (legacy rpc.grpc.status_code instead of rpc.response.status_code)",
-   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)"
+   "gaps_ref": "overview.md#known-emitted-telemetry-gaps — Python and Node.js gRPC (legacy rpc.grpc.status_code instead of rpc.response.status_code)",
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)",
+   "ruling": "owner 2026-11-26: accepted (gaps row exists)"
   },
   {
    "kind": "metric attr",
@@ -1438,11 +1493,12 @@
     "go",
     "dotnet"
    ],
-   "status": "proposed",
+   "status": "accepted",
    "attribute": "rpc_service",
    "reason": "matched by the round-1 token heuristic; needs review",
    "gaps_ref": "overview.md: Python and Node.js gRPC",
-   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)"
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)",
+   "ruling": "owner 2026-11-26: accepted (gaps row exists)"
   },
   {
    "kind": "metric",
@@ -1453,10 +1509,11 @@
     "node",
     "dotnet"
    ],
-   "status": "proposed",
+   "status": "accepted",
    "reason": "matched by the round-1 token heuristic; needs review",
    "gaps_ref": "overview.md: Node.js Redis metrics",
-   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)"
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)",
+   "ruling": "owner 2026-11-26: accepted (gaps row exists)"
   },
   {
    "kind": "metric",
@@ -1467,10 +1524,11 @@
     "node",
     "dotnet"
    ],
-   "status": "proposed",
+   "status": "accepted",
    "reason": "matched by the round-1 token heuristic; needs review",
    "gaps_ref": "overview.md: Node.js Redis metrics",
-   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)"
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)",
+   "ruling": "owner 2026-11-26: accepted (gaps row exists)"
   },
   {
    "kind": "metric",
@@ -1481,10 +1539,11 @@
     "node",
     "dotnet"
    ],
-   "status": "proposed",
+   "status": "accepted",
    "reason": "matched by the round-1 token heuristic; needs review",
    "gaps_ref": "overview.md: Node.js Redis metrics",
-   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)"
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)",
+   "ruling": "owner 2026-11-26: accepted (gaps row exists)"
   },
   {
    "kind": "metric",
@@ -1495,10 +1554,11 @@
     "node",
     "dotnet"
    ],
-   "status": "proposed",
+   "status": "accepted",
    "reason": "matched by the round-1 token heuristic; needs review",
    "gaps_ref": "overview.md: Node.js Redis metrics",
-   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)"
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)",
+   "ruling": "owner 2026-11-26: accepted (gaps row exists)"
   },
   {
    "kind": "metric",
@@ -1509,10 +1569,11 @@
     "node",
     "dotnet"
    ],
-   "status": "proposed",
+   "status": "accepted",
    "reason": "matched by the round-1 token heuristic; needs review",
    "gaps_ref": "overview.md: Node.js Redis metrics",
-   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)"
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)",
+   "ruling": "owner 2026-11-26: accepted (gaps row exists)"
   },
   {
    "kind": "metric",
@@ -1523,10 +1584,11 @@
     "node",
     "dotnet"
    ],
-   "status": "proposed",
+   "status": "accepted",
    "reason": "matched by the round-1 token heuristic; needs review",
    "gaps_ref": "overview.md: Node.js Redis metrics",
-   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)"
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)",
+   "ruling": "owner 2026-11-26: accepted (gaps row exists)"
   },
   {
    "kind": "metric",
@@ -1537,10 +1599,11 @@
     "node",
     "dotnet"
    ],
-   "status": "proposed",
+   "status": "accepted",
    "reason": "matched by the round-1 token heuristic; needs review",
    "gaps_ref": "overview.md: Node.js Redis metrics",
-   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)"
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)",
+   "ruling": "owner 2026-11-26: accepted (gaps row exists)"
   },
   {
    "kind": "metric",
@@ -1551,10 +1614,11 @@
     "node",
     "dotnet"
    ],
-   "status": "proposed",
+   "status": "accepted",
    "reason": "matched by the round-1 token heuristic; needs review",
    "gaps_ref": "overview.md: Node.js Redis metrics",
-   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)"
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)",
+   "ruling": "owner 2026-11-26: accepted (gaps row exists)"
   },
   {
    "kind": "metric",
@@ -1565,10 +1629,11 @@
     "node",
     "dotnet"
    ],
-   "status": "proposed",
+   "status": "accepted",
    "reason": "matched by the round-1 token heuristic; needs review",
    "gaps_ref": "overview.md: Node.js Redis metrics",
-   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)"
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)",
+   "ruling": "owner 2026-11-26: accepted (gaps row exists)"
   },
   {
    "kind": "metric",
@@ -1579,10 +1644,11 @@
     "node",
     "dotnet"
    ],
-   "status": "proposed",
+   "status": "accepted",
    "reason": "matched by the round-1 token heuristic; needs review",
    "gaps_ref": "overview.md: Node.js Redis metrics",
-   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)"
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)",
+   "ruling": "owner 2026-11-26: accepted (gaps row exists)"
   },
   {
    "kind": "metric",
@@ -1593,10 +1659,11 @@
     "node",
     "dotnet"
    ],
-   "status": "proposed",
+   "status": "accepted",
    "reason": "matched by the round-1 token heuristic; needs review",
    "gaps_ref": "overview.md: Node.js Redis metrics",
-   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)"
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)",
+   "ruling": "owner 2026-11-26: accepted (gaps row exists)"
   },
   {
    "kind": "metric",
@@ -1607,10 +1674,11 @@
     "node",
     "dotnet"
    ],
-   "status": "proposed",
+   "status": "accepted",
    "reason": "matched by the round-1 token heuristic; needs review",
    "gaps_ref": "overview.md: Node.js Redis metrics",
-   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)"
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)",
+   "ruling": "owner 2026-11-26: accepted (gaps row exists)"
   },
   {
    "kind": "metric",
@@ -1621,10 +1689,11 @@
     "node",
     "dotnet"
    ],
-   "status": "proposed",
+   "status": "accepted",
    "reason": "matched by the round-1 token heuristic; needs review",
    "gaps_ref": "overview.md: Node.js Redis metrics",
-   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)"
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)",
+   "ruling": "owner 2026-11-26: accepted (gaps row exists)"
   },
   {
    "kind": "metric",
@@ -1635,10 +1704,11 @@
     "python",
     "node"
    ],
-   "status": "proposed",
+   "status": "accepted",
    "reason": "matched by the round-1 token heuristic; needs review",
    "gaps_ref": "overview.md: .NET framework metrics (branch, task C11)",
-   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)"
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)",
+   "ruling": "owner 2026-11-26: accepted (gaps row exists)"
   },
   {
    "kind": "metric",
@@ -1649,10 +1719,11 @@
     "python",
     "node"
    ],
-   "status": "proposed",
+   "status": "accepted",
    "reason": "matched by the round-1 token heuristic; needs review",
    "gaps_ref": "overview.md: .NET framework metrics (branch, task C11)",
-   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)"
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)",
+   "ruling": "owner 2026-11-26: accepted (gaps row exists)"
   },
   {
    "kind": "metric attr",
@@ -1666,7 +1737,7 @@
    "status": "proposed",
    "attribute": "network_protocol_name",
    "reason": "worker http.client duration label keys differ (url.scheme absent in Python, network.protocol.name Go only)",
-   "gaps_ref": "overview.md#known-emitted-telemetry-gaps \u2014 (no row yet)",
+   "gaps_ref": "overview.md#known-emitted-telemetry-gaps — (no row yet)",
    "source": "refuter classification of the k8b-20261125 FAIL items (review round 1)"
   },
   {
@@ -1679,7 +1750,7 @@
    "status": "proposed",
    "attribute": "url_scheme",
    "reason": "worker http.client duration label keys differ (url.scheme absent in Python, network.protocol.name Go only)",
-   "gaps_ref": "overview.md#known-emitted-telemetry-gaps \u2014 (no row yet)",
+   "gaps_ref": "overview.md#known-emitted-telemetry-gaps — (no row yet)",
    "source": "refuter classification of the k8b-20261125 FAIL items (review round 1)"
   },
   {
@@ -1694,7 +1765,7 @@
    "status": "proposed",
    "attribute": "network_protocol_name",
    "reason": "worker http.client duration label keys differ (url.scheme absent in Python, network.protocol.name Go only)",
-   "gaps_ref": "overview.md#known-emitted-telemetry-gaps \u2014 (no row yet)",
+   "gaps_ref": "overview.md#known-emitted-telemetry-gaps — (no row yet)",
    "source": "refuter classification of the k8b-20261125 FAIL items (review round 1)"
   },
   {
@@ -1707,7 +1778,7 @@
    "status": "proposed",
    "attribute": "url_scheme",
    "reason": "worker http.client duration label keys differ (url.scheme absent in Python, network.protocol.name Go only)",
-   "gaps_ref": "overview.md#known-emitted-telemetry-gaps \u2014 (no row yet)",
+   "gaps_ref": "overview.md#known-emitted-telemetry-gaps — (no row yet)",
    "source": "refuter classification of the k8b-20261125 FAIL items (review round 1)"
   },
   {
@@ -1719,10 +1790,11 @@
     "node",
     "dotnet"
    ],
-   "status": "proposed",
+   "status": "accepted",
    "reason": "Go keeps the legacy db.name on the DB duration metric (R10 database/dup on metrics)",
-   "gaps_ref": "overview.md#known-emitted-telemetry-gaps \u2014 R10 (database/dup) rows",
-   "source": "round-2 refuter: of the 18 unlisted items"
+   "gaps_ref": "overview.md#known-emitted-telemetry-gaps — R10 (database/dup) rows",
+   "source": "round-2 refuter: of the 18 unlisted items",
+   "ruling": "owner 2026-11-26: accepted (gaps row exists)"
   },
   {
    "kind": "metric attr",
@@ -1732,10 +1804,11 @@
    "langs_missing": [
     "dotnet"
    ],
-   "status": "proposed",
+   "status": "accepted",
    "reason": ".NET writes no legacy db.system on the DB duration metric (conformant, task C14a)",
-   "gaps_ref": "overview.md#known-emitted-telemetry-gaps \u2014 .NET database db.system / db.system.name (branch, task C14a)",
-   "source": "round-2 refuter: of the 18 unlisted items"
+   "gaps_ref": "overview.md#known-emitted-telemetry-gaps — .NET database db.system / db.system.name (branch, task C14a)",
+   "source": "round-2 refuter: of the 18 unlisted items",
+   "ruling": "owner 2026-11-26: accepted (gaps row exists)"
   },
   {
    "kind": "metric attr",
@@ -1747,7 +1820,7 @@
    ],
    "status": "proposed",
    "reason": "Go writes no server.address / server.port on the DB duration metric (a new minor row)",
-   "gaps_ref": "overview.md#known-emitted-telemetry-gaps \u2014 (no row yet: minor)",
+   "gaps_ref": "overview.md#known-emitted-telemetry-gaps — (no row yet: minor)",
    "source": "round-2 refuter: of the 18 unlisted items"
   },
   {
@@ -1760,7 +1833,7 @@
    ],
    "status": "proposed",
    "reason": "Go writes no server.address / server.port on the DB duration metric (a new minor row)",
-   "gaps_ref": "overview.md#known-emitted-telemetry-gaps \u2014 (no row yet: minor)",
+   "gaps_ref": "overview.md#known-emitted-telemetry-gaps — (no row yet: minor)",
    "source": "round-2 refuter: of the 18 unlisted items"
   },
   {
@@ -1772,10 +1845,11 @@
     "node",
     "dotnet"
    ],
-   "status": "proposed",
+   "status": "accepted",
    "reason": "Go keeps the legacy db.name on the DB duration metric (R10 database/dup on metrics)",
-   "gaps_ref": "overview.md#known-emitted-telemetry-gaps \u2014 R10 (database/dup) rows",
-   "source": "round-2 refuter: of the 18 unlisted items"
+   "gaps_ref": "overview.md#known-emitted-telemetry-gaps — R10 (database/dup) rows",
+   "source": "round-2 refuter: of the 18 unlisted items",
+   "ruling": "owner 2026-11-26: accepted (gaps row exists)"
   },
   {
    "kind": "metric attr",
@@ -1785,10 +1859,11 @@
    "langs_missing": [
     "dotnet"
    ],
-   "status": "proposed",
+   "status": "accepted",
    "reason": ".NET writes no legacy db.system on the DB duration metric (conformant, task C14a)",
-   "gaps_ref": "overview.md#known-emitted-telemetry-gaps \u2014 .NET database db.system / db.system.name (branch, task C14a)",
-   "source": "round-2 refuter: of the 18 unlisted items"
+   "gaps_ref": "overview.md#known-emitted-telemetry-gaps — .NET database db.system / db.system.name (branch, task C14a)",
+   "source": "round-2 refuter: of the 18 unlisted items",
+   "ruling": "owner 2026-11-26: accepted (gaps row exists)"
   },
   {
    "kind": "metric attr",
@@ -1800,7 +1875,7 @@
    ],
    "status": "proposed",
    "reason": "Go writes no server.address / server.port on the DB duration metric (a new minor row)",
-   "gaps_ref": "overview.md#known-emitted-telemetry-gaps \u2014 (no row yet: minor)",
+   "gaps_ref": "overview.md#known-emitted-telemetry-gaps — (no row yet: minor)",
    "source": "round-2 refuter: of the 18 unlisted items"
   },
   {
@@ -1813,7 +1888,7 @@
    ],
    "status": "proposed",
    "reason": "Go writes no server.address / server.port on the DB duration metric (a new minor row)",
-   "gaps_ref": "overview.md#known-emitted-telemetry-gaps \u2014 (no row yet: minor)",
+   "gaps_ref": "overview.md#known-emitted-telemetry-gaps — (no row yet: minor)",
    "source": "round-2 refuter: of the 18 unlisted items"
   }
  ]
