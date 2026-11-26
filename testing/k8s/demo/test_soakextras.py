@@ -944,7 +944,9 @@ class Parity(unittest.TestCase):
         p.write_text(json.dumps([]))
         self.assertEqual(sx.load_allowlist(p), [])
         real = sx.load_allowlist()
-        self.assertTrue(real and all(e["status"] in ("proposed", "needs-row") for e in real))
+        self.assertTrue(real and all(e["status"] in ("proposed", "needs-row", "accepted") for e in real))
+        # An accepted entry carries the owner's ruling (2026-11-26) and never a needs-row reason.
+        self.assertTrue(all(e.get("ruling") for e in real if e["status"] == "accepted"))
         self.assertTrue(any(e["status"] == "needs-row" for e in real))
         self.assertFalse(any(e["role"] == "worker" and e["item"].startswith("traces_span_metrics_") for e in real))
         row = next(e for e in real if e["status"] == "needs-row")
