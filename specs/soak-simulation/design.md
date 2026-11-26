@@ -1541,6 +1541,10 @@ the graph's read time when that read is after t2.
        Tempo reads stop and the rest is UNMEASURED;
      - a failed read makes that item UNMEASURED and never aborts the run;
        three consecutive failures stop SR9.
+     - *(Corrected 2026-11-26.)* The platform raised Tempo's memory limit
+       to 4 GiB (platform commit 085be8f, owner approval), so the default
+       `--tempo-mem-stop` is now 3 GiB, 75 % of that limit. The rate limit
+       stays at 10 reads per minute.
 4. **SR10 parity** across the four languages, per app role.
    - Metrics: names and label keys from `/api/v1/series` over (t1, t2] for
      the demo jobs. Units are compared through the name's unit suffix only.

@@ -74,7 +74,7 @@ DEFAULT_SAMPLE = 50                                  # per reservoir cell (SR15 
 SDK_BSP_DELAY_S = 5.0                                # OTEL_BSP_SCHEDULE_DELAY default 5000 ms (the demo apps set none)
 # Tempo reads (platform owner, 2026-11-26, after tempo-0 was OOMKilled at 15:53:35Z by parallel reads):
 DEFAULT_TEMPO_RATE = 10.0                            # reads per minute, strictly sequential
-DEFAULT_TEMPO_MEM_STOP = 1.5 * 2**30                 # stop at a tempo-0 working set of 1.5 GiB (limit 2 GiB)
+DEFAULT_TEMPO_MEM_STOP = 3 * 2**30                   # stop at a tempo-0 working set of 3 GiB (75 % of the 4 GiB limit, platform 085be8f)
 TEMPO_BATCH = 10                                     # memory read before every batch of 10 reads
 TEMPO_MAX_ERRORS = 3                                 # consecutive failed reads stop every further read
 SEARCH_SLICES = 10
