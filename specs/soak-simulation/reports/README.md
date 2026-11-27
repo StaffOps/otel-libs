@@ -145,7 +145,7 @@ language; Go XSAM `sql.rows` / `sql.conn.reset_session`.
 
 | Item | Verdict | Evidence (run) |
 |---|---|---|
-| K1 snapshot: runtime-metric names, `exported_instance`, 1 h floor reading, Prometheus PVC | PASS except B1: NOT MET | `runs/k1-20261123/snapshot.json` (66/66 PASS). Re-run 2026-11-27T14:10Z (`runs/k1-20261127`): 65/65 PASS; the 24 h baseline counters were clean (0 noisy, 0 absent), but a roll-list container started at 2026-11-26T19:01:51Z, so a clean 24 h baseline is readable only from 2026-11-27T19:01:51Z. Every window's entry gate passed (`windows.jsonl` valid) |
+| K1 snapshot: runtime-metric names, `exported_instance`, 1 h floor reading, Prometheus PVC | PASS (B1 met 2026-11-27) | `runs/k1-20261123/snapshot.json` (66/66 PASS). Re-run 2026-11-27T14:10Z (`runs/k1-20261127`): 65/65 PASS; the 24 h baseline counters were clean (0 noisy, 0 absent), but a roll-list container started at 2026-11-26T19:01:51Z, so a clean 24 h baseline is readable only from 2026-11-27T19:01:51Z. Re-run 2026-11-27T19:05:18Z (`runs/k1-20261127b`): 65/65 PASS; baseline [2026-11-26T19:05:19Z, 2026-11-27T19:05:19Z] with 0 noisy, 0 absent, 0 n/a, and no roll-list container start inside it (youngest: `tempo-0` at 2026-11-26T19:01:50Z) — **B1 met**. Every window's entry gate passed (`windows.jsonl` valid) |
 | K-loop: dry run creates one soak-run object of each kind, the trap deletes exactly those; unit tests | PASS | `soak.py dry-run` PASS (9 objects, 29 seeded untouched), re-run 2026-11-26; the soak loop suite (276 tests) and the demo-side suite (439 tests, incl. `test_soakcount` 102, `test_soakextras` 73, `test_soakident` 19) pass on host `python3 -I` (2026-11-27) |
 | K-copy: positive control N sent = counted = accepted; K2 shows the demo pods' `k8s.pod.name` | PASS | `runs/kcopy-20261123d/control.json` (+8 / +2 / +2 / +1 / +2); tasks K-copy note |
 | K8a: coverage gate, valid passive window, S-D5 rules, FDs by `exec`, `verify.py demo` at start and end, mesh and platform guard clean | PASS with AG20 (12 h ruling, reduced sensitivity accepted 2026-11-25: a leak stepping less often than every 5 h 15 min can pass; 90 min warm-up vs the 12 h settling; node-worker at 0.89 of its limit, node-worker and dotnet-worker still stepping) | [k8a-20261124b.md](k8a-20261124b.md): 72 rules PASS, 3 n/a (AG12); 721 window reads, 723 guard reads, 0 non-ok, 1 transport retry; lowest hourly coverage 0.9667; `verify.py demo` after the window PASS 56, XFAIL 2, NA 6. The start-of-window `verify.py demo` is not recorded: accepted gap AG20 (owner 2026-11-27; guards and sentinels clean for the 12 h) |
@@ -317,5 +317,6 @@ in requirements, tasks, config-contract D10 and A56):
    regenerated.
 5. D10 rule (2) vs. tooling and CI changes since the tags → rule corrected.
 6. K8a start-of-window `verify.py demo` → accepted gap AG20 (owner
-   2026-11-27). K1 24 h baseline (B1) → re-run 2026-11-27: NOT MET (a
-   roll-list container start at 2026-11-26T19:01:51Z; no ruling yet).
+   2026-11-27). K1 24 h baseline (B1) → re-run 2026-11-27T14:10Z: NOT MET (a
+   roll-list container start at 2026-11-26T19:01:51Z); re-run
+   2026-11-27T19:05Z (`runs/k1-20261127b`): **met** — 24 h clean, 65/65.
