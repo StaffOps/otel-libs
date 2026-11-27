@@ -803,6 +803,17 @@ and `opentelemetry-instrumentation-logging`) `>=0.63b0,<0.67b0`. CI: py
 > image digests: the soak runs recorded none; Harbor shows all twelve
 > `otel-libs-demo-*:7080d19` tags pushed on 2026-11-23, before K8a started
 > (2026-11-24T14:26:14Z), at the digests the pods run (soak summary).
+>
+> *Correction to rule (2), 2026-11-27 (owner, demo DE12):* the example
+> directories `go/example/`, `python/example/`, `nodejs/example/` and
+> `dotnet/example/` may also change between the soaked commit and `0.3.0`.
+> They are not library inputs, and DE12 replaces their apps with the demo
+> apps. `demo-tag.sh` takes all of `go/` as input, so a change under
+> `go/example/` moves the demo tag even though the Go demo binaries do not
+> change (the Python, Node.js and .NET example trees are outside its list).
+> The freeze check runs over `demo-tag.sh`'s input list minus
+> `go/example/`, plus `go/`, `python/`, `nodejs/packages/` and `dotnet/`
+> without their `example/` trees, and must stay empty.
 
 **Choice**: one coordinated `0.3.0` for Go + Python, preceded by
 `0.3.0-rc.1` soaked in DEV/HML; no legacy-behavior flag; .NET stays on 0.2.x

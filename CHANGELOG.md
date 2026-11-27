@@ -4970,6 +4970,31 @@ Unsupported instrumentation versions, task A10 (P18):
   that the Go demo worker caps `DEMO_INTERVAL_SECONDS` at 3600 s
   (`go/demo/internal/demokit/demokit.go`, to fix after the soak code
   freeze); the soak now refuses a longer interval.
+- **`verify.py demo`: DE6 refutation fixes and gap filing (DE8, DE11,
+  2026-11-27).** The changes, by check:
+  - **b.db_client:** the exemplar's span must be the DB CLIENT span. Go and
+    .NET are now `xfail:A43` (A43 was decided on 2026-11-17: an upstream PR,
+    no helper workaround).
+  - **d.http, `unhandled`:** counts the ERROR records on the api SERVER span
+    and the framework spans below it: Go 0, Python 1, Node.js 1, .NET 1
+    (Kestrel).
+  - **c:** fails without a finite `le` bucket.
+  - **g:** a server-side sentinel search that returns its limit is marked as
+    capped. A server-side token hit that the client-side scan cannot confirm,
+    or a hit trace it cannot fetch, now fails the g cells. The poll-root
+    sample is removed, so every listed trace is scanned.
+  - **Pre-flight:** BLOCKs when a demo Deployment sets
+    `OTEL_METRICS_EXEMPLAR_FILTER`. It reads env names only.
+  - **Service-graph line:** reports a counter that does not exist as
+    `0 (series absent, gateway job up)`, and adds the gateway-wide
+    expired-edge share.
+  - **`expected.json`:** citations no longer use root README line numbers.
+  - **A42:** recorded as the owner's cross-language parity decision (keep
+    `500`), not a conformance gap; DE8 is closed.
+
+  Demo code findings are filed for after `0.3.0` final (DE17–DE20; D10 rule
+  (2) now also allows the example trees to change). Measured on k8s01, run
+  `20261116t1812`, images `7080d19`: NA 6, PASS 54, XFAIL 4.
 - **Soak K11 report and checks (2026-11-27).**
   [`specs/soak-simulation/reports/README.md`](specs/soak-simulation/reports/README.md)
   is the soak evidence for `0.3.0` final (D10). It summarizes the per-run

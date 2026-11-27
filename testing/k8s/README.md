@@ -250,6 +250,24 @@ UNEXPECTED or BLOCKED (exemplar storage absent, or the window starts less than
 120 s, a bad `expected.json`). `--dry-run` exits `1` only when the pre-flight
 is BLOCKED. Service-graph edges carry no run label: check e scopes them by
 service name only.
+The cells (a–g), the pre-flight lines and how to read XFAIL / NA are listed
+in [`demo/README.md`](../../demo/README.md#check-a-run-verifypy-demo). Details
+of the checks that are easy to misread (DE11, 2026-11-27): `b.db_client` wants
+the exemplar on the DB CLIENT span itself (`db.system.name`, or the legacy
+`db.system`), so Go and .NET
+are `xfail:A43` (their exemplar sits on the parent span); `d.http` on
+`unhandled` counts the ERROR records on the api SERVER span and the framework
+spans below it (Python and Node.js 1, Go 0, .NET 1, the Kestrel record);
+`c` fails without a finite `le` bucket; a server-side sentinel search of check
+g that returns exactly its limit (1000) is printed as capped — not a problem
+by itself, since each of those traces already holds a hit; every listed root
+trace is scanned (there is no poll-root sample: the workers never trace the
+XREADGROUP poll). The pre-flight BLOCKs when a demo Deployment sets
+`OTEL_METRICS_EXEMPLAR_FILTER` (it reads env names only; `envFrom` sources are
+named, not read). The service-graph INFO lines print the connector's dropped
+spans — `0 (series absent, gateway job up)` when the counter does not exist —
+and the gateway-wide expired-edge share
+(`otelcol_connector_servicegraph_expired_edges` / `_total_edges` over W).
 The tally line counts the pre-flight BLOCKED lines next to the cells
 (`verify demo: …; pre-flight BLOCKED 1; FAIL`). A backend request that fails in
 transport (the API server unreachable, a reset connection, a TLS handshake or

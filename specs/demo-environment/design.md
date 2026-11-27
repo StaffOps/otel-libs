@@ -592,9 +592,10 @@ hand-written `Failure.Record` (its library has no A45 API, parked) and the
   services, and it sits on the owning span, with `exception_type` = the pinned
   literal in all four languages (.NET: the measured short name). Not counted:
   the helper record of a failed PostgreSQL span (d.db's) and records on
-  framework spans outside every demo span (the .NET Kestrel record on the api
-  SERVER span for `unhandled`, design r3.5 "Framework logs on the unhandled
-  path", A37). The propagating spans are checked too: api `demo.order.accept`
+  framework spans outside every demo span (on `unhandled`: the helper's server
+  record of Python and Node.js, contract A37 decision (2), and the .NET Kestrel
+  record, A37 decision (6), parked as dotnet C20; d.http counts them —
+  *amended 2026-11-27, DE11: was "the .NET Kestrel record …, A37"*). The propagating spans are checked too: api `demo.order.accept`
   (`business_error`, `db_error`) and worker `demo.drive` have status ERROR,
   no description, `error.type` = `HTTP_CODES[scenario]` (`422` / `409` /
   `500`), no `exception` event and no ERROR record. Check c requires the
@@ -815,7 +816,9 @@ flag is `flags & 1` (never `flags="1"`: Python records carry `3`, audit).
   by time slices until a slice returns fewer traces than the limit (no
   silent cap: a slice that still hits the limit at the smallest slice size
   is FAIL); XREADGROUP poll roots are scanned on a sample of 50 per language
-  and then excluded. Connection-time roots from the first 5 minutes after
+  and then excluded *(removed 2026-11-27, DE11: the workers never trace the
+  poll, r3.6 item (2), so the sample was always "0 of 0"; every listed root is
+  scanned)*. Connection-time roots from the first 5 minutes after
   each pod start, with fully anchored TraceQL regexes:
   `{resource.otel_libs.run="<run>" && (name=~".*connect.*" || name=~"(?i)(auth|hello|startup)")}`.
   > *Corrected 2026-11-18 (M7, owner decision option A):* the span set and
@@ -904,6 +907,23 @@ A42), A43 (Go and .NET DB-client exemplars on the parent span; b.db_client
 keeps "a span of the trace" until A43 is decided); A37 evidence extended.
 (4) `otelcol_connector_servicegraph_dropped_spans` returns no data on this
 gateway: the info line prints `unmeasured` instead of 0.)*
+*(DE11, 2026-11-27, from the DE6 refutation and a read-only re-run of run
+`20261116t1812`: (1) b.db_client requires the exemplar's span to be a CLIENT
+span with `db.system.name` (or the legacy `db.system`, code review L1) — A43 was decided 2026-11-17 (upstream PR, no helper
+workaround), so the "any span of its trace" rule outlived its exit condition;
+Go and .NET are `xfail:A43`. (2) d.http on `unhandled` asserts the ERROR records
+on the api SERVER span and the framework spans below it: 1 for Python and
+Node.js (the helper's A37 record), 0 for Go, 1 for .NET (Kestrel, owner C20) —
+measured on the cluster the same day. (3) The dropped-span counter exists only
+after a drop: with the gateway job up, its absence prints `0 (series absent,
+gateway job up)`; a second INFO line reports the gateway-wide expired-edge share
+(`otelcol_connector_servicegraph_expired_edges` / `_total_edges` over W),
+reported, not gated. (4) A server-side sentinel search that returns exactly its
+limit (1000) is printed as capped. (5) Check c fails when no finite `le` bucket
+exists. (6) The pre-flight reads the demo Deployments' env names: a set
+`OTEL_METRICS_EXEMPLAR_FILTER` is BLOCKED (DR6); the target_info line says why
+each app has two instances (the app's SDK target_info and the gateway
+span-metrics one, which has no `instance` label).)*
 *(r3.7, 2026-11-16, DE5 code review: (1) an `xfail` cell carries a `reason`
 list in `expected.json`; it is XFAIL only when every observed problem contains
 one of the reasons, any other problem makes it FAIL (so an xfail cannot hide a

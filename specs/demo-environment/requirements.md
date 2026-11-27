@@ -177,6 +177,10 @@ What exists today cannot show this (read 2026-11-16):
   `exception.type`, `exception.message`, `exception.stacktrace` (ADR-014
   decision 2) (DE-D8). The unqualified type literals are a deliberate
   deviation from the semconv recommendation of a fully qualified name (DE-D8).
+  *Corrected 2026-11-27 (DE11): "at most one `exception` event" is stale. Since
+  A45 (contract design D15; DE-D8 note of 2026-11-17) the owning span carries **no**
+  `exception` event in any language, and check d.demo fails on any event, a
+  type-only one included (`testing/k8s/verify.py` `_d_demo`).*
 - WHEN the worker's `demo.drive` span receives a non-2xx answer THEN it SHALL
   set status ERROR with `error.type` = the HTTP status code and
   `demo.outcome=error`, record no `exception` event (no exception occurs in the
@@ -301,6 +305,11 @@ What exists today cannot show this (read 2026-11-16):
   token, in its line or in any structured-metadata field (run tokens in log
   records are intended: ADR-014 puts the exception detail there). The check SHALL print
   counts and labels only, never the matched text.
+  *Corrected 2026-11-27 (DE11): "connection-time root traces included" is stale.
+  The connection-time TraceQL search was replaced by the start-up scan (design
+  DE-D11, correction M7 of 2026-11-18, owner option A): the span set and the Loki
+  scan cover the run window plus the first 300 s after each pod start, which holds
+  the connection-time roots without a name filter.*
 
 ### DR13 — Relation to the examples and docs
 - WHEN the demo is added THEN the existing example apps, their Dockerfiles,

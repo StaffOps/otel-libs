@@ -42,3 +42,55 @@ apps (namespace `dev-otel-libs`; passwords generated at `apply`, kept until
 | Redis 7.4.12 | `demo-redis:6379` | keys `demo:<lang>:quote:<customer>`, stream `demo:<lang>:orders` (DE-D4, DE-D5) | Secret `demo-redis-auth`, key `password` |
 
 Build DSNs in memory from these and never log them. Status of the remaining tasks: [tasks.md](../specs/demo-environment/tasks.md).
+
+## Check a run: `verify.py demo`
+
+`testing/k8s/verify.py demo` reads one run back from Tempo, Loki and
+Prometheus on the cluster and judges every language × cell against
+[`testing/k8s/demo/expected.json`](../testing/k8s/demo/expected.json)
+(design DE-D11). It is read-only: every query goes through the API server's
+service proxy, and the pre-flight only `get`s Deployments and pods.
+
+```bash
+KUBE_CONTEXT=k8s01 python3 -I testing/k8s/verify.py demo --run "$RUN" --dry-run   # pre-flight only
+KUBE_CONTEXT=k8s01 python3 -I testing/k8s/verify.py demo --run "$RUN" --window 15m --settle 2m
+KUBE_CONTEXT=k8s01 python3 -I testing/k8s/verify.py --langs go,python demo --run "$RUN"
+```
+
+`$RUN` is the run id of `demo.sh apply` (pod label `otel-libs/run`, resource
+attribute `otel_libs.run`). The window is `[now − settle − W, now − settle]`;
+it must start at least 60 s after the youngest app pod start, or the
+pre-flight is BLOCKED.
+
+**Pre-flight** (INFO or BLOCKED lines): Prometheus `exemplar-storage` and its
+start time, the exemplar buffer fill, `target_info` instances of the run (two
+per app: the app's own and the one the gateway's span-metrics connector
+writes, without an `instance` label), `OTEL_METRICS_EXEMPLAR_FILTER` unset in
+the demo Deployments (DR6; env names only, never values), and the run's pods.
+
+| Cell | Checks (requirement) |
+|---|---|
+| `a` | Loki records with a `trace_id` resolve in Tempo and their `span_id` is a span of that trace, on or below a demo span (DR5) |
+| `b.http_server`, `b.rpc_server`, `b.db_client`, `b.demo_order` | `_bucket` exemplars of the run's instances resolve to a trace and a span; `b.db_client` also wants that span to be the DB CLIENT span (`db.system.name`, or the legacy `db.system`) (DR6) |
+| `c` | `demo.orders.processed` and `demo.order.duration`: names, labels, the nine DE-D9 bounds, an increase per backend scenario, metric `error_type` = the pinned literal (DR7) |
+| `d.demo` | owning demo span: ERROR, no description, pinned `error.type`, no `exception` event, exactly one ERROR record in the trace, on that span; propagating spans clean (DR3, A45) |
+| `d.grpc`, `d.http`, `d.db` | the instrumentation spans of each error route: status, `error.type`, no exception detail on the span; on `unhandled` the api SERVER span is `500` and carries the expected ERROR records (Python and Node.js 1, Go 0, .NET the Kestrel record); the failed PostgreSQL span has `23505` and a correlated record (DR3, ADR-014) |
+| `e.trace`, `e.edges`, `e.edge.db` | the `ok` trace shape, the service-graph edges worker → api → backend, the messaging edge, the PostgreSQL edge with `connection_type="database"` (DR8) |
+| `g.secret`, `g.sentinel.db`, `g.sentinel.app` | no 48-hex token, `password=`, URL userinfo or run token in any span of the run (window + 300 s after each pod start) or in the pods' Loki records; labels only are printed (DR12) |
+
+INFO lines that are reported, not gated: worker → api connection errors per
+language, the api → Redis edges, the service-graph connector's dropped spans
+(`0 (series absent, gateway job up)` when the counter was never created) and
+its gateway-wide expired-edge share.
+
+**Reading the verdicts.** `PASS`; `FAIL`; `XFAIL` — the cell is
+`xfail:<task>` and every problem matches one of its `reason` strings (an
+unexplained problem makes it `FAIL`); `XPASS` — an xfail cell passed: flip it
+to `pass` (fails the run, so a fixed gap is never missed); `NA` — an
+`n/a:<reason>` cell with no data (a metric the language does not emit; Node.js
+cells marked `requires_series` are NA only while the series exist);
+`UNEXPECTED` — data on an n/a cell; `BLOCKED` — the check could not run. Exit
+`0` when every cell is PASS, XFAIL or NA, `1` otherwise, `2` for usage errors.
+Every xfail names an open task (`tools/spec_lint.py` rule `xfail-task`); the
+refs in `expected.json` say why each non-pass cell is what it is. More detail:
+[`testing/k8s/README.md`](../testing/k8s/README.md#verify).

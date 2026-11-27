@@ -6,7 +6,7 @@
     "Predictions from the design 'Expected-results matrix' (r3.5, 2026-11-16); DE6 replaces each with the measured cell.",
     "The .NET gRPC-client exemplar (parked item, b572e3a) is not read: check b reads server, DB and demo series only.",
     "also_xfail lists further open tasks a cell needs before it can pass (checked by spec_lint like the primary task).",
-    "b.db_client accepts an exemplar on any span of its trace until A43 is decided (Go, .NET exemplars sit on the parent span).",
+    "b.db_client requires the exemplar's span to be a DB CLIENT span (db.system.name, or the legacy db.system; 2026-11-27, DE11; A43 was decided 2026-11-17: upstream PR, no helper workaround). Go and .NET exemplars sit on the parent span: xfail:A43.",
     "reason: an xfail cell is XFAIL only when every observed problem contains one of these substrings; any other problem makes it FAIL (DE-D11 r3.7).",
     "requires_series: an n/a cell that is NA only while the metric series exist (Node.js: metrics without SDK exemplars)."
   ],
@@ -33,7 +33,13 @@
       "a": "pass",
       "b.http_server": "pass",
       "b.rpc_server": "pass",
-      "b.db_client": "pass",
+      "b.db_client": {
+        "expect": "xfail:A43",
+        "ref": "docs/site/library/overview.md gap row 'Go SQL duration exemplars (A43)'; owner decision 2026-11-17 (design D16): upstream XSAM/otelsql PR 670, no helper workaround; xfail since 2026-11-27 (DE11), when b.db_client started requiring the DB CLIENT span",
+        "reason": [
+          "resolved exemplar spans are not a DB CLIENT span"
+        ]
+      },
       "b.demo_order": "pass",
       "c": "pass",
       "d.demo": "pass",
@@ -52,11 +58,11 @@
       "b.http_server": "pass",
       "b.rpc_server": {
         "expect": "n/a:upstream-no-rpc-metrics",
-        "ref": "README.md:312"
+        "ref": "docs/site/library/overview.md, gap row 'Python and Node.js gRPC' (legacy rpc.* attributes, no RPC metrics)"
       },
       "b.db_client": {
         "expect": "n/a:upstream-no-db-client-duration",
-        "ref": "design Metric map: contrib SQLAlchemy has no operation duration (unmeasured, DE6 confirms)"
+        "ref": "design Metric map: contrib SQLAlchemy has no operation duration; measured DE6 / 2026-11-27: series absent"
       },
       "b.demo_order": "pass",
       "c": "pass",
@@ -75,21 +81,21 @@
       "a": "pass",
       "b.http_server": {
         "expect": "n/a:upstream-no-sdk-exemplars",
-        "ref": "README.md:329; @opentelemetry/sdk-metrics 3.0.0 has no exemplar code",
+        "ref": "nodejs/README.md section 'Known differences from Go and Python' ('No runtime metrics and no exemplars'); docs/site/library/overview.md gap row 'Node.js runtime metrics and exemplars'; @opentelemetry/sdk-metrics 3.0.0 has no exemplar code",
         "requires_series": true
       },
       "b.rpc_server": {
         "expect": "n/a:upstream-no-rpc-metrics",
-        "ref": "README.md:312 (Node.js gRPC: no RPC metrics); measured DE6 2026-11-17: series absent"
+        "ref": "docs/site/library/overview.md, gap row 'Python and Node.js gRPC' (legacy rpc.* attributes, no RPC metrics); measured DE6 2026-11-17: series absent"
       },
       "b.db_client": {
         "expect": "n/a:upstream-no-sdk-exemplars",
-        "ref": "README.md:329; @opentelemetry/sdk-metrics 3.0.0 has no exemplar code",
+        "ref": "nodejs/README.md section 'Known differences from Go and Python' ('No runtime metrics and no exemplars'); docs/site/library/overview.md gap row 'Node.js runtime metrics and exemplars'; @opentelemetry/sdk-metrics 3.0.0 has no exemplar code",
         "requires_series": true
       },
       "b.demo_order": {
         "expect": "n/a:upstream-no-sdk-exemplars",
-        "ref": "README.md:329; @opentelemetry/sdk-metrics 3.0.0 has no exemplar code",
+        "ref": "nodejs/README.md section 'Known differences from Go and Python' ('No runtime metrics and no exemplars'); docs/site/library/overview.md gap row 'Node.js runtime metrics and exemplars'; @opentelemetry/sdk-metrics 3.0.0 has no exemplar code",
         "requires_series": true
       },
       "c": "pass",
@@ -108,7 +114,13 @@
       "a": "pass",
       "b.http_server": "pass",
       "b.rpc_server": "pass",
-      "b.db_client": "pass",
+      "b.db_client": {
+        "expect": "xfail:A43",
+        "ref": "docs/site/library/overview.md gap row 'Go SQL duration exemplars (A43)' (.NET Npgsql has the same gap, parked); owner decision 2026-11-17 (design D16): upstream XSAM/otelsql PR 670, no helper workaround; xfail since 2026-11-27 (DE11), when b.db_client started requiring the DB CLIENT span",
+        "reason": [
+          "resolved exemplar spans are not a DB CLIENT span"
+        ]
+      },
       "b.demo_order": "pass",
       "c": "pass",
       "d.demo": "pass",
@@ -118,13 +130,13 @@
         "also_xfail": [
           "C20"
         ],
-        "ref": "error.type = the exception type name, not 500 (A42); dotnet/HOW-TO.md:811-815 (ASP.NET Core RecordException: A37 .NET part, parked as specs/dotnet-otel-helper/tasks.md C20, 2026-11-19)",
+        "ref": "A42: owner cross-language parity decision 2026-11-27 (specs/config-contract-v0.3/tasks.md A42): every language keeps error.type 500 on the 5xx SERVER span; semconv HTTP span error.type allows the status code or the exception type, so .NET's exception type name is conformant and the cell waits on dotnet C20. Exception events: dotnet/HOW-TO.md section 'Exceptions Recorded in Spans' (ASP.NET Core RecordException, A37 .NET part, parked as specs/dotnet-otel-helper/tasks.md C20, 2026-11-19)",
         "reason": [
           "api SERVER error.type 'StaffOps.OtelLibs.Demo.DemoUnhandledError' (want 500)",
           "server span 'POST /orders' carries",
           "run token on server span"
         ],
-        "reason_notes": "the error.type reason is A42; the exception event reasons are C20 (the .NET part of A37)"
+        "reason_notes": "the error.type reason is A42 (cross-language parity, needs C20); the exception event reasons are C20 (the .NET part of A37)"
       },
       "d.db": "pass",
       "e.trace": "pass",

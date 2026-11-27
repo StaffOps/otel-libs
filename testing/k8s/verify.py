@@ -442,7 +442,14 @@ RETRY_DELAY = 60  # DE-D11 r3.3: a late trace / span is retried once after 60 s.
 MAX_EXEMPLAR_TRACES = 20
 MAX_D_TRACES = 5
 MAX_E_TRACES = 5
-POLL_ROOT_SAMPLE = 50
+# Server-side token searches of check g ask for at most this many traces; an answer of
+# exactly this size is capped (DE11, 2026-11-27).
+SENTINEL_SEARCH_LIMIT = 1000
+# check d.http, ``unhandled``: ERROR records on the api SERVER span and the framework
+# spans below it (DE11, 2026-11-27, measured on run 20261116t1812): Python and Node.js
+# write the helper's one server record (contract A37 decision 2), Go none (decision 7),
+# .NET the Kestrel record (A37 decision 6, parked as dotnet C20).
+SERVER_RECORDS_UNHANDLED = {"go": 0, "python": 1, "node": 1, "dotnet": 1}
 TEMPO_PAGE_LIMIT = 500
 LOKI_PAGE_LIMIT = 2000
 MIN_SLICE = 60
@@ -911,11 +918,16 @@ def demo_preflight(b: Backends, context: str, run: DemoRun, rep: DemoReport,
                         run.instances.setdefault((lang, app), set()).add(
                             (m.get("job", ""), m.get("instance", "")))
         found = sorted(f"{lang}/{app}={len(v)}" for (lang, app), v in run.instances.items())
-        rep.info(f"preflight target_info{{otel_libs_run={run.run!r}}} instances: "
+        # Two per app is the normal count: the app's own target_info and the one the
+        # gateway's span-metrics connector writes for the same service (no `instance`
+        # label; DE11, 2026-11-27, measured on run 20261116t1812).
+        rep.info(f"preflight target_info{{otel_libs_run={run.run!r}}} instances "
+                 "(2 per app = the app's SDK target_info + the gateway span-metrics target_info): "
                  + (" ".join(found) or "none"))
     except QueryError as exc:
         run.target_error = str(exc)
         rep.info(f"preflight target_info unreadable: {exc}")
+    exemplar_filter_env(context, run, rep, kubectl)
     try:
         items = kubectl(context, ["pods", "-n", run.namespace, "-l", f"otel-libs/run={run.run}"])
         for pod in items.get("items") or []:
@@ -937,6 +949,37 @@ def demo_preflight(b: Backends, context: str, run: DemoRun, rep: DemoReport,
         rep.blocked(f"preflight: the window starts at {run.window_start}, less than {STARTUP_GRACE}s "
                     f"after the youngest app pod start {max(run.latest_starts)} (startup race, "
                     "DE-D11 r3.6); wait or shorten --window")
+
+
+def exemplar_filter_env(context: str, run: DemoRun, rep: DemoReport, kubectl) -> None:
+    """DR6: the demo app Deployments leave OTEL_METRICS_EXEMPLAR_FILTER unset (DE11,
+    2026-11-27). Reads env names only, never a value; ``envFrom`` sources are not read
+    and are named in the INFO line."""
+    try:
+        items = kubectl(context, ["deployments", "-n", run.namespace, "-l",
+                                  f"otel-libs/run={run.run},otel-libs/lang"])
+    except QueryError as exc:
+        rep.info(f"preflight Deployments unreadable, OTEL_METRICS_EXEMPLAR_FILTER not checked: {exc}")
+        return
+    names, setting, env_from = [], [], []
+    for d in items.get("items") or []:
+        name = (d.get("metadata") or {}).get("name", "")
+        names.append(name)
+        spec = (((d.get("spec") or {}).get("template") or {}).get("spec") or {})
+        for c in (spec.get("containers") or []) + (spec.get("initContainers") or []):
+            if any(e.get("name") == "OTEL_METRICS_EXEMPLAR_FILTER" for e in c.get("env") or []):
+                setting.append(f"{name}/{c.get('name', '?')}")
+            if c.get("envFrom"):
+                env_from.append(f"{name}/{c.get('name', '?')}")
+    if not names:
+        rep.info("preflight OTEL_METRICS_EXEMPLAR_FILTER not checked: no app Deployment matched "
+                 f"otel-libs/run={run.run},otel-libs/lang")
+    elif setting:
+        rep.blocked(f"preflight: OTEL_METRICS_EXEMPLAR_FILTER is set in {sorted(setting)}; DR6 "
+                    "wants it unset (spec default trace_based)")
+    else:
+        rep.info(f"preflight OTEL_METRICS_EXEMPLAR_FILTER unset in {len(names)} app Deployment(s)"
+                 + (f" (envFrom not read: {sorted(env_from)})" if env_from else ""))
 
 
 def pod_times(pod: dict) -> tuple[int | None, int | None]:
@@ -1110,9 +1153,25 @@ def check_b(b: Backends, run: DemoRun, lang: str, cell: str, cache: TraceCache) 
         _, misses, retried = cache.resolve(pairs_to_check)
     except QueryError as exc:
         return Obs(OBS_ERROR, f"query error: {exc}")
-    note = (" (exemplar span may be the parent of the DB span until A43 is decided)"
-            if cell == "b.db_client" else "")
+    note = ""
     problems = []
+    if cell == "b.db_client":
+        # DR6: the exemplar names the DB CLIENT span itself. A43 was decided 2026-11-17
+        # (upstream PR, no helper workaround), so "any span of its trace" no longer passes
+        # (DE11, 2026-11-27); Go and .NET are xfail:A43 in expected.json.
+        # Span.is_db_client accepts the legacy db.system too: an instrumentation on old
+        # semconv still names the DB span (code review L1, 2026-11-27).
+        note = " (exemplar span must be a DB CLIENT span)"
+        missed = set(misses)
+        resolved = [(t, s) for t, s in pairs_to_check if (t, s) not in missed]
+        not_db = 0
+        for t, s in resolved:
+            span = next((x for x in cache.get(t) or [] if x.span_id == norm_span(s)), None)
+            if span is None or not span.is_db_client():
+                not_db += 1
+        if not_db:
+            problems.append(f"{not_db} of {len(resolved)} resolved exemplar spans are not a DB CLIENT "
+                            "span (db.system.name or db.system)")
     if no_span:
         problems.append(f"{no_span} exemplars without span_id")
     if invalid:
@@ -1187,10 +1246,11 @@ def check_c(b: Backends, run: DemoRun, lang: str) -> Obs:
     try:
         bounds = sorted(float(le) for le in les if le and le != "+Inf")
     except ValueError:
-        bounds = []
+        bounds = None
         problems.append(f"non-numeric le values {sorted(les)}")
-    if bounds and bounds != sorted(DURATION_BOUNDS):
-        problems.append(f"le bounds {bounds} != DE-D9 {list(DURATION_BOUNDS)}")
+    if bounds is not None and bounds != sorted(DURATION_BOUNDS):
+        # No finite bucket at all fails too (DE11, 2026-11-27): DE-D9 fixes nine bounds.
+        problems.append(f"le bounds {bounds or 'none (no finite le bucket)'} != DE-D9 {list(DURATION_BOUNDS)}")
     for s in names:
         if s.get("__name__", "").startswith(("demo_orders_processed", "demo_order_duration")):
             if not {"demo_scenario", "demo_outcome"} <= set(s):
@@ -1257,8 +1317,9 @@ def _d_demo(b: Backends, run: DemoRun, lang: str, scen: str, spans: list[Span]) 
     Counted: records on a demo span or below one in the same service, and records whose
     span id is missing or not in the trace. Not counted: the helper record of a failed
     PostgreSQL span (d.db's) and records on framework spans outside every demo span (the
-    .NET Kestrel record on the api SERVER span for ``unhandled``: A37 debt, design r3.5
-    "Framework logs on the unhandled path"). Propagating demo
+    helper's server record of Python and Node.js and the .NET Kestrel record on the api
+    SERVER / framework span for ``unhandled``: contract A37 decisions (2) and (6), the .NET
+    part parked as dotnet C20; d.http counts them, SERVER_RECORDS_UNHANDLED). Propagating demo
     spans (api ``demo.order.accept`` on 422/409, worker ``demo.drive``) carry status ERROR
     without description, ``error.type`` = the HTTP status code, no event, no record.
     """
@@ -1348,7 +1409,8 @@ def _d_grpc(lang: str, scen: str, spans: list[Span]) -> list[str]:
     return out
 
 
-def _d_http(lang: str, scen: str, spans: list[Span]) -> list[str]:
+def _d_http(b: Backends, run: DemoRun, lang: str, scen: str, spans: list[Span],
+            sleep=time.sleep) -> list[str]:
     by_id = {s.span_id: s for s in spans}
     servers = [s for s in spans if s.service == svc(lang, "api") and s.kind == "server"]
     out = []
@@ -1362,6 +1424,20 @@ def _d_http(lang: str, scen: str, spans: list[Span]) -> list[str]:
             out.append(f"{scen}: api SERVER status {server.status}")
         if server.attrs.get("error.type") != HTTP_CODES[scen]:
             out.append(f"{scen}: api SERVER error.type {server.attrs.get('error.type')!r} (want 500)")
+        # Exactly the expected ERROR records on the SERVER span and the framework spans below
+        # it (SERVER_RECORDS_UNHANDLED; DE11, 2026-11-27).
+        ids = {norm_span(s.span_id) for s in [server, *framework]}
+
+        def count() -> int:
+            return sum(1 for r in _loki_in_trace(b, run, lang, server.trace_id)
+                       if severity_number(r) >= 17 and norm_span(r.get("span_id", "")) in ids)
+        want = SERVER_RECORDS_UNHANDLED[lang]
+        n = count()
+        if n < want:  # a late record: read once more after RETRY_DELAY (code review L3)
+            sleep(RETRY_DELAY)
+            n = count()
+        if n != want:
+            out.append(f"{scen}: {n} ERROR records on the api SERVER / framework spans (want {want})")
     else:
         if server.status == "error":
             out.append(f"{scen}: api SERVER status error (want unset on 4xx)")
@@ -1426,7 +1502,7 @@ def check_d(b: Backends, run: DemoRun, lang: str, cache: TraceCache, rep: DemoRe
                 problems["d.demo"] += _d_demo(b, run, lang, scen, spans)
                 if scen in GRPC_MESSAGES:
                     problems["d.grpc"] += _d_grpc(lang, scen, spans)
-                problems["d.http"] += _d_http(lang, scen, spans)
+                problems["d.http"] += _d_http(b, run, lang, scen, spans, sleep=cache.sleep)
                 if scen == "db_error":
                     problems["d.db"] += _d_db(b, run, lang, spans)
             except QueryError as exc:
@@ -1616,14 +1692,46 @@ def check_e_edges(b: Backends, run: DemoRun, lang: str, rep: DemoReport) -> dict
 
 
 def servicegraph_dropped(b: Backends, run: DemoRun, rep: DemoReport) -> None:
+    """INFO lines: the connector's dropped spans and expired-edge share (reported, not gated).
+
+    The connector counters are gateway-wide, not per run. The dropped-span counter exists
+    only once a span was dropped, so an absent series with the gateway job up reads 0
+    (DE11, 2026-11-27).
+    """
     try:
         vec = b.prom_query(f"sum(increase(otelcol_connector_servicegraph_dropped_spans_total[{run.window}s]))"
                            f" or sum(increase(otelcol_connector_servicegraph_dropped_spans[{run.window}s]))",
                            run.window_end)
-        value = f"{float(vec[0]['value'][1]):.0f}" if vec else "unmeasured (no data from the gateway)"
+        if vec:
+            value = f"{float(vec[0]['value'][1]):.0f}"
+        else:
+            # The job that exports the connector's other series: its `up` tells whether
+            # the gateway was scraped.
+            up = b.prom_query("max(max by (job)(up) * on (job) group by (job)"
+                              '({__name__=~"otelcol_connector_servicegraph_.*"}))', run.window_end)
+            value = ("0 (series absent, gateway job up)" if up and float(up[0]["value"][1]) >= 1
+                     else "unmeasured (no data from the gateway)")
         rep.info(f"e: service_graph connector dropped spans in the window {value} (reported, not gated)")
     except QueryError as exc:
         rep.info(f"e: service_graph dropped-span count unreadable: {exc}")
+    try:
+        def edges(name: str) -> list[dict]:
+            # Both spellings, as for the dropped spans (code review L4): `_total` appears
+            # when the gateway's Prometheus translation adds the counter suffix.
+            return b.prom_query(f"sum(increase(otelcol_connector_servicegraph_{name}_total[{run.window}s]))"
+                                f" or sum(increase(otelcol_connector_servicegraph_{name}[{run.window}s]))",
+                                run.window_end)
+        exp = edges("expired_edges")
+        tot = edges("total_edges")
+        if exp and tot and float(tot[0]["value"][1]) > 0:
+            e, t = float(exp[0]["value"][1]), float(tot[0]["value"][1])
+            value = f"{e:.0f} of {t:.0f} ({e / t:.2f})"
+        else:
+            value = "unmeasured (no data from the gateway)"
+        rep.info(f"e: service_graph expired edges in the window {value}, gateway-wide "
+                 "(reported, not gated)")
+    except QueryError as exc:
+        rep.info(f"e: service_graph expired-edge share unreadable: {exc}")
 
 
 # ── check g: hygiene (DR12) ──
@@ -1725,10 +1833,6 @@ def scan_secret(value: str) -> list[str]:
     return [name for name, rx in SECRET_RES if rx.search(value)]
 
 
-def _is_poll_root(t: dict) -> bool:
-    return "XREADGROUP" in str(t.get("rootTraceName", "")).upper()
-
-
 def check_g(b: Backends, run: DemoRun, lang: str, cache: TraceCache,
             loki_hits: dict[str, list[str]]) -> dict[str, Obs]:
     cells = ("g.secret", "g.sentinel.db", "g.sentinel.app")
@@ -1752,25 +1856,32 @@ def check_g(b: Backends, run: DemoRun, lang: str, cache: TraceCache,
         listed, capped = tempo_page_intervals(b, f"{{{base}}}", intervals)
         sentinel_counts = {}
         extra: list[dict] = []
+        server_ids: dict[str, set[str]] = {}  # label -> trace ids the server-side search found
         for label, field_q in (("status", "statusMessage"), ("event", "event.exception.message"),
                                ("db.query.text", "span.db.query.text")):
             q = f'{{{base} && {field_q}=~{_quote(f".*({token_re})-{re.escape(run.run)}.*")}}}'
-            found = b.tempo_search(q, start, run.window_end, limit=1000)
-            sentinel_counts[label] = len(found)
+            found = b.tempo_search(q, start, run.window_end, limit=SENTINEL_SEARCH_LIMIT)
+            # An answer of exactly the limit is capped: traces beyond it are not fetched. Not
+            # a problem by itself, as long as the client-side scan finds the hits the server
+            # reported and every one of those traces was fetched (checked below; DE11,
+            # 2026-11-27, code review M1).
+            sentinel_counts[label] = (f"{len(found)} (capped at the limit)"
+                                      if len(found) >= SENTINEL_SEARCH_LIMIT else str(len(found)))
+            server_ids[label] = {i for i in (norm_trace(x.get("traceID", "")) for x in found) if i}
             extra += found
     except QueryError as exc:
         err = Obs(OBS_ERROR, f"query error: {exc}")
         return {c: err for c in cells}
     cross_detail, cross_problem = paging_crosscheck(b, base, listed, run.window_start, run.window_end)
-    polls = [t for t in listed if _is_poll_root(t)]
-    others = [t for t in listed if not _is_poll_root(t)]
-    stride = max(1, len(polls) // POLL_ROOT_SAMPLE)
-    sample = polls[::stride][:POLL_ROOT_SAMPLE]
-    ids = list(dict.fromkeys(norm_trace(t.get("traceID", "")) for t in others + sample + extra))
+    # Every listed root is scanned. The XREADGROUP poll-root sample was removed (DE11,
+    # 2026-11-27): the demo workers never trace the poll (design r3.6 item 2), so the
+    # sample was always "0 of 0".
+    ids = list(dict.fromkeys(norm_trace(t.get("traceID", "")) for t in listed + extra))
     ids = [i for i in ids if i]
     hits = {c: [] for c in cells}
     counted = {c: 0 for c in cells}
     unresolved = 0
+    unfetched: set[str] = set()
     for tid in ids:
         try:
             spans = cache.get(tid)
@@ -1779,6 +1890,7 @@ def check_g(b: Backends, run: DemoRun, lang: str, cache: TraceCache,
             return {c: err for c in cells}
         if spans is None:
             unresolved += 1
+            unfetched.add(tid)
             continue
         for s in spans:
             if not s.service.startswith(f"demo-{lang}-"):
@@ -1794,10 +1906,23 @@ def check_g(b: Backends, run: DemoRun, lang: str, cache: TraceCache,
                     hits[target].append(f"run token in {s.kind} span {s.span_id} {label}")
     secret_loki = loki_hits.get(lang, []) + loki_hits.get("*", [])
     hits["g.secret"] += secret_loki
-    common = (f"{len(ids)} traces scanned ({len(sample)} of {len(polls)} poll roots sampled, "
-              f"{len(intervals)} scan interval(s): run window + {STARTUP_SCAN}s after each pod start), "
+    common = (f"{len(ids)} traces scanned ({len(intervals)} scan interval(s): run window + "
+              f"{STARTUP_SCAN}s after each pod start), "
               f"server-side token counts "
               + " ".join(f"{k}={v}" for k, v in sentinel_counts.items()) + f"; {cross_detail}")
+    # The server-side token searches must be confirmed by the client-side scan (code review
+    # M1, 2026-11-27): a token-hit trace that cannot be fetched is a problem in every cell,
+    # and a server count without a client-side hit is a problem in the matching sentinel
+    # cell (db.query.text: g.sentinel.db; status and event: either sentinel cell).
+    server_all = set().union(*server_ids.values()) if server_ids else set()
+    lost = len(server_all & unfetched)
+    unmatched_server: dict[str, list[str]] = {"g.sentinel.db": [], "g.sentinel.app": []}
+    if server_ids.get("db.query.text") and not hits["g.sentinel.db"]:
+        unmatched_server["g.sentinel.db"].append("db.query.text")
+    for label in ("status", "event"):
+        if server_ids.get(label) and not hits["g.sentinel.db"] and not hits["g.sentinel.app"]:
+            for c in unmatched_server:
+                unmatched_server[c].append(label)
     out = {}
     for c in cells:
         problems = []
@@ -1807,6 +1932,11 @@ def check_g(b: Backends, run: DemoRun, lang: str, cache: TraceCache,
             problems.append(cross_problem)
         if unresolved and c == "g.secret":
             problems.append(f"{unresolved} listed traces not fetchable")
+        if lost:
+            problems.append(f"{lost} traces with a server-side token hit not fetchable")
+        if unmatched_server.get(c):
+            problems.append(f"server-side token search found traces ({', '.join(unmatched_server[c])}) "
+                            "but the client-side scan found no hit")
         uniq = list(dict.fromkeys(hits[c]))
         detail = f"{counted[c]} spans, {len(hits[c])} hit(s); {common}"
         if c == "g.secret":

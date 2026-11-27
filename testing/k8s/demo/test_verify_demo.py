@@ -278,12 +278,19 @@ class ExpectationTest(unittest.TestCase):
         tasks = {v["expect"] for cells in e.values() for v in cells.values() if v["expect"].startswith("xfail:")}
         # A37 (2026-11-19, owner decision 8): the .NET part is parked as dotnet tasks C20, so the
         # .NET cells name A42 / C20; no cell of any language names A37 any more (closed 2026-11-19).
-        self.assertEqual(tasks, {"xfail:A42", "xfail:C20"})
+        # A43 (DE11, 2026-11-27): b.db_client requires the DB CLIENT span; Go and .NET xfail.
+        self.assertEqual(tasks, {"xfail:A42", "xfail:A43", "xfail:C20"})
         self.assertNotIn("A37", {t for cells in e.values() for c in cells.values()
                                  for t in [c["expect"], *c["also"]]})
         self.assertEqual({(lang, cell) for lang, cells in e.items() for cell, c in cells.items()
                           if c["expect"].startswith("xfail:")},
-                         {("dotnet", "d.http"), ("dotnet", "g.sentinel.app")})
+                         {("dotnet", "d.http"), ("dotnet", "g.sentinel.app"),
+                          ("go", "b.db_client"), ("dotnet", "b.db_client")})
+        for lang in ("go", "dotnet"):
+            self.assertEqual(e[lang]["b.db_client"]["reason"],
+                             ["resolved exemplar spans are not a DB CLIENT span"])
+        # Stable citations, no root README line numbers (DE11).
+        self.assertNotIn("README.md:3", verify.EXPECTED_JSON.read_text())
         self.assertEqual(e["dotnet"]["d.http"]["expect"], "xfail:A42")
         self.assertEqual(e["dotnet"]["d.http"]["also"], ["C20"])
         self.assertEqual(e["dotnet"]["g.sentinel.app"]["expect"], "xfail:C20")
@@ -630,13 +637,20 @@ class CheckCTest(unittest.TestCase):
         self.assertEqual(verify.check_c(self.b, self.run, "go").state, "error")
 
 
-def record_lines(lang: str, owner: bool = True, extra: tuple = ()):
-    """Loki fake for check d: per fixture trace, the owning span's one ERROR record (A45)
-    and the helper record of each failed PostgreSQL span; ``extra`` adds (trace id, labels).
-    Answers trace-wide queries and span-scoped ones (``| span_id="..."``)."""
+def record_lines(lang: str, owner: bool = True, extra: tuple = (), server: bool = True):
+    """Loki fake for check d: per fixture trace, the owning span's one ERROR record (A45),
+    the helper record of each failed PostgreSQL span and, on ``unhandled``, the expected
+    ERROR records on the api SERVER span (verify.SERVER_RECORDS_UNHANDLED: Python and
+    Node.js the helper's A37 record, .NET Kestrel's, Go none); ``extra`` adds (trace id,
+    labels). Answers trace-wide queries and span-scoped ones (``| span_id="..."``)."""
     recs = []
     for sc in verify.ERROR_SCENARIOS:
         app, name = verify.OWNER[sc]
+        if server and sc == "unhandled":
+            api = next(s for s in spans_of(lang, sc) if s.kind == "server" and s.service == verify.svc(lang, "api"))
+            recs += [(api.trace_id, {"service_name": api.service, "span_id": api.span_id, "severity_number": "17",
+                                     "exception_type": "DemoUnhandledError", "exception_stacktrace": "at x"})
+                     ] * verify.SERVER_RECORDS_UNHANDLED[lang]
         for sp in spans_of(lang, sc):
             base = {"service_name": sp.service, "span_id": sp.span_id, "severity_number": "17",
                     "exception_stacktrace": "at x"}
@@ -876,19 +890,70 @@ class CheckDTest(unittest.TestCase):
         api_server.status = "error"
         worker = next(s for s in spans if s.kind == "client" and "http.request.method" in s.attrs)
         worker.attrs["error.type"] = "500"
-        problems = verify._d_http("go", "business_error", spans)
+        b, run = FakeBackends(), make_run()
+        problems = verify._d_http(b, run, "go", "business_error", spans)
         self.assertEqual(len(problems), 2, problems)
-        self.assertEqual(verify._d_http("go", "business_error", []), ["business_error: api SERVER span missing"])
+        self.assertEqual(verify._d_http(b, run, "go", "business_error", []),
+                         ["business_error: api SERVER span missing"])
         no_worker = [s for s in spans if s is not worker]
-        self.assertIn("worker HTTP CLIENT span missing", " ".join(verify._d_http("go", "db_error", no_worker)))
+        self.assertIn("worker HTTP CLIENT span missing",
+                      " ".join(verify._d_http(b, run, "go", "db_error", no_worker)))
         unh = spans_of("go", "unhandled")
         next(s for s in unh if s.kind == "server").status = "unset"
-        self.assertIn("api SERVER status unset", verify._d_http("go", "unhandled", unh)[0])
+        self.assertIn("api SERVER status unset", verify._d_http(b, run, "go", "unhandled", unh)[0])
         unh = spans_of("go", "unhandled")  # fresh copy: the recorded span has error.type 500 (D16)
         server = next(s for s in unh if s.kind == "server" and s.service.endswith("api"))
-        self.assertEqual(verify._d_http("go", "unhandled", unh), [])
+        self.assertEqual(verify._d_http(b, run, "go", "unhandled", unh), [])
         server.attrs.pop("error.type")
-        self.assertIn("unhandled: api SERVER error.type None (want 500)", verify._d_http("go", "unhandled", unh))
+        self.assertIn("unhandled: api SERVER error.type None (want 500)",
+                      verify._d_http(b, run, "go", "unhandled", unh))
+
+    def test_unhandled_server_records(self) -> None:
+        """DE11 (2026-11-27): exactly the expected ERROR records on the api SERVER / framework
+        spans on ``unhandled``: Python and Node.js 1 (A37 record), Go 0, .NET 1 (Kestrel, C20)."""
+        self.assertEqual(verify.SERVER_RECORDS_UNHANDLED, {"go": 0, "python": 1, "node": 1, "dotnet": 1})
+        for lang in verify.LANGS:
+            spans = spans_of(lang, "unhandled")
+            server = next(s for s in spans if s.kind == "server" and s.service == verify.svc(lang, "api"))
+            want = verify.SERVER_RECORDS_UNHANDLED[lang]
+            for n in (want, want + 1, max(0, want - 1)):
+                rec = {"service_name": server.service, "span_id": server.span_id, "severity_number": "17"}
+                b = FakeBackends()
+                b.loki_lines_fn = lambda q, s, e, limit, n=n, rec=rec: [(dict(rec), "x")] * n
+                sleeps: list = []
+                got = [p for p in verify._d_http(b, make_run(lang), lang, "unhandled", spans,
+                                                 sleep=sleeps.append)
+                       if "ERROR records on the api SERVER" in p]
+                # Below the expected count the read is retried once after RETRY_DELAY (L3).
+                self.assertEqual(sleeps, [verify.RETRY_DELAY] if n < want else [], (lang, n))
+                self.assertEqual(got, [] if n == want else
+                                 [f"unhandled: {n} ERROR records on the api SERVER / framework spans (want {want})"],
+                                 (lang, n))
+        # A record on a framework span below the SERVER span counts (Node.js express handler);
+        # an INFO record and a record on another span do not.
+        spans = spans_of("node", "unhandled")
+        handler = next(s for s in spans if s.name.startswith("request handler"))
+        worker = next(s for s in spans if s.service == verify.svc("node", "worker"))
+        b = FakeBackends()
+        b.loki_lines_fn = lambda *a: [({"span_id": handler.span_id, "severity_number": "17"}, "x"),
+                                      ({"span_id": handler.span_id, "severity_number": "9"}, "x"),
+                                      ({"span_id": worker.span_id, "severity_number": "17"}, "x")]
+        self.assertFalse([p for p in verify._d_http(b, make_run("node"), "node", "unhandled", spans,
+                                                    sleep=no_sleep)
+                          if "ERROR records on the api SERVER" in p])
+        # A record that arrives late is found by the retry.
+        server = next(s for s in spans if s.kind == "server" and s.service == verify.svc("node", "api"))
+        reads: list = []
+
+        def late(*a):
+            reads.append(1)
+            return [] if len(reads) == 1 else [({"span_id": server.span_id, "severity_number": "17"}, "x")]
+        b = FakeBackends()
+        b.loki_lines_fn = late
+        self.assertFalse([p for p in verify._d_http(b, make_run("node"), "node", "unhandled", spans,
+                                                    sleep=no_sleep)
+                          if "ERROR records on the api SERVER" in p])
+        self.assertEqual(len(reads), 2)
 
     def test_db_rules(self) -> None:
         b = FakeBackends()
@@ -1117,9 +1182,18 @@ class HygieneTest(unittest.TestCase):
         listed = [{"traceID": tid, "rootTraceName": "demo.drive"}]
         listed += [{"traceID": f"{i + 1:032x}", "rootTraceName": "XREADGROUP"} for i in range(polls)]
         b.search.append((("connect",), []))
-        b.search.append((("statusMessage",), [{"traceID": tid}]))
-        b.search.append((("event.exception.message",), []))
-        b.search.append((("span.db.query.text",), []))
+        # The server-side token searches answer what Tempo would: the trace when one of its
+        # status messages / exception events / query texts holds a run token (code review M1:
+        # a server hit the client-side scan does not confirm is a problem).
+        tokens = verify.run_tokens(RUNS.get(lang, "r1"))
+        spans = verify.parse_trace(fixture(lang, scen))
+
+        def holds(values) -> list:
+            return [{"traceID": tid}] if any(t in v for v in values for t in tokens) else []
+        b.search.append((("statusMessage",), holds(s.message for s in spans)))
+        b.search.append((("event.exception.message",),
+                         holds(a.get("exception.message", "") for s in spans for _, a in s.events)))
+        b.search.append((("span.db.query.text",), holds(s.attrs.get("db.query.text", "") for s in spans)))
         b.search.append(((), listed))
         run = make_run(lang, pods={lang: [(f"demo-{lang}-api-1", WSTART - 600)]})
         self.b = b
@@ -1143,10 +1217,26 @@ class HygieneTest(unittest.TestCase):
         self.assertNotIn("request handler", c["g.sentinel.app"].detail)
         self.assertEqual(c["g.sentinel.db"].state, "nodata")  # no DB span in that trace
 
-    def test_poll_roots_sampled(self) -> None:
-        self.run_g("dotnet", "ok", polls=120)
-        fetched = [c for c in self.b.calls if c[0] == "trace"]
-        self.assertEqual(len(fetched), 1 + 50)  # the drive trace + 50 of 120 poll roots
+    def test_every_listed_root_is_scanned(self) -> None:
+        # DE11 (2026-11-27): no XREADGROUP poll-root sample any more (the workers never
+        # trace the poll); a root named XREADGROUP is scanned like any other.
+        c = self.run_g("dotnet", "ok", polls=120)
+        fetched = [x for x in self.b.calls if x[0] == "trace"]
+        self.assertEqual(len(fetched), 1 + 120)
+        self.assertNotIn("poll roots", c["g.secret"].detail)
+        self.assertIn("listed traces not fetchable", c["g.secret"].detail)  # the fake ids
+
+    def test_sentinel_search_capped(self) -> None:
+        b = FakeBackends()
+        tid = b.add_trace(fixture("go", "ok"))
+        b.search.append((("event.exception.message",),
+                         lambda s, e, limit: [{"traceID": tid}] * limit))
+        b.search.append(((), [{"traceID": tid}]))
+        c = verify.check_g(b, make_run("go", pods={"go": [("demo-go-api-1", WSTART - 600)]}),
+                           "go", cache(b), {})
+        self.assertIn(f"event={verify.SENTINEL_SEARCH_LIMIT} (capped at the limit)", c["g.secret"].detail)
+        self.assertIn("status=1 ", c["g.secret"].detail)  # below the limit: a plain count
+        self.assertEqual(c["g.secret"].state, "pass", c["g.secret"].detail)  # reported, not a problem
 
     def test_loki_hits_and_caps(self) -> None:
         c = self.run_g("dotnet", "ok", loki={"dotnet": ["hex48 in Loki field x of pod p"],
@@ -1239,8 +1329,12 @@ class PreflightAndDriverTest(unittest.TestCase):
         self.assertTrue(run.exemplar_storage)
         self.assertEqual(run.instances, {("go", "api"): {("dev-otel-libs/demo-go-api", "i1")}})
         self.assertEqual(run.pods["go"][0][0], "demo-go-api-5f-abc")
-        self.assertEqual(calls, [("k8s01", ["pods", "-n", "dev-otel-libs", "-l", f"otel-libs/run={RUNS['go']}"])])
+        self.assertEqual(calls, [
+            ("k8s01", ["deployments", "-n", "dev-otel-libs", "-l", f"otel-libs/run={RUNS['go']},otel-libs/lang"]),
+            ("k8s01", ["pods", "-n", "dev-otel-libs", "-l", f"otel-libs/run={RUNS['go']}"])])
         text = out.getvalue()
+        self.assertIn("2 per app = the app's SDK target_info + the gateway span-metrics target_info", text)
+        self.assertIn("OTEL_METRICS_EXEMPLAR_FILTER unset in", text)
         self.assertIn("inside the window", text)
         self.assertIn("(full: old exemplars are evicted)", text)
         self.assertFalse(rep.failed())
@@ -1646,6 +1740,142 @@ class ReviewFixesTest(unittest.TestCase):
         res = verify.check_e_edges(b, make_run(), "go", report())
         self.assertIn("messaging edge / linked = 1.20", res["e.edges"].detail)
         self.assertIn("edges scoped by service name, not by run", res["e.edges"].detail)
+
+
+
+class DE11Test(unittest.TestCase):
+    """DE11 refutation fixes (2026-11-27)."""
+
+    def test_db_client_exemplar_must_name_the_db_client_span(self) -> None:
+        b = FakeBackends()
+        tid = b.add_trace(fixture("go", "ok"))
+        spans = spans_of("go", "ok")
+        proc = next(s for s in spans if s.name == "demo.order.process")
+        db = next(s for s in spans if s.name == "sql.conn.exec")
+        run = make_run(instances=instances("go"), exemplar_storage=True)
+        b.exemplars = [exemplar_series("inst-go-backend", (tid, db.span_id))]
+        obs = verify.check_b(b, run, "go", "b.db_client", cache(b))
+        self.assertEqual(obs.state, "pass", obs.detail)
+        self.assertIn("must be a DB CLIENT span", obs.detail)
+        # The parent span (A43: Go XSAM, .NET Npgsql) fails and the xfail:A43 reason explains it.
+        b.exemplars = [exemplar_series("inst-go-backend", (tid, proc.span_id), (tid, db.span_id))]
+        obs = verify.check_b(b, run, "go", "b.db_client", cache(b))
+        self.assertEqual(obs.state, "fail")
+        self.assertEqual(obs.problems, ["1 of 2 resolved exemplar spans are not a DB CLIENT span "
+                                        "(db.system.name or db.system)"])
+        self.assertEqual(report().cell("go", "b.db_client", obs), "XFAIL")
+        # Other b cells keep "a span of the trace".
+        b.exemplars = [exemplar_series("inst-go-backend", (tid, proc.span_id))]
+        self.assertEqual(verify.check_b(b, run, "go", "b.demo_order", cache(b)).state, "pass")
+        # An unresolved pair is its own problem, not counted twice.
+        b.exemplars = [exemplar_series("inst-go-backend", (tid, "00000000deadbeef"))]
+        obs = verify.check_b(b, run, "go", "b.db_client", cache(b))
+        self.assertEqual(obs.problems, ["1 (trace, span) pairs do not resolve after one retry"])
+
+    def test_server_side_hits_must_be_confirmed(self) -> None:
+        """Code review M1: a sentinel cell never PASSes while the server-side token search found
+        traces the client-side scan could not fetch or did not confirm."""
+        pods = {"go": [("demo-go-api-1", WSTART - 600)]}
+        b = FakeBackends()
+        tid = b.add_trace(fixture("go", "ok"))
+        lost = f"{0xabc:032x}"  # found by the server-side search, fetches as None
+        b.search.append((("event.exception.message",), [{"traceID": lost}]))
+        b.search.append((("statusMessage",), []))
+        b.search.append((("span.db.query.text",), []))
+        b.search.append(((), [{"traceID": tid}]))
+        c = verify.check_g(b, make_run("go", pods=pods), "go", cache(b), {})
+        for cell in ("g.secret", "g.sentinel.db", "g.sentinel.app"):
+            self.assertEqual(c[cell].state, "fail", (cell, c[cell].detail))
+            self.assertIn("1 traces with a server-side token hit not fetchable", c[cell].problems)
+        self.assertIn("server-side token search found traces (event) but the client-side scan found no hit",
+                      c["g.sentinel.app"].problems)
+        # A fetched trace the server flagged (db.query.text) but without a client-side hit fails
+        # g.sentinel.db only; status / event hits confirmed in either sentinel cell are fine.
+        b = FakeBackends()
+        tid = b.add_trace(fixture("go", "ok"))
+        b.search.append((("span.db.query.text",), [{"traceID": tid}]))
+        b.search.append((("statusMessage",), []))
+        b.search.append((("event.exception.message",), []))
+        b.search.append(((), [{"traceID": tid}]))
+        c = verify.check_g(b, make_run("go", pods=pods), "go", cache(b), {})
+        self.assertEqual(c["g.sentinel.db"].problems,
+                         ["server-side token search found traces (db.query.text) but the client-side "
+                          "scan found no hit"])
+        self.assertEqual(c["g.sentinel.app"].state, "pass", c["g.sentinel.app"].detail)
+        self.assertEqual(c["g.secret"].state, "pass", c["g.secret"].detail)
+        h = HygieneTest()
+        c = h.run_g("go", "db_error")  # the token is in the DB span's event: confirmed
+        self.assertFalse([p for p in c["g.sentinel.db"].problems if "server-side" in p])
+
+    def test_check_c_needs_a_finite_bucket(self) -> None:
+        c = CheckCTest()
+        c.setUp()
+        c.b.series = [s for s in c.b.series if s.get("le") in (None, "+Inf")]
+        obs = verify.check_c(c.b, c.run, "go")
+        self.assertEqual(obs.state, "fail")
+        self.assertIn("le bounds none (no finite le bucket) != DE-D9", obs.detail)
+
+    def test_servicegraph_lines(self) -> None:
+        b = FakeBackends()
+        b.prom_vec.append(("max by (job)(up)", [{"metric": {}, "value": [WEND, "1"]}]))
+        b.prom_vec.append(("expired_edges", [{"metric": {}, "value": [WEND, "50"]}]))
+        b.prom_vec.append(("total_edges", [{"metric": {}, "value": [WEND, "200"]}]))
+        out = io.StringIO()
+        verify.servicegraph_dropped(b, make_run(), report(out))
+        text = out.getvalue()
+        self.assertIn("dropped spans in the window 0 (series absent, gateway job up)", text)
+        self.assertIn("expired edges in the window 50 of 200 (0.25), gateway-wide", text)
+        down = FakeBackends()
+        down.prom_vec.append(("max by (job)(up)", [{"metric": {}, "value": [WEND, "0"]}]))
+        out = io.StringIO()
+        verify.servicegraph_dropped(down, make_run(), report(out))
+        self.assertIn("dropped spans in the window unmeasured", out.getvalue())
+        self.assertIn("expired edges in the window unmeasured", out.getvalue())
+        q = [c[1] for c in b.calls if c[0] == "prom"]
+        self.assertTrue(any("increase(otelcol_connector_servicegraph_expired_edges[" in x for x in q), q)
+        self.assertTrue(any("increase(otelcol_connector_servicegraph_expired_edges_total[" in x for x in q), q)
+        self.assertTrue(any("increase(otelcol_connector_servicegraph_total_edges_total[" in x for x in q), q)
+
+    def test_preflight_exemplar_filter(self) -> None:
+        def deploy(name: str, env: list, env_from: bool = False) -> dict:
+            c = {"name": "app", "env": env}
+            if env_from:
+                c["envFrom"] = [{"secretRef": {"name": "s"}}]
+            return {"metadata": {"name": name}, "spec": {"template": {"spec": {"containers": [c]}}}}
+
+        def kubectl_for(deployments: list):
+            return lambda ctx, args: ({"items": deployments} if args[0] == "deployments"
+                                      else pods_json(("demo-go-api-5f-abc", "")))
+        secret = "s3cr3t-value"
+        out = io.StringIO()
+        rep = report(out)
+        verify.demo_preflight(FakeBackends(), "k8s01", make_run(window_start=0), rep, kubectl=kubectl_for(
+            [deploy("demo-go-api", [{"name": "OTEL_METRICS_EXEMPLAR_FILTER", "value": secret}])]))
+        self.assertTrue(rep.failed())
+        self.assertIn("OTEL_METRICS_EXEMPLAR_FILTER is set in ['demo-go-api/app']", out.getvalue())
+        self.assertNotIn(secret, out.getvalue())  # env names only
+        out = io.StringIO()
+        rep = report(out)
+        verify.demo_preflight(FakeBackends(), "k8s01", make_run(window_start=0), rep, kubectl=kubectl_for(
+            [deploy("demo-go-api", [{"name": "OTEL_SERVICE_NAME", "value": "x"}], env_from=True),
+             deploy("demo-go-backend", [])]))
+        self.assertFalse(rep.failed(), out.getvalue())
+        self.assertIn("unset in 2 app Deployment(s) (envFrom not read: ['demo-go-api/app'])", out.getvalue())
+
+        def broken(ctx, args):
+            if args[0] == "deployments":
+                raise verify.QueryError("forbidden")
+            return pods_json(("demo-go-api-5f-abc", ""))
+        out = io.StringIO()
+        rep = report(out)
+        verify.demo_preflight(FakeBackends(), "k8s01", make_run(window_start=0), rep, kubectl=broken)
+        self.assertFalse(rep.failed())
+        self.assertIn("Deployments unreadable, OTEL_METRICS_EXEMPLAR_FILTER not checked", out.getvalue())
+        out = io.StringIO()  # code review L2: no Deployment matched is "not checked", not "unset in 0"
+        rep = report(out)
+        verify.demo_preflight(FakeBackends(), "k8s01", make_run(window_start=0), rep, kubectl=kubectl_for([]))
+        self.assertIn("OTEL_METRICS_EXEMPLAR_FILTER not checked: no app Deployment matched", out.getvalue())
+        self.assertNotIn("unset in 0", out.getvalue())
 
 
 if __name__ == "__main__":
