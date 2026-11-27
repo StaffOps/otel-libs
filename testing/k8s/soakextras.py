@@ -1183,6 +1183,67 @@ def allowed(item: dict, entries: list[dict], accept_proposed: bool = False) -> d
     return None
 
 
+def recorded_unmeasured(item: dict, entries: list[dict], run: str | None) -> dict | None:
+    """The ``unmeasured`` allowlist entry that covers the difference exactly
+    (same match rule as ``allowed``) and names ``run`` in its ``runs``, or
+    None: an owner-ruled UNMEASURED item of that run only."""
+    um = [e for e in entries if e.get("status") == "unmeasured" and run and run in (e.get("runs") or [])]
+    hit = allowed(item, [dict(e, status="accepted") for e in um])
+    return next((e for e in um if dict(e, status="accepted") == hit), None) if hit else None
+
+
+def rejudge(saved: dict, entries: list[dict], accept_proposed: bool = False, run: str | None = None) -> dict:
+    """Re-judges the SR10 items of a saved ``soak-extras.json`` against an
+    allowlist, offline: runtime-family items and items UNMEASURED by the
+    traffic rule keep their status; every other item is judged again
+    (``unmeasured`` entry → UNMEASURED, an ``accepted`` entry → documented,
+    else FAIL). No backend read."""
+    items, counts = [], {"documented": 0, "UNMEASURED": 0, "FAIL": 0}
+    for old in (saved.get("parity") or {}).get("items") or []:
+        it = {k: v for k, v in old.items() if k not in ("status", "row", "reason", "candidate")}
+        runtime = old.get("status") == "documented" and not str(old.get("row") or "").startswith("sr10-gaps.json")
+        traffic = old.get("status") == "UNMEASURED" and str(old.get("reason") or "").startswith("no traffic")
+        if runtime or traffic:
+            it.update(status=old["status"], row=old.get("row"), reason=old.get("reason"))
+        elif (um := recorded_unmeasured(it, entries, run)):
+            it.update(status="UNMEASURED", row=None, reason=f"{um['reason']} ({um.get('ruling', 'no ruling')})")
+        elif (e := allowed(it, entries, accept_proposed)):
+            it.update(status="documented", row=f"sr10-gaps.json ({e['status']}): {e['gaps_ref']}")
+        else:
+            it.update(status="FAIL", row=None)
+        counts[it["status"]] += 1
+        items.append(it)
+    verdict = "FAIL" if counts["FAIL"] else ("UNMEASURED" if counts["UNMEASURED"] else "PASS")
+    if accept_proposed and verdict == "PASS":
+        verdict = "PREVIEW"
+    return {"verdict": verdict, "counts": counts, "items": items, "source_t1": saved.get("t1"),
+            "source_t2": saved.get("t2"), "accept_proposed": accept_proposed, "run": run,
+            "note": "offline re-judge of the saved SR10 items against the current allowlist (no backend read)"}
+
+
+def main_rejudge(args) -> int:
+    """``verify.py soak extras --rejudge <soak-extras.json>``: prints the counts
+    and writes the result to ``--output`` (never overwriting)."""
+    try:
+        saved = json.loads(Path(args.rejudge).read_text())
+        gaps = json.loads(Path(args.sr10_gaps or SR10_GAPS).read_text())
+    except (OSError, ValueError) as exc:
+        print(f"verify soak extras --rejudge: {redact(exc)}", file=sys.stderr)
+        return 2
+    out = rejudge(saved, gaps.get("entries") or [], bool(getattr(args, "sr10_accept_proposed", False)),
+                  getattr(args, "run", None))
+    c = out["counts"]
+    print(f"verify soak extras --rejudge: items {sum(c.values())}: documented {c['documented']}, "
+          f"UNMEASURED {c['UNMEASURED']}, FAIL {c['FAIL']} -> {out['verdict']}", flush=True)
+    if getattr(args, "output", None):
+        try:
+            sc._write_json(Path(args.output).parent, "extras-rejudge", out, args.output)
+        except FileExistsError:
+            print(f"verify soak extras --rejudge: --output {args.output} exists; not overwritten", file=sys.stderr)
+            return 1
+    return 0 if out["verdict"] == "PASS" else 1
+
+
 def metric_sets(series: list[dict]) -> dict[str, dict[str, dict[str, set]]]:
     """role -> lang -> metric name -> label keys, from /api/v1/series label sets."""
     out: dict[str, dict[str, dict[str, set]]] = {}
@@ -1251,7 +1312,7 @@ def metric_traffic(src: Sources, t1: float, t2: float) -> tuple[dict, str]:
 
 
 def parity_items(metrics: dict, spans: dict, rows: list[dict], langs, entries: list[dict],
-                 accept_proposed: bool = False, traffic: dict | None = None) -> list[dict]:
+                 accept_proposed: bool = False, traffic: dict | None = None, run: str | None = None) -> list[dict]:
     """Every difference: documented (runtime family, or an allowlist entry),
     FAIL (with a candidate gaps row) or UNMEASURED (a label-key difference where
     a language had no traffic for the metric in the window)."""
@@ -1259,8 +1320,11 @@ def parity_items(metrics: dict, spans: dict, rows: list[dict], langs, entries: l
 
     def judge(it: dict, ctx: str = "", hint_item: str | None = None) -> None:
         rt = runtime_family(it["item"], it["have"]) if it["kind"] == "metric" else None
-        e = None if rt else allowed(it, entries, accept_proposed)
-        if rt:
+        um = None if rt else recorded_unmeasured(it, entries, run)
+        e = None if rt or um else allowed(it, entries, accept_proposed)
+        if um:
+            it.update(status="UNMEASURED", row=None, reason=f"{um['reason']} ({um.get('ruling', 'no ruling')})")
+        elif rt:
             it.update(status="documented", row=rt)
         elif e:
             it.update(status="documented", row=f"sr10-gaps.json ({e['status']}): {e['gaps_ref']}")
@@ -1303,7 +1367,7 @@ def parity_items(metrics: dict, spans: dict, rows: list[dict], langs, entries: l
 
 def parity_check(src: Sources, guard: TempoGuard, langs, t1: float, t2: float, traces: dict[str, list], gate: dict,
                  rows: list[dict], entries: list[dict], accept_proposed: bool = False,
-                 allowlist: Path = SR10_GAPS) -> tuple[dict, list[str]]:
+                 allowlist: Path = SR10_GAPS, run: str | None = None) -> tuple[dict, list[str]]:
     match = sp.sel("", {"job": ("=~", f"{sp.APP_NS}/{sp.DEMO_SERVICE_RE}"), "__name__": ("!~", ".+_bucket")})
     queries = [f"series {match}"]
     series = src.series(match, t1, t2)
@@ -1324,7 +1388,7 @@ def parity_check(src: Sources, guard: TempoGuard, langs, t1: float, t2: float, t
     spans = span_sets(tser, traces)
     if not spans:
         span_note = span_note or "no span of the window in Tempo (TraceQL metrics and fetched traces empty)"
-    items = parity_items(metrics, spans, rows, langs, entries, accept_proposed, traffic)
+    items = parity_items(metrics, spans, rows, langs, entries, accept_proposed, traffic, run)
     fails = [i for i in items if i["status"] == "FAIL"]
     unmeasured = [i for i in items if i["status"] == "UNMEASURED"]
     if fails:
@@ -1430,7 +1494,7 @@ def summary_rows(data: dict) -> list[tuple[str, str, str]]:
             rows.append((f"parity {i['role']} {i['kind']} {i['item']}", i["status"],
                          f"have {','.join(i['have']) or '-'}; missing {','.join(i['missing']) or '-'}"
                          + (f"; {i['reason']}" if i.get("reason") else "")
-                         + (f"; candidate gaps row: {i['candidate']}" if i.get("candidate") else "")))
+                         + (f"; heuristic candidate gaps row: {i['candidate']}" if i.get("candidate") else "")))
     for svc, sev in sorted(data["logs"]["services"].items()):
         rows.append((f"logs {svc}", "REPORT-ONLY", ", ".join(f"sev {k}: {n}" for k, n in sorted(sev.items()))))
     return rows
@@ -1460,7 +1524,7 @@ def action_extras(src: Sources, args, langs, canary: str | None, now: float, inp
     qe, edges = edge_store(src, t1, t2)
     orphans, traces = orphan_check(guard, records, langs, t1, t2, args.orphan_sample, gate, gw, cells)
     parity, pq = parity_check(src, guard, langs, t1, t2, traces, gate, gap_rows(), entries,
-                              getattr(args, "sr10_accept_proposed", False), allowlist)
+                              getattr(args, "sr10_accept_proposed", False), allowlist, args.run)
     logs, lq = severity_counts(src, t1, t2, kcal)
     if canary is None:
         canary_out = {"verdict": "UNMEASURED", "sources": [{"source": f"runs/{args.run}/canary", "status": "unmeasured",
@@ -1562,6 +1626,9 @@ def add_arguments(p) -> None:
                         f"(default {DEFAULT_TEMPO_MEM_STOP / 2**30:g})")
     p.add_argument("--sr10-gaps", type=Path, default=None,
                    help="extras: the SR10 allowlist (default testing/k8s/soak/sr10-gaps.json)")
+    p.add_argument("--rejudge", type=Path, default=None,
+                   help="extras: re-judge the SR10 items of this saved soak-extras.json against the allowlist, "
+                        "offline (no backend read); prints the counts; writes --output when given")
     p.add_argument("--sr10-accept-proposed", action="store_true",
                    help="extras: preview: proposed sr10-gaps.json entries pass; the verdict is PREVIEW and the "
                         "exit is never 0 (needs-row entries never pass)")

@@ -16,6 +16,7 @@ import sys
 import tempfile
 import time
 import unittest
+from unittest import mock
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 
@@ -959,6 +960,52 @@ class Helpers(Base):
         self.assertEqual(soak.load_state(d), {})
         soak.save_state(d, {"tag": "t"})
         self.assertEqual(soak.load_state(d), {"tag": "t"})
+
+    def test_state_records_commit_dirty_and_digests(self):
+        """K11 review: state.json carries the soaked commit, the freeze-path
+        dirt flag and the running demo digests at the window start."""
+        tag = "t1"
+
+        class Stub:
+            def __init__(self, fail=False):
+                self.fail, self.calls = fail, []
+
+            def get(self, args, namespaced=True):
+                self.calls.append(args)
+                if self.fail:
+                    raise soak.SoakError("kubectl get: boom")
+                if args[0] == "deployments":
+                    return {"items": [
+                        {"metadata": {"name": f"demo-go-{a}"},
+                         "spec": {"selector": {"matchLabels": {"app": f"demo-go-{a}"}},
+                                  "template": {"spec": {"containers": [
+                                      {"name": a, "image": f"reg.example.com/otel-libs-demo-go-{a}:{tag}"}]}}}}
+                        for a in ("worker", "api", "backend")]}
+                return {"items": [
+                    {"metadata": {"name": f"demo-go-{a}-x", "labels": {"app": f"demo-go-{a}"}},
+                     "status": {"phase": "Running", "containerStatuses": [
+                         {"name": a, "imageID": f"reg.example.com/otel-libs-demo-go-{a}@sha256:" + "a" * 64}]}}
+                    for a in ("worker", "api", "backend")]}
+        git = {("rev-parse", "HEAD"): "f" * 40}
+        with mock.patch.object(soak.soakcount, "_git", side_effect=lambda *a: git.get(a[:2])):
+            out = soak.provenance(Stub(), tag, ["go"])
+            self.assertEqual(out["commit"], "f" * 40)
+            self.assertFalse(out["dirty"])
+            self.assertEqual(sorted(out["digests"]), ["demo-go-api", "demo-go-backend", "demo-go-worker"])
+            self.assertTrue(out["digests"]["demo-go-api"].endswith("@sha256:" + "a" * 64))
+            self.assertRegex(out["digests_at"], r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$")
+            other = soak.provenance(Stub(), "t2", ["go"])
+            self.assertNotIn("digests", other)
+            self.assertIn("not the run's `t2`", other["digests_error"])
+            failed = soak.provenance(Stub(fail=True), tag, ["go"])
+            self.assertIn("read failed", failed["digests_error"])
+        with mock.patch.object(soak.soakcount, "_git", return_value=None):
+            nogit = soak.provenance(Stub(), tag, ["go"])
+        self.assertIsNone(nogit["commit"])
+        self.assertIsNone(nogit["dirty"])
+        git[("status", "--porcelain")] = " M go/x.go"
+        with mock.patch.object(soak.soakcount, "_git", side_effect=lambda *a: git.get(a[:2])):
+            self.assertTrue(soak.provenance(Stub(), tag, ["go"])["dirty"])
 
     def test_kube_errors_and_timeouts(self):
         k = soak.Kube("k8s01", kubectl=[sys.executable, "-c", "print('not json')"])

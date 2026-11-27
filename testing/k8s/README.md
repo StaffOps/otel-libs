@@ -4,9 +4,10 @@ Runs the helpers on a real cluster and checks what reached the backends. The
 Compose e2e (`testing/e2e/`) proves the wire format against a Collector on one
 machine; this directory adds what only Kubernetes shows: the node-local OTel
 agent, `k8sattributes` enrichment, pod identity and the service graph (built by
-the gateway Collector's `service_graph` connector). It is a first, partial
-run of the deferred soak Phase K check K2
-([`specs/soak-simulation/tasks.md`](../../specs/soak-simulation/tasks.md)).
+the gateway Collector's `service_graph` connector). It also carries the soak
+Phase K on `k8s01` ([`specs/soak-simulation/`](../../specs/soak-simulation/);
+[below](#soak-phase-k)), whose results are in
+[`specs/soak-simulation/reports/`](../../specs/soak-simulation/reports/README.md).
 
 | File | What it does |
 |---|---|
@@ -17,7 +18,8 @@ run of the deferred soak Phase K check K2
 | `build-demo.sh` | Builds and pushes the twelve demo images (`otel-libs-demo-<lang>-<app>`, tag from `demo/demo-tag.sh`); `MIN_FREE_GB` disk guard, exit 4 when the registry refuses authentication (specs/demo-environment DE4) |
 | `demo/demo.sh` | The demo environment: shared PostgreSQL + Redis and the worker/api/backend apps per language; `apply [--lang <lang> \| --all]` (K-D2 pre-flight + FailedScheduling watch), `scale --lang <lang> <n> \| --all <n>` (demo apps only), `delete --lang <lang> \| --all`, `render`; env overrides through `DEMO_ENV_FILE` ([below](#demo-env-overrides-and-scale-de13)) (DE2, DE4, DE13) |
 | `build-fakeotlp.sh` | Builds and pushes the test-only OTLP receiver `otel-libs-fakeotlp` from `testing/fakeotlp` of HEAD (tag: newest commit that touched it), the soak's hung (`--hang`) and redirect (`/parity-redirect-c/`) sinks; prints the digest to record; `PUSH=0` builds into the builder cache only; same `MIN_FREE_GB` guard and exit codes as `build-demo.sh` (specs/soak-simulation K-hang) |
-| `verify.py` | Read-only checks in Tempo, Loki and Prometheus; `smoke --run <id>`, `examples`, `demo --run <id>` (demo checks a–g against `demo/expected.json`, `--dry-run` = pre-flight only; specs/demo-environment DE-D11); the soak modes `platform --run <id>` (K1, `soakplatform.py`) and `soak <passive\|gate\|count\|shut\|cal\|extras\|report> --run <id>` (K-count, `soakcount.py`; `extras`, the K8b service-graph, canary, SR9 orphan, SR10 and severity checks, `soakextras.py`; specs/soak-simulation) |
+| `verify.py` | Read-only checks in Tempo, Loki and Prometheus; `smoke --run <id>`, `examples`, `demo --run <id>` (demo checks a–g against `demo/expected.json`, `--dry-run` = pre-flight only; specs/demo-environment DE-D11); the soak modes `platform --run <id>` (K1, `soakplatform.py`) and `soak <passive\|gate\|count\|shut\|identity\|labels\|cal\|extras\|report> --run <id>` (K-count, `soakcount.py`; `extras`, the K8b service-graph, canary, SR9 orphan, SR10 and severity checks, `soakextras.py`; `identity` and `labels`, K3 and K5, `soakident.py`; [below](#soak-phase-k)) |
+| `soak/` | The soak run loop `soak.py` (modes `run`, `cal`, `shut`, the trap, `cleanup`), its guards and k6 script generator ([`soak/README.md`](soak/README.md)) |
 | `images/<lang>.Dockerfile` | Smoke images; `images/python-smoke.py` is the Python smoke program |
 
 ## Prerequisites
@@ -279,6 +281,50 @@ port-forward. One `PASS`/`FAIL` line per check, a summary, exit 1 on any FAIL.
 
 Lines whose trace flags have the sampled bit clear are skipped: they carry the
 trace_id of a span that was never recorded (see below).
+
+## Soak (Phase K)
+
+The soak ([`specs/soak-simulation/`](../../specs/soak-simulation/) r6.2)
+runs the demo apps of the four languages through the agent-only Collector copy
+`soak-agent` in `dev-otel-libs`. Two tools, both from the operator's laptop:
+`soak/soak.py` writes only objects labelled `otel-libs/soak-run=<run>` (and
+re-applies the demo through its hook); `verify.py soak` only reads. Raw output
+goes to `testing/k8s/soak/runs/<run>/` (git-ignored); the soaked commit gets a
+local tag `soak/<run>`.
+
+| Mode (`soak/soak.py`) | Task | Does |
+|---|---|---|
+| `run --window passive --duration <s> --hook` | K8a | Passive window: guard read every 60 s (mesh and platform guard, FD `exec` sweep), no load |
+| `run --window loaded --rate <n> --worker-interval <s> --hook` | K8b | Loaded window: a k6 Job at `--rate` req/s per language, then a guarded quiesce, then the trap; writes `count-window.json` and `workers.json` |
+| `cal` | K-cal | Calibration: two k6 repeats of N requests per cell with quiesced boundaries, then rate steps; writes `kcal-input.json` |
+| `shut --rate <n> --worker-interval <s> --kcal <soak-cal.json>` | K-shut + K3 + K5 | One k6 Job (`phase=pre` / `post`); each api pod deleted by name at the boundary + δ; writes the inputs of `soak shut`, `identity`, `labels` |
+| `preflight`, `cleanup`, `render`, `dry-run` | K-loop | Read-only checks before a run; the trap's steps after a cut-off laptop; one object offline; the trap proven on a fake `kubectl` |
+
+Every mode runs the pre-flight and the entry gate before any write, and the
+trap (EXIT / INT / TERM / HUP) deletes the run's soak-run objects only and
+restores the demo. With `go` in `--langs`, a worker interval above 3600 s is
+refused (the Go demo's cap, demo task DE16). Options and window rules:
+[`soak/README.md`](soak/README.md).
+
+| Action (`verify.py soak <action> --run <id>`) | Reads | Writes (`runs/<id>/`) |
+|---|---|---|
+| `gate` | span metrics per demo job, runtime-metric coverage over `--lookback` | `soak-gate.json` |
+| `passive --start <epoch> --warmup <d> --judged <d>` | S-D5 rules per container (memory, threads, goroutines, .NET thread pool, FDs from `guard.jsonl`, restarts) | `soak-passive.json` |
+| `count --t1 --t2 --k6-log --workers … --kcal <soak-cal.json>` (the `count_args` of `count-window.json`) | copy `otel_libs_soak_fixed_spans_total` per service against the K-cal bounds; gateway `span_metrics` cross-check; drain | `soak-count.json` |
+| `cal --input kcal-input.json` | k per cell, integral and equal over two repeats; rate cap vs drain | `soak-cal.json` |
+| `extras --count-window … --kcal …` (`--rejudge <soak-extras.json>`: the saved SR10 items against the current allowlist, offline) | api → backend failed share, secret canary, SR9 orphans, SR10 parity against `soak/sr10-gaps.json`, per-severity Loki counts; Tempo reads rate- and memory-guarded | `soak-extras.json` |
+| `shut --input shut-input.json` | old process's count by `service_instance_id`, exit within grace | `soak-shut.json` |
+| `identity --input identity-input.json` | K3: a new `service.instance.id` per pod, the same in Prometheus, the copy, Loki and Tempo | `soak-identity.json` |
+| `labels --input identity-input.json` | K5: `job`, `instance`, promoted resource labels; series counts before and after each roll | `soak-labels.json` |
+| `report [--tag <t>]` | every `soak-<action>.json` of the run; `state.json` (commit, demo tag, digests, context); `snapshot.json`; the tag's commit (`git rev-parse`); the live demo Deployments and pods (`kubectl get`) when no digest is recorded | `specs/soak-simulation/reports/<run>.md`, refused on a secret-scan hit (the run's canary, the fakeotlp redirect token) |
+
+`--output <path>` writes `passive`, `gate`, `count`, `shut` or `cal` to a new
+file (mode 0600, never overwriting), for a re-derivation next to the recorded
+one. Durations take one unit (`630m`, not `10h30m`). `report` writes as
+"Commit" the commit of the run's tag (or of `state.json`), HEAD only as
+"generated at"; image digests from `snapshot.json`, else from the live demo
+Deployments when their tag equals the run's, else "not recorded". Results and
+verdicts per language: [`specs/soak-simulation/reports/README.md`](../../specs/soak-simulation/reports/README.md).
 
 ## Measured results (2026-11-15)
 

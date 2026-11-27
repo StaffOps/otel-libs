@@ -4970,6 +4970,27 @@ Unsupported instrumentation versions, task A10 (P18):
   that the Go demo worker caps `DEMO_INTERVAL_SECONDS` at 3600 s
   (`go/demo/internal/demokit/demokit.go`, to fix after the soak code
   freeze); the soak now refuses a longer interval.
+- **Soak K11 report and checks (2026-11-27).**
+  [`specs/soak-simulation/reports/README.md`](specs/soak-simulation/reports/README.md)
+  is the soak evidence for `0.3.0` final (D10). It summarizes the per-run
+  reports of `k8a-20261124b`, `kcal-20261125d`, `k8b-20261125` and
+  `kshut-20261126c`, with a score per language and per check.
+  - The accepted gaps are now AG1–AG20; their fixes after the freeze are
+    A54–A59 and DE16.
+  - The code freeze held for every `soak/<run>` tag.
+  - The demo image digests are proved by their Harbor push times, all
+    before K8a.
+  - Go is report-only (AG17).
+
+  Tooling changes:
+  - `verify.py soak report` writes the soaked commit from the run's tag (or
+    `state.json`) and HEAD as "generated at".
+  - `soak.py` records the commit, a dirty flag and the demo digests in
+    `state.json` at window start.
+  - The SR10 allowlist accepts a run-scoped `unmeasured` status.
+  - `verify.py soak extras --rejudge` re-judges a saved run offline.
+  - `testing/k8s/README.md` describes the soak modes and the
+    `verify.py soak` actions.
 - **CI runs the soak loop tests (2026-11-26, owner ruling).** The CI spec
   job and `testing/verify.sh demo-tests` now also run
   `testing/k8s/soak/test_*.py` (stdlib, against fakes, no cluster), on

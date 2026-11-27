@@ -1224,6 +1224,20 @@ a docs-only HEAD reuses the images (intended).
 the change touches runtime behavior) on the new HEAD, or cut an rc and soak
 it (S-D9).
 **Alternatives**: cut an rc first (owner declined this round).
+*(Corrected 2026-11-26, K11, owner ruling: `verify.py soak report` writes as
+"Commit" the commit of the run's tag (`git rev-list -n1 soak/<run>`), else the
+commit `state.json` recorded, and HEAD only as "generated at". The soak runs
+recorded no image digests (no `snapshot.json`), so the report takes them from
+the live demo Deployments only when their tag equals the run's demo image tag,
+and says so; otherwise "not recorded".)*
+*(Corrected 2026-11-27, K11 review: `soak.py` now records in `state.json`
+the full HEAD sha (`commit`), `dirty` (uncommitted changes under `go/`,
+`python/`, `nodejs/`, `dotnet/`, `testing/k8s/demo/`) and the running demo
+digests at the window start (`digests`, `digests_at`); the report prefers
+them over the live read. The runs up to `kshut-20261126c` have no recorded
+commit or digests; their digests are proved by Harbor instead (all twelve
+`:7080d19` tags pushed 2026-11-23, before K8a, at the digests the pods run;
+soak summary). A tag that is not found is named in the report.)*
 
 ## Phase K r6.2 — lean soak (added 2026-11-23)
 

@@ -1390,9 +1390,35 @@ def _start(args: argparse.Namespace, kube: Kube, d: Path):
 
 
 def _state(args: argparse.Namespace, kube: Kube, record: dict, *, reservoir: bool) -> dict:
-    return {"run": args.run, "tag": record["tag"], "replicas": record["replicas"], "langs": args.langs,
-            "context": kube.context, "namespace": kube.namespace, "window": args.window,
-            "started": time.time(), "hook_applied": False, "reservoir": reservoir}
+    state = {"run": args.run, "tag": record["tag"], "replicas": record["replicas"], "langs": args.langs,
+             "context": kube.context, "namespace": kube.namespace, "window": args.window,
+             "started": time.time(), "hook_applied": False, "reservoir": reservoir}
+    state.update(provenance(kube, record["tag"], args.langs))
+    return state
+
+
+FREEZE_PATHS = ("go", "python", "nodejs", "dotnet", "testing/k8s/demo")
+
+
+def provenance(kube: Kube, tag: str, langs: list[str]) -> dict:
+    """K11 review: the soaked commit (full HEAD sha), whether the freeze paths
+    are dirty, and the running demo digests at the window start (read-only
+    gets; a failed read records the reason instead)."""
+    commit = soakcount._git("rev-parse", "HEAD")
+    out: dict = {"commit": commit,
+                 "dirty": bool(soakcount._git("status", "--porcelain", "--", *FREEZE_PATHS)) if commit else None}
+    try:
+        deps = kube.get(["deployments", "-l", DEMO_SELECTOR]).get("items") or []
+        pods = kube.get(["pods"]).get("items") or []
+        digests, why = soakcount.digests_from(deps, pods, tag, langs)
+    except (SoakError, OSError, subprocess.SubprocessError) as exc:
+        digests, why = {}, f"read failed: {str(exc)[:120]}"
+    out["digests_at"] = guard.sp.iso(time.time())
+    if digests:
+        out["digests"] = digests
+    else:
+        out["digests_error"] = why
+    return out
 
 
 @contextmanager

@@ -1298,9 +1298,10 @@ def scan_report(text: str, canary: str | None) -> list[str]:
         hits.append("auth value")
     if sp.USERINFO_RE.search(text):
         hits.append("url userinfo")
-    if canary and canary in text:
+    low = text.lower()
+    if canary and canary.lower() in low:
         hits.append("canary")
-    if FAKEOTLP_TOKEN in text:
+    if FAKEOTLP_TOKEN in low:
         hits.append("fakeotlp token")
     return hits
 
@@ -1320,12 +1321,19 @@ def _cnt(v: dict) -> str:
 
 def render_report(run: str, meta: dict, sections: dict[str, dict]) -> str:
     """Counts only: verdicts, values, exact queries, digests, the commit and tag."""
+    commit = meta.get("commit") or "not recorded"
     lines = [f"# Soak run `{run}`", "",
-             f"- Commit: `{meta.get('commit', 'unknown')}`; tag: `{meta.get('tag', 'none')}`",
-             f"- Generated: {meta.get('generated', '')} by `verify.py soak report`", ""]
+             f"- Commit: `{commit}`" + (f" ({meta['commit_source']})" if meta.get("commit_source") else "")
+             + f"; tag: `{meta.get('tag', 'none')}`"]
+    for note in meta.get("commit_notes") or []:
+        lines.append(f"- Note: {note}")
+    lines += [f"- Generated: {meta.get('generated', '')} at HEAD `{meta.get('generated_at') or 'unknown'}` "
+              "by `verify.py soak report`", ""]
+    if meta.get("digests_source"):
+        lines.append(f"- Image digests: {meta['digests_source']}")
     for d in meta.get("digests") or []:
         lines.append(f"- Image: `{d}`")
-    if meta.get("digests"):
+    if meta.get("digests_source") or meta.get("digests"):
         lines.append("")
     for name in ("passive", "gate", "count", "shut", "identity", "labels", "cal", "extras"):
         sec = sections.get(name)
@@ -1396,11 +1404,144 @@ def rows_for(name: str, data: dict) -> dict:
             rows.append((f"rate cap {lang}", v["verdict"],
                          f"enqueue {_fmt(v['enqueue_rate'])}/s vs drain {_fmt(v['drain_rate'])}/s"))
     elif name == "extras":
-        rows = [tuple(r) for r in data.get("rows") or []]
+        # K11 review: a saved candidate gaps row is a token heuristic, labelled as such.
+        rows = [(r[0], r[1], str(r[2]).replace("; candidate gaps row:", "; heuristic candidate gaps row:"))
+                for r in data.get("rows") or []]
     elif name in ("identity", "labels"):
         import soakident
         rows = soakident.rows(name, data)
     return {"rows": rows, "findings": findings, "queries": data.get("queries") or [], "window": data.get("window")}
+
+
+def _git(*argv: str) -> str | None:
+    """One read-only git call in the repo; None on any failure or no output."""
+    try:
+        out = subprocess.run(["git", "-C", str(REPO), *argv], capture_output=True, text=True,
+                             check=True, timeout=10).stdout.strip()
+    except (subprocess.SubprocessError, OSError):
+        return None
+    return out or None
+
+
+def head_label() -> str | None:
+    """HEAD's short sha, with ``+dirty`` when ``testing/k8s`` (the report's own
+    tooling) has uncommitted changes."""
+    head = _git("rev-parse", "--short", "HEAD")
+    if head and _git("status", "--porcelain", "--", "testing/k8s"):
+        head += "+dirty"
+    return head
+
+
+def run_commit(tag: str | None, state: dict) -> tuple[str | None, str | None, list[str]]:
+    """The soaked commit (K-D16): the commit of the run's tag (``git rev-parse
+    --verify -q refs/tags/<tag>^{commit}``), else the commit ``state.json``
+    recorded, else None. Returns (short commit, source, notes); a tag that is
+    not found, and a state.json commit that differs from the tag's, are named
+    in the notes."""
+    notes: list[str] = []
+    recorded = state.get("commit") if isinstance(state.get("commit"), str) else None
+    given = bool(tag) and tag != "none"
+    full = _git("rev-parse", "--verify", "-q", f"refs/tags/{tag}^{{commit}}") if given else None
+    if given and not full:
+        notes.append(f"tag `{tag}` not found")
+    if full:
+        short = full[:7]
+        if recorded and not full.startswith(recorded) and not recorded.startswith(short):
+            notes.append(f"state.json records commit `{recorded}`, the tag points at `{short}`")
+        return short, f"`git rev-parse refs/tags/{tag}^{{commit}}`", notes
+    if recorded:
+        if state.get("dirty"):
+            notes.append("state.json records a dirty tree at the run start")
+        return recorded[:7], "recorded in state.json", notes
+    return None, None, notes
+
+
+def image_repo(ref: str) -> str:
+    """The full ``registry/path`` of an image reference (tag and digest
+    dropped; a Docker Hub short name expanded to ``docker.io/library/…``)."""
+    name = ref.split("@", 1)[0]
+    last = name.rsplit("/", 1)[-1]
+    if ":" in last:
+        name = name[: len(name) - len(last)] + last.split(":", 1)[0]
+    first = name.split("/", 1)[0]
+    if "/" not in name:
+        return f"docker.io/library/{name}"
+    if "." not in first and ":" not in first and first != "localhost":
+        return f"docker.io/{name}"
+    return name
+
+
+def _matches(selector: dict, labels: dict) -> bool:
+    return bool(selector) and all(labels.get(k) == v for k, v in selector.items())
+
+
+def digests_from(deps: list[dict], pods: list[dict], run_tag: str | None,
+                 langs=verify.LANGS) -> tuple[dict[str, str], str | None]:
+    """The demo Deployments' ``ref@sha256:…`` per Deployment, when every demo
+    Deployment of ``langs`` runs ``run_tag``: the ``imageID`` of the
+    same-named container of its Running pods (matched by the Deployment's
+    selector labels), for the same repository. Returns (digests, None) or
+    ({}, the reason they are not recorded)."""
+    if not run_tag:
+        return {}, "no demo image tag in state.json"
+    want = {f"demo-{lang}-{app}" for lang in langs for app in verify.DEMO_APPS}
+    found: dict[str, tuple[str, str, dict]] = {}
+    for d in deps:
+        name = (d.get("metadata") or {}).get("name", "")
+        if name in want:
+            spec = d.get("spec") or {}
+            cs = ((spec.get("template") or {}).get("spec") or {}).get("containers") or []
+            c0 = cs[0] if cs else {}
+            found[name] = (c0.get("name", ""), c0.get("image", ""),
+                           (spec.get("selector") or {}).get("matchLabels") or {})
+    missing = sorted(want - set(found))
+    if missing:
+        return {}, f"live demo Deployments missing: {', '.join(missing)}"
+    other = sorted({ref.rsplit(":", 1)[-1] for _, ref, _ in found.values() if not ref.endswith(f":{run_tag}")})
+    if other:
+        return {}, f"the live demo Deployments run tag(s) {', '.join(other)}, not the run's `{run_tag}`"
+    out, unresolved = {}, []
+    for name, (cname, ref, selector) in sorted(found.items()):
+        repo = image_repo(ref)
+        ids = set()
+        for p in pods:
+            if not _matches(selector, (p.get("metadata") or {}).get("labels") or {}):
+                continue
+            if (p.get("status") or {}).get("phase") != "Running":
+                continue
+            for c in (p.get("status") or {}).get("containerStatuses") or []:
+                image_id = str(c.get("imageID", ""))
+                if c.get("name") != cname or "@sha256:" not in image_id:
+                    continue
+                if image_repo(image_id) != repo:
+                    continue
+                ids.add(image_id.rsplit("@", 1)[-1])
+        if len(ids) == 1:
+            out[name] = f"{ref}@{ids.pop()}"
+        else:
+            unresolved.append(name)
+    if unresolved:
+        return {}, f"no single running digest for {', '.join(unresolved)}"
+    return out, None
+
+
+def live_digests(context: str, namespace: str, run_tag: str | None, langs=verify.LANGS) -> tuple[list[str], str]:
+    """``digests_from`` over a read-only ``kubectl get`` of the live demo
+    Deployments and pods. Returns (``ref@sha256:…`` list, source sentence)."""
+    if not run_tag:
+        return [], "not recorded (no snapshot.json, no demo image tag in state.json)"
+    try:
+        deps = verify.kubectl_json(context, ["deploy", "-n", namespace]).get("items") or []
+        pods = verify.kubectl_json(context, ["pods", "-n", namespace]).get("items") or []
+    except (verify.QueryError, OSError, subprocess.SubprocessError) as exc:
+        return [], f"not recorded (no snapshot.json; live read failed: {str(exc)[:120]})"
+    out, why = digests_from(deps, pods, run_tag, langs)
+    if why:
+        return [], f"not recorded (no snapshot.json; {why})"
+    return sorted(out.values()), (
+        f"from the live demo Deployments read at {sp.iso(time.time())} (not recorded at run time; "
+        f"their tag `{run_tag}` equals the run's demo image tag; the digest the tag resolved to when "
+        "these pods started — a re-push of the tag since the run is not excluded)")
 
 
 def write_report(path: Path, text: str, canary: str | None) -> None:
@@ -1452,6 +1593,8 @@ def main_soak(b: verify.Backends, args, now: float, reader: sp.Reader | None = N
             print(f"verify soak extras: --output {output} exists; not overwritten", file=sys.stderr)
             return 1
         import soakextras
+        if getattr(args, "rejudge", None):
+            return soakextras.main_rejudge(args)
         return soakextras.main_extras(r, args, d, langs, now)
     missing = {"passive": ("start",), "count": ("t1", "t2", "k6_log", "kcal"),
                "shut": ("input",), "cal": ("input",), "identity": ("input",),
@@ -1659,12 +1802,25 @@ def action_report(args, d: Path) -> int:
         if p.exists():
             sections[name] = rows_for(name, _load_json(p))
     snap = d / "snapshot.json"
-    digests = []
+    state_file = d / "state.json"
+    state = _load_json(state_file) if state_file.exists() else {}
+    tag = args.tag or f"soak/{args.run}"
+    commit, commit_source, notes = run_commit(tag, state)
     if snap.exists():
         digests = sorted({str(v) for v in _walk(_load_json(snap)) if isinstance(v, str) and sp.IMAGE_DIGEST_RE.match(v)})
+        digests_source = "from snapshot.json"
+    elif isinstance(state.get("digests"), dict) and state["digests"]:
+        digests = sorted(str(v) for v in state["digests"].values())
+        digests_source = f"recorded in state.json at the run start ({state.get('digests_at', 'time not recorded')})"
+    else:
+        langs = [lg for lg in (state.get("langs") or verify.LANGS) if lg in verify.LANGS]
+        digests, digests_source = live_digests(state.get("context") or args.context,
+                                               state.get("namespace") or getattr(args, "namespace", sp.APP_NS),
+                                               state.get("tag"), langs)
     canary_file = d / "canary"
     canary = canary_file.read_text().strip() if canary_file.exists() else None
-    meta = {"commit": sp._git_head(), "tag": args.tag or f"soak/{args.run}", "digests": digests,
+    meta = {"commit": commit, "commit_source": commit_source, "commit_notes": notes, "tag": tag,
+            "digests": digests, "digests_source": digests_source, "generated_at": head_label(),
             "generated": sp.iso(time.time())}
     text = render_report(args.run, meta, sections)
     path = args.report or (REPORTS_DIR / f"{args.run}.md")

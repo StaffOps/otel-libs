@@ -779,6 +779,30 @@ and `opentelemetry-instrumentation-logging`) `>=0.63b0,<0.67b0`. CI: py
 > owner): from the start of the passive window
 > to the report, no change under `go/`, `python/`, `nodejs/packages/` or
 > `dotnet/`, or the loaded window is re-run. Rule (2) above is unchanged.
+>
+> *Amended 2026-11-26 (owner, soak K11):* the soak evidence is
+> [`specs/soak-simulation/reports/README.md`](../soak-simulation/reports/README.md),
+> with per-run reports beside it. The signed list is **AG1–AG17**: AG13 (the
+> cluster failure modes K10 + K10b, deferred to after `0.3.0` final, ruling
+> of 2026-11-25), AG14 Python without `db.client.operation.duration` (fix
+> A54), AG15 .NET DB duration attributes (A55), AG16 Go HTTP client duration
+> without `error.type` (A56) and AG17 the Go demo worker's 3600 s interval cap
+> (demo DE16; Go report-only in the soak; one drive per ≈ 5 s, measured in
+> K8b, inferred for K-cal — corrected 2026-11-27). *Correction to rule (2), same
+> date:* files that are neither a library input nor a demo image input may
+> also change between the soaked commit and `0.3.0` — `testing/`, `tools/`,
+> `.github/`, `mkdocs.yml` and the specs. The freeze check over `go/`,
+> `python/`, `nodejs/packages/`, `dotnet/` and `demo-tag.sh`'s input list is
+> unchanged.
+>
+> *Amended 2026-11-27 (owner, soak SR10 span classification):* the signed list
+> is **AG1–AG19**, adding AG18 SQL query span names not per semconv v1.43
+> (fix A57, all languages) and AG19 the Go HTTP client span name `HTTP POST`
+> (fix A58); then **AG1–AG20**, with AG20 the K8a start-of-window
+> `verify.py demo` (only the end-of-window reading is recorded). Rule (1)'s
+> image digests: the soak runs recorded none; Harbor shows all twelve
+> `otel-libs-demo-*:7080d19` tags pushed on 2026-11-23, before K8a started
+> (2026-11-24T14:26:14Z), at the digests the pods run (soak summary).
 
 **Choice**: one coordinated `0.3.0` for Go + Python, preceded by
 `0.3.0-rc.1` soaked in DEV/HML; no legacy-behavior flag; .NET stays on 0.2.x

@@ -628,7 +628,7 @@ own id. A run id is a label value (`soakplatform.RUN_RE`, shared with K1).
 
 ## Evidence
 
-`runs/<id>/` is git-ignored: `state.json` (tag, languages), `guard.jsonl`
+`runs/<id>/` is git-ignored: `state.json` (tag, languages, the HEAD `commit` and `dirty` flag, the running demo `digests` at the window start — since 2026-11-27), `guard.jsonl`
 (every read), `windows.jsonl`, `trap.jsonl`, `heartbeat`, `raw/` (k6 logs and, with
 `--hook`, the demo container logs of trap step 1b),
 `count-window.json` and, with `--hook`, `workers.json` (`run`, above),

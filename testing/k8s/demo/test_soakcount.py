@@ -1133,6 +1133,189 @@ class Report(unittest.TestCase):
         self.assertEqual(sc.scan_report(text, None), [])
 
 
+
+def _deploy(name, image):
+    app = name.rsplit("-", 1)[-1]
+    return {"metadata": {"name": name}, "spec": {"selector": {"matchLabels": {"app": name}},
+            "template": {"spec": {"containers": [{"name": app, "image": image}]}}}}
+
+
+def _pod(name, image_id, phase="Running", app=None, cname=None):
+    app = app or name.rsplit("-", 2)[0]
+    cname = cname or app.rsplit("-", 1)[-1]
+    return {"metadata": {"name": name, "labels": {"app": app}},
+            "status": {"phase": phase, "containerStatuses": [{"name": cname, "imageID": image_id}]}}
+
+
+def _live(tag="t1", langs=("go",), skip=(), pods_extra=()):
+    deps, pods = [], list(pods_extra)
+    for lang in langs:
+        for app in verify.DEMO_APPS:
+            name = f"demo-{lang}-{app}"
+            if name in skip:
+                continue
+            deps.append(_deploy(name, f"reg.example.com/otel-libs-{name}:{tag}"))
+            pods.append(_pod(f"{name}-abc-1", f"reg.example.com/otel-libs-{name}@sha256:" + "a" * 64))
+    return {"deploy": {"items": deps}, "pods": {"items": pods}}
+
+
+class ReportProvenance(unittest.TestCase):
+    """K11 fix: the soaked commit comes from the tag (or state.json), HEAD only
+    as "generated at"; digests from snapshot.json, else live only at the run's tag."""
+
+    @unittest.skipUnless(sc._git("rev-parse", "--git-dir"), "needs a git checkout")
+    def test_git_helper(self):
+        self.assertRegex(sc._git("rev-parse", "HEAD") or "", r"^[0-9a-f]{40}$")
+        self.assertIsNone(sc._git("rev-list", "-n1", "refs/tags/soak/no-such-run-k11", "--"))
+
+    def test_commit_from_the_tag(self):
+        with mock.patch.object(sc, "_git", return_value="1404f9c1f8b16400649b4af03c25a9e58f85b852"):
+            self.assertEqual(sc.run_commit("soak/r1", {}),
+                             ("1404f9c", "`git rev-parse refs/tags/soak/r1^{commit}`", []))
+
+    def test_commit_tag_and_state_disagree(self):
+        with mock.patch.object(sc, "_git", return_value="1404f9c1f8b16400649b4af03c25a9e58f85b852"):
+            commit, _, notes = sc.run_commit("soak/r1", {"commit": "e5f8e4b"})
+        self.assertEqual(commit, "1404f9c")
+        self.assertIn("e5f8e4b", notes[0])
+        with mock.patch.object(sc, "_git", return_value="1404f9c1f8b16400649b4af03c25a9e58f85b852"):
+            self.assertEqual(sc.run_commit("soak/r1", {"commit": "1404f9c"})[2], [])
+
+    def test_tag_not_found_falls_back_to_state(self):
+        with mock.patch.object(sc, "_git", return_value=None) as g:
+            commit, source, notes = sc.run_commit("soak/gone", {"commit": "abcdef0123", "dirty": True})
+        self.assertEqual((commit, source), ("abcdef0", "recorded in state.json"))
+        self.assertIn("tag `soak/gone` not found", notes)
+        self.assertIn("dirty", notes[1])
+        self.assertEqual(g.call_args.args, ("rev-parse", "--verify", "-q", "refs/tags/soak/gone^{commit}"))
+
+    def test_head_label_marks_dirty_tooling(self):
+        with mock.patch.object(sc, "_git", side_effect=["abc1234", " M testing/k8s/soakcount.py"]):
+            self.assertEqual(sc.head_label(), "abc1234+dirty")
+        with mock.patch.object(sc, "_git", side_effect=["abc1234", None]):
+            self.assertEqual(sc.head_label(), "abc1234")
+
+    def test_commit_from_state_without_tag(self):
+        with mock.patch.object(sc, "_git", return_value=None) as g:
+            self.assertEqual(sc.run_commit("none", {"commit": "1d683b2aaaa"}), ("1d683b2", "recorded in state.json", []))
+            g.assert_not_called()
+            commit, source, notes = sc.run_commit("soak/gone", {})
+        self.assertIsNone(commit)
+        self.assertIsNone(source)
+        self.assertIn("not found", notes[0])
+
+    def _digests(self, live, tag="t1", langs=("go",)):
+        def kubectl(ctx, args):
+            if isinstance(live, Exception):
+                raise live
+            return live[args[0]]
+        with mock.patch.object(verify, "kubectl_json", side_effect=kubectl):
+            return sc.live_digests("k8s01", "dev-otel-libs", tag, langs)
+
+    def test_image_repo(self):
+        self.assertEqual(sc.image_repo("reg.example.com/a/b:t1"), "reg.example.com/a/b")
+        self.assertEqual(sc.image_repo("reg.example.com:5000/a/b@sha256:" + "a" * 64), "reg.example.com:5000/a/b")
+        self.assertEqual(sc.image_repo("redis:7"), "docker.io/library/redis")
+        self.assertEqual(sc.image_repo("library/redis:7"), "docker.io/library/redis")
+        self.assertEqual(sc.image_repo("other.example.com/development/otel-libs-demo-go-api@sha256:" + "a" * 64),
+                         "other.example.com/development/otel-libs-demo-go-api")
+
+    def test_live_digests_at_the_run_tag(self):
+        out, source = self._digests(_live())
+        self.assertEqual(len(out), 3)
+        self.assertTrue(all(sp.IMAGE_DIGEST_RE.match(d) for d in out), out)
+        self.assertIn("not recorded at run time", source)
+        self.assertIn("`t1`", source)
+
+    def test_live_digests_refused_on_another_tag(self):
+        out, source = self._digests(_live(tag="t2"))
+        self.assertEqual(out, [])
+        self.assertTrue(source.startswith("not recorded"), source)
+        self.assertIn("t2", source)
+
+    def test_live_digests_not_recorded_cases(self):
+        self.assertTrue(self._digests(_live(), tag=None)[1].startswith("not recorded"))
+        self.assertIn("missing", self._digests(_live(skip=("demo-go-api",)))[1])
+        self.assertIn("live read failed", self._digests(verify.QueryError("boom"))[1])
+        self.assertIn("live read failed", self._digests(FileNotFoundError("kubectl"))[1])
+        two = _live(pods_extra=[_pod("demo-go-api-abc-2", "reg.example.com/otel-libs-demo-go-api@sha256:" + "b" * 64)])
+        self.assertIn("no single running digest", self._digests(two)[1])
+        pending = _live(pods_extra=[_pod("demo-go-api-abc-2", "reg.example.com/x@sha256:" + "b" * 64, "Pending")])
+        self.assertEqual(len(self._digests(pending)[0]), 3)
+        # another app's pod, another container name or another repository never counts
+        # same last segment, another registry: not the Deployment's repository
+        other_reg = _live(pods_extra=[_pod("demo-go-api-abc-6", "mirror.example.com/otel-libs-demo-go-api@sha256:" + "9" * 64)])
+        self.assertEqual(len(self._digests(other_reg)[0]), 3)
+        noise = _live(pods_extra=[_pod("demo-go-api-abc-3", "reg.example.com/x@sha256:" + "c" * 64, app="demo-go-apix"),
+                                  _pod("demo-go-api-abc-4", "reg.example.com/otel-libs-demo-go-api@sha256:" + "d" * 64,
+                                       cname="sidecar"),
+                                  _pod("demo-go-api-abc-5", "reg.example.com/istio-proxy@sha256:" + "e" * 64,
+                                       app="demo-go-api", cname="api")])
+        out, _ = self._digests(noise)
+        self.assertEqual(len(out), 3, out)
+        self.assertTrue(all(d.endswith("a" * 64) for d in out), out)
+
+    def test_render_commit_and_generated_at(self):
+        text = sc.render_report("r1", {"commit": "1404f9c", "commit_source": "`git rev-list -n1 soak/r1`",
+                                       "commit_notes": ["n1"], "tag": "soak/r1", "generated_at": "7252420",
+                                       "generated": "2026-11-26T00:00:00Z", "digests": [],
+                                       "digests_source": "not recorded (x)"}, {})
+        self.assertIn("- Commit: `1404f9c` (`git rev-list -n1 soak/r1`); tag: `soak/r1`", text)
+        self.assertIn("- Note: n1", text)
+        self.assertIn("at HEAD `7252420`", text)
+        self.assertIn("- Image digests: not recorded (x)", text)
+        self.assertIn("- Commit: `not recorded`", sc.render_report("r1", {}, {}))
+
+    def test_action_report_without_snapshot_reads_live(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            d = Path(tmp)
+            (d / "state.json").write_text(json.dumps({"tag": "t1", "langs": ["go"]}))
+            args = parse(["soak", "report", "--run", "r1", "--tag", "soak/r1", "--report", str(d / "r.md"),
+                          "--out-dir", str(d)])
+            with mock.patch.object(sc, "_git", return_value="e5f8e4be967d82ec4bb17e6fd7821977fb0ab0d1"), \
+                    mock.patch.object(verify, "kubectl_json", side_effect=lambda c, a: _live()[a[0]]), \
+                    redirect_stdout(io.StringIO()):
+                self.assertEqual(sc.action_report(args, d), 0)
+            text = (d / "r.md").read_text()
+        self.assertIn("- Commit: `e5f8e4b`", text)
+        self.assertIn("from the live demo Deployments", text)
+        self.assertIn("@sha256:" + "a" * 64, text)
+        self.assertIn("re-push of the tag since the run is not excluded", text)
+
+    def test_action_report_prefers_state_digests_and_its_context(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            d = Path(tmp)
+            (d / "state.json").write_text(json.dumps({"tag": "t1", "langs": ["go"], "context": "ctx-x",
+                                                      "namespace": "ns-x"}))
+            args = parse(["soak", "report", "--run", "r1", "--tag", "none", "--report", str(d / "r.md"),
+                          "--out-dir", str(d)])
+            seen = []
+
+            def kubectl(ctx, a):
+                seen.append((ctx, a[2]))
+                return _live()[a[0]]
+            with mock.patch.object(verify, "kubectl_json", side_effect=kubectl), redirect_stdout(io.StringIO()):
+                self.assertEqual(sc.action_report(args, d), 0)
+            self.assertEqual(seen[0], ("ctx-x", "ns-x"))
+            (d / "state.json").write_text(json.dumps({"tag": "t1", "digests_at": "2026-11-27T00:00:00Z",
+                                                      "digests": {"demo-go-api": "r/x:t1@sha256:" + "f" * 64}}))
+            with mock.patch.object(verify, "kubectl_json", side_effect=AssertionError("no live read")), \
+                    redirect_stdout(io.StringIO()):
+                self.assertEqual(sc.action_report(args, d), 0)
+            text = (d / "r.md").read_text()
+        self.assertIn("recorded in state.json at the run start (2026-11-27T00:00:00Z)", text)
+        self.assertIn("f" * 64, text)
+
+    def test_extras_candidate_rows_are_labelled_heuristic(self):
+        sec = sc.rows_for("extras", {"rows": [["parity api metric m", "FAIL", "have go; candidate gaps row: X"]]})
+        self.assertEqual(sec["rows"][0][2], "have go; heuristic candidate gaps row: X")
+
+    def test_scan_is_case_insensitive(self):
+        canary = "ab" * 24
+        self.assertIn("canary", sc.scan_report(canary.upper(), canary))
+        self.assertIn("fakeotlp token", sc.scan_report("PARITY-REDIRECT-TOKEN", None))
+
+
 # ── the CLI ──
 
 

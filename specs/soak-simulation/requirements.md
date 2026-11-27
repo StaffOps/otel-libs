@@ -1307,6 +1307,14 @@ stays as dated history.
       recalibration (FDs in all four languages by the named `exec` read;
       Node.js runtime state not judged, AG12), `verify.py demo` passes at its start and end, and the
       "Mesh and platform guard" stayed clean.
+      *(Amended 2026-11-27, owner rulings 2026-11-24 / 2026-11-25 and K11:
+      the window is 12 h = 90 min warm-up + 10 h 30 min judged, accepted
+      with reduced sensitivity — a leak that steps less often than every
+      5 h 15 min (the second half) can pass, the warm-up was 90 min against
+      the 12 h settling time, and node-worker ended at 0.89 of its slope
+      limit with node-worker and dotnet-worker still stepping inside the
+      judged span (design S-D5); the start-of-window `verify.py demo` is
+      accepted gap AG20.)*
 - [ ] K-cal: the fixed-family k values are integers and stable across two
       repeats, or the failing families are excluded and named; the drain
       rate and the loaded rate are recorded.
@@ -1319,12 +1327,23 @@ stays as dated history.
 - [ ] K-shut, K3 and K5 pass ("Shutdown (r6.2)", "Restart mechanics (r6.2)").
 - [ ] K10 (refused, hung, back-pressure, redirect) and K10b: every mode passes
       or is reported `not injected` with the reason observed.
+      *(Amended 2026-11-26, owner: K10 and K10b are deferred to after
+      `0.3.0` final as accepted gap AG13, ruling "Enxuto" of 2026-11-25.)*
 - [ ] Every failure is fixed in the libs and re-run on the new HEAD, or is an
       owner-ruled accepted gap (AG1–AG12).
+      *(Amended 2026-11-26, owner: the list is AG1–AG17 — AG13 K10 deferred,
+      AG14 A54, AG15 A55, AG16 A56, AG17 DE16; "Accepted gaps" below and
+      tasks.md "Deferred in r6.2".)*
+      *(Amended 2026-11-27, owner: AG1–AG19, with AG18 A57 and AG19 A58;
+      then AG1–AG20, with AG20 the K8a start-of-window `verify.py demo`.)*
 - [ ] The code freeze held (no change under `go/`, `python/`,
       `nodejs/packages/`, `dotnet/` since the local tag `soak/<run>`), and the `0.3.0`
       commit differs from the soaked commit only in version strings,
       `CHANGELOG.md` and documentation.
+      *(Corrected 2026-11-26, owner: files that are neither a library input
+      nor a demo image input may also differ — `testing/`, `tools/`,
+      `.github/`, `mkdocs.yml` and the specs. The freeze check over the
+      library paths and `demo-tag.sh`'s input list is unchanged.)*
 - [ ] The summary `reports/<run>.md` passed the secret scan, is committed,
       refuted by `observability` + `dev`, and linked from D10 and the
       CHANGELOG.
@@ -1472,6 +1491,51 @@ Proposed in r6 (not in the owner's list; each needs a signature or a task):
   and restarts are. *Accepted 2026-11-23 (owner, ruling K0e-2, as part of the
   lean scope).* *(The first r6.2 draft proposed AG12 for FDs outside Python
   too; the owner's FD `exec` ruling removed that part.)*
+
+*Amended 2026-11-26 (owner, K11): five more gaps accepted; the list is
+AG1–AG17. Each has a fix task after the code freeze (tasks.md "Deferred in
+r6.2").*
+- **AG13 Failure modes and misconfiguration on the cluster** (SR5, SR6, SR13
+  back-pressure and fallback; K10 + K10b) — deferred to after `0.3.0` final;
+  the behavior is covered by the Compose e2e and unit suites. *Accepted
+  2026-11-25 (owner, ruling "Enxuto"); recorded here 2026-11-26.*
+- **AG14 Python without `db.client.operation.duration`** (SR10) — fix task
+  A54 (config-contract). *Accepted 2026-11-26 (owner).*
+- **AG15 .NET DB duration without `db.namespace`, `db.operation.name`,
+  `error.type`** (SR10) — fix task A55. *Accepted 2026-11-26 (owner).*
+- **AG16 Go `http.client.request.duration` without `error.type`** (SR10) —
+  fix task A56; measured in Go from the span metrics, UNMEASURED in
+  `k8b-20261125` because Python and Node.js had no traffic for the metric.
+  *Accepted 2026-11-26 (owner).* *(Corrected 2026-11-27, K11 review M3: in
+  Go a measured gap, confirmed from source — otelhttp v0.72.0
+  `internal/semconv/client.go:175-178` (spans) vs `:240-264` / `:281-284`
+  (metric); 434 failed of 1 448 calls. Python and Node.js UNMEASURED.)*
+- **AG17 Go demo worker interval cap** (SR15 Counting, Load) — the Go worker
+  caps `DEMO_INTERVAL_SECONDS` at 3600 s, so Go is report-only in K-cal, K8b
+  and the K-shut count; fix task DE16 (demo-environment), then a Go K-cal
+  and K8b. *Accepted 2026-11-26 (owner).* *(Corrected 2026-11-27, K11
+  review M1: one drive per ≈ 5 s — measured in K8b, 1 448 worker → api calls
+  over 7 249 s; inferred for K-cal.)*
+
+*Amended 2026-11-27 (owner, SR10 span classification of `k8b-20261125`):
+two more gaps; the list is AG1–AG19.*
+- **AG18 SQL query span names** (SR10) — no language uses
+  `db.query.summary` or `db.collection.name` for the span name (semconv
+  v1.43; the demo sets no `OTEL_SEMCONV_STABILITY_OPT_IN`); Python
+  `INSERT demo_python` has the `{op} {target}` form with `db.namespace` as
+  the target, .NET `postgresql` is the last-resort fallback *(wording
+  corrected 2026-11-27, K11 review)*; Node.js's
+  `pg.query:-- demo_node` takes the operation from the schema's leading SQL
+  comment (`nodejs/demo/backend/app.js:104-107`). 8 span items. Fix task
+  A57. *Accepted 2026-11-27 (owner).*
+- **AG19 Go HTTP client span name** (SR10) — `HTTP POST` from otelhttp
+  v0.72.0's default formatter (`transport.go:81-83`) vs `POST` in Python,
+  Node.js and .NET. 2 span items. Fix task A58. *Accepted 2026-11-27
+  (owner).*
+- **AG20 K8a start-of-window `verify.py demo`** (SR15 Soak rules (K8a),
+  added 2026-11-27) — run `k8a-20261124b` recorded only the end-of-window
+  reading (PASS 56, XFAIL 2, NA 6); the guards and sentinels were clean for
+  the 12 h. *Accepted 2026-11-27 (owner).*
 
 ## Out of scope
 - Real traffic shapes/volumes and Collector capacity sizing.

@@ -944,11 +944,13 @@ class Parity(unittest.TestCase):
         p.write_text(json.dumps([]))
         self.assertEqual(sx.load_allowlist(p), [])
         real = sx.load_allowlist()
-        self.assertTrue(real and all(e["status"] in ("proposed", "needs-row", "accepted") for e in real))
+        self.assertTrue(real and all(e["status"] in ("proposed", "needs-row", "accepted", "unmeasured") for e in real))
         # An accepted entry carries the owner's ruling (2026-11-26) and never a needs-row reason.
         self.assertTrue(all(e.get("ruling") for e in real if e["status"] == "accepted"))
         self.assertTrue(any(e["status"] == "needs-row" for e in real))
-        self.assertFalse(any(e["role"] == "worker" and e["item"].startswith("traces_span_metrics_") for e in real))
+        # The worker span-metric keys are a window artefact: only ever UNMEASURED by ruling, never a pass.
+        self.assertTrue(all(e["status"] == "unmeasured" for e in real
+                            if e["role"] == "worker" and e["item"].startswith("traces_span_metrics_")))
         row = next(e for e in real if e["status"] == "needs-row")
         it = {"kind": row["kind"], "role": row["role"], "item": row["item"], "missing": row["langs_missing"],
               "have": [], **({"metric": row["item"], "attribute": row["attribute"]} if row.get("attribute") else {})}
@@ -1014,6 +1016,88 @@ class Parity(unittest.TestCase):
         src.series_ans = []
         out, _ = sx.parity_check(src, G(src), verify.LANGS, T1, T2, {}, CLEAN, self.rows, [])
         self.assertEqual(out["reason"], "no demo series in the window")
+
+
+class Rejudge(unittest.TestCase):
+    """K11 review M2: an owner-ruled ``unmeasured`` entry, and the offline re-judge."""
+
+    ATTR = {"kind": "metric attr", "role": "worker", "item": "traces_span_metrics_calls_total http_route",
+            "metric": "traces_span_metrics_calls_total", "attribute": "http_route", "have": ["go"],
+            "missing": ["python", "node", "dotnet"]}
+    UM = {"kind": "metric attr", "role": "worker", "item": "traces_span_metrics_calls_total",
+          "attribute": "http_route", "langs_missing": ["python", "node", "dotnet"], "status": "unmeasured",
+          "runs": ["k8b-r1"], "reason": "only the Go worker emitted them", "gaps_ref": "none", "ruling": "owner 2026-11-26: UNMEASURED"}
+
+    def test_unmeasured_entry_is_honoured(self):
+        self.assertEqual(sx.recorded_unmeasured(dict(self.ATTR), [self.UM], "k8b-r1"), self.UM)
+        self.assertIsNone(sx.recorded_unmeasured(dict(self.ATTR), [self.UM], "k8b-r2"))   # another run
+        self.assertIsNone(sx.recorded_unmeasured(dict(self.ATTR), [self.UM], None))
+        self.assertIsNone(sx.recorded_unmeasured(dict(self.ATTR), [dict(self.UM, runs=[])], "k8b-r1"))
+        self.assertIsNone(sx.allowed(dict(self.ATTR), [self.UM], accept_proposed=True))   # never a pass
+        metrics = {"worker": {"go": {"traces_span_metrics_calls_total": {"http_route"}},
+                              "python": {"traces_span_metrics_calls_total": set()},
+                              "node": {"traces_span_metrics_calls_total": set()},
+                              "dotnet": {"traces_span_metrics_calls_total": set()}}}
+        items = sx.parity_items(metrics, {}, [], verify.LANGS, [self.UM], run="k8b-r1")
+        it = next(i for i in items if i["kind"] == "metric attr")
+        self.assertEqual(it["status"], "UNMEASURED")
+        self.assertIn("owner 2026-11-26", it["reason"])
+        other = sx.parity_items(metrics, {}, [], verify.LANGS, [self.UM], run="k8b-r2")
+        self.assertEqual(next(i for i in other if i["kind"] == "metric attr")["status"], "FAIL")
+
+    def test_rejudge_counts(self):
+        saved = {"t1": 1, "t2": 2, "parity": {"items": [
+            dict(self.ATTR, status="FAIL", row=None, candidate="c"),
+            {"kind": "metric", "role": "api", "item": "go_x", "have": ["go"], "missing": ["python"],
+             "status": "documented", "row": "runtime family go_"},
+            {"kind": "metric attr", "role": "api", "item": "m k", "metric": "m", "attribute": "k", "have": ["go"],
+             "missing": ["python"], "status": "UNMEASURED", "reason": "no traffic for m"},
+            {"kind": "span", "role": "api", "item": "SET", "span_kind": "client", "have": ["go"],
+             "missing": ["dotnet"], "status": "FAIL", "row": None},
+            {"kind": "span", "role": "api", "item": "GET", "span_kind": "client", "have": ["go"],
+             "missing": ["dotnet"], "status": "FAIL", "row": None}]}}
+        acc = {"kind": "span", "role": "api", "item": "SET", "span_kind": "client", "langs_missing": ["dotnet"],
+               "status": "accepted", "reason": "r", "gaps_ref": "row"}
+        out = sx.rejudge(saved, [self.UM, acc], run="k8b-r1")
+        self.assertEqual(out["counts"], {"documented": 2, "UNMEASURED": 2, "FAIL": 1})
+        other = sx.rejudge(saved, [self.UM, acc], run="k8b-r2")       # the entry is scoped to its run
+        self.assertEqual(other["counts"], {"documented": 2, "UNMEASURED": 1, "FAIL": 2})
+        self.assertEqual(out["verdict"], "FAIL")
+        by = {i["item"]: i for i in out["items"]}
+        self.assertEqual(by["SET"]["row"], "sr10-gaps.json (accepted): row")
+        self.assertNotIn("candidate", by["traces_span_metrics_calls_total http_route"])
+        clean = sx.rejudge({"parity": {"items": [saved["parity"]["items"][1]]}}, [])
+        self.assertEqual(clean["verdict"], "PASS")
+
+    def test_rejudge_cli(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            d = Path(tmp)
+            (d / "saved.json").write_text(json.dumps({"parity": {"items": [dict(self.ATTR, status="FAIL")]}}))
+            (d / "gaps.json").write_text(json.dumps({"entries": [self.UM]}))
+            args = argparse.Namespace(rejudge=d / "saved.json", sr10_gaps=d / "gaps.json", output=d / "o.json",
+                                      sr10_accept_proposed=False, run="k8b-r1")
+            out = io.StringIO()
+            with redirect_stdout(out):
+                self.assertEqual(sx.main_rejudge(args), 1)      # UNMEASURED is not a pass
+            self.assertIn("UNMEASURED 1, FAIL 0", out.getvalue())
+            self.assertEqual(json.loads((d / "o.json").read_text())["counts"]["UNMEASURED"], 1)
+            err = io.StringIO()
+            with redirect_stdout(io.StringIO()), redirect_stderr(err):
+                self.assertEqual(sx.main_rejudge(args), 1)      # never overwrites
+            self.assertIn("not overwritten", err.getvalue())
+            args.rejudge = d / "missing.json"
+            with redirect_stderr(io.StringIO()):
+                self.assertEqual(sx.main_rejudge(args), 2)
+
+    def test_the_real_allowlist_reproduces_the_k11_counts(self):
+        saved = Path(__file__).resolve().parents[1] / "soak" / "runs" / "k8b-20261125" / "soak-extras.json"
+        if not saved.exists():
+            self.skipTest("run k8b-20261125 not on this machine (git-ignored)")
+        gaps = json.loads(sx.SR10_GAPS.read_text())["entries"]
+        out = sx.rejudge(json.loads(saved.read_text()), gaps, run="k8b-20261125")
+        self.assertEqual(out["counts"], {"documented": 254, "UNMEASURED": 16, "FAIL": 84})
+        later = sx.rejudge(json.loads(saved.read_text()), gaps, run="k8b-later")
+        self.assertEqual(later["counts"], {"documented": 254, "UNMEASURED": 7, "FAIL": 93})
 
 
 class ParityRegression(unittest.TestCase):
