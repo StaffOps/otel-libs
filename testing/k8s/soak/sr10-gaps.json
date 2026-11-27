@@ -1,0 +1,2412 @@
+{
+ "draft": false,
+ "note": "SR10 allowlist (design K-D21). Final for the soak of 2026-11 (draft set to false 2026-11-27, owner rulings of 2026-11-26 and 2026-11-27). A difference passes only on an entry with status accepted that matches kind, role (or *), item (exact, or a prefix when match is prefix), the attribute for a label key, the span kind for a span, and covers every missing language; status unmeasured makes the item UNMEASURED by owner ruling, only for the run ids in its runs field; proposed and needs-row never pass (--sr10-accept-proposed previews proposed). Accepted gaps of the soak, not allowlisted on purpose: AG14 (A54) Python without db.client.operation.duration; AG15 (A55) .NET db.client.operation.duration without db.namespace / db.operation.name / error.type; AG16 (A56) Go http.client.request.duration without error.type (measured in Go; Python and Node.js not measured); AG18 (A57) SQL query span names; AG19 (A58) Go HTTP client span name. needs-row: the item waits for its row in docs/site/library/overview.md (A50 pass).",
+ "entries": [
+  {
+   "kind": "metric",
+   "role": "api",
+   "item": "aspnetcore_memory_pool_allocated_bytes_total",
+   "langs_missing": [
+    "go",
+    "python",
+    "node"
+   ],
+   "status": "needs-row",
+   "reason": "aspnetcore memory_pool meter: the C11 '.NET framework metrics' row must list it first (round-2 refuter)",
+   "gaps_ref": "overview.md#known-emitted-telemetry-gaps — .NET framework metrics (branch, task C11)",
+   "source": "refuter classification of the k8b-20261125 FAIL items (review round 1)"
+  },
+  {
+   "kind": "metric",
+   "role": "api",
+   "item": "aspnetcore_memory_pool_evicted_bytes_total",
+   "langs_missing": [
+    "go",
+    "python",
+    "node"
+   ],
+   "status": "needs-row",
+   "reason": "aspnetcore memory_pool meter: the C11 '.NET framework metrics' row must list it first (round-2 refuter)",
+   "gaps_ref": "overview.md#known-emitted-telemetry-gaps — .NET framework metrics (branch, task C11)",
+   "source": "refuter classification of the k8b-20261125 FAIL items (review round 1)"
+  },
+  {
+   "kind": "metric",
+   "role": "api",
+   "item": "aspnetcore_memory_pool_pooled_bytes",
+   "langs_missing": [
+    "go",
+    "python",
+    "node"
+   ],
+   "status": "needs-row",
+   "reason": "aspnetcore memory_pool meter: the C11 '.NET framework metrics' row must list it first (round-2 refuter)",
+   "gaps_ref": "overview.md#known-emitted-telemetry-gaps — .NET framework metrics (branch, task C11)",
+   "source": "refuter classification of the k8b-20261125 FAIL items (review round 1)"
+  },
+  {
+   "kind": "metric",
+   "role": "api",
+   "item": "aspnetcore_memory_pool_rented_bytes_total",
+   "langs_missing": [
+    "go",
+    "python",
+    "node"
+   ],
+   "status": "needs-row",
+   "reason": "aspnetcore memory_pool meter: the C11 '.NET framework metrics' row must list it first (round-2 refuter)",
+   "gaps_ref": "overview.md#known-emitted-telemetry-gaps — .NET framework metrics (branch, task C11)",
+   "source": "refuter classification of the k8b-20261125 FAIL items (review round 1)"
+  },
+  {
+   "kind": "metric",
+   "role": "api",
+   "item": "aspnetcore_routing_match_attempts_total",
+   "langs_missing": [
+    "go",
+    "python",
+    "node"
+   ],
+   "status": "accepted",
+   "reason": "matched by the round-1 token heuristic; needs review",
+   "gaps_ref": "overview.md: .NET framework metrics (branch, task C11)",
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)",
+   "ruling": "owner 2026-11-26: accepted (gaps row exists)"
+  },
+  {
+   "kind": "metric",
+   "role": "api",
+   "item": "db_client_connections_create_time_milliseconds_count",
+   "langs_missing": [
+    "python",
+    "node",
+    "dotnet"
+   ],
+   "status": "accepted",
+   "reason": "matched by the round-1 token heuristic; needs review",
+   "gaps_ref": "overview.md: Node.js Redis metrics",
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)",
+   "ruling": "owner 2026-11-26: accepted (gaps row exists)"
+  },
+  {
+   "kind": "metric",
+   "role": "api",
+   "item": "db_client_connections_create_time_milliseconds_sum",
+   "langs_missing": [
+    "python",
+    "node",
+    "dotnet"
+   ],
+   "status": "accepted",
+   "reason": "matched by the round-1 token heuristic; needs review",
+   "gaps_ref": "overview.md: Node.js Redis metrics",
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)",
+   "ruling": "owner 2026-11-26: accepted (gaps row exists)"
+  },
+  {
+   "kind": "metric",
+   "role": "api",
+   "item": "db_client_connections_hits_total",
+   "langs_missing": [
+    "python",
+    "node",
+    "dotnet"
+   ],
+   "status": "accepted",
+   "reason": "matched by the round-1 token heuristic; needs review",
+   "gaps_ref": "overview.md: Node.js Redis metrics",
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)",
+   "ruling": "owner 2026-11-26: accepted (gaps row exists)"
+  },
+  {
+   "kind": "metric",
+   "role": "api",
+   "item": "db_client_connections_idle_max",
+   "langs_missing": [
+    "python",
+    "node",
+    "dotnet"
+   ],
+   "status": "accepted",
+   "reason": "matched by the round-1 token heuristic; needs review",
+   "gaps_ref": "overview.md: Node.js Redis metrics",
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)",
+   "ruling": "owner 2026-11-26: accepted (gaps row exists)"
+  },
+  {
+   "kind": "metric",
+   "role": "api",
+   "item": "db_client_connections_idle_min",
+   "langs_missing": [
+    "python",
+    "node",
+    "dotnet"
+   ],
+   "status": "accepted",
+   "reason": "matched by the round-1 token heuristic; needs review",
+   "gaps_ref": "overview.md: Node.js Redis metrics",
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)",
+   "ruling": "owner 2026-11-26: accepted (gaps row exists)"
+  },
+  {
+   "kind": "metric",
+   "role": "api",
+   "item": "db_client_connections_max",
+   "langs_missing": [
+    "python",
+    "node",
+    "dotnet"
+   ],
+   "status": "accepted",
+   "reason": "matched by the round-1 token heuristic; needs review",
+   "gaps_ref": "overview.md: Node.js Redis metrics",
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)",
+   "ruling": "owner 2026-11-26: accepted (gaps row exists)"
+  },
+  {
+   "kind": "metric",
+   "role": "api",
+   "item": "db_client_connections_misses_total",
+   "langs_missing": [
+    "python",
+    "node",
+    "dotnet"
+   ],
+   "status": "accepted",
+   "reason": "matched by the round-1 token heuristic; needs review",
+   "gaps_ref": "overview.md: Node.js Redis metrics",
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)",
+   "ruling": "owner 2026-11-26: accepted (gaps row exists)"
+  },
+  {
+   "kind": "metric",
+   "role": "api",
+   "item": "db_client_connections_timeouts_total",
+   "langs_missing": [
+    "python",
+    "node",
+    "dotnet"
+   ],
+   "status": "accepted",
+   "reason": "matched by the round-1 token heuristic; needs review",
+   "gaps_ref": "overview.md: Node.js Redis metrics",
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)",
+   "ruling": "owner 2026-11-26: accepted (gaps row exists)"
+  },
+  {
+   "kind": "metric",
+   "role": "api",
+   "item": "db_client_connections_usage",
+   "langs_missing": [
+    "python",
+    "node",
+    "dotnet"
+   ],
+   "status": "accepted",
+   "reason": "matched by the round-1 token heuristic; needs review",
+   "gaps_ref": "overview.md: Node.js Redis metrics",
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)",
+   "ruling": "owner 2026-11-26: accepted (gaps row exists)"
+  },
+  {
+   "kind": "metric",
+   "role": "api",
+   "item": "db_client_connections_use_time_milliseconds_count",
+   "langs_missing": [
+    "python",
+    "node",
+    "dotnet"
+   ],
+   "status": "accepted",
+   "reason": "matched by the round-1 token heuristic; needs review",
+   "gaps_ref": "overview.md: Node.js Redis metrics",
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)",
+   "ruling": "owner 2026-11-26: accepted (gaps row exists)"
+  },
+  {
+   "kind": "metric",
+   "role": "api",
+   "item": "db_client_connections_use_time_milliseconds_sum",
+   "langs_missing": [
+    "python",
+    "node",
+    "dotnet"
+   ],
+   "status": "accepted",
+   "reason": "matched by the round-1 token heuristic; needs review",
+   "gaps_ref": "overview.md: Node.js Redis metrics",
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)",
+   "ruling": "owner 2026-11-26: accepted (gaps row exists)"
+  },
+  {
+   "kind": "metric",
+   "role": "api",
+   "item": "db_client_connections_waits_duration_nanoseconds",
+   "langs_missing": [
+    "python",
+    "node",
+    "dotnet"
+   ],
+   "status": "accepted",
+   "reason": "matched by the round-1 token heuristic; needs review",
+   "gaps_ref": "overview.md: Node.js Redis metrics",
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)",
+   "ruling": "owner 2026-11-26: accepted (gaps row exists)"
+  },
+  {
+   "kind": "metric",
+   "role": "api",
+   "item": "db_client_connections_waits_total",
+   "langs_missing": [
+    "python",
+    "node",
+    "dotnet"
+   ],
+   "status": "accepted",
+   "reason": "matched by the round-1 token heuristic; needs review",
+   "gaps_ref": "overview.md: Node.js Redis metrics",
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)",
+   "ruling": "owner 2026-11-26: accepted (gaps row exists)"
+  },
+  {
+   "kind": "metric",
+   "role": "api",
+   "item": "dns_lookup_duration_seconds_count",
+   "langs_missing": [
+    "go",
+    "python",
+    "node"
+   ],
+   "status": "accepted",
+   "reason": "matched by the round-1 token heuristic; needs review",
+   "gaps_ref": "overview.md: .NET framework metrics (branch, task C11)",
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)",
+   "ruling": "owner 2026-11-26: accepted (gaps row exists)"
+  },
+  {
+   "kind": "metric",
+   "role": "api",
+   "item": "dns_lookup_duration_seconds_sum",
+   "langs_missing": [
+    "go",
+    "python",
+    "node"
+   ],
+   "status": "accepted",
+   "reason": "matched by the round-1 token heuristic; needs review",
+   "gaps_ref": "overview.md: .NET framework metrics (branch, task C11)",
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)",
+   "ruling": "owner 2026-11-26: accepted (gaps row exists)"
+  },
+  {
+   "kind": "metric",
+   "role": "api",
+   "item": "http_client_request_duration_seconds_count",
+   "langs_missing": [
+    "go",
+    "python",
+    "node"
+   ],
+   "status": "accepted",
+   "reason": "matched by the round-1 token heuristic; needs review",
+   "gaps_ref": "overview.md: .NET gRPC metrics",
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)",
+   "ruling": "owner 2026-11-26: accepted (gaps row exists)"
+  },
+  {
+   "kind": "metric",
+   "role": "api",
+   "item": "http_client_request_duration_seconds_sum",
+   "langs_missing": [
+    "go",
+    "python",
+    "node"
+   ],
+   "status": "accepted",
+   "reason": "matched by the round-1 token heuristic; needs review",
+   "gaps_ref": "overview.md: .NET gRPC metrics",
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)",
+   "ruling": "owner 2026-11-26: accepted (gaps row exists)"
+  },
+  {
+   "kind": "metric attr",
+   "role": "api",
+   "item": "http_server_request_duration_seconds_count",
+   "langs_missing": [
+    "python",
+    "node",
+    "dotnet"
+   ],
+   "status": "proposed",
+   "attribute": "network_protocol_name",
+   "reason": "Go HTTP server instrumentation records server.address, server.port, network.protocol.name on http.server.request.duration",
+   "gaps_ref": "overview.md#known-emitted-telemetry-gaps — (no row yet)",
+   "source": "refuter classification of the k8b-20261125 FAIL items (review round 1)"
+  },
+  {
+   "kind": "metric attr",
+   "role": "api",
+   "item": "http_server_request_duration_seconds_count",
+   "langs_missing": [
+    "python",
+    "node",
+    "dotnet"
+   ],
+   "status": "proposed",
+   "attribute": "server_address",
+   "reason": "Go HTTP server instrumentation records server.address, server.port, network.protocol.name on http.server.request.duration",
+   "gaps_ref": "overview.md#known-emitted-telemetry-gaps — (no row yet)",
+   "source": "refuter classification of the k8b-20261125 FAIL items (review round 1)"
+  },
+  {
+   "kind": "metric attr",
+   "role": "api",
+   "item": "http_server_request_duration_seconds_count",
+   "langs_missing": [
+    "python",
+    "node",
+    "dotnet"
+   ],
+   "status": "proposed",
+   "attribute": "server_port",
+   "reason": "Go HTTP server instrumentation records server.address, server.port, network.protocol.name on http.server.request.duration",
+   "gaps_ref": "overview.md#known-emitted-telemetry-gaps — (no row yet)",
+   "source": "refuter classification of the k8b-20261125 FAIL items (review round 1)"
+  },
+  {
+   "kind": "metric attr",
+   "role": "api",
+   "item": "http_server_request_duration_seconds_sum",
+   "langs_missing": [
+    "python",
+    "node",
+    "dotnet"
+   ],
+   "status": "proposed",
+   "attribute": "network_protocol_name",
+   "reason": "Go HTTP server instrumentation records server.address, server.port, network.protocol.name on http.server.request.duration",
+   "gaps_ref": "overview.md#known-emitted-telemetry-gaps — (no row yet)",
+   "source": "refuter classification of the k8b-20261125 FAIL items (review round 1)"
+  },
+  {
+   "kind": "metric attr",
+   "role": "api",
+   "item": "http_server_request_duration_seconds_sum",
+   "langs_missing": [
+    "python",
+    "node",
+    "dotnet"
+   ],
+   "status": "proposed",
+   "attribute": "server_address",
+   "reason": "Go HTTP server instrumentation records server.address, server.port, network.protocol.name on http.server.request.duration",
+   "gaps_ref": "overview.md#known-emitted-telemetry-gaps — (no row yet)",
+   "source": "refuter classification of the k8b-20261125 FAIL items (review round 1)"
+  },
+  {
+   "kind": "metric attr",
+   "role": "api",
+   "item": "http_server_request_duration_seconds_sum",
+   "langs_missing": [
+    "python",
+    "node",
+    "dotnet"
+   ],
+   "status": "proposed",
+   "attribute": "server_port",
+   "reason": "Go HTTP server instrumentation records server.address, server.port, network.protocol.name on http.server.request.duration",
+   "gaps_ref": "overview.md#known-emitted-telemetry-gaps — (no row yet)",
+   "source": "refuter classification of the k8b-20261125 FAIL items (review round 1)"
+  },
+  {
+   "kind": "metric",
+   "role": "api",
+   "item": "kestrel_active_connections",
+   "langs_missing": [
+    "go",
+    "python",
+    "node"
+   ],
+   "status": "accepted",
+   "reason": "matched by the round-1 token heuristic; needs review",
+   "gaps_ref": "overview.md: .NET framework metrics (branch, task C11)",
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)",
+   "ruling": "owner 2026-11-26: accepted (gaps row exists)"
+  },
+  {
+   "kind": "metric",
+   "role": "api",
+   "item": "kestrel_connection_duration_seconds_count",
+   "langs_missing": [
+    "go",
+    "python",
+    "node"
+   ],
+   "status": "accepted",
+   "reason": "matched by the round-1 token heuristic; needs review",
+   "gaps_ref": "overview.md: .NET framework metrics (branch, task C11)",
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)",
+   "ruling": "owner 2026-11-26: accepted (gaps row exists)"
+  },
+  {
+   "kind": "metric",
+   "role": "api",
+   "item": "kestrel_connection_duration_seconds_sum",
+   "langs_missing": [
+    "go",
+    "python",
+    "node"
+   ],
+   "status": "accepted",
+   "reason": "matched by the round-1 token heuristic; needs review",
+   "gaps_ref": "overview.md: .NET framework metrics (branch, task C11)",
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)",
+   "ruling": "owner 2026-11-26: accepted (gaps row exists)"
+  },
+  {
+   "kind": "metric",
+   "role": "api",
+   "item": "kestrel_queued_connections",
+   "langs_missing": [
+    "go",
+    "python",
+    "node"
+   ],
+   "status": "accepted",
+   "reason": "matched by the round-1 token heuristic; needs review",
+   "gaps_ref": "overview.md: .NET framework metrics (branch, task C11)",
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)",
+   "ruling": "owner 2026-11-26: accepted (gaps row exists)"
+  },
+  {
+   "kind": "metric",
+   "role": "api",
+   "item": "rpc_client_call_duration_seconds_count",
+   "langs_missing": [
+    "python",
+    "node",
+    "dotnet"
+   ],
+   "status": "accepted",
+   "reason": "matched by the round-1 token heuristic; needs review",
+   "gaps_ref": "overview.md: Python and Node.js gRPC",
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)",
+   "ruling": "owner 2026-11-26: accepted (gaps row exists)"
+  },
+  {
+   "kind": "metric",
+   "role": "api",
+   "item": "rpc_client_call_duration_seconds_sum",
+   "langs_missing": [
+    "python",
+    "node",
+    "dotnet"
+   ],
+   "status": "accepted",
+   "reason": "matched by the round-1 token heuristic; needs review",
+   "gaps_ref": "overview.md: Python and Node.js gRPC",
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)",
+   "ruling": "owner 2026-11-26: accepted (gaps row exists)"
+  },
+  {
+   "kind": "metric attr",
+   "role": "api",
+   "item": "traces_span_metrics_calls_total",
+   "langs_missing": [
+    "go",
+    "dotnet"
+   ],
+   "status": "accepted",
+   "attribute": "rpc_grpc_status_code",
+   "reason": "matched by the round-1 token heuristic; needs review",
+   "gaps_ref": "overview.md: Python and Node.js gRPC",
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)",
+   "ruling": "owner 2026-11-26: accepted (gaps row exists)"
+  },
+  {
+   "kind": "metric attr",
+   "role": "api",
+   "item": "traces_span_metrics_calls_total",
+   "langs_missing": [
+    "python",
+    "node"
+   ],
+   "status": "accepted",
+   "attribute": "rpc_response_status_code",
+   "reason": "Python and Node.js gRPC spans carry the legacy rpc.grpc.status_code (round-2 refuter)",
+   "gaps_ref": "overview.md#known-emitted-telemetry-gaps — Python and Node.js gRPC (legacy rpc.grpc.status_code instead of rpc.response.status_code)",
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)",
+   "ruling": "owner 2026-11-26: accepted (gaps row exists)"
+  },
+  {
+   "kind": "metric attr",
+   "role": "api",
+   "item": "traces_span_metrics_calls_total",
+   "langs_missing": [
+    "go",
+    "dotnet"
+   ],
+   "status": "accepted",
+   "attribute": "rpc_service",
+   "reason": "matched by the round-1 token heuristic; needs review",
+   "gaps_ref": "overview.md: Python and Node.js gRPC",
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)",
+   "ruling": "owner 2026-11-26: accepted (gaps row exists)"
+  },
+  {
+   "kind": "metric attr",
+   "role": "api",
+   "item": "traces_span_metrics_duration_seconds_count",
+   "langs_missing": [
+    "go",
+    "dotnet"
+   ],
+   "status": "accepted",
+   "attribute": "rpc_grpc_status_code",
+   "reason": "matched by the round-1 token heuristic; needs review",
+   "gaps_ref": "overview.md: Python and Node.js gRPC",
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)",
+   "ruling": "owner 2026-11-26: accepted (gaps row exists)"
+  },
+  {
+   "kind": "metric attr",
+   "role": "api",
+   "item": "traces_span_metrics_duration_seconds_count",
+   "langs_missing": [
+    "python",
+    "node"
+   ],
+   "status": "accepted",
+   "attribute": "rpc_response_status_code",
+   "reason": "Python and Node.js gRPC spans carry the legacy rpc.grpc.status_code (round-2 refuter)",
+   "gaps_ref": "overview.md#known-emitted-telemetry-gaps — Python and Node.js gRPC (legacy rpc.grpc.status_code instead of rpc.response.status_code)",
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)",
+   "ruling": "owner 2026-11-26: accepted (gaps row exists)"
+  },
+  {
+   "kind": "metric attr",
+   "role": "api",
+   "item": "traces_span_metrics_duration_seconds_count",
+   "langs_missing": [
+    "go",
+    "dotnet"
+   ],
+   "status": "accepted",
+   "attribute": "rpc_service",
+   "reason": "matched by the round-1 token heuristic; needs review",
+   "gaps_ref": "overview.md: Python and Node.js gRPC",
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)",
+   "ruling": "owner 2026-11-26: accepted (gaps row exists)"
+  },
+  {
+   "kind": "metric attr",
+   "role": "api",
+   "item": "traces_span_metrics_duration_seconds_sum",
+   "langs_missing": [
+    "go",
+    "dotnet"
+   ],
+   "status": "accepted",
+   "attribute": "rpc_grpc_status_code",
+   "reason": "matched by the round-1 token heuristic; needs review",
+   "gaps_ref": "overview.md: Python and Node.js gRPC",
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)",
+   "ruling": "owner 2026-11-26: accepted (gaps row exists)"
+  },
+  {
+   "kind": "metric attr",
+   "role": "api",
+   "item": "traces_span_metrics_duration_seconds_sum",
+   "langs_missing": [
+    "python",
+    "node"
+   ],
+   "status": "accepted",
+   "attribute": "rpc_response_status_code",
+   "reason": "Python and Node.js gRPC spans carry the legacy rpc.grpc.status_code (round-2 refuter)",
+   "gaps_ref": "overview.md#known-emitted-telemetry-gaps — Python and Node.js gRPC (legacy rpc.grpc.status_code instead of rpc.response.status_code)",
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)",
+   "ruling": "owner 2026-11-26: accepted (gaps row exists)"
+  },
+  {
+   "kind": "metric attr",
+   "role": "api",
+   "item": "traces_span_metrics_duration_seconds_sum",
+   "langs_missing": [
+    "go",
+    "dotnet"
+   ],
+   "status": "accepted",
+   "attribute": "rpc_service",
+   "reason": "matched by the round-1 token heuristic; needs review",
+   "gaps_ref": "overview.md: Python and Node.js gRPC",
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)",
+   "ruling": "owner 2026-11-26: accepted (gaps row exists)"
+  },
+  {
+   "kind": "metric",
+   "role": "backend",
+   "item": "aspnetcore_memory_pool_allocated_bytes_total",
+   "langs_missing": [
+    "go",
+    "python",
+    "node"
+   ],
+   "status": "needs-row",
+   "reason": "aspnetcore memory_pool meter: the C11 '.NET framework metrics' row must list it first (round-2 refuter)",
+   "gaps_ref": "overview.md#known-emitted-telemetry-gaps — .NET framework metrics (branch, task C11)",
+   "source": "refuter classification of the k8b-20261125 FAIL items (review round 1)"
+  },
+  {
+   "kind": "metric",
+   "role": "backend",
+   "item": "aspnetcore_memory_pool_evicted_bytes_total",
+   "langs_missing": [
+    "go",
+    "python",
+    "node"
+   ],
+   "status": "needs-row",
+   "reason": "aspnetcore memory_pool meter: the C11 '.NET framework metrics' row must list it first (round-2 refuter)",
+   "gaps_ref": "overview.md#known-emitted-telemetry-gaps — .NET framework metrics (branch, task C11)",
+   "source": "refuter classification of the k8b-20261125 FAIL items (review round 1)"
+  },
+  {
+   "kind": "metric",
+   "role": "backend",
+   "item": "aspnetcore_memory_pool_pooled_bytes",
+   "langs_missing": [
+    "go",
+    "python",
+    "node"
+   ],
+   "status": "needs-row",
+   "reason": "aspnetcore memory_pool meter: the C11 '.NET framework metrics' row must list it first (round-2 refuter)",
+   "gaps_ref": "overview.md#known-emitted-telemetry-gaps — .NET framework metrics (branch, task C11)",
+   "source": "refuter classification of the k8b-20261125 FAIL items (review round 1)"
+  },
+  {
+   "kind": "metric",
+   "role": "backend",
+   "item": "aspnetcore_memory_pool_rented_bytes_total",
+   "langs_missing": [
+    "go",
+    "python",
+    "node"
+   ],
+   "status": "needs-row",
+   "reason": "aspnetcore memory_pool meter: the C11 '.NET framework metrics' row must list it first (round-2 refuter)",
+   "gaps_ref": "overview.md#known-emitted-telemetry-gaps — .NET framework metrics (branch, task C11)",
+   "source": "refuter classification of the k8b-20261125 FAIL items (review round 1)"
+  },
+  {
+   "kind": "metric",
+   "role": "backend",
+   "item": "aspnetcore_routing_match_attempts_total",
+   "langs_missing": [
+    "go",
+    "python",
+    "node"
+   ],
+   "status": "accepted",
+   "reason": "matched by the round-1 token heuristic; needs review",
+   "gaps_ref": "overview.md: .NET framework metrics (branch, task C11)",
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)",
+   "ruling": "owner 2026-11-26: accepted (gaps row exists)"
+  },
+  {
+   "kind": "metric",
+   "role": "backend",
+   "item": "db_client_connection_count",
+   "langs_missing": [
+    "go",
+    "python"
+   ],
+   "status": "proposed",
+   "reason": "database connection-pool metrics differ per language (Node.js/.NET db.client.connection.*, Python db.client.connections.usage, Go db.sql.connection.*)",
+   "gaps_ref": "overview.md#known-emitted-telemetry-gaps — (no row yet)",
+   "source": "refuter classification of the k8b-20261125 FAIL items (review round 1)"
+  },
+  {
+   "kind": "metric attr",
+   "role": "backend",
+   "item": "db_client_connection_count",
+   "langs_missing": [
+    "dotnet"
+   ],
+   "status": "accepted",
+   "attribute": "db_client_connection_pool_name",
+   "reason": "matched by the round-1 token heuristic; needs review",
+   "gaps_ref": "overview.md: .NET database query text and connection attributes (branch, task C14a)",
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)",
+   "ruling": "owner 2026-11-26: accepted (gaps row exists)"
+  },
+  {
+   "kind": "metric",
+   "role": "backend",
+   "item": "db_client_connection_max",
+   "langs_missing": [
+    "go",
+    "python"
+   ],
+   "status": "proposed",
+   "reason": "database connection-pool metrics differ per language (Node.js/.NET db.client.connection.*, Python db.client.connections.usage, Go db.sql.connection.*)",
+   "gaps_ref": "overview.md#known-emitted-telemetry-gaps — (no row yet)",
+   "source": "refuter classification of the k8b-20261125 FAIL items (review round 1)"
+  },
+  {
+   "kind": "metric attr",
+   "role": "backend",
+   "item": "db_client_connection_max",
+   "langs_missing": [
+    "dotnet"
+   ],
+   "status": "accepted",
+   "attribute": "db_client_connection_pool_name",
+   "reason": "matched by the round-1 token heuristic; needs review",
+   "gaps_ref": "overview.md: .NET database query text and connection attributes (branch, task C14a)",
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)",
+   "ruling": "owner 2026-11-26: accepted (gaps row exists)"
+  },
+  {
+   "kind": "metric",
+   "role": "backend",
+   "item": "db_client_connection_npgsql_create_time_seconds_count",
+   "langs_missing": [
+    "go",
+    "python",
+    "node"
+   ],
+   "status": "proposed",
+   "reason": "Npgsql driver metrics (.NET only)",
+   "gaps_ref": "overview.md#known-emitted-telemetry-gaps — (no row yet)",
+   "source": "refuter classification of the k8b-20261125 FAIL items (review round 1)"
+  },
+  {
+   "kind": "metric",
+   "role": "backend",
+   "item": "db_client_connection_npgsql_create_time_seconds_sum",
+   "langs_missing": [
+    "go",
+    "python",
+    "node"
+   ],
+   "status": "proposed",
+   "reason": "Npgsql driver metrics (.NET only)",
+   "gaps_ref": "overview.md#known-emitted-telemetry-gaps — (no row yet)",
+   "source": "refuter classification of the k8b-20261125 FAIL items (review round 1)"
+  },
+  {
+   "kind": "metric",
+   "role": "backend",
+   "item": "db_client_connection_pending_requests",
+   "langs_missing": [
+    "go",
+    "python",
+    "dotnet"
+   ],
+   "status": "proposed",
+   "reason": "database connection-pool metrics differ per language (Node.js/.NET db.client.connection.*, Python db.client.connections.usage, Go db.sql.connection.*)",
+   "gaps_ref": "overview.md#known-emitted-telemetry-gaps — (no row yet)",
+   "source": "refuter classification of the k8b-20261125 FAIL items (review round 1)"
+  },
+  {
+   "kind": "metric",
+   "role": "backend",
+   "item": "db_client_connections_usage",
+   "langs_missing": [
+    "go",
+    "node",
+    "dotnet"
+   ],
+   "status": "needs-row",
+   "reason": "SQLAlchemy pool metric db.client.connections.usage: needs a new DB pool-metrics row (round-2 refuter)",
+   "gaps_ref": "overview.md: Node.js Redis metrics",
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)"
+  },
+  {
+   "kind": "metric attr",
+   "role": "backend",
+   "item": "db_client_operation_duration_seconds_count",
+   "langs_missing": [
+    "node",
+    "dotnet"
+   ],
+   "status": "needs-row",
+   "attribute": "db_response_status_code",
+   "reason": "db.response.status_code missing in Node.js and .NET (Node.js puts the SQLSTATE in error.type): a real gap, needs a row (round-2 refuter)",
+   "gaps_ref": "overview.md: Go SQL duration metric `error.type`",
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)"
+  },
+  {
+   "kind": "metric attr",
+   "role": "backend",
+   "item": "db_client_operation_duration_seconds_sum",
+   "langs_missing": [
+    "node",
+    "dotnet"
+   ],
+   "status": "needs-row",
+   "attribute": "db_response_status_code",
+   "reason": "db.response.status_code missing in Node.js and .NET (Node.js puts the SQLSTATE in error.type): a real gap, needs a row (round-2 refuter)",
+   "gaps_ref": "overview.md: Go SQL duration metric `error.type`",
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)"
+  },
+  {
+   "kind": "metric",
+   "role": "backend",
+   "item": "db_client_operation_failed_total",
+   "langs_missing": [
+    "go",
+    "python",
+    "node"
+   ],
+   "status": "proposed",
+   "reason": "Npgsql driver metrics (.NET only)",
+   "gaps_ref": "overview.md#known-emitted-telemetry-gaps — (no row yet)",
+   "source": "refuter classification of the k8b-20261125 FAIL items (review round 1)"
+  },
+  {
+   "kind": "metric",
+   "role": "backend",
+   "item": "db_client_operation_npgsql_bytes_read_total",
+   "langs_missing": [
+    "go",
+    "python",
+    "node"
+   ],
+   "status": "proposed",
+   "reason": "Npgsql driver metrics (.NET only)",
+   "gaps_ref": "overview.md#known-emitted-telemetry-gaps — (no row yet)",
+   "source": "refuter classification of the k8b-20261125 FAIL items (review round 1)"
+  },
+  {
+   "kind": "metric",
+   "role": "backend",
+   "item": "db_client_operation_npgsql_bytes_written_total",
+   "langs_missing": [
+    "go",
+    "python",
+    "node"
+   ],
+   "status": "proposed",
+   "reason": "Npgsql driver metrics (.NET only)",
+   "gaps_ref": "overview.md#known-emitted-telemetry-gaps — (no row yet)",
+   "source": "refuter classification of the k8b-20261125 FAIL items (review round 1)"
+  },
+  {
+   "kind": "metric",
+   "role": "backend",
+   "item": "db_client_operation_npgsql_executing",
+   "langs_missing": [
+    "go",
+    "python",
+    "node"
+   ],
+   "status": "proposed",
+   "reason": "Npgsql driver metrics (.NET only)",
+   "gaps_ref": "overview.md#known-emitted-telemetry-gaps — (no row yet)",
+   "source": "refuter classification of the k8b-20261125 FAIL items (review round 1)"
+  },
+  {
+   "kind": "metric",
+   "role": "backend",
+   "item": "db_client_operation_npgsql_prepared_ratio",
+   "langs_missing": [
+    "go",
+    "python",
+    "node"
+   ],
+   "status": "proposed",
+   "reason": "Npgsql driver metrics (.NET only)",
+   "gaps_ref": "overview.md#known-emitted-telemetry-gaps — (no row yet)",
+   "source": "refuter classification of the k8b-20261125 FAIL items (review round 1)"
+  },
+  {
+   "kind": "metric",
+   "role": "backend",
+   "item": "db_sql_connection_closed_max_idle_time_total",
+   "langs_missing": [
+    "python",
+    "node",
+    "dotnet"
+   ],
+   "status": "proposed",
+   "reason": "database connection-pool metrics differ per language (Node.js/.NET db.client.connection.*, Python db.client.connections.usage, Go db.sql.connection.*)",
+   "gaps_ref": "overview.md#known-emitted-telemetry-gaps — (no row yet)",
+   "source": "refuter classification of the k8b-20261125 FAIL items (review round 1)"
+  },
+  {
+   "kind": "metric",
+   "role": "backend",
+   "item": "db_sql_connection_closed_max_idle_total",
+   "langs_missing": [
+    "python",
+    "node",
+    "dotnet"
+   ],
+   "status": "proposed",
+   "reason": "database connection-pool metrics differ per language (Node.js/.NET db.client.connection.*, Python db.client.connections.usage, Go db.sql.connection.*)",
+   "gaps_ref": "overview.md#known-emitted-telemetry-gaps — (no row yet)",
+   "source": "refuter classification of the k8b-20261125 FAIL items (review round 1)"
+  },
+  {
+   "kind": "metric",
+   "role": "backend",
+   "item": "db_sql_connection_closed_max_lifetime_total",
+   "langs_missing": [
+    "python",
+    "node",
+    "dotnet"
+   ],
+   "status": "proposed",
+   "reason": "database connection-pool metrics differ per language (Node.js/.NET db.client.connection.*, Python db.client.connections.usage, Go db.sql.connection.*)",
+   "gaps_ref": "overview.md#known-emitted-telemetry-gaps — (no row yet)",
+   "source": "refuter classification of the k8b-20261125 FAIL items (review round 1)"
+  },
+  {
+   "kind": "metric",
+   "role": "backend",
+   "item": "db_sql_connection_max_open",
+   "langs_missing": [
+    "python",
+    "node",
+    "dotnet"
+   ],
+   "status": "proposed",
+   "reason": "database connection-pool metrics differ per language (Node.js/.NET db.client.connection.*, Python db.client.connections.usage, Go db.sql.connection.*)",
+   "gaps_ref": "overview.md#known-emitted-telemetry-gaps — (no row yet)",
+   "source": "refuter classification of the k8b-20261125 FAIL items (review round 1)"
+  },
+  {
+   "kind": "metric",
+   "role": "backend",
+   "item": "db_sql_connection_open",
+   "langs_missing": [
+    "python",
+    "node",
+    "dotnet"
+   ],
+   "status": "proposed",
+   "reason": "database connection-pool metrics differ per language (Node.js/.NET db.client.connection.*, Python db.client.connections.usage, Go db.sql.connection.*)",
+   "gaps_ref": "overview.md#known-emitted-telemetry-gaps — (no row yet)",
+   "source": "refuter classification of the k8b-20261125 FAIL items (review round 1)"
+  },
+  {
+   "kind": "metric",
+   "role": "backend",
+   "item": "db_sql_connection_wait_duration_milliseconds_total",
+   "langs_missing": [
+    "python",
+    "node",
+    "dotnet"
+   ],
+   "status": "proposed",
+   "reason": "database connection-pool metrics differ per language (Node.js/.NET db.client.connection.*, Python db.client.connections.usage, Go db.sql.connection.*)",
+   "gaps_ref": "overview.md#known-emitted-telemetry-gaps — (no row yet)",
+   "source": "refuter classification of the k8b-20261125 FAIL items (review round 1)"
+  },
+  {
+   "kind": "metric",
+   "role": "backend",
+   "item": "db_sql_connection_wait_total",
+   "langs_missing": [
+    "python",
+    "node",
+    "dotnet"
+   ],
+   "status": "proposed",
+   "reason": "database connection-pool metrics differ per language (Node.js/.NET db.client.connection.*, Python db.client.connections.usage, Go db.sql.connection.*)",
+   "gaps_ref": "overview.md#known-emitted-telemetry-gaps — (no row yet)",
+   "source": "refuter classification of the k8b-20261125 FAIL items (review round 1)"
+  },
+  {
+   "kind": "metric",
+   "role": "backend",
+   "item": "dns_lookup_duration_seconds_count",
+   "langs_missing": [
+    "go",
+    "python",
+    "node"
+   ],
+   "status": "accepted",
+   "reason": "matched by the round-1 token heuristic; needs review",
+   "gaps_ref": "overview.md: .NET framework metrics (branch, task C11)",
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)",
+   "ruling": "owner 2026-11-26: accepted (gaps row exists)"
+  },
+  {
+   "kind": "metric",
+   "role": "backend",
+   "item": "dns_lookup_duration_seconds_sum",
+   "langs_missing": [
+    "go",
+    "python",
+    "node"
+   ],
+   "status": "accepted",
+   "reason": "matched by the round-1 token heuristic; needs review",
+   "gaps_ref": "overview.md: .NET framework metrics (branch, task C11)",
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)",
+   "ruling": "owner 2026-11-26: accepted (gaps row exists)"
+  },
+  {
+   "kind": "metric",
+   "role": "backend",
+   "item": "http_server_request_duration_seconds_count",
+   "langs_missing": [
+    "go",
+    "python",
+    "node"
+   ],
+   "status": "accepted",
+   "reason": "matched by the round-1 token heuristic; needs review",
+   "gaps_ref": "overview.md: .NET gRPC metrics",
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)",
+   "ruling": "owner 2026-11-26: accepted (gaps row exists)"
+  },
+  {
+   "kind": "metric",
+   "role": "backend",
+   "item": "http_server_request_duration_seconds_sum",
+   "langs_missing": [
+    "go",
+    "python",
+    "node"
+   ],
+   "status": "accepted",
+   "reason": "matched by the round-1 token heuristic; needs review",
+   "gaps_ref": "overview.md: .NET gRPC metrics",
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)",
+   "ruling": "owner 2026-11-26: accepted (gaps row exists)"
+  },
+  {
+   "kind": "metric",
+   "role": "backend",
+   "item": "kestrel_active_connections",
+   "langs_missing": [
+    "go",
+    "python",
+    "node"
+   ],
+   "status": "accepted",
+   "reason": "matched by the round-1 token heuristic; needs review",
+   "gaps_ref": "overview.md: .NET framework metrics (branch, task C11)",
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)",
+   "ruling": "owner 2026-11-26: accepted (gaps row exists)"
+  },
+  {
+   "kind": "metric",
+   "role": "backend",
+   "item": "kestrel_connection_duration_seconds_count",
+   "langs_missing": [
+    "go",
+    "python",
+    "node"
+   ],
+   "status": "accepted",
+   "reason": "matched by the round-1 token heuristic; needs review",
+   "gaps_ref": "overview.md: .NET framework metrics (branch, task C11)",
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)",
+   "ruling": "owner 2026-11-26: accepted (gaps row exists)"
+  },
+  {
+   "kind": "metric",
+   "role": "backend",
+   "item": "kestrel_connection_duration_seconds_sum",
+   "langs_missing": [
+    "go",
+    "python",
+    "node"
+   ],
+   "status": "accepted",
+   "reason": "matched by the round-1 token heuristic; needs review",
+   "gaps_ref": "overview.md: .NET framework metrics (branch, task C11)",
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)",
+   "ruling": "owner 2026-11-26: accepted (gaps row exists)"
+  },
+  {
+   "kind": "metric",
+   "role": "backend",
+   "item": "kestrel_queued_connections",
+   "langs_missing": [
+    "go",
+    "python",
+    "node"
+   ],
+   "status": "accepted",
+   "reason": "matched by the round-1 token heuristic; needs review",
+   "gaps_ref": "overview.md: .NET framework metrics (branch, task C11)",
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)",
+   "ruling": "owner 2026-11-26: accepted (gaps row exists)"
+  },
+  {
+   "kind": "metric",
+   "role": "backend",
+   "item": "kestrel_queued_requests",
+   "langs_missing": [
+    "go",
+    "python",
+    "node"
+   ],
+   "status": "accepted",
+   "reason": "matched by the round-1 token heuristic; needs review",
+   "gaps_ref": "overview.md: .NET framework metrics (branch, task C11)",
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)",
+   "ruling": "owner 2026-11-26: accepted (gaps row exists)"
+  },
+  {
+   "kind": "metric",
+   "role": "backend",
+   "item": "rpc_server_call_duration_seconds_count",
+   "langs_missing": [
+    "python",
+    "node",
+    "dotnet"
+   ],
+   "status": "accepted",
+   "reason": "matched by the round-1 token heuristic; needs review",
+   "gaps_ref": "overview.md: Python and Node.js gRPC",
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)",
+   "ruling": "owner 2026-11-26: accepted (gaps row exists)"
+  },
+  {
+   "kind": "metric",
+   "role": "backend",
+   "item": "rpc_server_call_duration_seconds_sum",
+   "langs_missing": [
+    "python",
+    "node",
+    "dotnet"
+   ],
+   "status": "accepted",
+   "reason": "matched by the round-1 token heuristic; needs review",
+   "gaps_ref": "overview.md: Python and Node.js gRPC",
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)",
+   "ruling": "owner 2026-11-26: accepted (gaps row exists)"
+  },
+  {
+   "kind": "metric attr",
+   "role": "backend",
+   "item": "traces_span_metrics_calls_total",
+   "langs_missing": [
+    "go",
+    "node",
+    "dotnet"
+   ],
+   "status": "needs-row",
+   "attribute": "db_operation_name",
+   "reason": "db.operation.name: Python's value is 'INSERT demo_python'; Go, Node.js and .NET SQL CLIENT spans have none: a real gap, needs a row (round-2 refuter)",
+   "gaps_ref": "overview.md: Redis `db.operation.name` and span names",
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)"
+  },
+  {
+   "kind": "metric attr",
+   "role": "backend",
+   "item": "traces_span_metrics_calls_total",
+   "langs_missing": [
+    "go",
+    "python",
+    "node"
+   ],
+   "status": "needs-row",
+   "attribute": "http_request_method",
+   "reason": ".NET gRPC SERVER spans carry http.* attributes: needs a new row (round-2 refuter)",
+   "gaps_ref": "overview.md: HTTP and gRPC exception detail on spans (task A37, ADR-014 decision 4; owner dec",
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)"
+  },
+  {
+   "kind": "metric attr",
+   "role": "backend",
+   "item": "traces_span_metrics_calls_total",
+   "langs_missing": [
+    "go",
+    "python",
+    "node"
+   ],
+   "status": "needs-row",
+   "attribute": "http_response_status_code",
+   "reason": ".NET gRPC SERVER spans carry http.* attributes: needs a new row (round-2 refuter)",
+   "gaps_ref": "overview.md: HTTP and gRPC exception detail on spans (task A37, ADR-014 decision 4; owner dec",
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)"
+  },
+  {
+   "kind": "metric attr",
+   "role": "backend",
+   "item": "traces_span_metrics_calls_total",
+   "langs_missing": [
+    "go",
+    "python",
+    "node"
+   ],
+   "status": "needs-row",
+   "attribute": "http_route",
+   "reason": ".NET gRPC SERVER spans carry http.* attributes: needs a new row (round-2 refuter)",
+   "gaps_ref": "overview.md: HTTP and gRPC exception detail on spans (task A37, ADR-014 decision 4; owner dec",
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)"
+  },
+  {
+   "kind": "metric attr",
+   "role": "backend",
+   "item": "traces_span_metrics_calls_total",
+   "langs_missing": [
+    "go",
+    "dotnet"
+   ],
+   "status": "accepted",
+   "attribute": "rpc_grpc_status_code",
+   "reason": "matched by the round-1 token heuristic; needs review",
+   "gaps_ref": "overview.md: Python and Node.js gRPC",
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)",
+   "ruling": "owner 2026-11-26: accepted (gaps row exists)"
+  },
+  {
+   "kind": "metric attr",
+   "role": "backend",
+   "item": "traces_span_metrics_calls_total",
+   "langs_missing": [
+    "python",
+    "node"
+   ],
+   "status": "accepted",
+   "attribute": "rpc_response_status_code",
+   "reason": "Python and Node.js gRPC spans carry the legacy rpc.grpc.status_code (round-2 refuter)",
+   "gaps_ref": "overview.md#known-emitted-telemetry-gaps — Python and Node.js gRPC (legacy rpc.grpc.status_code instead of rpc.response.status_code)",
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)",
+   "ruling": "owner 2026-11-26: accepted (gaps row exists)"
+  },
+  {
+   "kind": "metric attr",
+   "role": "backend",
+   "item": "traces_span_metrics_calls_total",
+   "langs_missing": [
+    "go",
+    "dotnet"
+   ],
+   "status": "accepted",
+   "attribute": "rpc_service",
+   "reason": "matched by the round-1 token heuristic; needs review",
+   "gaps_ref": "overview.md: Python and Node.js gRPC",
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)",
+   "ruling": "owner 2026-11-26: accepted (gaps row exists)"
+  },
+  {
+   "kind": "metric attr",
+   "role": "backend",
+   "item": "traces_span_metrics_duration_seconds_count",
+   "langs_missing": [
+    "go",
+    "node",
+    "dotnet"
+   ],
+   "status": "needs-row",
+   "attribute": "db_operation_name",
+   "reason": "db.operation.name: Python's value is 'INSERT demo_python'; Go, Node.js and .NET SQL CLIENT spans have none: a real gap, needs a row (round-2 refuter)",
+   "gaps_ref": "overview.md: Redis `db.operation.name` and span names",
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)"
+  },
+  {
+   "kind": "metric attr",
+   "role": "backend",
+   "item": "traces_span_metrics_duration_seconds_count",
+   "langs_missing": [
+    "go",
+    "python",
+    "node"
+   ],
+   "status": "needs-row",
+   "attribute": "http_request_method",
+   "reason": ".NET gRPC SERVER spans carry http.* attributes: needs a new row (round-2 refuter)",
+   "gaps_ref": "overview.md: HTTP and gRPC exception detail on spans (task A37, ADR-014 decision 4; owner dec",
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)"
+  },
+  {
+   "kind": "metric attr",
+   "role": "backend",
+   "item": "traces_span_metrics_duration_seconds_count",
+   "langs_missing": [
+    "go",
+    "python",
+    "node"
+   ],
+   "status": "needs-row",
+   "attribute": "http_response_status_code",
+   "reason": ".NET gRPC SERVER spans carry http.* attributes: needs a new row (round-2 refuter)",
+   "gaps_ref": "overview.md: HTTP and gRPC exception detail on spans (task A37, ADR-014 decision 4; owner dec",
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)"
+  },
+  {
+   "kind": "metric attr",
+   "role": "backend",
+   "item": "traces_span_metrics_duration_seconds_count",
+   "langs_missing": [
+    "go",
+    "python",
+    "node"
+   ],
+   "status": "needs-row",
+   "attribute": "http_route",
+   "reason": ".NET gRPC SERVER spans carry http.* attributes: needs a new row (round-2 refuter)",
+   "gaps_ref": "overview.md: HTTP and gRPC exception detail on spans (task A37, ADR-014 decision 4; owner dec",
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)"
+  },
+  {
+   "kind": "metric attr",
+   "role": "backend",
+   "item": "traces_span_metrics_duration_seconds_count",
+   "langs_missing": [
+    "go",
+    "dotnet"
+   ],
+   "status": "accepted",
+   "attribute": "rpc_grpc_status_code",
+   "reason": "matched by the round-1 token heuristic; needs review",
+   "gaps_ref": "overview.md: Python and Node.js gRPC",
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)",
+   "ruling": "owner 2026-11-26: accepted (gaps row exists)"
+  },
+  {
+   "kind": "metric attr",
+   "role": "backend",
+   "item": "traces_span_metrics_duration_seconds_count",
+   "langs_missing": [
+    "python",
+    "node"
+   ],
+   "status": "accepted",
+   "attribute": "rpc_response_status_code",
+   "reason": "Python and Node.js gRPC spans carry the legacy rpc.grpc.status_code (round-2 refuter)",
+   "gaps_ref": "overview.md#known-emitted-telemetry-gaps — Python and Node.js gRPC (legacy rpc.grpc.status_code instead of rpc.response.status_code)",
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)",
+   "ruling": "owner 2026-11-26: accepted (gaps row exists)"
+  },
+  {
+   "kind": "metric attr",
+   "role": "backend",
+   "item": "traces_span_metrics_duration_seconds_count",
+   "langs_missing": [
+    "go",
+    "dotnet"
+   ],
+   "status": "accepted",
+   "attribute": "rpc_service",
+   "reason": "matched by the round-1 token heuristic; needs review",
+   "gaps_ref": "overview.md: Python and Node.js gRPC",
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)",
+   "ruling": "owner 2026-11-26: accepted (gaps row exists)"
+  },
+  {
+   "kind": "metric attr",
+   "role": "backend",
+   "item": "traces_span_metrics_duration_seconds_sum",
+   "langs_missing": [
+    "go",
+    "node",
+    "dotnet"
+   ],
+   "status": "needs-row",
+   "attribute": "db_operation_name",
+   "reason": "db.operation.name: Python's value is 'INSERT demo_python'; Go, Node.js and .NET SQL CLIENT spans have none: a real gap, needs a row (round-2 refuter)",
+   "gaps_ref": "overview.md: Redis `db.operation.name` and span names",
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)"
+  },
+  {
+   "kind": "metric attr",
+   "role": "backend",
+   "item": "traces_span_metrics_duration_seconds_sum",
+   "langs_missing": [
+    "go",
+    "python",
+    "node"
+   ],
+   "status": "needs-row",
+   "attribute": "http_request_method",
+   "reason": ".NET gRPC SERVER spans carry http.* attributes: needs a new row (round-2 refuter)",
+   "gaps_ref": "overview.md: HTTP and gRPC exception detail on spans (task A37, ADR-014 decision 4; owner dec",
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)"
+  },
+  {
+   "kind": "metric attr",
+   "role": "backend",
+   "item": "traces_span_metrics_duration_seconds_sum",
+   "langs_missing": [
+    "go",
+    "python",
+    "node"
+   ],
+   "status": "needs-row",
+   "attribute": "http_response_status_code",
+   "reason": ".NET gRPC SERVER spans carry http.* attributes: needs a new row (round-2 refuter)",
+   "gaps_ref": "overview.md: HTTP and gRPC exception detail on spans (task A37, ADR-014 decision 4; owner dec",
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)"
+  },
+  {
+   "kind": "metric attr",
+   "role": "backend",
+   "item": "traces_span_metrics_duration_seconds_sum",
+   "langs_missing": [
+    "go",
+    "python",
+    "node"
+   ],
+   "status": "needs-row",
+   "attribute": "http_route",
+   "reason": ".NET gRPC SERVER spans carry http.* attributes: needs a new row (round-2 refuter)",
+   "gaps_ref": "overview.md: HTTP and gRPC exception detail on spans (task A37, ADR-014 decision 4; owner dec",
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)"
+  },
+  {
+   "kind": "metric attr",
+   "role": "backend",
+   "item": "traces_span_metrics_duration_seconds_sum",
+   "langs_missing": [
+    "go",
+    "dotnet"
+   ],
+   "status": "accepted",
+   "attribute": "rpc_grpc_status_code",
+   "reason": "matched by the round-1 token heuristic; needs review",
+   "gaps_ref": "overview.md: Python and Node.js gRPC",
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)",
+   "ruling": "owner 2026-11-26: accepted (gaps row exists)"
+  },
+  {
+   "kind": "metric attr",
+   "role": "backend",
+   "item": "traces_span_metrics_duration_seconds_sum",
+   "langs_missing": [
+    "python",
+    "node"
+   ],
+   "status": "accepted",
+   "attribute": "rpc_response_status_code",
+   "reason": "Python and Node.js gRPC spans carry the legacy rpc.grpc.status_code (round-2 refuter)",
+   "gaps_ref": "overview.md#known-emitted-telemetry-gaps — Python and Node.js gRPC (legacy rpc.grpc.status_code instead of rpc.response.status_code)",
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)",
+   "ruling": "owner 2026-11-26: accepted (gaps row exists)"
+  },
+  {
+   "kind": "metric attr",
+   "role": "backend",
+   "item": "traces_span_metrics_duration_seconds_sum",
+   "langs_missing": [
+    "go",
+    "dotnet"
+   ],
+   "status": "accepted",
+   "attribute": "rpc_service",
+   "reason": "matched by the round-1 token heuristic; needs review",
+   "gaps_ref": "overview.md: Python and Node.js gRPC",
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)",
+   "ruling": "owner 2026-11-26: accepted (gaps row exists)"
+  },
+  {
+   "kind": "metric",
+   "role": "worker",
+   "item": "db_client_connections_create_time_milliseconds_count",
+   "langs_missing": [
+    "python",
+    "node",
+    "dotnet"
+   ],
+   "status": "accepted",
+   "reason": "matched by the round-1 token heuristic; needs review",
+   "gaps_ref": "overview.md: Node.js Redis metrics",
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)",
+   "ruling": "owner 2026-11-26: accepted (gaps row exists)"
+  },
+  {
+   "kind": "metric",
+   "role": "worker",
+   "item": "db_client_connections_create_time_milliseconds_sum",
+   "langs_missing": [
+    "python",
+    "node",
+    "dotnet"
+   ],
+   "status": "accepted",
+   "reason": "matched by the round-1 token heuristic; needs review",
+   "gaps_ref": "overview.md: Node.js Redis metrics",
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)",
+   "ruling": "owner 2026-11-26: accepted (gaps row exists)"
+  },
+  {
+   "kind": "metric",
+   "role": "worker",
+   "item": "db_client_connections_hits_total",
+   "langs_missing": [
+    "python",
+    "node",
+    "dotnet"
+   ],
+   "status": "accepted",
+   "reason": "matched by the round-1 token heuristic; needs review",
+   "gaps_ref": "overview.md: Node.js Redis metrics",
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)",
+   "ruling": "owner 2026-11-26: accepted (gaps row exists)"
+  },
+  {
+   "kind": "metric",
+   "role": "worker",
+   "item": "db_client_connections_idle_max",
+   "langs_missing": [
+    "python",
+    "node",
+    "dotnet"
+   ],
+   "status": "accepted",
+   "reason": "matched by the round-1 token heuristic; needs review",
+   "gaps_ref": "overview.md: Node.js Redis metrics",
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)",
+   "ruling": "owner 2026-11-26: accepted (gaps row exists)"
+  },
+  {
+   "kind": "metric",
+   "role": "worker",
+   "item": "db_client_connections_idle_min",
+   "langs_missing": [
+    "python",
+    "node",
+    "dotnet"
+   ],
+   "status": "accepted",
+   "reason": "matched by the round-1 token heuristic; needs review",
+   "gaps_ref": "overview.md: Node.js Redis metrics",
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)",
+   "ruling": "owner 2026-11-26: accepted (gaps row exists)"
+  },
+  {
+   "kind": "metric",
+   "role": "worker",
+   "item": "db_client_connections_max",
+   "langs_missing": [
+    "python",
+    "node",
+    "dotnet"
+   ],
+   "status": "accepted",
+   "reason": "matched by the round-1 token heuristic; needs review",
+   "gaps_ref": "overview.md: Node.js Redis metrics",
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)",
+   "ruling": "owner 2026-11-26: accepted (gaps row exists)"
+  },
+  {
+   "kind": "metric",
+   "role": "worker",
+   "item": "db_client_connections_misses_total",
+   "langs_missing": [
+    "python",
+    "node",
+    "dotnet"
+   ],
+   "status": "accepted",
+   "reason": "matched by the round-1 token heuristic; needs review",
+   "gaps_ref": "overview.md: Node.js Redis metrics",
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)",
+   "ruling": "owner 2026-11-26: accepted (gaps row exists)"
+  },
+  {
+   "kind": "metric",
+   "role": "worker",
+   "item": "db_client_connections_timeouts_total",
+   "langs_missing": [
+    "python",
+    "node",
+    "dotnet"
+   ],
+   "status": "accepted",
+   "reason": "matched by the round-1 token heuristic; needs review",
+   "gaps_ref": "overview.md: Node.js Redis metrics",
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)",
+   "ruling": "owner 2026-11-26: accepted (gaps row exists)"
+  },
+  {
+   "kind": "metric",
+   "role": "worker",
+   "item": "db_client_connections_usage",
+   "langs_missing": [
+    "python",
+    "node",
+    "dotnet"
+   ],
+   "status": "accepted",
+   "reason": "matched by the round-1 token heuristic; needs review",
+   "gaps_ref": "overview.md: Node.js Redis metrics",
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)",
+   "ruling": "owner 2026-11-26: accepted (gaps row exists)"
+  },
+  {
+   "kind": "metric",
+   "role": "worker",
+   "item": "db_client_connections_use_time_milliseconds_count",
+   "langs_missing": [
+    "python",
+    "node",
+    "dotnet"
+   ],
+   "status": "accepted",
+   "reason": "matched by the round-1 token heuristic; needs review",
+   "gaps_ref": "overview.md: Node.js Redis metrics",
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)",
+   "ruling": "owner 2026-11-26: accepted (gaps row exists)"
+  },
+  {
+   "kind": "metric",
+   "role": "worker",
+   "item": "db_client_connections_use_time_milliseconds_sum",
+   "langs_missing": [
+    "python",
+    "node",
+    "dotnet"
+   ],
+   "status": "accepted",
+   "reason": "matched by the round-1 token heuristic; needs review",
+   "gaps_ref": "overview.md: Node.js Redis metrics",
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)",
+   "ruling": "owner 2026-11-26: accepted (gaps row exists)"
+  },
+  {
+   "kind": "metric",
+   "role": "worker",
+   "item": "db_client_connections_waits_duration_nanoseconds",
+   "langs_missing": [
+    "python",
+    "node",
+    "dotnet"
+   ],
+   "status": "accepted",
+   "reason": "matched by the round-1 token heuristic; needs review",
+   "gaps_ref": "overview.md: Node.js Redis metrics",
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)",
+   "ruling": "owner 2026-11-26: accepted (gaps row exists)"
+  },
+  {
+   "kind": "metric",
+   "role": "worker",
+   "item": "db_client_connections_waits_total",
+   "langs_missing": [
+    "python",
+    "node",
+    "dotnet"
+   ],
+   "status": "accepted",
+   "reason": "matched by the round-1 token heuristic; needs review",
+   "gaps_ref": "overview.md: Node.js Redis metrics",
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)",
+   "ruling": "owner 2026-11-26: accepted (gaps row exists)"
+  },
+  {
+   "kind": "metric",
+   "role": "worker",
+   "item": "dns_lookup_duration_seconds_count",
+   "langs_missing": [
+    "go",
+    "python",
+    "node"
+   ],
+   "status": "accepted",
+   "reason": "matched by the round-1 token heuristic; needs review",
+   "gaps_ref": "overview.md: .NET framework metrics (branch, task C11)",
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)",
+   "ruling": "owner 2026-11-26: accepted (gaps row exists)"
+  },
+  {
+   "kind": "metric",
+   "role": "worker",
+   "item": "dns_lookup_duration_seconds_sum",
+   "langs_missing": [
+    "go",
+    "python",
+    "node"
+   ],
+   "status": "accepted",
+   "reason": "matched by the round-1 token heuristic; needs review",
+   "gaps_ref": "overview.md: .NET framework metrics (branch, task C11)",
+   "source": "round-1 heuristic match on k8b-20261125 (no longer a pass)",
+   "ruling": "owner 2026-11-26: accepted (gaps row exists)"
+  },
+  {
+   "kind": "metric attr",
+   "role": "worker",
+   "item": "http_client_request_duration_seconds_count",
+   "langs_missing": [
+    "python",
+    "node",
+    "dotnet"
+   ],
+   "status": "proposed",
+   "attribute": "network_protocol_name",
+   "reason": "worker http.client duration label keys differ (url.scheme absent in Python, network.protocol.name Go only)",
+   "gaps_ref": "overview.md#known-emitted-telemetry-gaps — (no row yet)",
+   "source": "refuter classification of the k8b-20261125 FAIL items (review round 1)"
+  },
+  {
+   "kind": "metric attr",
+   "role": "worker",
+   "item": "http_client_request_duration_seconds_count",
+   "langs_missing": [
+    "python"
+   ],
+   "status": "proposed",
+   "attribute": "url_scheme",
+   "reason": "worker http.client duration label keys differ (url.scheme absent in Python, network.protocol.name Go only)",
+   "gaps_ref": "overview.md#known-emitted-telemetry-gaps — (no row yet)",
+   "source": "refuter classification of the k8b-20261125 FAIL items (review round 1)"
+  },
+  {
+   "kind": "metric attr",
+   "role": "worker",
+   "item": "http_client_request_duration_seconds_sum",
+   "langs_missing": [
+    "python",
+    "node",
+    "dotnet"
+   ],
+   "status": "proposed",
+   "attribute": "network_protocol_name",
+   "reason": "worker http.client duration label keys differ (url.scheme absent in Python, network.protocol.name Go only)",
+   "gaps_ref": "overview.md#known-emitted-telemetry-gaps — (no row yet)",
+   "source": "refuter classification of the k8b-20261125 FAIL items (review round 1)"
+  },
+  {
+   "kind": "metric attr",
+   "role": "worker",
+   "item": "http_client_request_duration_seconds_sum",
+   "langs_missing": [
+    "python"
+   ],
+   "status": "proposed",
+   "attribute": "url_scheme",
+   "reason": "worker http.client duration label keys differ (url.scheme absent in Python, network.protocol.name Go only)",
+   "gaps_ref": "overview.md#known-emitted-telemetry-gaps — (no row yet)",
+   "source": "refuter classification of the k8b-20261125 FAIL items (review round 1)"
+  },
+  {
+   "kind": "metric attr",
+   "role": "backend",
+   "item": "db_client_operation_duration_seconds_count",
+   "attribute": "db_name",
+   "langs_missing": [
+    "node",
+    "dotnet"
+   ],
+   "status": "accepted",
+   "reason": "Go keeps the legacy db.name on the DB duration metric (R10 database/dup on metrics)",
+   "gaps_ref": "overview.md#known-emitted-telemetry-gaps — R10 (database/dup) rows",
+   "source": "round-2 refuter: of the 18 unlisted items",
+   "ruling": "owner 2026-11-26: accepted (gaps row exists)"
+  },
+  {
+   "kind": "metric attr",
+   "role": "backend",
+   "item": "db_client_operation_duration_seconds_count",
+   "attribute": "db_system",
+   "langs_missing": [
+    "dotnet"
+   ],
+   "status": "accepted",
+   "reason": ".NET writes no legacy db.system on the DB duration metric (conformant, task C14a)",
+   "gaps_ref": "overview.md#known-emitted-telemetry-gaps — .NET database db.system / db.system.name (branch, task C14a)",
+   "source": "round-2 refuter: of the 18 unlisted items",
+   "ruling": "owner 2026-11-26: accepted (gaps row exists)"
+  },
+  {
+   "kind": "metric attr",
+   "role": "backend",
+   "item": "db_client_operation_duration_seconds_count",
+   "attribute": "server_address",
+   "langs_missing": [
+    "go"
+   ],
+   "status": "proposed",
+   "reason": "Go writes no server.address / server.port on the DB duration metric (a new minor row)",
+   "gaps_ref": "overview.md#known-emitted-telemetry-gaps — (no row yet: minor)",
+   "source": "round-2 refuter: of the 18 unlisted items"
+  },
+  {
+   "kind": "metric attr",
+   "role": "backend",
+   "item": "db_client_operation_duration_seconds_count",
+   "attribute": "server_port",
+   "langs_missing": [
+    "go"
+   ],
+   "status": "proposed",
+   "reason": "Go writes no server.address / server.port on the DB duration metric (a new minor row)",
+   "gaps_ref": "overview.md#known-emitted-telemetry-gaps — (no row yet: minor)",
+   "source": "round-2 refuter: of the 18 unlisted items"
+  },
+  {
+   "kind": "metric attr",
+   "role": "backend",
+   "item": "db_client_operation_duration_seconds_sum",
+   "attribute": "db_name",
+   "langs_missing": [
+    "node",
+    "dotnet"
+   ],
+   "status": "accepted",
+   "reason": "Go keeps the legacy db.name on the DB duration metric (R10 database/dup on metrics)",
+   "gaps_ref": "overview.md#known-emitted-telemetry-gaps — R10 (database/dup) rows",
+   "source": "round-2 refuter: of the 18 unlisted items",
+   "ruling": "owner 2026-11-26: accepted (gaps row exists)"
+  },
+  {
+   "kind": "metric attr",
+   "role": "backend",
+   "item": "db_client_operation_duration_seconds_sum",
+   "attribute": "db_system",
+   "langs_missing": [
+    "dotnet"
+   ],
+   "status": "accepted",
+   "reason": ".NET writes no legacy db.system on the DB duration metric (conformant, task C14a)",
+   "gaps_ref": "overview.md#known-emitted-telemetry-gaps — .NET database db.system / db.system.name (branch, task C14a)",
+   "source": "round-2 refuter: of the 18 unlisted items",
+   "ruling": "owner 2026-11-26: accepted (gaps row exists)"
+  },
+  {
+   "kind": "metric attr",
+   "role": "backend",
+   "item": "db_client_operation_duration_seconds_sum",
+   "attribute": "server_address",
+   "langs_missing": [
+    "go"
+   ],
+   "status": "proposed",
+   "reason": "Go writes no server.address / server.port on the DB duration metric (a new minor row)",
+   "gaps_ref": "overview.md#known-emitted-telemetry-gaps — (no row yet: minor)",
+   "source": "round-2 refuter: of the 18 unlisted items"
+  },
+  {
+   "kind": "metric attr",
+   "role": "backend",
+   "item": "db_client_operation_duration_seconds_sum",
+   "attribute": "server_port",
+   "langs_missing": [
+    "go"
+   ],
+   "status": "proposed",
+   "reason": "Go writes no server.address / server.port on the DB duration metric (a new minor row)",
+   "gaps_ref": "overview.md#known-emitted-telemetry-gaps — (no row yet: minor)",
+   "source": "round-2 refuter: of the 18 unlisted items"
+  },
+  {
+   "kind": "span",
+   "role": "api",
+   "item": "CLIENT",
+   "span_kind": "client",
+   "langs_missing": [
+    "python",
+    "node",
+    "dotnet"
+   ],
+   "status": "needs-row",
+   "reason": "Go go-redis sends CLIENT SETINFO on connect; needs-row: waits for its row in docs/site/library/overview.md (A50 pass)",
+   "gaps_ref": "overview.md#known-emitted-telemetry-gaps — Go `CLIENT` (CLIENT SETINFO) span (row to add, A50)",
+   "source": "observability refuter classification of the k8b-20261125 SR10 span differences (2026-11-27)",
+   "ruling": "owner 2026-11-27"
+  },
+  {
+   "kind": "span",
+   "role": "worker",
+   "item": "CLIENT",
+   "span_kind": "client",
+   "langs_missing": [
+    "python",
+    "node",
+    "dotnet"
+   ],
+   "status": "needs-row",
+   "reason": "Go go-redis sends CLIENT SETINFO on connect; needs-row: waits for its row in docs/site/library/overview.md (A50 pass)",
+   "gaps_ref": "overview.md#known-emitted-telemetry-gaps — Go `CLIENT` (CLIENT SETINFO) span (row to add, A50)",
+   "source": "observability refuter classification of the k8b-20261125 SR10 span differences (2026-11-27)",
+   "ruling": "owner 2026-11-27"
+  },
+  {
+   "kind": "span",
+   "role": "api",
+   "item": "SET",
+   "span_kind": "client",
+   "langs_missing": [
+    "dotnet"
+   ],
+   "status": "needs-row",
+   "reason": "Redis SET with expiry: .NET client sends SETEX; needs-row: waits for its row in docs/site/library/overview.md (A50 pass)",
+   "gaps_ref": "overview.md#known-emitted-telemetry-gaps — Redis `SET` / `SETEX` (row to add, A50)",
+   "source": "observability refuter classification of the k8b-20261125 SR10 span differences (2026-11-27)",
+   "ruling": "owner 2026-11-27"
+  },
+  {
+   "kind": "span",
+   "role": "api",
+   "item": "SETEX",
+   "span_kind": "client",
+   "langs_missing": [
+    "go",
+    "python",
+    "node"
+   ],
+   "status": "needs-row",
+   "reason": "Redis SET with expiry: .NET client sends SETEX; needs-row: waits for its row in docs/site/library/overview.md (A50 pass)",
+   "gaps_ref": "overview.md#known-emitted-telemetry-gaps — Redis `SET` / `SETEX` (row to add, A50)",
+   "source": "observability refuter classification of the k8b-20261125 SR10 span differences (2026-11-27)",
+   "ruling": "owner 2026-11-27"
+  },
+  {
+   "kind": "span",
+   "role": "worker",
+   "item": "XINFO",
+   "span_kind": "client",
+   "langs_missing": [
+    "python",
+    "dotnet"
+   ],
+   "status": "needs-row",
+   "reason": "XINFO subcommand naming differs per Redis instrumentation; needs-row: waits for its row in docs/site/library/overview.md (A50 pass)",
+   "gaps_ref": "overview.md#known-emitted-telemetry-gaps — Redis `XINFO` subcommand naming (row to add, A50)",
+   "source": "observability refuter classification of the k8b-20261125 SR10 span differences (2026-11-27)",
+   "ruling": "owner 2026-11-27"
+  },
+  {
+   "kind": "span",
+   "role": "worker",
+   "item": "XINFO GROUPS",
+   "span_kind": "client",
+   "langs_missing": [
+    "go",
+    "node",
+    "dotnet"
+   ],
+   "status": "needs-row",
+   "reason": "XINFO subcommand naming differs per Redis instrumentation; needs-row: waits for its row in docs/site/library/overview.md (A50 pass)",
+   "gaps_ref": "overview.md#known-emitted-telemetry-gaps — Redis `XINFO` subcommand naming (row to add, A50)",
+   "source": "observability refuter classification of the k8b-20261125 SR10 span differences (2026-11-27)",
+   "ruling": "owner 2026-11-27"
+  },
+  {
+   "kind": "span",
+   "role": "api",
+   "item": "POST /orders http receive",
+   "span_kind": "internal",
+   "langs_missing": [
+    "go",
+    "node",
+    "dotnet"
+   ],
+   "status": "needs-row",
+   "reason": "Python ASGI http receive INTERNAL span (see A59); needs-row: waits for its row in docs/site/library/overview.md (A50 pass)",
+   "gaps_ref": "overview.md#known-emitted-telemetry-gaps — Python ASGI `http receive` / `http send` INTERNAL spans (row to add, A50; A59)",
+   "source": "observability refuter classification of the k8b-20261125 SR10 span differences (2026-11-27)",
+   "ruling": "owner 2026-11-27"
+  },
+  {
+   "kind": "span",
+   "role": "api",
+   "item": "POST /orders http send",
+   "span_kind": "internal",
+   "langs_missing": [
+    "go",
+    "node",
+    "dotnet"
+   ],
+   "status": "needs-row",
+   "reason": "Python ASGI http send INTERNAL span (see A59); needs-row: waits for its row in docs/site/library/overview.md (A50 pass)",
+   "gaps_ref": "overview.md#known-emitted-telemetry-gaps — Python ASGI `http receive` / `http send` INTERNAL spans (row to add, A50; A59)",
+   "source": "observability refuter classification of the k8b-20261125 SR10 span differences (2026-11-27)",
+   "ruling": "owner 2026-11-27"
+  },
+  {
+   "kind": "span",
+   "role": "api",
+   "item": "request handler - /orders",
+   "span_kind": "internal",
+   "langs_missing": [
+    "go",
+    "python",
+    "dotnet"
+   ],
+   "status": "needs-row",
+   "reason": "Node.js express instrumentation request handler span; needs-row: waits for its row in docs/site/library/overview.md (A50 pass)",
+   "gaps_ref": "overview.md#known-emitted-telemetry-gaps — Node.js express `request handler` span (row to add, A50)",
+   "source": "observability refuter classification of the k8b-20261125 SR10 span differences (2026-11-27)",
+   "ruling": "owner 2026-11-27"
+  },
+  {
+   "kind": "span",
+   "role": "backend",
+   "item": "CONNECT demo_dotnet",
+   "span_kind": "client",
+   "langs_missing": [
+    "go",
+    "python",
+    "node"
+   ],
+   "status": "needs-row",
+   "reason": "SQL connection span, per language; needs-row: waits for its row in docs/site/library/overview.md (A50 pass)",
+   "gaps_ref": "overview.md#known-emitted-telemetry-gaps — SQL connection spans per language (row to add, A50)",
+   "source": "observability refuter classification of the k8b-20261125 SR10 span differences (2026-11-27)",
+   "ruling": "owner 2026-11-27"
+  },
+  {
+   "kind": "span",
+   "role": "backend",
+   "item": "connect",
+   "span_kind": "client",
+   "langs_missing": [
+    "go",
+    "node",
+    "dotnet"
+   ],
+   "status": "needs-row",
+   "reason": "SQL connection span, per language; needs-row: waits for its row in docs/site/library/overview.md (A50 pass)",
+   "gaps_ref": "overview.md#known-emitted-telemetry-gaps — SQL connection spans per language (row to add, A50)",
+   "source": "observability refuter classification of the k8b-20261125 SR10 span differences (2026-11-27)",
+   "ruling": "owner 2026-11-27"
+  },
+  {
+   "kind": "span",
+   "role": "backend",
+   "item": "pg-pool.connect",
+   "span_kind": "client",
+   "langs_missing": [
+    "go",
+    "python",
+    "dotnet"
+   ],
+   "status": "needs-row",
+   "reason": "SQL connection span, per language; needs-row: waits for its row in docs/site/library/overview.md (A50 pass)",
+   "gaps_ref": "overview.md#known-emitted-telemetry-gaps — SQL connection spans per language (row to add, A50)",
+   "source": "observability refuter classification of the k8b-20261125 SR10 span differences (2026-11-27)",
+   "ruling": "owner 2026-11-27"
+  },
+  {
+   "kind": "span",
+   "role": "backend",
+   "item": "pg.connect",
+   "span_kind": "client",
+   "langs_missing": [
+    "go",
+    "python",
+    "dotnet"
+   ],
+   "status": "needs-row",
+   "reason": "SQL connection span, per language; needs-row: waits for its row in docs/site/library/overview.md (A50 pass)",
+   "gaps_ref": "overview.md#known-emitted-telemetry-gaps — SQL connection spans per language (row to add, A50)",
+   "source": "observability refuter classification of the k8b-20261125 SR10 span differences (2026-11-27)",
+   "ruling": "owner 2026-11-27"
+  },
+  {
+   "kind": "span",
+   "role": "backend",
+   "item": "sql.connector.connect",
+   "span_kind": "client",
+   "langs_missing": [
+    "python",
+    "node",
+    "dotnet"
+   ],
+   "status": "needs-row",
+   "reason": "SQL connection span, per language; needs-row: waits for its row in docs/site/library/overview.md (A50 pass)",
+   "gaps_ref": "overview.md#known-emitted-telemetry-gaps — SQL connection spans per language (row to add, A50)",
+   "source": "observability refuter classification of the k8b-20261125 SR10 span differences (2026-11-27)",
+   "ruling": "owner 2026-11-27"
+  },
+  {
+   "kind": "span",
+   "role": "backend",
+   "item": "sql.rows",
+   "span_kind": "client",
+   "langs_missing": [
+    "python",
+    "node",
+    "dotnet"
+   ],
+   "status": "needs-row",
+   "reason": "Go XSAM otelsql span; needs-row: waits for its row in docs/site/library/overview.md (A50 pass)",
+   "gaps_ref": "overview.md#known-emitted-telemetry-gaps — Go XSAM `sql.rows` / `sql.conn.reset_session` (row to add, A50)",
+   "source": "observability refuter classification of the k8b-20261125 SR10 span differences (2026-11-27)",
+   "ruling": "owner 2026-11-27"
+  },
+  {
+   "kind": "span",
+   "role": "backend",
+   "item": "sql.conn.reset_session",
+   "span_kind": "client",
+   "langs_missing": [
+    "python",
+    "node",
+    "dotnet"
+   ],
+   "status": "needs-row",
+   "reason": "Go XSAM otelsql span; needs-row: waits for its row in docs/site/library/overview.md (A50 pass)",
+   "gaps_ref": "overview.md#known-emitted-telemetry-gaps — Go XSAM `sql.rows` / `sql.conn.reset_session` (row to add, A50)",
+   "source": "observability refuter classification of the k8b-20261125 SR10 span differences (2026-11-27)",
+   "ruling": "owner 2026-11-27"
+  },
+  {
+   "kind": "span",
+   "role": "api",
+   "item": "EXISTS",
+   "span_kind": "client",
+   "langs_missing": [
+    "go",
+    "node",
+    "dotnet"
+   ],
+   "status": "accepted",
+   "reason": "demo code, per language (DE-D7)",
+   "gaps_ref": "demo start-up commands (DE-D7), not a library difference",
+   "source": "observability refuter classification of the k8b-20261125 SR10 span differences (2026-11-27)",
+   "ruling": "owner 2026-11-27"
+  },
+  {
+   "kind": "span",
+   "role": "api",
+   "item": "XINFO GROUPS",
+   "span_kind": "client",
+   "langs_missing": [
+    "go",
+    "node",
+    "dotnet"
+   ],
+   "status": "accepted",
+   "reason": "demo code, per language (DE-D7)",
+   "gaps_ref": "demo start-up commands (DE-D7), not a library difference",
+   "source": "observability refuter classification of the k8b-20261125 SR10 span differences (2026-11-27)",
+   "ruling": "owner 2026-11-27"
+  },
+  {
+   "kind": "span",
+   "role": "worker",
+   "item": "EXISTS",
+   "span_kind": "client",
+   "langs_missing": [
+    "go",
+    "dotnet"
+   ],
+   "status": "accepted",
+   "reason": "demo code, per language (DE-D7)",
+   "gaps_ref": "demo start-up commands (DE-D7), not a library difference",
+   "source": "observability refuter classification of the k8b-20261125 SR10 span differences (2026-11-27)",
+   "ruling": "owner 2026-11-27"
+  },
+  {
+   "kind": "span",
+   "role": "worker",
+   "item": "TYPE",
+   "span_kind": "client",
+   "langs_missing": [
+    "python",
+    "node",
+    "dotnet"
+   ],
+   "status": "accepted",
+   "reason": "demo code, per language (DE-D7)",
+   "gaps_ref": "demo start-up commands (DE-D7), not a library difference",
+   "source": "observability refuter classification of the k8b-20261125 SR10 span differences (2026-11-27)",
+   "ruling": "owner 2026-11-27"
+  },
+  {
+   "kind": "span",
+   "role": "api",
+   "item": "connect",
+   "span_kind": "client",
+   "langs_missing": [
+    "python",
+    "dotnet"
+   ],
+   "status": "accepted",
+   "reason": "Redis connect span (Go, Node.js); the gaps row exists",
+   "gaps_ref": "overview.md#known-emitted-telemetry-gaps — Redis db.operation.name and span names",
+   "source": "observability refuter classification of the k8b-20261125 SR10 span differences (2026-11-27)",
+   "ruling": "owner 2026-11-27: accepted (gaps row 'Redis db.operation.name and span names')"
+  },
+  {
+   "kind": "span",
+   "role": "worker",
+   "item": "connect",
+   "span_kind": "client",
+   "langs_missing": [
+    "python",
+    "dotnet"
+   ],
+   "status": "accepted",
+   "reason": "Redis connect span (Go, Node.js); the gaps row exists",
+   "gaps_ref": "overview.md#known-emitted-telemetry-gaps — Redis db.operation.name and span names",
+   "source": "observability refuter classification of the k8b-20261125 SR10 span differences (2026-11-27)",
+   "ruling": "owner 2026-11-27: accepted (gaps row 'Redis db.operation.name and span names')"
+  },
+  {
+   "kind": "metric attr",
+   "role": "worker",
+   "item": "traces_span_metrics_calls_total",
+   "attribute": "error_type",
+   "langs_missing": [
+    "python",
+    "node",
+    "dotnet"
+   ],
+   "status": "unmeasured",
+   "runs": [
+    "k8b-20261125"
+   ],
+   "reason": "these keys belong to HTTP CLIENT spans that only the Go worker emitted in the window (window artefact)",
+   "gaps_ref": "none: not a library difference",
+   "source": "k8b-20261125 SR10, removed from the proposed entries (owner 2026-11-26)",
+   "ruling": "owner 2026-11-26: UNMEASURED"
+  },
+  {
+   "kind": "metric attr",
+   "role": "worker",
+   "item": "traces_span_metrics_calls_total",
+   "attribute": "http_request_method",
+   "langs_missing": [
+    "python",
+    "node",
+    "dotnet"
+   ],
+   "status": "unmeasured",
+   "runs": [
+    "k8b-20261125"
+   ],
+   "reason": "these keys belong to HTTP CLIENT spans that only the Go worker emitted in the window (window artefact)",
+   "gaps_ref": "none: not a library difference",
+   "source": "k8b-20261125 SR10, removed from the proposed entries (owner 2026-11-26)",
+   "ruling": "owner 2026-11-26: UNMEASURED"
+  },
+  {
+   "kind": "metric attr",
+   "role": "worker",
+   "item": "traces_span_metrics_calls_total",
+   "attribute": "http_response_status_code",
+   "langs_missing": [
+    "python",
+    "node",
+    "dotnet"
+   ],
+   "status": "unmeasured",
+   "runs": [
+    "k8b-20261125"
+   ],
+   "reason": "these keys belong to HTTP CLIENT spans that only the Go worker emitted in the window (window artefact)",
+   "gaps_ref": "none: not a library difference",
+   "source": "k8b-20261125 SR10, removed from the proposed entries (owner 2026-11-26)",
+   "ruling": "owner 2026-11-26: UNMEASURED"
+  },
+  {
+   "kind": "metric attr",
+   "role": "worker",
+   "item": "traces_span_metrics_duration_seconds_count",
+   "attribute": "error_type",
+   "langs_missing": [
+    "python",
+    "node",
+    "dotnet"
+   ],
+   "status": "unmeasured",
+   "runs": [
+    "k8b-20261125"
+   ],
+   "reason": "these keys belong to HTTP CLIENT spans that only the Go worker emitted in the window (window artefact)",
+   "gaps_ref": "none: not a library difference",
+   "source": "k8b-20261125 SR10, removed from the proposed entries (owner 2026-11-26)",
+   "ruling": "owner 2026-11-26: UNMEASURED"
+  },
+  {
+   "kind": "metric attr",
+   "role": "worker",
+   "item": "traces_span_metrics_duration_seconds_count",
+   "attribute": "http_request_method",
+   "langs_missing": [
+    "python",
+    "node",
+    "dotnet"
+   ],
+   "status": "unmeasured",
+   "runs": [
+    "k8b-20261125"
+   ],
+   "reason": "these keys belong to HTTP CLIENT spans that only the Go worker emitted in the window (window artefact)",
+   "gaps_ref": "none: not a library difference",
+   "source": "k8b-20261125 SR10, removed from the proposed entries (owner 2026-11-26)",
+   "ruling": "owner 2026-11-26: UNMEASURED"
+  },
+  {
+   "kind": "metric attr",
+   "role": "worker",
+   "item": "traces_span_metrics_duration_seconds_count",
+   "attribute": "http_response_status_code",
+   "langs_missing": [
+    "python",
+    "node",
+    "dotnet"
+   ],
+   "status": "unmeasured",
+   "runs": [
+    "k8b-20261125"
+   ],
+   "reason": "these keys belong to HTTP CLIENT spans that only the Go worker emitted in the window (window artefact)",
+   "gaps_ref": "none: not a library difference",
+   "source": "k8b-20261125 SR10, removed from the proposed entries (owner 2026-11-26)",
+   "ruling": "owner 2026-11-26: UNMEASURED"
+  },
+  {
+   "kind": "metric attr",
+   "role": "worker",
+   "item": "traces_span_metrics_duration_seconds_sum",
+   "attribute": "error_type",
+   "langs_missing": [
+    "python",
+    "node",
+    "dotnet"
+   ],
+   "status": "unmeasured",
+   "runs": [
+    "k8b-20261125"
+   ],
+   "reason": "these keys belong to HTTP CLIENT spans that only the Go worker emitted in the window (window artefact)",
+   "gaps_ref": "none: not a library difference",
+   "source": "k8b-20261125 SR10, removed from the proposed entries (owner 2026-11-26)",
+   "ruling": "owner 2026-11-26: UNMEASURED"
+  },
+  {
+   "kind": "metric attr",
+   "role": "worker",
+   "item": "traces_span_metrics_duration_seconds_sum",
+   "attribute": "http_request_method",
+   "langs_missing": [
+    "python",
+    "node",
+    "dotnet"
+   ],
+   "status": "unmeasured",
+   "runs": [
+    "k8b-20261125"
+   ],
+   "reason": "these keys belong to HTTP CLIENT spans that only the Go worker emitted in the window (window artefact)",
+   "gaps_ref": "none: not a library difference",
+   "source": "k8b-20261125 SR10, removed from the proposed entries (owner 2026-11-26)",
+   "ruling": "owner 2026-11-26: UNMEASURED"
+  },
+  {
+   "kind": "metric attr",
+   "role": "worker",
+   "item": "traces_span_metrics_duration_seconds_sum",
+   "attribute": "http_response_status_code",
+   "langs_missing": [
+    "python",
+    "node",
+    "dotnet"
+   ],
+   "status": "unmeasured",
+   "runs": [
+    "k8b-20261125"
+   ],
+   "reason": "these keys belong to HTTP CLIENT spans that only the Go worker emitted in the window (window artefact)",
+   "gaps_ref": "none: not a library difference",
+   "source": "k8b-20261125 SR10, removed from the proposed entries (owner 2026-11-26)",
+   "ruling": "owner 2026-11-26: UNMEASURED"
+  }
+ ]
+}

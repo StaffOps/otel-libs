@@ -1,0 +1,12 @@
+# Context allowlist for go/demo/api/Dockerfile (repo-root context, DE-D3).
+*
+!go/go.mod
+!go/go.sum
+!go/*.go
+!go/internal/
+!go/ext/otelsql/
+!go/ext/otelredis/
+!go/demo/
+go/**/*_test.go
+go/demo/**/Dockerfile*
+

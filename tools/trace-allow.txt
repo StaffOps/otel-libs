@@ -1,0 +1,65 @@
+# Allow-list for tools/trace_matrix.py --check: "<ID> <reason>".
+# A SHALL requirement listed here has no test citation yet. Remove the entry as
+# soon as a test, parity case or e2e check cites the id (a stale entry fails).
+#
+# config-contract-v0.3: implemented by done tasks whose tests don't cite the id.
+G4 uncovered at introduction (2026-10-28); owner task: A2 (done; build on otel v1.47 + stats handlers is exercised by CI, no test names G4)
+G5 uncovered at introduction (2026-10-28); owner task: A2 (done; add G5 to the route-name test)
+G6 uncovered at introduction (2026-10-28); owner task: A10 (done; add G6 to the go/ext tests)
+P15 uncovered at introduction (2026-10-28); owner task: A1 (done; enforced by the CI lower-deps matrix, not by a test file)
+#
+# repo-tooling (draft spec).
+RT7 implemented as the CI job spec-checks (.github/workflows/ci.yml); no test file can cite it; owner task: T11 review
+#
+# soak-simulation (draft spec r6.2 "lean soak", 2026-11-23: Phase S dropped by the owner 2026-11-19; Phase K on
+# k8s01 only — checks live in testing/k8s/verify.py and testing/k8s/soak/, which are not citation paths;
+# tasks from its tasks.md r6.2 table).
+SR0 Phase K: demo apps as workload, not cited by a test (per-severity counts accepted gap AG6); owner tasks: K-cal, K8a, K8b
+SR1 Phase K: Collector copy soak-agent (gateway part accepted gap AG2); owner task: K-copy
+SR2 Phase K: dev + OTLP/gRPC only (other envs accepted gap AG5, TLS AG1); owner tasks: K8a, K8b, K10
+SR3 Phase K: k6 open-loop Job; owner tasks: K-loop, K8b
+SR4 Phase K: leaks (FDs by exec, Node.js runtime AG12) and fixed-family count bounds; owner tasks: K-count, K8a, K8b
+SR5 Phase K: refused, hung, back-pressure on the app-to-copy hop (black hole accepted gap AG11); owner tasks: K-hang, K10
+SR6 Phase K: misconfiguration at start-up; owner task: K10b
+SR7 Phase K: shutdown in its own k6 run after the loaded window; owner task: K-shut
+SR8 Phase K: sampled=00 class (sampling shares AG2, health spans AG9); owner task: K8b
+SR9 Phase K: orphan check on the k6 reservoir (routing accepted gap AG2); owner task: K8b
+SR10 Phase K: cross-language comparison; owner task: K8b
+SR11 dropped with Phase S (owner 2026-11-19); evidence only, never a gate; no owner task
+SR12 Phase K: restart identity; owner task: K3
+SR13 Phase K: back-pressure, Prometheus fallback (backend outage AG3, burst AG7, multi-worker Python AG8); owner tasks: K10, K10b
+SR14 dropped with Phase S (owner 2026-11-19); its safety rules live in SR15; no owner task
+SR15 Phase K on k8s01 (r5 2026-11-15, r6 2026-11-19, r6.1 2026-11-20, r6.2 2026-11-23); owner tasks: K1, K-loop, K-count, K-copy, K8a, K-cal, K8b, K-shut, K10, K11
+#
+# nodejs-otel-helper (Phase B): "JS<n> pending B<x>" = not cited yet; owner task B<x>
+# from specs/nodejs-otel-helper/tasks.md. The owner task deletes its line when its
+# tests cite the id (added by B2, 2026-10-29).
+#
+# dotnet-otel-helper (Phase C): "DN<n> pending C<x>" = no .NET test cites the id yet; owner
+# task from specs/dotnet-otel-helper/tasks.md (Covers column). The owner task deletes its line
+# when its tests cite the id (added by C4, 2026-11-09; DN11 is cited by ParityTests).
+DN0 shipped by C-patch (done) on release/dotnet-0.2; enforced by that branch's CI, not by a test on this branch
+DN1 pending C0 (runtime retarget); C3 (done) set the dependency set, checked by the build, not by a test
+DN7 pending C11 (instrumentation, health, HTTP/gRPC parity)
+DN8 pending C13 (logging)
+DN9 pending C14a, C14b, C14c, C15 (opt-in packages)
+DN10 done by C2; enforced by the CI build-lib pack assertion (five StaffOps.OtelHelper* packages), not by a test file
+DN12 pending C0 (runtime retarget, last)
+#
+# demo-environment (draft spec): "DR<n> pending DE<x>" = no test on a citation path cites the
+# id yet (testing/k8s is not a citation path; verify.py demo checks run on the cluster in DE6).
+# Owner task from specs/demo-environment/tasks.md (Covers column); added by DE5, 2026-11-16.
+DR0 pending DE1, DE3a-d (one topology, four languages; checked on the cluster by DE6)
+DR1 pending DE2 (backing services; demo.sh checks, testing/k8s/demo/test_*.py)
+DR2 pending DE3a-d (queue propagation; verify.py demo check e, run in DE6)
+DR3 pending DE3a-d (error routes; verify.py demo check d, run in DE6)
+DR4 pending DE3a-d (custom signals; verify.py demo check c, run in DE6)
+DR5 pending DE5 (verify.py demo check a; unit tests in testing/k8s/demo, not a citation path)
+DR6 pending DE5 (verify.py demo check b; unit tests in testing/k8s/demo, not a citation path)
+DR7 pending DE5 (verify.py demo check c; unit tests in testing/k8s/demo, not a citation path)
+DR8 pending DE5 (verify.py demo check e; unit tests in testing/k8s/demo, not a citation path)
+DR9 pending DE5, DE8 (expected.json strict xfail / n/a; spec_lint xfail-task rule)
+DR10 pending DE9 (manual Explore check, run report)
+DR11 pending DE2, DE4 (cluster constraints and credentials; demo.sh)
+DR12 pending DE5 (verify.py demo check g; unit tests in testing/k8s/demo, not a citation path)
+DR13 pending DE11, DE12 (docs and the examples-replacement pass)

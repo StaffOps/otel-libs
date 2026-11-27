@@ -41,14 +41,29 @@ Thumbs.db
 # Test/Coverage
 *.trx
 TestResults/
-dotnet/OtelHelper.Tests/coverage.xml
-dotnet/OtelHelper.Tests/coverage/
+dotnet/StaffOps.OtelHelper.Tests/coverage.xml
+dotnet/StaffOps.OtelHelper.Tests/coverage/
 
 # CI build output (consumed by Dockerfile.demo)
 packages/
+# ...but the Node.js workspace keeps its sources in nodejs/packages/.
+!nodejs/packages/
+# ...and the site mirrors their READMEs in docs/site/nodejs/packages/.
+!docs/site/nodejs/packages/
 
 # Claude Code — personal overrides, not for the team
 .claude/settings.local.json
 
 # MkDocs build output (repo-root only — docs/site/ is the mkdocs source dir, not this)
 /site/
+
+# Node.js (nodejs/; dist/ is covered by the Python entry above)
+node_modules/
+coverage/
+*.tgz
+
+# Built e2e smoke binary
+testing/e2e/go-smoke/go-smoke
+
+# Soak raw run output (specs/soak-simulation SR15 "Evidence (r6.2)"): never committed
+testing/k8s/soak/runs/

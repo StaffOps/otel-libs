@@ -1,0 +1,393 @@
+# Kubernetes test tooling (`testing/k8s/`)
+
+Runs the helpers on a real cluster and checks what reached the backends. The
+Compose e2e (`testing/e2e/`) proves the wire format against a Collector on one
+machine; this directory adds what only Kubernetes shows: the node-local OTel
+agent, `k8sattributes` enrichment, pod identity and the service graph (built by
+the gateway Collector's `service_graph` connector). It also carries the soak
+Phase K on `k8s01` ([`specs/soak-simulation/`](../../specs/soak-simulation/);
+[below](#soak-phase-k)), whose results are in
+[`specs/soak-simulation/reports/`](../../specs/soak-simulation/reports/README.md).
+
+| File | What it does |
+|---|---|
+| `build-images.sh` | Builds and pushes the four smoke images (`otel-libs-smoke-<lang>`) |
+| `build-examples.sh` | Builds and pushes the twelve example images (`otel-libs-example-<lang>-<app>`) |
+| `smoke-jobs.sh` | One Job per language x {grpc, http}; `apply [--verify]`, `delete`, `render` |
+| `examples/examples.sh` | The example apps as Deployments; `apply`, `delete`, `render` |
+| `build-demo.sh` | Builds and pushes the twelve demo images (`otel-libs-demo-<lang>-<app>`, tag from `demo/demo-tag.sh`); `MIN_FREE_GB` disk guard, exit 4 when the registry refuses authentication (specs/demo-environment DE4) |
+| `demo/demo.sh` | The demo environment: shared PostgreSQL + Redis and the worker/api/backend apps per language; `apply [--lang <lang> \| --all]` (K-D2 pre-flight + FailedScheduling watch), `scale --lang <lang> <n> \| --all <n>` (demo apps only), `delete --lang <lang> \| --all`, `render`; env overrides through `DEMO_ENV_FILE` ([below](#demo-env-overrides-and-scale-de13)) (DE2, DE4, DE13) |
+| `build-fakeotlp.sh` | Builds and pushes the test-only OTLP receiver `otel-libs-fakeotlp` from `testing/fakeotlp` of HEAD (tag: newest commit that touched it), the soak's hung (`--hang`) and redirect (`/parity-redirect-c/`) sinks; prints the digest to record; `PUSH=0` builds into the builder cache only; same `MIN_FREE_GB` guard and exit codes as `build-demo.sh` (specs/soak-simulation K-hang) |
+| `verify.py` | Read-only checks in Tempo, Loki and Prometheus; `smoke --run <id>`, `examples`, `demo --run <id>` (demo checks a–g against `demo/expected.json`, `--dry-run` = pre-flight only; specs/demo-environment DE-D11); the soak modes `platform --run <id>` (K1, `soakplatform.py`) and `soak <passive\|gate\|count\|shut\|identity\|labels\|cal\|extras\|report> --run <id>` (K-count, `soakcount.py`; `extras`, the K8b service-graph, canary, SR9 orphan, SR10 and severity checks, `soakextras.py`; `identity` and `labels`, K3 and K5, `soakident.py`; [below](#soak-phase-k)) |
+| `soak/` | The soak run loop `soak.py` (modes `run`, `cal`, `shut`, the trap, `cleanup`), its guards and k6 script generator ([`soak/README.md`](soak/README.md)) |
+| `images/<lang>.Dockerfile` | Smoke images; `images/python-smoke.py` is the Python smoke program |
+
+## Prerequisites
+
+- A kube context (default `k8s01`) that can read the test namespace and use the
+  service proxy of the backends: `kubectl get --raw
+  /api/v1/namespaces/monitoring/services/<svc>:<port>/proxy/...`.
+- The test namespace (default `dev-otel-libs`). Nothing here creates it.
+- An OTel agent reachable at
+  `otel-agent-collector.opentelemetry.svc.cluster.local:4317` (gRPC) and `:4318`
+  (HTTP), with `k8sattributes` and pipelines to Tempo, Loki and Prometheus.
+- Backends in namespace `monitoring`: `tempo:3200`, `loki:3100`,
+  `kps-prometheus:9090`. The service-graph series
+  (`traces_service_graph_request_total`, labels `client`, `server`, `failed`,
+  `connection_type`, `client_k8s_cluster_name`) come from the gateway
+  Collector's `service_graph` connector, written to Prometheus; Tempo runs no
+  `metrics_generator`. `verify.py` takes
+  `BACKENDS_NAMESPACE`, `TEMPO`, `LOKI` and `PROMETHEUS` to point elsewhere.
+- Docker with a buildx builder (default name `multiarch`:
+  `docker buildx create --name multiarch`) and a login to the registry for the
+  push: `docker login harbor.staffops.space`. The cluster pulls anonymously, so
+  the registry project must allow anonymous pull; no pull secret is used.
+- `python3` on the host only to run `verify.py` (standard library; it shells out
+  to `kubectl`). Everything else runs in Docker.
+
+## Build the images
+
+Both build scripts export the **committed HEAD** with `git archive`: uncommitted
+work never lands in an image. Commit first, or the image shows the previous
+commit. The one exception is `testing/k8s/images/` itself, which
+`build-images.sh` copies from the working tree.
+
+```bash
+testing/k8s/build-images.sh              # go python node dotnet
+testing/k8s/build-images.sh python       # one language
+testing/k8s/build-examples.sh            # all twelve example apps
+testing/k8s/build-examples.sh go python/api
+testing/k8s/build-fakeotlp.sh            # the soak's hung/redirect sink; prints the digest
+PUSH=0 testing/k8s/build-fakeotlp.sh     # build check only, nothing pushed
+```
+
+Images are `linux/amd64` only (the test node), tagged with the short HEAD sha
+and `latest`: `harbor.staffops.space/development/otel-libs-smoke-<lang>` and
+`.../otel-libs-example-<lang>-<app>`. `TAG`, `REGISTRY` and `BUILDER` override
+the defaults. `build-examples.sh` stops when the local Docker daemon has less
+than `MIN_FREE_GB` (3) free: the .NET and Node.js builds are large. The probe
+measures the local daemon's disk, not a remote or `docker-container` buildx
+builder's storage.
+
+`smoke-jobs.sh` and `examples.sh` default `TAG` to the short HEAD sha too, so
+they run the images built from the current commit; after a new commit, build
+again or pass `TAG=latest` (or an older sha). Both print the tag they applied.
+
+## Smoke Jobs
+
+Each Job runs one smoke program once: span `e2e-smoke-span`, counter
+`e2e.smoke.runs`, WARN log `e2e-smoke-log` inside the span. Service
+`e2e-<lang>-k8s-<combo>`, configured only with standard OTel variables
+(`OTEL_EXPORTER_OTLP_ENDPOINT`, `_PROTOCOL`, `OTEL_SERVICE_NAME`,
+`OTEL_RESOURCE_ATTRIBUTES` with `otel_libs.run=<run>`,
+`OTEL_METRIC_EXPORT_INTERVAL=1000`).
+
+```bash
+RUN=r2 testing/k8s/smoke-jobs.sh apply              # 8 Jobs, prints run=r2
+RUN=r2 testing/k8s/smoke-jobs.sh apply --verify     # also waits and verifies (or VERIFY=1)
+LANGS="go python" RUN=r3 testing/k8s/smoke-jobs.sh apply
+testing/k8s/smoke-jobs.sh render                    # print the manifests only
+testing/k8s/smoke-jobs.sh delete                    # every e2e-smoke Job
+```
+
+`--verify` polls the run's Jobs every 5 s until all succeeded, one failed
+(it stops there) or `WAIT_TIMEOUT` seconds (300) passed, sleeps `VERIFY_DELAY`
+(30 s) for ingestion, runs `verify.py smoke --run $RUN` over the last hour and
+exits non-zero when a Job did not succeed or a check failed. `LANGS` and `RUN`
+(lowercase letters, digits, `-`) are validated before anything is applied.
+Without it `apply` behaves as before. Jobs clean themselves up 24 h after they
+finish (`ttlSecondsAfterFinished`).
+
+Every smoke program exits 1 when its telemetry did not leave. The Python SDK
+reports a refused or unreachable export only in its log —
+`shutdown_telemetry()` and the providers' `force_flush()` still succeed
+(measured, grpc and http/protobuf, against a closed port) — so
+`python-smoke.py` counts ERROR records on the `opentelemetry.exporter.otlp`
+loggers and exits 1 when there is one. Retries of transient errors log at
+WARNING and do not count. Measured 2026-11-15: exit 0 against a Collector,
+exit 1 against `http://127.0.0.1:9` for both protocols. This detection is
+verified by hand, not in CI: `testing/k8s/images/check-python-refused.sh`
+builds the image locally (or runs `IMAGE=...`) and asserts exit 1 against a
+closed port for both protocols. It depends on the SDK's exporter logger names;
+if upstream renames them, a refused export exits 0 again. The image in the
+registry on 2026-11-15 predates this check: rebuild it (`build-images.sh
+python`) to get it.
+
+## Example apps
+
+```bash
+testing/k8s/examples/examples.sh apply                    # compact layout, all four languages
+LANGS="go python" testing/k8s/examples/examples.sh apply  # a subset
+LAYOUT=split testing/k8s/examples/examples.sh apply       # one pod per app
+testing/k8s/examples/examples.sh render
+LANGS=dotnet testing/k8s/examples/examples.sh delete      # by the otel-libs/lang label
+```
+
+Wiring comes from the examples' own code: Python, Node.js and .NET run
+`process --HTTP--> api --gRPC--> backend`, the process driving traffic. Go runs
+`api --HTTP--> backend` and a standalone process; the Go process has no client,
+so a `curl` container calls `go-api` every 15 s (`/health` included, which must
+produce no span).
+
+### The pod limit and the compact layout
+
+The test node runs at its 110-pod limit with about two pods free, so twelve app
+pods do not fit. `LAYOUT=compact` (the default) puts each language's apps in one
+Deployment as containers of one pod, wired over `127.0.0.1`: five pods
+(`go-stack`, `go-process` — it listens on `:8080` like `go-api` — `python-stack`,
+`node-stack`, `dotnet-stack`). Even five may not fit next to the smoke Jobs.
+Rotate languages: delete one, apply the next.
+
+```bash
+LANGS="go python" testing/k8s/examples/examples.sh delete
+LANGS="node dotnet" testing/k8s/examples/examples.sh apply
+```
+
+`verify.py examples` checks current traffic only (the last `--fresh` minutes),
+so run it for the languages deployed right now, once per rotation:
+`--langs node,dotnet`, then `--langs go,python` after rotating. A language that
+is not running fails.
+
+## Demo env overrides and scale (DE13)
+
+The soak reuses the demo as its workload
+([`specs/demo-environment/design.md`](../../specs/demo-environment/design.md)
+DE-D7, amendments 2026-11-19 and 2026-11-23). `demo.sh apply` and `render`
+read an optional env file, `DEMO_ENV_FILE`:
+
+```text
+# <lang>/<app> NAME=VALUE — `*` for either part; comment and blank lines skipped
+*/* OTEL_EXPORTER_OTLP_ENDPOINT=http://soak-otlp.dev-otel-libs.svc.cluster.local:4317
+*/worker DEMO_INTERVAL_SECONDS=10800
+*/* DEMO_RESTART_NONCE=20261123t1200
+python/api OTEL_EXPORTER_OTLP_HEADERS=x-canary=<token>
+```
+
+```bash
+DEMO_ENV_FILE=testing/k8s/soak/runs/<run>/demo.env testing/k8s/demo/demo.sh render   # *_HEADERS shown as <set>
+DEMO_ENV_FILE=testing/k8s/soak/runs/<run>/demo.env testing/k8s/demo/demo.sh apply --all
+testing/k8s/demo/demo.sh scale --lang go 0     # the go worker, api and backend to 0 replicas
+testing/k8s/demo/demo.sh scale --all 1         # every language in LANGS back to 1
+```
+
+| Rule | Behavior |
+|---|---|
+| Replace or add | A line replaces the value of a variable the app already sets, in the same position, or adds a new variable after the defaults. Two lines that set one name for the same app (wildcards included) are an error, so the `env` list never holds a name twice |
+| Allow-list | Names `OTEL_*` and `DEMO_*` only. Denied: `OTEL_SERVICE_NAME` and `OTEL_RESOURCE_ATTRIBUTES` (the identity the soak checks read), `DEMO_PG_*`, `DEMO_REDIS_*` and `DEMO_*_PASSWORD_FILE` (the DE-D13 credential wiring) |
+| Values | Any text without `"`, `\` or a control character (an empty value is allowed: OTel treats it as unset) |
+| Errors | A malformed, denied or duplicate line, an unknown language or app, or a missing file exits 2 with the line number and the name, never the value, before any `kubectl` or `docker` call |
+| Masking | `render` prints every `*_HEADERS` value as `<set>`; `apply` sends the real value |
+| Forced roll | `DEMO_RESTART_NONCE` is an allowed name the apps ignore: a new value changes the pod template, so `apply` rolls the Deployments (`Recreate`) |
+| No file | Without `DEMO_ENV_FILE` (or with an empty or comment-only file) the manifests are byte-identical to the hook-less ones (`demo/fixtures/render-default.yaml`) |
+| Other commands | `delete` and `scale` ignore `DEMO_ENV_FILE` |
+| Restore | `DEMO_RESTORE=1` (with `apply --lang/--all` or `scale` only) puts already-running apps back without the hook's values and skips the K-D2 capacity pre-flight (the apps already hold their requests); it refuses `DEMO_ENV_FILE` and refuses when any app Deployment of those languages is not applied; `apply` also refuses a target that runs another image tag than `TAG` or has replicas 0, and `scale` refuses an `n` above the current replicas of every target (a scale-up runs the normal pre-flight); the rollout and the FailedScheduling watch still run. Used by the soak trap (`testing/k8s/soak/`) |
+
+`scale --lang <lang> <n>` or `scale --all <n>` (LANGS) sets the replicas of the
+demo app Deployments (selector `otel-libs/lang in (...)`, so PostgreSQL and
+Redis are never scaled), with `n` from 0 to 999. It refuses when one of the
+apps is not applied. For `n` > 0 it runs the K-D2 pre-flight on `n` times the
+apps' requests (running app pods are counted again: conservative), then the
+rollout and FailedScheduling watch of `apply`; for `n` = 0 it runs no
+pre-flight and waits for the pods to go. A later `apply` sets the replicas
+back to 1: the apps are applied with `--force-conflicts`, because `kubectl
+scale` leaves `.spec.replicas` owned by the `kubectl` field manager and a
+plain server-side apply would fail with a conflict. The demo's own checks
+(`verify.py demo`) assume the default 5 s worker interval: a run with
+overrides is not a DE-D11 run.
+
+## Verify
+
+```bash
+python3 -I testing/k8s/verify.py smoke --run r2
+python3 -I testing/k8s/verify.py --langs node,dotnet examples
+python3 -I testing/k8s/verify.py --langs go,python --fresh 15 examples
+python3 -I testing/k8s/verify.py demo --run "$RUN" --dry-run          # pre-flight only
+python3 -I testing/k8s/verify.py demo --run "$RUN" --window 15m --settle 2m
+python3 -I testing/k8s/verify.py platform --run "$RUN" \
+  --fakeotlp-image harbor.staffops.space/development/otel-libs-fakeotlp:<tag>@sha256:<digest>
+```
+
+`platform` (specs/soak-simulation K1, r6.2; code in `soakplatform.py`) is the
+soak's platform snapshot and entry gate, read-only apart from one `kubectl
+exec` per demo container that reads `/proc/1/comm` and `/proc/1/cmdline`
+(`--skip-exec` drops it). It prints one PASS / FAIL / NA line per item: the
+Collector CRs and `soak-agent` ConfigMap, Prometheus `spec.otlp` and PVC,
+roll-list pods, node, namespace labels, Tempo and Loki limits, the K8a runtime
+metric names, the copy's `exported_instance` label, the Tempo selectors, PID 1
+per demo container, the mesh and platform guard (a)–(h) and the sentinels over
+`--lookback` (30m). INFO lines give the `--baseline` (24h) read of every
+sentinel and guard counter — when each was last noisy, and from when a clean
+24 h baseline (counters clean, no roll-list container start) is readable —
+and the node reading from `--floor-window` (1h): a minimum below the initial
+K-D13 floors (2 GiB, 15 %, 10 %) is a FAIL, and the floors stay the initial
+ones until K-cal measures the run's footprint (rule in K-D13, dated
+2026-11-23). The PVC item notes that the 20Gi capacity differs from the 60Gi
+request: tracked, not an outage risk (local-path does not enforce PVC
+capacity; the TSDB lives on the node root fs, bounded by `retentionSize`).
+Raw reads reach `BORN_GRACE` + one scrape before their window, so a counter
+series with no sample before the window's start was born in it and counts.
+Guard (a) tolerates pods in transition (deleting, a container not running
+yet, a container start or Ready transition, or a Running exit, within 60 s;
+a pod of the previous read that is gone), which may not be in ztunnel's
+scraped count yet; a series born in a window that has a sample in the hour
+before its start only had a scrape gap and is reset-unknown (an error item),
+not an increase; guard (g) skips Terminating pods and judges the
+run's languages; a roll-list container that is not running fails (d,e). Guard (h) and the copy's
+sentinels without a success sibling are NA until the apps export to the copy;
+`--expect-copy` makes them required. Every shared-job query carries
+`cluster="k8s01"`. Files go to `testing/k8s/soak/runs/<run>/` (git-ignored):
+`snapshot.json` (read by later soak tasks), `baseline.json`,
+`edges-report-only.json` and `crs/` (credentials stripped; a file the secret
+scan flags is not written). Exit `0` every item PASS or NA, `1` any FAIL,
+`2` usage errors.
+
+`demo` (specs/demo-environment DE-D11) checks the window `[now − settle − W,
+now − settle]` against `testing/k8s/demo/expected.json` and prints one line per
+language × cell plus a matrix. Exit codes: `0` every cell PASS, XFAIL (all
+problems match the cell's `reason` list) or NA; `1` any FAIL, XPASS,
+UNEXPECTED or BLOCKED (exemplar storage absent, or the window starts less than
+60 s after the youngest app pod start); `2` usage errors (`--settle` under
+120 s, a bad `expected.json`). `--dry-run` exits `1` only when the pre-flight
+is BLOCKED. Service-graph edges carry no run label: check e scopes them by
+service name only.
+The cells (a–g), the pre-flight lines and how to read XFAIL / NA are listed
+in [`demo/README.md`](../../demo/README.md#check-a-run-verifypy-demo). Details
+of the checks that are easy to misread (DE11, 2026-11-27): `b.db_client` wants
+the exemplar on the DB CLIENT span itself (`db.system.name`, or the legacy
+`db.system`), so Go and .NET
+are `xfail:A43` (their exemplar sits on the parent span); `d.http` on
+`unhandled` counts the ERROR records on the api SERVER span and the framework
+spans below it (Python and Node.js 1, Go 0, .NET 1, the Kestrel record);
+`c` fails without a finite `le` bucket; a server-side sentinel search of check
+g that returns exactly its limit (1000) is printed as capped — not a problem
+by itself, since each of those traces already holds a hit; every listed root
+trace is scanned (there is no poll-root sample: the workers never trace the
+XREADGROUP poll). The pre-flight BLOCKs when a demo Deployment sets
+`OTEL_METRICS_EXEMPLAR_FILTER` (it reads env names only; `envFrom` sources are
+named, not read). The service-graph INFO lines print the connector's dropped
+spans — `0 (series absent, gateway job up)` when the counter does not exist —
+and the gateway-wide expired-edge share
+(`otelcol_connector_servicegraph_expired_edges` / `_total_edges` over W).
+The tally line counts the pre-flight BLOCKED lines next to the cells
+(`verify demo: …; pre-flight BLOCKED 1; FAIL`). A backend request that fails in
+transport (the API server unreachable, a reset connection, a TLS handshake or
+i/o timeout, kubectl's 60 s timeout) is tried up to three times, 1 s and 3 s
+apart; an HTTP error answer (`Error from server …`) is never retried. In a hard
+API-server outage a run therefore takes up to about three times longer to fail.
+
+Options before the mode: `--context` (`KUBE_CONTEXT`, `k8s01`), `--namespace`
+(`NAMESPACE`, `dev-otel-libs`), `--since` (smoke look-back window, `6h`),
+`--fresh` (examples: minutes of current traffic, `10`), `--langs`.
+Every query goes through the API server's service proxy: read-only, no
+port-forward. One `PASS`/`FAIL` line per check, a summary, exit 1 on any FAIL.
+
+`smoke --run <id>`, per service `e2e-<lang>-k8s-<combo>` (four checks):
+
+| Check | Passes when |
+|---|---|
+| trace | Tempo has a trace of that run rooted at `e2e-smoke-span` |
+| k8s resource | its resource has `k8s.namespace.name` = the namespace and a `k8s.pod.name` |
+| log | Loki has the `e2e-smoke-log` line of that run, on the same trace_id (Tempo drops leading zeros from trace ids, the comparison ignores them) |
+| metric | Prometheus has `e2e_smoke_runs_total` for the service from that run's pod (`smoke-<lang>-<combo>-<run>-*`; `otel_libs.run` is not a metric label) |
+
+`examples`, per language, over the last `--fresh` minutes:
+
+| Check | Passes when |
+|---|---|
+| edge process -> api, api -> backend | `increase(traces_service_graph_request_total{failed="false"}[<fresh>m]) > 0` for the edge, instant query (Go: api -> backend only) |
+| log -> trace | one sampled log line of the language's examples, newer than `--fresh`, has a trace_id Tempo resolves |
+
+Lines whose trace flags have the sampled bit clear are skipped: they carry the
+trace_id of a span that was never recorded (see below).
+
+## Soak (Phase K)
+
+The soak ([`specs/soak-simulation/`](../../specs/soak-simulation/) r6.2)
+runs the demo apps of the four languages through the agent-only Collector copy
+`soak-agent` in `dev-otel-libs`. Two tools, both from the operator's laptop:
+`soak/soak.py` writes only objects labelled `otel-libs/soak-run=<run>` (and
+re-applies the demo through its hook); `verify.py soak` only reads. Raw output
+goes to `testing/k8s/soak/runs/<run>/` (git-ignored); the soaked commit gets a
+local tag `soak/<run>`.
+
+| Mode (`soak/soak.py`) | Task | Does |
+|---|---|---|
+| `run --window passive --duration <s> --hook` | K8a | Passive window: guard read every 60 s (mesh and platform guard, FD `exec` sweep), no load |
+| `run --window loaded --rate <n> --worker-interval <s> --hook` | K8b | Loaded window: a k6 Job at `--rate` req/s per language, then a guarded quiesce, then the trap; writes `count-window.json` and `workers.json` |
+| `cal` | K-cal | Calibration: two k6 repeats of N requests per cell with quiesced boundaries, then rate steps; writes `kcal-input.json` |
+| `shut --rate <n> --worker-interval <s> --kcal <soak-cal.json>` | K-shut + K3 + K5 | One k6 Job (`phase=pre` / `post`); each api pod deleted by name at the boundary + δ; writes the inputs of `soak shut`, `identity`, `labels` |
+| `preflight`, `cleanup`, `render`, `dry-run` | K-loop | Read-only checks before a run; the trap's steps after a cut-off laptop; one object offline; the trap proven on a fake `kubectl` |
+
+Every mode runs the pre-flight and the entry gate before any write, and the
+trap (EXIT / INT / TERM / HUP) deletes the run's soak-run objects only and
+restores the demo. With `go` in `--langs`, a worker interval above 3600 s is
+refused (the Go demo's cap, demo task DE16). Options and window rules:
+[`soak/README.md`](soak/README.md).
+
+| Action (`verify.py soak <action> --run <id>`) | Reads | Writes (`runs/<id>/`) |
+|---|---|---|
+| `gate` | span metrics per demo job, runtime-metric coverage over `--lookback` | `soak-gate.json` |
+| `passive --start <epoch> --warmup <d> --judged <d>` | S-D5 rules per container (memory, threads, goroutines, .NET thread pool, FDs from `guard.jsonl`, restarts) | `soak-passive.json` |
+| `count --t1 --t2 --k6-log --workers … --kcal <soak-cal.json>` (the `count_args` of `count-window.json`) | copy `otel_libs_soak_fixed_spans_total` per service against the K-cal bounds; gateway `span_metrics` cross-check; drain | `soak-count.json` |
+| `cal --input kcal-input.json` | k per cell, integral and equal over two repeats; rate cap vs drain | `soak-cal.json` |
+| `extras --count-window … --kcal …` (`--rejudge <soak-extras.json>`: the saved SR10 items against the current allowlist, offline) | api → backend failed share, secret canary, SR9 orphans, SR10 parity against `soak/sr10-gaps.json`, per-severity Loki counts; Tempo reads rate- and memory-guarded | `soak-extras.json` |
+| `shut --input shut-input.json` | old process's count by `service_instance_id`, exit within grace | `soak-shut.json` |
+| `identity --input identity-input.json` | K3: a new `service.instance.id` per pod, the same in Prometheus, the copy, Loki and Tempo | `soak-identity.json` |
+| `labels --input identity-input.json` | K5: `job`, `instance`, promoted resource labels; series counts before and after each roll | `soak-labels.json` |
+| `report [--tag <t>]` | every `soak-<action>.json` of the run; `state.json` (commit, demo tag, digests, context); `snapshot.json`; the tag's commit (`git rev-parse`); the live demo Deployments and pods (`kubectl get`) when no digest is recorded | `specs/soak-simulation/reports/<run>.md`, refused on a secret-scan hit (the run's canary, the fakeotlp redirect token) |
+
+`--output <path>` writes `passive`, `gate`, `count`, `shut` or `cal` to a new
+file (mode 0600, never overwriting), for a re-derivation next to the recorded
+one. Durations take one unit (`630m`, not `10h30m`). `report` writes as
+"Commit" the commit of the run's tag (or of `state.json`), HEAD only as
+"generated at"; image digests from `snapshot.json`, else from the live demo
+Deployments when their tag equals the run's, else "not recorded". Results and
+verdicts per language: [`specs/soak-simulation/reports/README.md`](../../specs/soak-simulation/reports/README.md).
+
+## Measured results (2026-11-15)
+
+Cluster `k8s01`, namespace `dev-otel-libs`, images built from this branch.
+
+- **Smoke**: 8/8 Jobs completed (Go, Python, Node.js, .NET x grpc,
+  http/protobuf). The manual check before `verify.py` existed found trace, log
+  on the same trace_id and metric for all 8 services (24/24); `verify.py smoke
+  --run r1`, which adds the k8s-resource check, passed 32/32.
+- **Examples**: the window-based first version of `verify.py examples` passed
+  11/11 (each language while or after it ran) — Go api -> backend; Python,
+  Node.js and .NET process -> api and api -> backend; for every language a log
+  line whose trace resolves in Tempo. The current-traffic version, with Node.js
+  and .NET deployed: `--langs node,dotnet` 6/6 (81 and 81 requests on the Node.js
+  edges, 39 and 64 on the .NET edges, in 10 minutes); Go and Python, rotated
+  out, fail as expected.
+- **k8s enrichment**: all 8 smoke resources had `k8s.namespace.name` and
+  `k8s.pod.name` (`verify.py`); the resources inspected by hand (one smoke
+  trace, one trace per example language, all eleven example services) also had
+  `k8s.pod.uid`, `k8s.node.name`, `k8s.cluster.name` and `service.namespace`,
+  added by the agent. The apps set only `service.name` and
+  `deployment.environment.name` (AGENTS.md principle 4).
+
+Differences found (behavior of the examples or the platform, not checks that
+failed):
+
+| Finding | Detail |
+|---|---|
+| Go examples have no gRPC hop | `go-api` calls `go-backend` over HTTP; the Go process has no client, so `curl` drives `go-api` |
+| Go api/backend send no OTel logs | They log with the standard library; only `example-go-process` had log lines with a trace_id in Loki |
+| Go client span name `HTTP <method>` | e.g. `HTTP GET`; the other languages name client spans by the method alone (`GET`, `POST`) |
+| Python framework spans | The ASGI instrumentation adds `POST /notify http receive` / `http send` internal spans under each server span |
+| Node.js framework spans | instrumentation-express adds `request handler - /notify` under each server span |
+| Python `/health` access log carries a trace_id | uvicorn's access line for a probe has the trace_id of the filtered health span, trace flags `2` (not sampled): the trace is not in Tempo by design |
+| .NET backend -> `unknown` node | `dotnet-backend` calls `httpbin.org` (external enrichment); the service graph shows the edge to `unknown` (`connection_type="virtual_node"`) |
+| `k8s.container.name` missing in the compact layout | Pods with three app containers get no `k8s.container.name` (the single-container smoke pods get `smoke`) |
+| `service.version` comes from the platform | Smoke resources got `service.version=latest`, the image tag, added by the agent; the helpers do not set it. The multi-container example pods got none |
+
+## Clean up
+
+```bash
+testing/k8s/smoke-jobs.sh delete
+testing/k8s/examples/examples.sh delete   # all languages; LANGS=... for a subset
+```
+
+Both delete only objects in the test namespace labelled with their component
+(`app.kubernetes.io/component=e2e-smoke`, or `=example` plus the
+`otel-libs/lang` label). Images stay in the registry.

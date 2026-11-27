@@ -1,0 +1,43 @@
+name: Start fake OTLP receiver
+description: >
+  Builds testing/fakeotlp and runs it on the runner's loopback for the parity
+  fixture's export cases, then exports the FAKEOTLP_* variables the runners read
+  (testing/README.md). It binds only the case addresses, so unrelated tests
+  exporting to localhost:4317 get connection-refused.
+runs:
+  using: composite
+  steps:
+    - uses: docker/setup-buildx-action@v3
+    - uses: docker/build-push-action@v6
+      with:
+        context: testing/fakeotlp
+        load: true
+        tags: otel-libs/fakeotlp:ci
+        cache-from: type=gha,scope=fakeotlp
+        cache-to: type=gha,mode=max,scope=fakeotlp
+    - name: Run receiver
+      shell: bash
+      run: |
+        # Host network: 127.0.0.2/127.0.0.3/[::1] are loopback addresses on the runner.
+        # Runs as nobody; the binary carries cap_net_bind_service for 80/443.
+        # Default listen addresses = the case addresses (testing/README.md).
+        docker run -d --name fakeotlp --network host otel-libs/fakeotlp:ci
+        for _ in $(seq 30); do curl -sf http://127.0.0.2:8888/requests >/dev/null && break; sleep 1; done
+        curl -sf http://127.0.0.2:8888/requests >/dev/null || { docker logs fakeotlp; exit 1; }
+        # IPv6 loopback is required: PARITY_REQUIRE_FAKEOTLP turns a missing one into failures, not skips.
+        if ! curl -sfg -X POST 'http://[::1]:24318/probe' >/dev/null; then
+          docker logs fakeotlp
+          echo "::error::no IPv6 loopback on this runner; the IPv6 parity cases cannot run"
+          exit 1
+        fi
+        curl -sf -X DELETE http://127.0.0.2:8888/requests >/dev/null
+        docker cp fakeotlp:/out/ca.pem "$RUNNER_TEMP/fakeotlp-ca.pem"
+        test -s "$RUNNER_TEMP/fakeotlp-ca.pem"
+        {
+          echo "FAKEOTLP_HOST=127.0.0.2"
+          echo "FAKEOTLP_HOST_TLS=127.0.0.3"
+          echo "FAKEOTLP_HOST_IPV6=[::1]"
+          echo "FAKEOTLP_ADMIN=http://127.0.0.2:8888"
+          echo "FAKEOTLP_CA=$RUNNER_TEMP/fakeotlp-ca.pem"
+          echo "PARITY_REQUIRE_FAKEOTLP=1"
+        } >> "$GITHUB_ENV"

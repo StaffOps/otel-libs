@@ -3,13 +3,13 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install prebuilt otel-helper wheel (built once in CI, passed via artifact)
-COPY packages/otel_helper-*.whl /tmp/
-RUN pip install --no-cache-dir /tmp/otel_helper-*.whl
+# Install prebuilt staffops-otel-helper wheel (built once in CI, passed via artifact)
+COPY packages/staffops_otel_helper-*.whl /tmp/
+RUN pip install --no-cache-dir /tmp/staffops_otel_helper-*.whl
 
-# Install app dependencies (skip otel-helper line)
+# Install app dependencies (skip staffops-otel-helper line)
 COPY example/python-backend/requirements.txt .
-RUN grep -v "otel-helper\|setuptools" requirements.txt | pip install --no-cache-dir -r /dev/stdin
+RUN grep -v "staffops-otel-helper\|setuptools" requirements.txt | pip install --no-cache-dir -r /dev/stdin
 
 # Generate gRPC stubs
 COPY example/protos/ /app/protos/

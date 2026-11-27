@@ -1,0 +1,1113 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {
+          "type": "grafana",
+          "uid": "-- Grafana --"
+        },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "links": [
+    {
+      "asDropdown": false,
+      "includeVars": true,
+      "keepTime": true,
+      "tags": [
+        "demo-otel-libs"
+      ],
+      "title": "demo-otel-libs",
+      "type": "dashboards"
+    }
+  ],
+  "panels": [
+    {
+      "gridPos": {
+        "h": 4,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "id": 1,
+      "options": {
+        "content": "### Does any span still keep the error message or stack?\nA span can carry error text in three places: the **status description**, and the `exception.message` and `exception.stacktrace` attributes of the exception event. The target is **none**: the span keeps only `exception.type` (\"conformant\") and the text goes to the error log.\n\n**Status:** database spans conform (A36); HTTP/gRPC server and client spans in Go, Python and Node.js conform too (A37, done 2026-11-19). .NET is parked (C20/C21), so the remaining bars are expected to be `dotnet` only. The numbers count **spans** in the range.",
+        "mode": "markdown"
+      },
+      "type": "text"
+    },
+    {
+      "datasource": {
+        "type": "tempo",
+        "uid": "tempo"
+      },
+      "description": "Spans that **received** the request (api, backend). A37 target: 0, except .NET (parked).",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "noValue": "0",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green"
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 0,
+        "y": 4
+      },
+      "id": 2,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "sum"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showPercentChange": false,
+        "textMode": "value",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "tempo",
+            "uid": "tempo"
+          },
+          "limit": 20,
+          "metricsQueryType": "range",
+          "query": "{ resource.service.name =~ \"demo-(${lang:pipe})-(api|backend|worker)\" && resource.service.name =~ \"${service:pipe}\" && kind = server && (statusMessage != \"\" || event.exception.message != nil || event.exception.stacktrace != nil) } | count_over_time()",
+          "queryType": "traceql",
+          "refId": "A",
+          "step": "",
+          "tableType": "spans"
+        }
+      ],
+      "title": "Server: spans with text",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "tempo",
+        "uid": "tempo"
+      },
+      "description": "Spans that **called** another service or the database. A37 target: 0, except .NET (parked).",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "noValue": "0",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green"
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 6,
+        "y": 4
+      },
+      "id": 3,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "sum"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showPercentChange": false,
+        "textMode": "value",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "tempo",
+            "uid": "tempo"
+          },
+          "limit": 20,
+          "metricsQueryType": "range",
+          "query": "{ resource.service.name =~ \"demo-(${lang:pipe})-(api|backend|worker)\" && resource.service.name =~ \"${service:pipe}\" && kind = client && (statusMessage != \"\" || event.exception.message != nil || event.exception.stacktrace != nil) } | count_over_time()",
+          "queryType": "traceql",
+          "refId": "A",
+          "step": "",
+          "tableType": "spans"
+        }
+      ],
+      "title": "Client: spans with text",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "tempo",
+        "uid": "tempo"
+      },
+      "description": "Internal steps (e.g. the express span in Node.js). A37 target: 0.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "noValue": "0",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green"
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 12,
+        "y": 4
+      },
+      "id": 4,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "sum"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showPercentChange": false,
+        "textMode": "value",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "tempo",
+            "uid": "tempo"
+          },
+          "limit": 20,
+          "metricsQueryType": "range",
+          "query": "{ resource.service.name =~ \"demo-(${lang:pipe})-(api|backend|worker)\" && resource.service.name =~ \"${service:pipe}\" && kind = internal && (statusMessage != \"\" || event.exception.message != nil || event.exception.stacktrace != nil) } | count_over_time()",
+          "queryType": "traceql",
+          "refId": "A",
+          "step": "",
+          "tableType": "spans"
+        }
+      ],
+      "title": "Internal: spans with text",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "tempo",
+        "uid": "tempo"
+      },
+      "description": "Spans with an exception event that follows the rule (type only): database clients (A36) and HTTP/gRPC spans in Go, Python and Node.js (A37).",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "noValue": "0",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "blue"
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 18,
+        "y": 4
+      },
+      "id": 5,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "sum"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showPercentChange": false,
+        "textMode": "value",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "tempo",
+            "uid": "tempo"
+          },
+          "limit": 20,
+          "metricsQueryType": "range",
+          "query": "{ resource.service.name =~ \"demo-(${lang:pipe})-(api|backend|worker)\" && resource.service.name =~ \"${service:pipe}\" && event.exception.type != nil && event.exception.message = nil && event.exception.stacktrace = nil && statusMessage = \"\" } | count_over_time()",
+          "queryType": "traceql",
+          "refId": "A",
+          "step": "",
+          "tableType": "spans"
+        }
+      ],
+      "title": "Conformant (type only)",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "tempo",
+        "uid": "tempo"
+      },
+      "description": "One bar per service and span kind, with the total spans in the range. **Target: no bars** (only `dotnet` expected, parked).",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green"
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 0,
+        "y": 9
+      },
+      "id": 6,
+      "options": {
+        "displayMode": "basic",
+        "namePlacement": "top",
+        "orientation": "horizontal",
+        "reduceOptions": {
+          "calcs": [
+            "sum"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showUnfilled": true,
+        "sizing": "auto",
+        "text": {
+          "titleSize": 13,
+          "valueSize": 20
+        },
+        "valueMode": "color"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "tempo",
+            "uid": "tempo"
+          },
+          "limit": 20,
+          "metricsQueryType": "range",
+          "query": "{ resource.service.name =~ \"demo-(${lang:pipe})-(api|backend|worker)\" && resource.service.name =~ \"${service:pipe}\" && (statusMessage != \"\" || event.exception.message != nil || event.exception.stacktrace != nil) } | count_over_time() by (resource.service.name, kind)",
+          "queryType": "traceql",
+          "refId": "A",
+          "step": "",
+          "tableType": "spans"
+        }
+      ],
+      "title": "Who still keeps error text?",
+      "transformations": [
+        {
+          "id": "renameByRegex",
+          "options": {
+            "regex": "\\{kind=\"([a-z]+)\", resource\\.service\\.name=\"demo-([a-z]+)-([a-z]+)\"\\}",
+            "renamePattern": "$2 · $3 ($1 span)"
+          }
+        }
+      ],
+      "type": "bargauge"
+    },
+    {
+      "datasource": {
+        "type": "tempo",
+        "uid": "tempo"
+      },
+      "description": "Spans whose event has only the type. Compare with the panel next to it: bars should be on this side, not the left one.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "blue"
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 12,
+        "y": 9
+      },
+      "id": 7,
+      "options": {
+        "displayMode": "basic",
+        "namePlacement": "top",
+        "orientation": "horizontal",
+        "reduceOptions": {
+          "calcs": [
+            "sum"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showUnfilled": true,
+        "sizing": "auto",
+        "text": {
+          "titleSize": 13,
+          "valueSize": 20
+        },
+        "valueMode": "color"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "tempo",
+            "uid": "tempo"
+          },
+          "limit": 20,
+          "metricsQueryType": "range",
+          "query": "{ resource.service.name =~ \"demo-(${lang:pipe})-(api|backend|worker)\" && resource.service.name =~ \"${service:pipe}\" && event.exception.type != nil && event.exception.message = nil && event.exception.stacktrace = nil && statusMessage = \"\" } | count_over_time() by (resource.service.name, kind)",
+          "queryType": "traceql",
+          "refId": "A",
+          "step": "",
+          "tableType": "spans"
+        }
+      ],
+      "title": "Who is already conformant?",
+      "transformations": [
+        {
+          "id": "renameByRegex",
+          "options": {
+            "regex": "\\{kind=\"([a-z]+)\", resource\\.service\\.name=\"demo-([a-z]+)-([a-z]+)\"\\}",
+            "renamePattern": "$2 · $3 ($1 span)"
+          }
+        }
+      ],
+      "type": "bargauge"
+    },
+    {
+      "datasource": {
+        "type": "tempo",
+        "uid": "tempo"
+      },
+      "description": "Spans with error text over time, per service. After a deploy that changes error handling, a service's bars should stop from that moment.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "barAlignment": 0,
+            "drawStyle": "bars",
+            "fillOpacity": 60,
+            "lineWidth": 2,
+            "showPoints": "never",
+            "spanNulls": true,
+            "stacking": {
+              "group": "A",
+              "mode": "normal"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "min": 0,
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 18
+      },
+      "id": 8,
+      "interval": "2m",
+      "options": {
+        "legend": {
+          "calcs": [
+            "sum"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "tempo",
+            "uid": "tempo"
+          },
+          "limit": 20,
+          "metricsQueryType": "range",
+          "query": "{ resource.service.name =~ \"demo-(${lang:pipe})-(api|backend|worker)\" && resource.service.name =~ \"${service:pipe}\" && (statusMessage != \"\" || event.exception.message != nil || event.exception.stacktrace != nil) } | count_over_time() by (resource.service.name)",
+          "queryType": "traceql",
+          "refId": "A",
+          "step": "2m",
+          "tableType": "spans"
+        }
+      ],
+      "title": "Did the leak stop after the deploy?",
+      "transformations": [
+        {
+          "id": "renameByRegex",
+          "options": {
+            "regex": "^demo-([a-z]+)-([a-z]+)$",
+            "renamePattern": "$1 · $2"
+          }
+        }
+      ],
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "tempo",
+        "uid": "tempo"
+      },
+      "description": "Language · service · `error.type` and the number of spans. Expected: `409`/`422`/`500` (HTTP), `ALREADY_EXISTS`/`FAILED_PRECONDITION` (gRPC), `23505` (database) or the exception name. A row without `error.type`, or with a different qualified name (.NET), is a parity divergence. A37 does not change this table.",
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "filterable": true
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 18
+      },
+      "id": 9,
+      "options": {
+        "cellHeight": "sm",
+        "footer": {
+          "show": false
+        },
+        "showHeader": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "tempo",
+            "uid": "tempo"
+          },
+          "limit": 20,
+          "metricsQueryType": "range",
+          "query": "{ resource.service.name =~ \"demo-(${lang:pipe})-(api|backend|worker)\" && resource.service.name =~ \"${service:pipe}\" && status = error } | count_over_time() by (resource.service.name, span.error.type)",
+          "queryType": "traceql",
+          "refId": "A",
+          "step": "",
+          "tableType": "spans"
+        }
+      ],
+      "title": "Do error spans use the same error.type in every language?",
+      "transformations": [
+        {
+          "id": "renameByRegex",
+          "options": {
+            "regex": "\\{resource\\.service\\.name=\"demo-([a-z]+)-([a-z]+)\", span\\.error\\.type=\"(.*)\"\\}",
+            "renamePattern": "$1 · $2 · $3"
+          }
+        },
+        {
+          "id": "reduce",
+          "options": {
+            "includeTimeField": false,
+            "mode": "seriesToRows",
+            "reducers": [
+              "sum"
+            ]
+          }
+        },
+        {
+          "id": "organize",
+          "options": {
+            "renameByName": {
+              "Field": "series",
+              "Total": "error spans"
+            }
+          }
+        },
+        {
+          "id": "sortBy",
+          "options": {
+            "sort": [
+              {
+                "desc": true,
+                "field": "error spans"
+              }
+            ]
+          }
+        }
+      ],
+      "type": "table"
+    },
+    {
+      "collapsed": true,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 26
+      },
+      "id": 10,
+      "panels": [
+        {
+          "datasource": {
+            "type": "tempo",
+            "uid": "tempo"
+          },
+          "description": "TraceQL `status = error && statusMessage != \"\"`.",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "barAlignment": 0,
+                "drawStyle": "bars",
+                "fillOpacity": 60,
+                "lineWidth": 2,
+                "showPoints": "never",
+                "spanNulls": true,
+                "stacking": {
+                  "group": "A",
+                  "mode": "normal"
+                },
+                "thresholdsStyle": {
+                  "mode": "off"
+                }
+              },
+              "min": 0,
+              "unit": "short"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 8,
+            "x": 0,
+            "y": 27
+          },
+          "id": 11,
+          "interval": "2m",
+          "options": {
+            "legend": {
+              "calcs": [
+                "sum"
+              ],
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "tempo",
+                "uid": "tempo"
+              },
+              "limit": 20,
+              "metricsQueryType": "range",
+              "query": "{ resource.service.name =~ \"demo-(${lang:pipe})-(api|backend|worker)\" && resource.service.name =~ \"${service:pipe}\" && status = error && statusMessage != \"\" } | count_over_time() by (resource.service.name, kind)",
+              "queryType": "traceql",
+              "refId": "A",
+              "step": "2m",
+              "tableType": "spans"
+            }
+          ],
+          "title": "Status description set on an error span",
+          "transformations": [
+            {
+              "id": "renameByRegex",
+              "options": {
+                "regex": "\\{kind=\"([a-z]+)\", resource\\.service\\.name=\"demo-([a-z]+)-([a-z]+)\"\\}",
+                "renamePattern": "$2 · $3 ($1 span)"
+              }
+            }
+          ],
+          "type": "timeseries"
+        },
+        {
+          "datasource": {
+            "type": "tempo",
+            "uid": "tempo"
+          },
+          "description": "TraceQL `event.exception.message != nil`.",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "barAlignment": 0,
+                "drawStyle": "bars",
+                "fillOpacity": 60,
+                "lineWidth": 2,
+                "showPoints": "never",
+                "spanNulls": true,
+                "stacking": {
+                  "group": "A",
+                  "mode": "normal"
+                },
+                "thresholdsStyle": {
+                  "mode": "off"
+                }
+              },
+              "min": 0,
+              "unit": "short"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 8,
+            "x": 8,
+            "y": 27
+          },
+          "id": 12,
+          "interval": "2m",
+          "options": {
+            "legend": {
+              "calcs": [
+                "sum"
+              ],
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "tempo",
+                "uid": "tempo"
+              },
+              "limit": 20,
+              "metricsQueryType": "range",
+              "query": "{ resource.service.name =~ \"demo-(${lang:pipe})-(api|backend|worker)\" && resource.service.name =~ \"${service:pipe}\" && event.exception.message != nil } | count_over_time() by (resource.service.name, kind)",
+              "queryType": "traceql",
+              "refId": "A",
+              "step": "2m",
+              "tableType": "spans"
+            }
+          ],
+          "title": "Exception event with exception.message",
+          "transformations": [
+            {
+              "id": "renameByRegex",
+              "options": {
+                "regex": "\\{kind=\"([a-z]+)\", resource\\.service\\.name=\"demo-([a-z]+)-([a-z]+)\"\\}",
+                "renamePattern": "$2 · $3 ($1 span)"
+              }
+            }
+          ],
+          "type": "timeseries"
+        },
+        {
+          "datasource": {
+            "type": "tempo",
+            "uid": "tempo"
+          },
+          "description": "TraceQL `event.exception.stacktrace != nil`.",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "barAlignment": 0,
+                "drawStyle": "bars",
+                "fillOpacity": 60,
+                "lineWidth": 2,
+                "showPoints": "never",
+                "spanNulls": true,
+                "stacking": {
+                  "group": "A",
+                  "mode": "normal"
+                },
+                "thresholdsStyle": {
+                  "mode": "off"
+                }
+              },
+              "min": 0,
+              "unit": "short"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 8,
+            "x": 16,
+            "y": 27
+          },
+          "id": 13,
+          "interval": "2m",
+          "options": {
+            "legend": {
+              "calcs": [
+                "sum"
+              ],
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "tempo",
+                "uid": "tempo"
+              },
+              "limit": 20,
+              "metricsQueryType": "range",
+              "query": "{ resource.service.name =~ \"demo-(${lang:pipe})-(api|backend|worker)\" && resource.service.name =~ \"${service:pipe}\" && event.exception.stacktrace != nil } | count_over_time() by (resource.service.name, kind)",
+              "queryType": "traceql",
+              "refId": "A",
+              "step": "2m",
+              "tableType": "spans"
+            }
+          ],
+          "title": "Exception event with exception.stacktrace",
+          "transformations": [
+            {
+              "id": "renameByRegex",
+              "options": {
+                "regex": "\\{kind=\"([a-z]+)\", resource\\.service\\.name=\"demo-([a-z]+)-([a-z]+)\"\\}",
+                "renamePattern": "$2 · $3 ($1 span)"
+              }
+            }
+          ],
+          "type": "timeseries"
+        },
+        {
+          "datasource": {
+            "type": "tempo",
+            "uid": "tempo"
+          },
+          "description": "Counts spans, not events: a duplicated event (interceptor + `use_span`) only shows when you open the trace. A37 target: at most one type-only event per exception.",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "barAlignment": 0,
+                "drawStyle": "bars",
+                "fillOpacity": 60,
+                "lineWidth": 2,
+                "showPoints": "never",
+                "spanNulls": true,
+                "stacking": {
+                  "group": "A",
+                  "mode": "none"
+                },
+                "thresholdsStyle": {
+                  "mode": "off"
+                }
+              },
+              "unit": "short"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 8,
+            "x": 0,
+            "y": 35
+          },
+          "id": 14,
+          "interval": "2m",
+          "options": {
+            "legend": {
+              "calcs": [
+                "sum"
+              ],
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "tempo",
+                "uid": "tempo"
+              },
+              "limit": 20,
+              "metricsQueryType": "range",
+              "query": "{ resource.service.name =~ \"demo-python-.*\" && resource.service.name =~ \"${service:pipe}\" && event.exception.type =~ \".*AbortError.*\" } | count_over_time() by (name)",
+              "queryType": "traceql",
+              "refId": "A",
+              "step": "2m",
+              "tableType": "spans"
+            }
+          ],
+          "title": "Python: gRPC spans with AbortError",
+          "transformations": [],
+          "type": "timeseries"
+        },
+        {
+          "datasource": {
+            "type": "tempo",
+            "uid": "tempo"
+          },
+          "description": "Most recent first. Click the Trace ID to open it. `Trace Service` is who **started** the trace (the worker); the span's service is in the `service.name` column.",
+          "fieldConfig": {
+            "defaults": {
+              "custom": {
+                "align": "auto",
+                "filterable": true
+              }
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 16,
+            "x": 8,
+            "y": 35
+          },
+          "id": 15,
+          "options": {
+            "cellHeight": "sm",
+            "footer": {
+              "show": false
+            },
+            "showHeader": true
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "tempo",
+                "uid": "tempo"
+              },
+              "limit": 30,
+              "query": "{ resource.service.name =~ \"demo-(${lang:pipe})-(api|backend|worker)\" && resource.service.name =~ \"${service:pipe}\" && (statusMessage != \"\" || event.exception.message != nil) } | select(resource.service.name, kind, name, statusMessage, event.exception.type, span.error.type) with(most_recent=true)",
+              "queryType": "traceql",
+              "refId": "A",
+              "spss": 1,
+              "tableType": "spans"
+            }
+          ],
+          "title": "Sample: recent spans that still keep error text",
+          "transformations": [],
+          "type": "table"
+        }
+      ],
+      "title": "Technical detail — each kind of leak and samples",
+      "type": "row"
+    }
+  ],
+  "refresh": "1m",
+  "schemaVersion": 42,
+  "tags": [
+    "demo-otel-libs",
+    "otel-libs",
+    "A37"
+  ],
+  "templating": {
+    "list": [
+      {
+        "allValue": "go|python|node|dotnet",
+        "current": {
+          "selected": true,
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        },
+        "includeAll": true,
+        "label": "Language",
+        "multi": true,
+        "name": "lang",
+        "options": [
+          {
+            "selected": true,
+            "text": "All",
+            "value": "$__all"
+          },
+          {
+            "selected": false,
+            "text": "go",
+            "value": "go"
+          },
+          {
+            "selected": false,
+            "text": "python",
+            "value": "python"
+          },
+          {
+            "selected": false,
+            "text": "node",
+            "value": "node"
+          },
+          {
+            "selected": false,
+            "text": "dotnet",
+            "value": "dotnet"
+          }
+        ],
+        "query": "go,python,node,dotnet",
+        "type": "custom"
+      },
+      {
+        "allValue": "demo-.*",
+        "current": {
+          "selected": true,
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        },
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "definition": "label_values(traces_span_metrics_calls_total{service_name=~\"demo-(${lang:pipe})-(api|backend|worker)\"}, service_name)",
+        "includeAll": true,
+        "label": "Service",
+        "multi": true,
+        "name": "service",
+        "options": [],
+        "query": {
+          "qryType": 1,
+          "query": "label_values(traces_span_metrics_calls_total{service_name=~\"demo-(${lang:pipe})-(api|backend|worker)\"}, service_name)",
+          "refId": "PrometheusVariableQueryEditor-VariableQuery"
+        },
+        "refresh": 2,
+        "sort": 1,
+        "type": "query"
+      }
+    ]
+  },
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "demo-otel-libs — 3. Span hygiene (A37): does any span still keep the error text?",
+  "uid": "demo-otel-span-hygiene",
+  "version": 5,
+  "weekStart": ""
+}

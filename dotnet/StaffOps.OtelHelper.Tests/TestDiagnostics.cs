@@ -1,0 +1,75 @@
+using Microsoft.Extensions.Configuration;
+using StaffOps.OtelHelper.Diagnostics;
+
+namespace StaffOps.OtelHelper.Tests;
+
+/// <summary>
+/// A diagnostics sink of its own per test (design D-NET5: never Console.SetError, which
+/// races under parallel xUnit), plus resolution helpers.
+/// </summary>
+internal sealed class TestDiagnostics
+{
+    private readonly StringWriter _writer = new();
+
+    public TestDiagnostics()
+    {
+        Sink = new OtelHelperDiagnostics(() => _writer);
+    }
+
+    public OtelHelperDiagnostics Sink { get; }
+
+    /// <summary>Everything the sink wrote.</summary>
+    public string Text => _writer.ToString();
+
+    /// <summary>The written lines.</summary>
+    public string[] Lines => Text.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+    /// <summary>
+    /// The written lines except the one D8 deprecation warning of <paramref name="variable"/> (task
+    /// C16), for tests about another behavior of a deprecated variable. Fails unless exactly one
+    /// such line was written.
+    /// </summary>
+    public string[] LinesWithoutDeprecation(string variable)
+    {
+        bool IsDeprecation(string line) => line.StartsWith($"otelhelper: WARN {variable} is deprecated and will be removed in 1.0;", StringComparison.Ordinal);
+        Xunit.Assert.Single(Lines, IsDeprecation);
+        return Lines.Where(l => !IsDeprecation(l)).ToArray();
+    }
+
+    /// <summary>Resolves code options against the current process environment.</summary>
+    public ResolvedTelemetry Resolve(Action<TelemetryOptions>? configure = null, IConfiguration? configuration = null)
+    {
+        var options = new TelemetryOptions();
+        configure?.Invoke(options);
+        return TelemetryResolver.Resolve(options, Sink, configuration);
+    }
+
+    /// <summary>
+    /// Sets a service name and an environment in code, so a test about another row sees only its
+    /// own diagnostics (an unset identity warns, task C6).
+    /// </summary>
+    public static void Identified(TelemetryOptions options)
+    {
+        options.ServiceName ??= "test-service";
+        options.Environment ??= DeploymentEnvironments.DEV;
+    }
+
+    /// <summary>Resolves with a throwaway sink.</summary>
+    public static ResolvedTelemetry ResolveQuiet(Action<TelemetryOptions>? configure = null)
+        => new TestDiagnostics().Resolve(configure);
+}
+
+/// <summary>Builds the helper on a plain service collection, the providers already built.</summary>
+internal static class TestPipelines
+{
+    public static Microsoft.Extensions.DependencyInjection.ServiceProvider Build(Action<TelemetryOptions> configure, TestDiagnostics? diagnostics = null)
+    {
+        var services = new Microsoft.Extensions.DependencyInjection.ServiceCollection();
+        Microsoft.Extensions.DependencyInjection.ServiceCollectionServiceExtensions.AddSingleton<IOtelHelperDiagnostics>(services, (diagnostics ?? new TestDiagnostics()).Sink);
+        services.AddOtelHelper(configure);
+        var provider = Microsoft.Extensions.DependencyInjection.ServiceCollectionContainerBuilderExtensions.BuildServiceProvider(services);
+        Microsoft.Extensions.DependencyInjection.ServiceProviderServiceExtensions.GetRequiredService<OpenTelemetry.Trace.TracerProvider>(provider);
+        Microsoft.Extensions.DependencyInjection.ServiceProviderServiceExtensions.GetRequiredService<OpenTelemetry.Metrics.MeterProvider>(provider);
+        return provider;
+    }
+}

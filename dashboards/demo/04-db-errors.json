@@ -1,0 +1,1033 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {
+          "type": "grafana",
+          "uid": "-- Grafana --"
+        },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "links": [
+    {
+      "asDropdown": false,
+      "includeVars": true,
+      "keepTime": true,
+      "tags": [
+        "demo-otel-libs"
+      ],
+      "title": "demo-otel-libs",
+      "type": "dashboards"
+    }
+  ],
+  "panels": [
+    {
+      "gridPos": {
+        "h": 4,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "id": 1,
+      "options": {
+        "content": "### Does every database failure produce a log with the detail? (A36, done)\nThe scenario: the backend tries to insert a duplicate order and PostgreSQL refuses it (SQLSTATE `23505`, unique key violation). The database **span** keeps `exception.type` and `db.response.status_code = 23505`; the **message** and the **stack** go to **one** error log with the same `trace_id`/`span_id` — also when the trace is not sampled (then the log's trace link opens an empty trace: filter the logs by `db_system_name` / `error_type` instead). Proof: the number of failures must equal the number of logs.",
+        "mode": "markdown"
+      },
+      "type": "text"
+    },
+    {
+      "datasource": {
+        "type": "datasource",
+        "uid": "-- Mixed --"
+      },
+      "description": "Database error logs ÷ database spans with an error. **Target: 100%.** Use a range without pod restarts (the counter resets and the number exceeds 100%).",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 0,
+          "noValue": "no failures in range",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red"
+              },
+              {
+                "color": "orange",
+                "value": 0.9
+              },
+              {
+                "color": "green",
+                "value": 0.98
+              }
+            ]
+          },
+          "unit": "percentunit"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 0,
+        "y": 4
+      },
+      "id": 2,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showPercentChange": false,
+        "textMode": "value",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "exemplar": false,
+          "expr": "sum(traces_span_metrics_calls_total{service_name=~\"demo-(${lang:pipe})-(api|backend|worker)\", service_name=~\"${service:pipe}\", span_kind=\"SPAN_KIND_CLIENT\", db_system_name=\"postgresql\", status_code=\"STATUS_CODE_ERROR\"} - traces_span_metrics_calls_total{service_name=~\"demo-(${lang:pipe})-(api|backend|worker)\", service_name=~\"${service:pipe}\", span_kind=\"SPAN_KIND_CLIENT\", db_system_name=\"postgresql\", status_code=\"STATUS_CODE_ERROR\"} offset $__range)",
+          "hide": true,
+          "instant": true,
+          "legendFormat": "__auto",
+          "range": false,
+          "refId": "spans"
+        },
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "expr": "sum(count_over_time({service_name=~\"demo-(${lang:pipe})-(api|backend|worker)\", service_name=~\"${service:pipe}\"} | severity_number >= 17 | exception_type != \"\" | (db_system_name != \"\" or scope_name = \"StaffOps.OtelHelper.Database\") [$__range]))",
+          "hide": true,
+          "legendFormat": "",
+          "queryType": "instant",
+          "refId": "records"
+        },
+        {
+          "datasource": {
+            "type": "__expr__",
+            "uid": "__expr__"
+          },
+          "expression": "$records / $spans",
+          "refId": "Coverage",
+          "type": "math"
+        }
+      ],
+      "title": "A36 · coverage",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "PostgreSQL client spans with error status (Collector span metrics).",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 0,
+          "noValue": "0",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "blue"
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 6,
+        "y": 4
+      },
+      "id": 3,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showPercentChange": false,
+        "textMode": "value",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "exemplar": false,
+          "expr": "sum(traces_span_metrics_calls_total{service_name=~\"demo-(${lang:pipe})-(api|backend|worker)\", service_name=~\"${service:pipe}\", span_kind=\"SPAN_KIND_CLIENT\", db_system_name=\"postgresql\", status_code=\"STATUS_CODE_ERROR\"} - traces_span_metrics_calls_total{service_name=~\"demo-(${lang:pipe})-(api|backend|worker)\", service_name=~\"${service:pipe}\", span_kind=\"SPAN_KIND_CLIENT\", db_system_name=\"postgresql\", status_code=\"STATUS_CODE_ERROR\"} offset $__range)",
+          "instant": true,
+          "legendFormat": "__auto",
+          "range": false,
+          "refId": "A"
+        }
+      ],
+      "title": "Database failures",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
+      "description": "Error logs with `db.system.name` (Go, Python, Node.js) or from the .NET helper's database logger category (.NET).",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "noValue": "0",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "blue"
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 12,
+        "y": 4
+      },
+      "id": 4,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showPercentChange": false,
+        "textMode": "value",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "expr": "sum(count_over_time({service_name=~\"demo-(${lang:pipe})-(api|backend|worker)\", service_name=~\"${service:pipe}\"} | severity_number >= 17 | exception_type != \"\" | (db_system_name != \"\" or scope_name = \"StaffOps.OtelHelper.Database\") [$__range]))",
+          "legendFormat": "",
+          "queryType": "instant",
+          "refId": "A"
+        }
+      ],
+      "title": "Database error logs",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "tempo",
+        "uid": "tempo"
+      },
+      "description": "Database client spans with a status description, `exception.message` or `exception.stacktrace`. **Target: 0** (what A36 guarantees).",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "noValue": "0",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green"
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 18,
+        "y": 4
+      },
+      "id": 5,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "sum"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showPercentChange": false,
+        "textMode": "value",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "tempo",
+            "uid": "tempo"
+          },
+          "limit": 20,
+          "metricsQueryType": "range",
+          "query": "{ resource.service.name =~ \"demo-(${lang:pipe})-(api|backend|worker)\" && resource.service.name =~ \"${service:pipe}\" && kind = client && span.db.system.name != nil && (statusMessage != \"\" || event.exception.message != nil || event.exception.stacktrace != nil) } | count_over_time()",
+          "queryType": "traceql",
+          "refId": "A",
+          "step": "",
+          "tableType": "spans"
+        }
+      ],
+      "title": "Database spans with a message",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "datasource",
+        "uid": "-- Mixed --"
+      },
+      "description": "One row per language. **Good = DB failures and Error logs equal, Coverage 100% (green).** Fewer logs than failures = lost detail; more logs = duplicate.",
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "filterable": true
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Coverage"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percentunit"
+              },
+              {
+                "id": "decimals",
+                "value": 0
+              },
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "color-background"
+                }
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "red"
+                    },
+                    {
+                      "color": "orange",
+                      "value": 0.9
+                    },
+                    {
+                      "color": "green",
+                      "value": 0.98
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byRegexp",
+              "options": "DB failures|Error logs"
+            },
+            "properties": [
+              {
+                "id": "decimals",
+                "value": 0
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 0,
+        "y": 9
+      },
+      "id": 6,
+      "options": {
+        "cellHeight": "sm",
+        "footer": {
+          "show": false
+        },
+        "showHeader": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "exemplar": false,
+          "expr": "label_replace(sum by (service_name) (traces_span_metrics_calls_total{service_name=~\"demo-(${lang:pipe})-(api|backend|worker)\", service_name=~\"${service:pipe}\", span_kind=\"SPAN_KIND_CLIENT\", db_system_name=\"postgresql\", status_code=\"STATUS_CODE_ERROR\"} - traces_span_metrics_calls_total{service_name=~\"demo-(${lang:pipe})-(api|backend|worker)\", service_name=~\"${service:pipe}\", span_kind=\"SPAN_KIND_CLIENT\", db_system_name=\"postgresql\", status_code=\"STATUS_CODE_ERROR\"} offset $__range), \"lang\", \"$1\", \"service_name\", \"demo-([a-z]+)-.*\")",
+          "hide": true,
+          "instant": true,
+          "legendFormat": "__auto",
+          "range": false,
+          "refId": "spans"
+        },
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "expr": "sum by (lang, service_name) (count_over_time({service_name=~\"demo-(${lang:pipe})-(api|backend|worker)\", service_name=~\"${service:pipe}\"} | severity_number >= 17 | exception_type != \"\" | (db_system_name != \"\" or scope_name = \"StaffOps.OtelHelper.Database\") | label_format lang=`{{ regexReplaceAll \"demo-([a-z]+)-.*\" .service_name \"$1\" }}` [$__range]))",
+          "hide": true,
+          "legendFormat": "",
+          "queryType": "instant",
+          "refId": "records"
+        },
+        {
+          "datasource": {
+            "type": "__expr__",
+            "uid": "__expr__"
+          },
+          "expression": "$spans * 1",
+          "refId": "DB failures",
+          "type": "math"
+        },
+        {
+          "datasource": {
+            "type": "__expr__",
+            "uid": "__expr__"
+          },
+          "expression": "$records * 1",
+          "refId": "Error logs",
+          "type": "math"
+        },
+        {
+          "datasource": {
+            "type": "__expr__",
+            "uid": "__expr__"
+          },
+          "expression": "$records / $spans",
+          "refId": "Coverage",
+          "type": "math"
+        }
+      ],
+      "title": "Failures × logs, language by language",
+      "transformations": [
+        {
+          "id": "labelsToFields",
+          "options": {
+            "mode": "columns"
+          }
+        },
+        {
+          "id": "merge",
+          "options": {}
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "service_name": true
+            },
+            "indexByName": {
+              "Coverage": 4,
+              "DB failures": 2,
+              "Error logs": 3,
+              "lang": 0,
+              "service_name": 1
+            },
+            "renameByName": {
+              "lang": "language"
+            }
+          }
+        }
+      ],
+      "type": "table"
+    },
+    {
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
+      "description": "Expected `23505` in every language. **`dotnet · no SQLSTATE`** is the parked .NET item: the log exists, but without `db.system.name` and SQLSTATE.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "barAlignment": 0,
+            "drawStyle": "bars",
+            "fillOpacity": 60,
+            "lineWidth": 2,
+            "showPoints": "never",
+            "spanNulls": true,
+            "stacking": {
+              "group": "A",
+              "mode": "normal"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "min": 0,
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 12,
+        "y": 9
+      },
+      "id": 7,
+      "interval": "2m",
+      "options": {
+        "legend": {
+          "calcs": [
+            "sum"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "expr": "sum by (lang, sqlstate) (count_over_time({service_name=~\"demo-(${lang:pipe})-(api|backend|worker)\", service_name=~\"${service:pipe}\"} | severity_number >= 17 | exception_type != \"\" | (db_system_name != \"\" or scope_name = \"StaffOps.OtelHelper.Database\") | label_format lang=`{{ regexReplaceAll \"demo-([a-z]+)-.*\" .service_name \"$1\" }}` | label_format sqlstate=`{{ if .db_response_status_code }}{{ .db_response_status_code }}{{ else }}no SQLSTATE{{ end }}` [$__auto]))",
+          "legendFormat": "{{lang}} · {{sqlstate}}",
+          "queryType": "range",
+          "refId": "A"
+        }
+      ],
+      "title": "Do the database logs carry the error code (SQLSTATE)?",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "tempo",
+        "uid": "tempo"
+      },
+      "description": "**Good:** `exception.type` set (Python records no event), `exception.message` and `statusMessage` empty, `db.response.status_code = 23505`. Click the Trace ID → in the trace, **Logs for this span** shows the log with the message.",
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "filterable": true
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 16
+      },
+      "id": 8,
+      "options": {
+        "cellHeight": "sm",
+        "footer": {
+          "show": false
+        },
+        "showHeader": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "tempo",
+            "uid": "tempo"
+          },
+          "limit": 30,
+          "query": "{ resource.service.name =~ \"demo-(${lang:pipe})-(api|backend|worker)\" && resource.service.name =~ \"${service:pipe}\" && kind = client && span.db.system.name != nil && status = error } | select(resource.service.name, name, span.db.response.status_code, span.error.type, event.exception.type, event.exception.message, statusMessage) with(most_recent=true)",
+          "queryType": "traceql",
+          "refId": "A",
+          "spss": 1,
+          "tableType": "spans"
+        }
+      ],
+      "title": "Recent failed database spans — what stayed on the span?",
+      "type": "table"
+    },
+    {
+      "collapsed": true,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 24
+      },
+      "id": 9,
+      "panels": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "description": "The four languages should have the same rate on `postgresql`. Redis without errors is expected (Redis is A52).",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "barAlignment": 0,
+                "drawStyle": "line",
+                "fillOpacity": 0,
+                "lineWidth": 2,
+                "showPoints": "never",
+                "spanNulls": true,
+                "stacking": {
+                  "group": "A",
+                  "mode": "none"
+                },
+                "thresholdsStyle": {
+                  "mode": "off"
+                }
+              },
+              "unit": "reqps"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 25
+          },
+          "id": 10,
+          "interval": "2m",
+          "options": {
+            "legend": {
+              "calcs": [
+                "mean"
+              ],
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "exemplar": false,
+              "expr": "sum by (lang, db_system_name) (label_replace(rate(traces_span_metrics_calls_total{service_name=~\"demo-(${lang:pipe})-(api|backend|worker)\", service_name=~\"${service:pipe}\", span_kind=\"SPAN_KIND_CLIENT\", db_system_name!=\"\", status_code=\"STATUS_CODE_ERROR\"}[$__rate_interval]), \"lang\", \"$1\", \"service_name\", \"demo-([a-z]+)-.*\"))",
+              "instant": false,
+              "legendFormat": "{{lang}} · {{db_system_name}}",
+              "range": true,
+              "refId": "A"
+            }
+          ],
+          "title": "Database failures per second, per language",
+          "transformations": [],
+          "type": "timeseries"
+        },
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "description": "Every row should have `trace_id` and `span_id`; the `span_id` is the database span's (or `connect` in Python). For a record of an unsampled span, the trace link opens an empty trace.",
+          "fieldConfig": {
+            "defaults": {
+              "custom": {
+                "align": "auto",
+                "filterable": true
+              }
+            },
+            "overrides": [
+              {
+                "matcher": {
+                  "id": "byName",
+                  "options": "trace_id"
+                },
+                "properties": [
+                  {
+                    "id": "links",
+                    "value": [
+                      {
+                        "title": "Open trace in Tempo",
+                        "url": "/explore?schemaVersion=1&panes={\"t\":{\"datasource\":\"tempo\",\"queries\":[{\"refId\":\"A\",\"datasource\":{\"type\":\"tempo\",\"uid\":\"tempo\"},\"queryType\":\"traceql\",\"query\":\"${__value.raw}\"}],\"range\":{\"from\":\"now-1h\",\"to\":\"now\"}}}"
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 12,
+            "y": 25
+          },
+          "id": 11,
+          "options": {
+            "cellHeight": "sm",
+            "footer": {
+              "show": false
+            },
+            "showHeader": true
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "loki",
+                "uid": "loki"
+              },
+              "expr": "{service_name=~\"demo-(${lang:pipe})-(api|backend|worker)\", service_name=~\"${service:pipe}\"} | severity_number >= 17 | exception_type != \"\" | (db_system_name != \"\" or scope_name = \"StaffOps.OtelHelper.Database\")",
+              "legendFormat": "",
+              "queryType": "range",
+              "refId": "A"
+            }
+          ],
+          "title": "Database error logs (raw) — open the trace through the trace_id",
+          "transformations": [
+            {
+              "id": "extractFields",
+              "options": {
+                "format": "json",
+                "keepTime": true,
+                "replace": false,
+                "source": "labels"
+              }
+            },
+            {
+              "id": "organize",
+              "options": {
+                "includeByName": {
+                  "Time": true,
+                  "db_response_status_code": true,
+                  "error_type": true,
+                  "exception_type": true,
+                  "scope_name": true,
+                  "service_name": true,
+                  "span_id": true,
+                  "trace_id": true
+                },
+                "renameByName": {
+                  "Time": "time",
+                  "db_response_status_code": "SQLSTATE",
+                  "scope_name": "scope",
+                  "service_name": "service"
+                }
+              }
+            }
+          ],
+          "type": "table"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "description": "Exemplars only in Go and .NET; in those two the exemplar opens the **parent** span (gap A43, open; dashboard 5).",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "barAlignment": 0,
+                "drawStyle": "line",
+                "fillOpacity": 0,
+                "lineWidth": 2,
+                "showPoints": "never",
+                "spanNulls": true,
+                "stacking": {
+                  "group": "A",
+                  "mode": "none"
+                },
+                "thresholdsStyle": {
+                  "mode": "off"
+                }
+              },
+              "unit": "s"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 33
+          },
+          "id": 12,
+          "interval": "2m",
+          "options": {
+            "legend": {
+              "calcs": [],
+              "displayMode": "list",
+              "placement": "bottom",
+              "showLegend": true
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "exemplar": true,
+              "expr": "histogram_quantile(0.95, sum by (le, service_name) (rate(db_client_operation_duration_seconds_bucket{service_name=~\"demo-(${lang:pipe})-(api|backend|worker)\", service_name=~\"${service:pipe}\"}[$__rate_interval])))",
+              "instant": false,
+              "legendFormat": "{{service_name}}",
+              "range": true,
+              "refId": "A"
+            }
+          ],
+          "title": "Database p95 duration with exemplars — SDK metric (A43: opens the parent span)",
+          "transformations": [],
+          "type": "timeseries"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "description": "The same p95 derived from the spans, for the four languages; here the exemplar opens the right span.",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "barAlignment": 0,
+                "drawStyle": "line",
+                "fillOpacity": 0,
+                "lineWidth": 2,
+                "showPoints": "never",
+                "spanNulls": true,
+                "stacking": {
+                  "group": "A",
+                  "mode": "none"
+                },
+                "thresholdsStyle": {
+                  "mode": "off"
+                }
+              },
+              "unit": "s"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 12,
+            "y": 33
+          },
+          "id": 13,
+          "interval": "2m",
+          "options": {
+            "legend": {
+              "calcs": [],
+              "displayMode": "list",
+              "placement": "bottom",
+              "showLegend": true
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "exemplar": true,
+              "expr": "histogram_quantile(0.95, sum by (le, service_name) (rate(traces_span_metrics_duration_seconds_bucket{service_name=~\"demo-(${lang:pipe})-(api|backend|worker)\", service_name=~\"${service:pipe}\", span_kind=\"SPAN_KIND_CLIENT\", db_system_name!=\"\", db_system_name=\"postgresql\"}[$__rate_interval])))",
+              "instant": false,
+              "legendFormat": "{{service_name}}",
+              "range": true,
+              "refId": "A"
+            }
+          ],
+          "title": "Database p95 duration with exemplars — span metrics (opens the database span)",
+          "transformations": [],
+          "type": "timeseries"
+        }
+      ],
+      "title": "Technical detail — rates, raw logs and exemplars",
+      "type": "row"
+    }
+  ],
+  "refresh": "1m",
+  "schemaVersion": 42,
+  "tags": [
+    "demo-otel-libs",
+    "otel-libs",
+    "A36"
+  ],
+  "templating": {
+    "list": [
+      {
+        "allValue": "go|python|node|dotnet",
+        "current": {
+          "selected": true,
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        },
+        "includeAll": true,
+        "label": "Language",
+        "multi": true,
+        "name": "lang",
+        "options": [
+          {
+            "selected": true,
+            "text": "All",
+            "value": "$__all"
+          },
+          {
+            "selected": false,
+            "text": "go",
+            "value": "go"
+          },
+          {
+            "selected": false,
+            "text": "python",
+            "value": "python"
+          },
+          {
+            "selected": false,
+            "text": "node",
+            "value": "node"
+          },
+          {
+            "selected": false,
+            "text": "dotnet",
+            "value": "dotnet"
+          }
+        ],
+        "query": "go,python,node,dotnet",
+        "type": "custom"
+      },
+      {
+        "allValue": "demo-.*",
+        "current": {
+          "selected": true,
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        },
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "definition": "label_values(traces_span_metrics_calls_total{service_name=~\"demo-(${lang:pipe})-(api|backend|worker)\"}, service_name)",
+        "includeAll": true,
+        "label": "Service",
+        "multi": true,
+        "name": "service",
+        "options": [],
+        "query": {
+          "qryType": 1,
+          "query": "label_values(traces_span_metrics_calls_total{service_name=~\"demo-(${lang:pipe})-(api|backend|worker)\"}, service_name)",
+          "refId": "PrometheusVariableQueryEditor-VariableQuery"
+        },
+        "refresh": 2,
+        "sort": 1,
+        "type": "query"
+      }
+    ]
+  },
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "demo-otel-libs — 4. Database errors (A36): does every failure produce a log with the detail?",
+  "uid": "demo-otel-db-errors",
+  "version": 5,
+  "weekStart": ""
+}

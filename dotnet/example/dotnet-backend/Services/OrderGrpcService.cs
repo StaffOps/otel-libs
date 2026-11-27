@@ -1,6 +1,6 @@
 using System.Diagnostics;
 using System.Diagnostics.Metrics;
-using OtelHelper.Grpc;
+using Examples.Grpc;
 using Grpc.Core;
 using OpenTelemetry;
 
@@ -8,10 +8,14 @@ namespace DotnetBackend.Services;
 
 public class OrderGrpcService : OrderService.OrderServiceBase
 {
-    private static readonly string ServiceName = Environment.GetEnvironmentVariable("SERVICE_NAME") ?? "sample-backend";
+    // Only the "processed_by" field of the replies; telemetry gets service.name from the helper.
+    private static readonly string ServiceName = Environment.GetEnvironmentVariable("OTEL_SERVICE_NAME") ?? "sample-backend";
     private static readonly ActivitySource DbActivity = new("sample-backend.db");
     private static readonly ActivitySource ExternalActivity = new("sample-backend.external");
-    private static readonly Meter Meter = new(ServiceName);
+    // A fixed meter name, subscribed in Program.cs through TelemetryOptions.AdditionalMeters
+    // (a gRPC service instance lives for one call, so the keyed Meter is not injected here).
+    public const string MeterName = "sample-backend.orders";
+    private static readonly Meter Meter = new(MeterName);
 
     private static readonly Counter<long> ProcessedCounter = Meter.CreateCounter<long>("orders.processed_total", "orders");
     private static readonly Counter<long> CancelledCounter = Meter.CreateCounter<long>("orders.cancelled_total", "orders");

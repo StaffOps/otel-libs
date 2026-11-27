@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <!-- demo-dotnet-api: HTTP server (POST /orders), gRPC client, Redis cache client and
+       queue producer (specs/demo-environment DE-D2, DE-D5, DE-D6, DE-D8). -->
+  <ItemGroup>
+    <ProjectReference Include="..\Common\Demo.Common.csproj" />
+    <ProjectReference Include="..\..\StaffOps.OtelHelper.Redis\StaffOps.OtelHelper.Redis.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Grpc.Net.Client" Version="2.62.0" />
+    <!-- grpc.health.v1 client for GET /health (DE-D11 r3.6). -->
+    <PackageReference Include="Grpc.HealthCheck" Version="2.62.0" />
+  </ItemGroup>
+</Project>

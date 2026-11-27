@@ -1,0 +1,1 @@
+../../../../nodejs/packages/otel-helper-redis/README.md

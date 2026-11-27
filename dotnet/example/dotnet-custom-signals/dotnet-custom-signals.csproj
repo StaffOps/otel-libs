@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+
+  <!--
+    The helper: by default the project in this tree (dotnet run from the repo).
+    The Dockerfile passes -p:OtelHelperVersion=<version> and restores the packed
+    StaffOps.OtelHelper .nupkg from a local feed (../nuget.packages.config), as
+    a consumer does (task C17).
+  -->
+  <ItemGroup Condition="'$(OtelHelperVersion)' == ''">
+    <ProjectReference Include="..\..\StaffOps.OtelHelper\StaffOps.OtelHelper.csproj" />
+  </ItemGroup>
+  <ItemGroup Condition="'$(OtelHelperVersion)' != ''">
+    <PackageReference Include="StaffOps.OtelHelper" Version="$(OtelHelperVersion)" />
+  </ItemGroup>
+</Project>

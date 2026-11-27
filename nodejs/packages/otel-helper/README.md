@@ -1,0 +1,85 @@
+# @staffops/otel-helper
+
+OpenTelemetry helper for Node.js: one call configures traces, metrics and
+logs with the cross-language contract of the Go and Python helpers —
+standard `OTEL_*` variables first, OTLP export to an OpenTelemetry
+Collector, sampling and resource enrichment at the Collector. Instruments
+`node:http`/`https`, `fetch`, express and `@grpc/grpc-js`; Prometheus
+`/metrics` when no OTLP endpoint is configured; a logger that exports
+through OpenTelemetry or writes JSON lines on stdout. A failed gRPC call's
+span carries `error.type` = the status code name (`FAILED_PRECONDITION`), as
+in the Go and Python helpers (CLIENT: every non-OK code; SERVER: the six
+server-fault codes; gaps in [HOW-TO §3](https://github.com/StaffOps/otel-libs/blob/main/nodejs/HOW-TO.md#3-grpc)).
+
+> **Release candidate `0.3.0-rc.1`**, published to npmjs (dist-tag `next`, with
+> provenance) and to GitHub Packages. Install an exact version:
+> `npm install @staffops/otel-helper@0.3.0-rc.1 @opentelemetry/api@~1.10.0`.
+> Never a bare `npm install @staffops/otel-helper`: until the first stable
+> release, `latest` is a deprecated `0.0.0-bootstrap.0` placeholder. Registry
+> setup (`.npmrc`, GitHub Packages token):
+> [CONSUMING.md](https://github.com/StaffOps/otel-libs/blob/main/CONSUMING.md#nodejs-npm-packages).
+
+Requires Node.js 22.15.0 or newer and the peer dependency
+`@opentelemetry/api` `>=1.10.0 <1.11.0`.
+
+Two ways to start it, before the libraries it instruments are loaded:
+
+**A. Preload**, configured from the environment (ES modules or CommonJS):
+
+```bash
+OTEL_SERVICE_NAME=checkout-api \
+OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317 \
+node --import @staffops/otel-helper/register app.mjs
+```
+
+**B. `setup()` in code**, first thing in a CommonJS entry (an ES module app
+puts it in a preload file of its own: see the HOW-TO):
+
+```js
+const { setup } = require('@staffops/otel-helper');
+setup({ serviceName: 'checkout-api' });
+```
+
+Either way, flush on `SIGTERM` (the helper installs no signal handler) and
+`await shutdown()` before any `process.exit()`; a process that ends on its
+own is flushed by the helper:
+
+```js
+import { shutdown } from '@staffops/otel-helper'; // CommonJS: require('@staffops/otel-helper')
+
+process.once('SIGTERM', () => { shutdown().finally(() => process.exit(0)); });
+```
+
+Custom spans with one failure rule, shared with Go and Python: a throw or
+rejection marks the span ERROR (no description) with `error.type` and no
+`exception` event, and writes one ERROR log record with the message and
+stack in the span's context (one record per helper span the failure
+crosses, each with its own span id); success stays Unset (never Ok); an
+`AbortError` or a grpc-js `CANCELLED` error stays Unset (an `AbortError`
+caused by `AbortSignal.timeout()` is a timeout: a failure). `startRootSpan`
+follows the same rule (changed in 0.3: no message or stack on the span).
+Override `error.type` with `Symbol.for('otel.error_type')`.
+
+```js
+const { recordFailure, withSpan } = require('@staffops/otel-helper');
+
+await withSpan('order.process', async (span) => {
+  const result = await process(order); // a throw: ERROR + error.type, one correlated ERROR log, rethrown
+  if (!result.ok) recordFailure(new Error(result.reason), span); // a handled failure, marked by hand
+});
+```
+
+Details: [README, Application span failures](https://github.com/StaffOps/otel-libs/blob/main/nodejs/README.md#application-span-failures)
+and [HOW-TO §16](https://github.com/StaffOps/otel-libs/blob/main/nodejs/HOW-TO.md#16-application-span-failures-withspan-recordfailure).
+Records on the stdout fallback carry `trace_id` and `span_id` when written in
+a span.
+
+Opt-in packages: `@staffops/otel-helper-sql`, `-redis`, `-aws`
+(instrumentation) and `-pino`, `-winston` (log destinations).
+
+- [Overview and environment variables](https://github.com/StaffOps/otel-libs/blob/main/nodejs/README.md)
+- [API stability (0.x)](https://github.com/StaffOps/otel-libs/blob/main/nodejs/README.md#api-stability-0x): what a patch release keeps, and the SDK/API version coupling
+- [HOW-TO](https://github.com/StaffOps/otel-libs/blob/main/nodejs/HOW-TO.md)
+- [Examples](https://github.com/StaffOps/otel-libs/blob/main/nodejs/example/README.md)
+
+License: Apache-2.0.

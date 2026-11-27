@@ -1,0 +1,520 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {
+          "type": "grafana",
+          "uid": "-- Grafana --"
+        },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "links": [
+    {
+      "asDropdown": false,
+      "includeVars": true,
+      "keepTime": true,
+      "tags": [
+        "demo-otel-libs"
+      ],
+      "title": "demo-otel-libs",
+      "type": "dashboards"
+    }
+  ],
+  "panels": [
+    {
+      "gridPos": {
+        "h": 6,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "id": 1,
+      "options": {
+        "content": "### Does clicking a point on the graph take me to the right span?\nEach **orange cell** is a duration bucket (the lighter, the more requests). Each **blue dot** is an **exemplar**: a real request in that bucket, with its `trace_id`.\n\n**How to use it:** hover over a blue dot → click **View trace** → the trace opens in Tempo with one span highlighted → on the span, **Logs for this span** opens the correlated error log.\n\n**Gap A43 (open):** in Go and .NET, the exemplar of the SDK database metric highlights the **parent** span (the caller of the database), not the database span. Compare the two graphs below: the right one (derived from the spans) highlights the right span. Node.js records no exemplars on SDK metrics; Python emits no database metric.",
+        "mode": "markdown"
+      },
+      "type": "text"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "The SDK's `db.client.operation.duration` histogram (Go, Node.js, .NET); exemplars only in Go and .NET. Open a blue dot and see which span is highlighted: the parent, while A43 is open. Once A43 is fixed, it should be the database span.",
+      "gridPos": {
+        "h": 10,
+        "w": 12,
+        "x": 0,
+        "y": 6
+      },
+      "id": 2,
+      "options": {
+        "calculate": false,
+        "cellGap": 1,
+        "color": {
+          "exponent": 0.5,
+          "fill": "dark-orange",
+          "mode": "scheme",
+          "scheme": "Oranges",
+          "steps": 64
+        },
+        "exemplars": {
+          "color": "rgba(80,160,255,1)"
+        },
+        "filterValues": {
+          "le": 1e-09
+        },
+        "legend": {
+          "show": false
+        },
+        "rowsFrame": {
+          "layout": "auto"
+        },
+        "tooltip": {
+          "mode": "single",
+          "showColorScale": true,
+          "yHistogram": true
+        },
+        "yAxis": {
+          "axisPlacement": "left",
+          "unit": "s"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "exemplar": true,
+          "expr": "sum by (le) (rate(db_client_operation_duration_seconds_bucket{service_name=~\"demo-(${lang:pipe})-(api|backend|worker)\", service_name=~\"${service:pipe}\"}[$__rate_interval]))",
+          "format": "heatmap",
+          "instant": false,
+          "legendFormat": "{{le}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Database — SDK metric: the exemplar opens the PARENT span (A43, wrong)",
+      "type": "heatmap"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "The same duration, computed by the Collector from the database spans of the four languages; the exemplar is the database span itself. Use it as the reference for the correct behavior.",
+      "gridPos": {
+        "h": 10,
+        "w": 12,
+        "x": 12,
+        "y": 6
+      },
+      "id": 3,
+      "options": {
+        "calculate": false,
+        "cellGap": 1,
+        "color": {
+          "exponent": 0.5,
+          "fill": "dark-orange",
+          "mode": "scheme",
+          "scheme": "Oranges",
+          "steps": 64
+        },
+        "exemplars": {
+          "color": "rgba(80,160,255,1)"
+        },
+        "filterValues": {
+          "le": 1e-09
+        },
+        "legend": {
+          "show": false
+        },
+        "rowsFrame": {
+          "layout": "auto"
+        },
+        "tooltip": {
+          "mode": "single",
+          "showColorScale": true,
+          "yHistogram": true
+        },
+        "yAxis": {
+          "axisPlacement": "left",
+          "unit": "s"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "exemplar": true,
+          "expr": "sum by (le) (rate(traces_span_metrics_duration_seconds_bucket{service_name=~\"demo-(${lang:pipe})-(api|backend|worker)\", service_name=~\"${service:pipe}\", span_kind=\"SPAN_KIND_CLIENT\", db_system_name=\"postgresql\"}[$__rate_interval]))",
+          "format": "heatmap",
+          "instant": false,
+          "legendFormat": "{{le}}",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Database — derived from spans: the exemplar opens the DATABASE span (right)",
+      "type": "heatmap"
+    },
+    {
+      "datasource": {
+        "type": "tempo",
+        "uid": "tempo"
+      },
+      "description": "Most recent first. Click the Trace ID, then **Logs for this span**: exactly **one** error log should appear for the failed span (rule A36/A37).",
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "filterable": true
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 16
+      },
+      "id": 4,
+      "options": {
+        "cellHeight": "sm",
+        "footer": {
+          "show": false
+        },
+        "showHeader": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "tempo",
+            "uid": "tempo"
+          },
+          "limit": 30,
+          "query": "{ resource.service.name =~ \"demo-(${lang:pipe})-(api|backend|worker)\" && resource.service.name =~ \"${service:pipe}\" && status = error && kind = server } | select(resource.service.name, name, span.error.type) with(most_recent=true)",
+          "queryType": "traceql",
+          "refId": "A",
+          "spss": 1,
+          "tableType": "spans"
+        }
+      ],
+      "title": "Most recent error traces — starting point for trace → log",
+      "type": "table"
+    },
+    {
+      "collapsed": true,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 24
+      },
+      "id": 5,
+      "panels": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "description": "`http.server.request.duration`; exemplars in Go, Python and .NET (Node.js records none).",
+          "gridPos": {
+            "h": 9,
+            "w": 8,
+            "x": 0,
+            "y": 25
+          },
+          "id": 6,
+          "options": {
+            "calculate": false,
+            "cellGap": 1,
+            "color": {
+              "exponent": 0.5,
+              "fill": "dark-orange",
+              "mode": "scheme",
+              "scheme": "Oranges",
+              "steps": 64
+            },
+            "exemplars": {
+              "color": "rgba(80,160,255,1)"
+            },
+            "filterValues": {
+              "le": 1e-09
+            },
+            "legend": {
+              "show": false
+            },
+            "rowsFrame": {
+              "layout": "auto"
+            },
+            "tooltip": {
+              "mode": "single",
+              "showColorScale": true,
+              "yHistogram": true
+            },
+            "yAxis": {
+              "axisPlacement": "left",
+              "unit": "s"
+            }
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "exemplar": true,
+              "expr": "sum by (le) (rate(http_server_request_duration_seconds_bucket{service_name=~\"demo-(${lang:pipe})-(api|backend|worker)\", service_name=~\"${service:pipe}\"}[$__rate_interval]))",
+              "format": "heatmap",
+              "instant": false,
+              "legendFormat": "{{le}}",
+              "range": true,
+              "refId": "A"
+            }
+          ],
+          "title": "HTTP server (SDK)",
+          "type": "heatmap"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "description": "Only the Go backend emits `rpc.server.call.duration`; empty without Go in the filter is the parity gap.",
+          "gridPos": {
+            "h": 9,
+            "w": 8,
+            "x": 8,
+            "y": 25
+          },
+          "id": 7,
+          "options": {
+            "calculate": false,
+            "cellGap": 1,
+            "color": {
+              "exponent": 0.5,
+              "fill": "dark-orange",
+              "mode": "scheme",
+              "scheme": "Oranges",
+              "steps": 64
+            },
+            "exemplars": {
+              "color": "rgba(80,160,255,1)"
+            },
+            "filterValues": {
+              "le": 1e-09
+            },
+            "legend": {
+              "show": false
+            },
+            "rowsFrame": {
+              "layout": "auto"
+            },
+            "tooltip": {
+              "mode": "single",
+              "showColorScale": true,
+              "yHistogram": true
+            },
+            "yAxis": {
+              "axisPlacement": "left",
+              "unit": "s"
+            }
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "exemplar": true,
+              "expr": "sum by (le) (rate(rpc_server_call_duration_seconds_bucket{service_name=~\"demo-(${lang:pipe})-(api|backend|worker)\", service_name=~\"${service:pipe}\"}[$__rate_interval]))",
+              "format": "heatmap",
+              "instant": false,
+              "legendFormat": "{{le}}",
+              "range": true,
+              "refId": "A"
+            }
+          ],
+          "title": "gRPC server (SDK, Go only)",
+          "type": "heatmap"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "description": "The exemplar opens the HTTP client span; from there the trace shows the api and backend of the same request.",
+          "gridPos": {
+            "h": 9,
+            "w": 8,
+            "x": 16,
+            "y": 25
+          },
+          "id": 8,
+          "options": {
+            "calculate": false,
+            "cellGap": 1,
+            "color": {
+              "exponent": 0.5,
+              "fill": "dark-orange",
+              "mode": "scheme",
+              "scheme": "Oranges",
+              "steps": 64
+            },
+            "exemplars": {
+              "color": "rgba(80,160,255,1)"
+            },
+            "filterValues": {
+              "le": 1e-09
+            },
+            "legend": {
+              "show": false
+            },
+            "rowsFrame": {
+              "layout": "auto"
+            },
+            "tooltip": {
+              "mode": "single",
+              "showColorScale": true,
+              "yHistogram": true
+            },
+            "yAxis": {
+              "axisPlacement": "left",
+              "unit": "s"
+            }
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "prometheus"
+              },
+              "exemplar": true,
+              "expr": "sum by (le) (rate(http_client_request_duration_seconds_bucket{service_name=~\"demo-(${lang:pipe})-(api|backend|worker)\", service_name=~\"${service:pipe}\"}[$__rate_interval]))",
+              "format": "heatmap",
+              "instant": false,
+              "legendFormat": "{{le}}",
+              "range": true,
+              "refId": "A"
+            }
+          ],
+          "title": "HTTP client: worker → api (SDK)",
+          "type": "heatmap"
+        }
+      ],
+      "title": "Other histograms with exemplars (HTTP and gRPC)",
+      "type": "row"
+    }
+  ],
+  "refresh": "1m",
+  "schemaVersion": 42,
+  "tags": [
+    "demo-otel-libs",
+    "otel-libs",
+    "A43"
+  ],
+  "templating": {
+    "list": [
+      {
+        "allValue": "go|python|node|dotnet",
+        "current": {
+          "selected": true,
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        },
+        "includeAll": true,
+        "label": "Language",
+        "multi": true,
+        "name": "lang",
+        "options": [
+          {
+            "selected": true,
+            "text": "All",
+            "value": "$__all"
+          },
+          {
+            "selected": false,
+            "text": "go",
+            "value": "go"
+          },
+          {
+            "selected": false,
+            "text": "python",
+            "value": "python"
+          },
+          {
+            "selected": false,
+            "text": "node",
+            "value": "node"
+          },
+          {
+            "selected": false,
+            "text": "dotnet",
+            "value": "dotnet"
+          }
+        ],
+        "query": "go,python,node,dotnet",
+        "type": "custom"
+      },
+      {
+        "allValue": "demo-.*",
+        "current": {
+          "selected": true,
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        },
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "definition": "label_values(traces_span_metrics_calls_total{service_name=~\"demo-(${lang:pipe})-(api|backend|worker)\"}, service_name)",
+        "includeAll": true,
+        "label": "Service",
+        "multi": true,
+        "name": "service",
+        "options": [],
+        "query": {
+          "qryType": 1,
+          "query": "label_values(traces_span_metrics_calls_total{service_name=~\"demo-(${lang:pipe})-(api|backend|worker)\"}, service_name)",
+          "refId": "PrometheusVariableQueryEditor-VariableQuery"
+        },
+        "refresh": 2,
+        "sort": 1,
+        "type": "query"
+      }
+    ]
+  },
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "demo-otel-libs — 5. Exemplars: from the graph to the right trace",
+  "uid": "demo-otel-exemplars",
+  "version": 3,
+  "weekStart": ""
+}

@@ -1,0 +1,839 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {
+          "type": "grafana",
+          "uid": "-- Grafana --"
+        },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "links": [
+    {
+      "asDropdown": false,
+      "includeVars": true,
+      "keepTime": true,
+      "tags": [
+        "demo-otel-libs"
+      ],
+      "title": "demo-otel-libs",
+      "type": "dashboards"
+    }
+  ],
+  "panels": [
+    {
+      "gridPos": {
+        "h": 4,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "id": 1,
+      "options": {
+        "content": "### Does each failure become **exactly one** error log, linked to the trace?\n**The rule being proven:** the span keeps only the error **type** (`exception.type`); the **message** and the **stack** go to **one** correlated error log. Why: messages can hold sensitive data and are expensive to index in a trace; in the log they are searchable and under controlled retention. Here we look only at the **error logs** in Loki: how many have a `trace_id`, who writes them and whether any error appears twice. An error log from an **unsampled** span has a valid `trace_id` that Tempo does not have, so its trace link opens an empty trace. Terms: [0. Start here](/d/demo-otel-start).",
+        "mode": "markdown"
+      },
+      "type": "text"
+    },
+    {
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
+      "description": "Fraction of error logs with a `trace_id`. **Target: 100%.** Known cause of a lower value: Python's `uvicorn.error` (see the number next to it).",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "decimals": 1,
+          "noValue": "0",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red"
+              },
+              {
+                "color": "orange",
+                "value": 0.9
+              },
+              {
+                "color": "green",
+                "value": 0.999
+              }
+            ]
+          },
+          "unit": "percentunit"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 0,
+        "y": 4
+      },
+      "id": 2,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showPercentChange": false,
+        "textMode": "value",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "expr": "sum(count_over_time({service_name=~\"demo-(${lang:pipe})-(api|backend|worker)\", service_name=~\"${service:pipe}\"} | severity_number >= 17 | trace_id != \"\" [$__range])) / sum(count_over_time({service_name=~\"demo-(${lang:pipe})-(api|backend|worker)\", service_name=~\"${service:pipe}\"} | severity_number >= 17 [$__range]))",
+          "legendFormat": "",
+          "queryType": "instant",
+          "refId": "A"
+        }
+      ],
+      "title": "Error logs linked to a trace",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
+      "description": "Error logs without a `trace_id`. **Target: 0.** The table below says who writes them.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "noValue": "0",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green"
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 6,
+        "y": 4
+      },
+      "id": 3,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showPercentChange": false,
+        "textMode": "value",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "expr": "sum(count_over_time({service_name=~\"demo-(${lang:pipe})-(api|backend|worker)\", service_name=~\"${service:pipe}\"} | severity_number >= 17 | trace_id = \"\" [$__range]))",
+          "legendFormat": "",
+          "queryType": "instant",
+          "refId": "A"
+        }
+      ],
+      "title": "Error logs without trace_id",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
+      "description": "Error logs written by the web server (`uvicorn.error` in Python, Kestrel in .NET) in addition to the helper's log: the same error counted twice. **Target: 0.** The fix is in the application (A37 HOW-TO sections); .NET is parked (C20/C21).",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "noValue": "0",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green"
+              },
+              {
+                "color": "orange",
+                "value": 1
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 12,
+        "y": 4
+      },
+      "id": 4,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showPercentChange": false,
+        "textMode": "value",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "expr": "sum(count_over_time({service_name=~\"demo-(${lang:pipe})-(api|backend|worker)\", service_name=~\"${service:pipe}\"} | severity_number >= 17 | scope_name =~ \"uvicorn.error|Microsoft.AspNetCore.Server.Kestrel\" [$__range]))",
+          "legendFormat": "",
+          "queryType": "instant",
+          "refId": "A"
+        }
+      ],
+      "title": "Extra copies of the same error",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
+      "description": "How many error logs the helper itself wrote (application span failures and database errors). Informational: this is the right path for the error detail.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "noValue": "0",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "blue"
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 18,
+        "y": 4
+      },
+      "id": 5,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showPercentChange": false,
+        "textMode": "value",
+        "wideLayout": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "expr": "sum(count_over_time({service_name=~\"demo-(${lang:pipe})-(api|backend|worker)\", service_name=~\"${service:pipe}\"} | severity_number >= 17 | scope_name =~ \"otel-helper|staffops_otel_helper.*|StaffOps.OtelHelper.*\" [$__range]))",
+          "legendFormat": "",
+          "queryType": "instant",
+          "refId": "A"
+        }
+      ],
+      "title": "Logs written by the helper",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
+      "description": "**Green** = the otel-libs helper (the expected path). **Red** = the web server logging the same error again (copy). **Blue** = the .NET demo application code, which writes its own failure log.",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "barAlignment": 0,
+            "drawStyle": "bars",
+            "fillOpacity": 60,
+            "lineWidth": 2,
+            "showPoints": "never",
+            "spanNulls": true,
+            "stacking": {
+              "group": "A",
+              "mode": "normal"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "min": 0,
+          "unit": "short"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "helper (expected)"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "green",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "web server (extra copy)"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "red",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "application (.NET demo)"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "blue",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 9
+      },
+      "id": 6,
+      "interval": "2m",
+      "options": {
+        "legend": {
+          "calcs": [
+            "sum"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "expr": "sum by (origin) (count_over_time({service_name=~\"demo-(${lang:pipe})-(api|backend|worker)\", service_name=~\"${service:pipe}\"} | severity_number >= 17 | label_format origin=`{{ if or (eq .scope_name \"otel-helper\") (hasPrefix \"staffops_otel_helper\" .scope_name) (hasPrefix \"StaffOps.OtelHelper\" .scope_name) }}helper (expected){{ else if or (eq .scope_name \"uvicorn.error\") (eq .scope_name \"Microsoft.AspNetCore.Server.Kestrel\") }}web server (extra copy){{ else }}application (.NET demo){{ end }}` [$__auto]))",
+          "legendFormat": "{{origin}}",
+          "queryType": "range",
+          "refId": "A"
+        }
+      ],
+      "title": "Who writes the error logs?",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
+      "description": "An empty table is the good state. A new row after a change = correlation regression (log written after the span ended).",
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "filterable": true
+          },
+          "noValue": "none — good"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 9
+      },
+      "id": 7,
+      "options": {
+        "cellHeight": "sm",
+        "footer": {
+          "show": false
+        },
+        "showHeader": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "expr": "sum by (service_name, scope_name) (count_over_time({service_name=~\"demo-(${lang:pipe})-(api|backend|worker)\", service_name=~\"${service:pipe}\"} | severity_number >= 17 | trace_id = \"\" [$__range]))",
+          "legendFormat": "",
+          "queryType": "instant",
+          "refId": "A"
+        }
+      ],
+      "title": "Who writes error logs without trace_id?",
+      "transformations": [
+        {
+          "id": "labelsToFields",
+          "options": {
+            "mode": "columns"
+          }
+        },
+        {
+          "id": "merge",
+          "options": {}
+        },
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true
+            },
+            "renameByName": {
+              "Value": "logs without trace_id",
+              "Value #A": "logs without trace_id",
+              "scope_name": "logger / scope",
+              "service_name": "service"
+            }
+          }
+        }
+      ],
+      "type": "table"
+    },
+    {
+      "datasource": {
+        "type": "loki",
+        "uid": "loki"
+      },
+      "description": "Rows = exception type, columns = language, cells = number of error logs. Every demo scenario runs at the same rate, so **equal** numbers for an equivalent scenario = good. **Twice as many** (e.g. `DemoUnhandledError` in Python and .NET) = a web-server copy. Different names per language are normal (each database driver has its own error class).",
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "filterable": true
+          },
+          "noValue": "—"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 24,
+        "x": 0,
+        "y": 17
+      },
+      "id": 8,
+      "options": {
+        "cellHeight": "sm",
+        "footer": {
+          "show": false
+        },
+        "showHeader": true
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "expr": "sum by (lang, exception_type) (count_over_time({service_name=~\"demo-(${lang:pipe})-(api|backend|worker)\", service_name=~\"${service:pipe}\"} | severity_number >= 17 | exception_type != \"\" | label_format lang=`{{ regexReplaceAll \"demo-([a-z]+)-.*\" .service_name \"$1\" }}` [$__range]))",
+          "legendFormat": "",
+          "queryType": "instant",
+          "refId": "A"
+        }
+      ],
+      "title": "Does the same error appear the same number of times in each language?",
+      "transformations": [
+        {
+          "id": "labelsToFields",
+          "options": {
+            "mode": "columns"
+          }
+        },
+        {
+          "id": "merge",
+          "options": {}
+        },
+        {
+          "id": "organize",
+          "options": {
+            "renameByName": {
+              "Value": "logs",
+              "Value #A": "logs"
+            }
+          }
+        },
+        {
+          "id": "groupingToMatrix",
+          "options": {
+            "columnField": "lang",
+            "rowField": "exception_type",
+            "valueField": "logs"
+          }
+        },
+        {
+          "id": "organize",
+          "options": {
+            "renameByName": {
+              "exception_type\\lang": "exception type"
+            }
+          }
+        }
+      ],
+      "type": "table"
+    },
+    {
+      "collapsed": true,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 24
+      },
+      "id": 9,
+      "panels": [
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "description": "`scope_name` is the logger (Python), the scope (Go/Node `otel-helper`) or the category (.NET).",
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "barAlignment": 0,
+                "drawStyle": "bars",
+                "fillOpacity": 60,
+                "lineWidth": 2,
+                "showPoints": "never",
+                "spanNulls": true,
+                "stacking": {
+                  "group": "A",
+                  "mode": "normal"
+                },
+                "thresholdsStyle": {
+                  "mode": "off"
+                }
+              },
+              "min": 0,
+              "unit": "short"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 9,
+            "w": 24,
+            "x": 0,
+            "y": 25
+          },
+          "id": 10,
+          "interval": "2m",
+          "options": {
+            "legend": {
+              "calcs": [
+                "sum"
+              ],
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "loki",
+                "uid": "loki"
+              },
+              "expr": "sum by (service_name, scope_name) (count_over_time({service_name=~\"demo-(${lang:pipe})-(api|backend|worker)\", service_name=~\"${service:pipe}\"} | severity_number >= 17 [$__auto]))",
+              "legendFormat": "{{service_name}} · {{scope_name}}",
+              "queryType": "range",
+              "refId": "A"
+            }
+          ],
+          "title": "Error logs per service and logger/scope",
+          "transformations": [],
+          "type": "timeseries"
+        },
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "description": "Check that `exception_message` and `exception_stacktrace` are here (and not on the span) and that `span_id` is the one of the failed span. The `trace_id` field has a link to Tempo; for a record of an unsampled span that link opens an empty trace.",
+          "gridPos": {
+            "h": 12,
+            "w": 24,
+            "x": 0,
+            "y": 34
+          },
+          "id": 11,
+          "options": {
+            "dedupStrategy": "none",
+            "enableInfiniteScrolling": true,
+            "enableLogDetails": true,
+            "prettifyLogMessage": false,
+            "showCommonLabels": false,
+            "showLabels": false,
+            "showTime": true,
+            "sortOrder": "Descending",
+            "wrapLogMessage": true
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "loki",
+                "uid": "loki"
+              },
+              "expr": "{service_name=~\"demo-(${lang:pipe})-(api|backend|worker)\", service_name=~\"${service:pipe}\"} | severity_number >= 17 | trace_id != \"\"",
+              "legendFormat": "",
+              "queryType": "range",
+              "refId": "A"
+            }
+          ],
+          "title": "Correlated error logs (open one and use the trace_id link)",
+          "type": "logs"
+        },
+        {
+          "datasource": {
+            "type": "loki",
+            "uid": "loki"
+          },
+          "description": "Known content: Python's `uvicorn.error` with the full stack. Empty is the desired state.",
+          "gridPos": {
+            "h": 8,
+            "w": 24,
+            "x": 0,
+            "y": 46
+          },
+          "id": 12,
+          "options": {
+            "dedupStrategy": "none",
+            "enableInfiniteScrolling": true,
+            "enableLogDetails": true,
+            "prettifyLogMessage": false,
+            "showCommonLabels": false,
+            "showLabels": false,
+            "showTime": true,
+            "sortOrder": "Descending",
+            "wrapLogMessage": true
+          },
+          "targets": [
+            {
+              "datasource": {
+                "type": "loki",
+                "uid": "loki"
+              },
+              "expr": "{service_name=~\"demo-(${lang:pipe})-(api|backend|worker)\", service_name=~\"${service:pipe}\"} | severity_number >= 17 | trace_id = \"\"",
+              "legendFormat": "",
+              "queryType": "range",
+              "refId": "A"
+            }
+          ],
+          "title": "Error logs without trace_id",
+          "type": "logs"
+        }
+      ],
+      "title": "Technical detail — raw logs and counts per scope",
+      "type": "row"
+    }
+  ],
+  "refresh": "1m",
+  "schemaVersion": 42,
+  "tags": [
+    "demo-otel-libs",
+    "otel-libs",
+    "A36",
+    "A37"
+  ],
+  "templating": {
+    "list": [
+      {
+        "allValue": "go|python|node|dotnet",
+        "current": {
+          "selected": true,
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        },
+        "includeAll": true,
+        "label": "Language",
+        "multi": true,
+        "name": "lang",
+        "options": [
+          {
+            "selected": true,
+            "text": "All",
+            "value": "$__all"
+          },
+          {
+            "selected": false,
+            "text": "go",
+            "value": "go"
+          },
+          {
+            "selected": false,
+            "text": "python",
+            "value": "python"
+          },
+          {
+            "selected": false,
+            "text": "node",
+            "value": "node"
+          },
+          {
+            "selected": false,
+            "text": "dotnet",
+            "value": "dotnet"
+          }
+        ],
+        "query": "go,python,node,dotnet",
+        "type": "custom"
+      },
+      {
+        "allValue": "demo-.*",
+        "current": {
+          "selected": true,
+          "text": [
+            "All"
+          ],
+          "value": [
+            "$__all"
+          ]
+        },
+        "datasource": {
+          "type": "prometheus",
+          "uid": "prometheus"
+        },
+        "definition": "label_values(traces_span_metrics_calls_total{service_name=~\"demo-(${lang:pipe})-(api|backend|worker)\"}, service_name)",
+        "includeAll": true,
+        "label": "Service",
+        "multi": true,
+        "name": "service",
+        "options": [],
+        "query": {
+          "qryType": 1,
+          "query": "label_values(traces_span_metrics_calls_total{service_name=~\"demo-(${lang:pipe})-(api|backend|worker)\"}, service_name)",
+          "refId": "PrometheusVariableQueryEditor-VariableQuery"
+        },
+        "refresh": 2,
+        "sort": 1,
+        "type": "query"
+      }
+    ]
+  },
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "demo-otel-libs — 2. Exceptions and logs: does each failure become a log linked to the trace?",
+  "uid": "demo-otel-exc-logs",
+  "version": 5,
+  "weekStart": ""
+}

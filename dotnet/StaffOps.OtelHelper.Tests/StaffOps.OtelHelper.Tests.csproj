@@ -1,0 +1,44 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="coverlet.msbuild" Version="6.0.2">
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.12.0" />
+    <PackageReference Include="xunit" Version="2.9.3" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="8.0.1" />
+    <PackageReference Include="Microsoft.Extensions.Hosting" Version="8.0.1" />
+    <PackageReference Include="OpenTelemetry.Exporter.InMemory" Version="1.20.1" />
+    <PackageReference Include="Moq" Version="4.20.72" />
+    <!-- Drivers of the StaffOps.OtelHelper.Sql integration tests (task C14a); the package itself
+         depends on neither (the application brings its driver). -->
+    <PackageReference Include="Npgsql" Version="10.0.3" />
+    <PackageReference Include="MySqlConnector" Version="2.6.2" />
+    <!-- AWS SDK clients of the StaffOps.OtelHelper.AWS tests (task C14c), test-only (Apache-2.0),
+         against a local fake endpoint. Versions whose AWSSDK.Core range starts at 4.0.3.3, the
+         floor of OpenTelemetry.Instrumentation.AWS 1.20.3, so the resolved core is unchanged;
+         SNS and SQS at the instrumentation's own floor. -->
+    <PackageReference Include="AWSSDK.S3" Version="4.0.14" />
+    <PackageReference Include="AWSSDK.DynamoDBv2" Version="4.0.10.1" />
+    <PackageReference Include="AWSSDK.SimpleNotificationService" Version="4.0.2.7" />
+    <PackageReference Include="AWSSDK.SQS" Version="4.0.2.5" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\StaffOps.OtelHelper\StaffOps.OtelHelper.csproj" />
+    <ProjectReference Include="..\StaffOps.OtelHelper.AWS\StaffOps.OtelHelper.AWS.csproj" />
+    <ProjectReference Include="..\StaffOps.OtelHelper.Redis\StaffOps.OtelHelper.Redis.csproj" />
+    <ProjectReference Include="..\StaffOps.OtelHelper.Sql\StaffOps.OtelHelper.Sql.csproj" />
+    <ProjectReference Include="..\StaffOps.OtelHelper.Profiling\StaffOps.OtelHelper.Profiling.csproj" />
+    <!-- Spawned per parity case from this output folder (ParityTests, design D-NET12). -->
+    <ProjectReference Include="..\StaffOps.OtelHelper.ParityDriver\StaffOps.OtelHelper.ParityDriver.csproj" />
+  </ItemGroup>
+</Project>

@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <!-- demo-dotnet-backend: gRPC server (demo.v1.OrderService) and PostgreSQL client
+       (specs/demo-environment DE-D2, DE-D4, DE-D8, DE-D9). -->
+  <ItemGroup>
+    <ProjectReference Include="..\Common\Demo.Common.csproj" />
+    <ProjectReference Include="..\..\StaffOps.OtelHelper.Sql\StaffOps.OtelHelper.Sql.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Grpc.AspNetCore" Version="2.62.0" />
+    <!-- grpc.health.v1.Health for the pod probes (DE4; the other languages serve it too). -->
+    <PackageReference Include="Grpc.AspNetCore.HealthChecks" Version="2.62.0" />
+    <!-- The version the helper's Sql tests verify (dotnet/README.md "Sql"). -->
+    <PackageReference Include="Npgsql" Version="10.0.3" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The shared schema (DE-D3, DE-D4); the proto types come from Demo.Common. -->
+    <EmbeddedResource Include="..\..\..\demo\sql\schema.sql" LogicalName="demo-schema.sql" />
+  </ItemGroup>
+</Project>
